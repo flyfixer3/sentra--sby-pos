@@ -1,0 +1,13 @@
+{
+    "name": "Mutation",
+    "alias": "mutation",
+    "description": "",
+    "keywords": [],
+    "priority": 0,
+    "providers": [
+        "Modules\\Mutation\\Providers\\MutationServiceProvider"
+    ],
+    "aliases": {},
+    "files": [],
+    "requires": []
+}
