@@ -13,6 +13,7 @@
         "guzzlehttp/guzzle": "^7.0.1",
         "h4cc/wkhtmltopdf-amd64": "^0.12.4",
         "laravel/framework": "^8.40",
+        "laravel/sanctum": "^2.15",
         "laravel/tinker": "^2.5",
         "laravel/ui": "^3.3",
         "livewire/livewire": "^2.5",

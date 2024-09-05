@@ -11,7 +11,18 @@ use Illuminate\Support\Facades\Gate;
 use Modules\Mutation\Entities\Mutation;
 use Modules\Product\Entities\Product;
 use Modules\Product\Notifications\NotifyQuantityAlert;
-
+class Debit {
+    // Properties
+    public $tanggal;
+    public $nominal;
+    public $keterangan;
+}
+class Credit {
+    // Properties
+    public $tanggal;
+    public $nominal;
+    public $keterangan;
+}
 class MutationController extends Controller
 {
 
@@ -38,16 +49,42 @@ class MutationController extends Controller
         return $line_of_text;
     }
     
+  
     public function store(Request $request) {
 
         abort_if(Gate::denies('create_mutations'), 403);
         // dd(Mutation::where('product_id', 1716)
         //                                 ->latest()->get()->unique('warehouse_id')->sum('stock_in'));
+     
 
-
-        // $csvFileName = "KONSINYASI.csv";
+        // $csvFileName = "juni.csv";
         // $csvFile = public_path('csv/' . $csvFileName);
         // $konsyinasi = $this->readCSV($csvFile,array('delimiter' => ','));
+        // $credit = array();
+        // $debit = array();
+        // $index = 0;
+        // $total = array(2);
+        // $total[0] = 0;
+        // $total[1] = 0;
+        // foreach($konsyinasi as $ks){
+        //     if(isset($ks[4])){
+        //         if($ks[4] == "CR"){
+        //             $total[0] += $ks[3];    
+        //             $credit[$index] = new Credit();
+        //             $credit[$index]->tanggal = $ks[0];
+        //             $credit[$index]->nominal = $ks[3];
+        //             $credit[$index]->keterangan = $ks[1];
+        //         }else if($ks[4] == "DB"){
+        //             $total[1] += $ks[3]; 
+        //             $debit[$index] = new Debit();
+        //             $debit[$index]->tanggal = $ks[0];
+        //             $debit[$index]->nominal = $ks[3];
+        //             $debit[$index]->keterangan = $ks[1];
+        //         }
+        //         $index++;
+        //     }
+        // }
+        // dd($total);
 
         // foreach($konsyinasi as $ks){
         //     $product = Product::where('product_code', $ks[1])->first();

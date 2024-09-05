@@ -8,6 +8,7 @@ use Illuminate\Routing\Controller;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
 use Modules\People\Entities\Supplier;
+use App\Models\AccountingAccount;
 use Modules\Product\Entities\Product;
 use Modules\Mutation\Entities\Mutation;
 use Modules\Purchase\Entities\Purchase;

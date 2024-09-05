@@ -15,5 +15,6 @@
     "Quotation": true,
     "Reports": true,
     "Mutation": true,
-    "PurchaseOrder": true
+    "PurchaseOrder": true,
+    "Accounting": true
 }

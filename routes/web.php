@@ -14,6 +14,8 @@ Route::get('/', function () {
 
 Auth::routes(['register' => false]);
 
+// Route::post('login', 'Auth\LoginAPIController@login');
+
 Route::group(['middleware' => 'auth'], function () {
     Route::get('/home', 'HomeController@index')
         ->name('home');
