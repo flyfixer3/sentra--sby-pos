@@ -69,7 +69,7 @@
                                 </div>
                             </div>
 
-                            <livewire:product-cart-sale :cartInstance="'purchase'" :data="$purchase" :warehouses="\Modules\Product\Entities\Warehouse::all()"/>
+                            <livewire:product-cart-purchase :cartInstance="'purchase'" :data="$purchase" :loading_warehouse="\Modules\Product\Entities\Warehouse::findOrFail(99)"/>
 
                             <div class="form-row">
                                 <div class="col-lg-4">

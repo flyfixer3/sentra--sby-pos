@@ -69,7 +69,8 @@
                                 </div>
                             </div>
 
-                            <livewire:product-cart-sale :cartInstance="'purchase'" :data=null :warehouses="\Modules\Product\Entities\Warehouse::all()"/>/>
+                            <livewire:product-cart-purchase :cartInstance="'purchase'" :data=null :loading_warehouse="\Modules\Product\Entities\Warehouse::findOrFail(99)"/>
+                            <!-- <livewire:product-cart :cartInstance="'purchase'" :data=null /> -->
 
                             <div class="form-row">
                                 <div class="col-lg-4">
@@ -82,11 +83,12 @@
                                         </select>
                                     </div>
                                 </div>
-                                <div class="col-lg-4">
+                                <div class="col-lg-4" hidden>
                                     <div class="from-group">
                                         <div class="form-group">
                                             <label for="payment_method">Payment Method <span class="text-danger">*</span></label>
                                             <select class="form-control" name="payment_method" id="payment_method" required>
+                                                <option selected>-</option>
                                                 @foreach(\App\Models\AccountingSubaccount::join('accounting_accounts', 'accounting_accounts.id', '=', 'accounting_subaccounts.accounting_account_id')
                                                 ->where('accounting_accounts.is_active', '=', '1')->where('accounting_accounts.account_number', 3)
                                                 ->select('accounting_subaccounts.*', 'accounting_accounts.account_number')->get(); as $account)
@@ -96,11 +98,11 @@
                                         </div>
                                     </div>
                                 </div>
-                                <div class="col-lg-4">
+                                <div class="col-lg-4" hidden>
                                     <div class="form-group">
                                         <label for="paid_amount">Amount Paid <span class="text-danger">*</span></label>
                                         <div class="input-group">
-                                            <input id="paid_amount" type="text" class="form-control" name="paid_amount" required>
+                                            <input id="paid_amount" type="text" class="form-control" name="paid_amount" value=0 required>
                                             <div class="input-group-append">
                                                 <button id="getTotalAmount" class="btn btn-primary" type="button">
                                                     <i class="bi bi-check-square"></i>

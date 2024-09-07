@@ -22,12 +22,6 @@ class AccountingTransactionController extends Controller
         $user = Auth::user();
 
         $transactions = AccountingTransaction::query()
-            ->when(!empty($user->ibo_id), function ($query) use ($user) {
-                return $query->where('ibo_id', '=', $user->ibo_id);
-            })
-            ->when(!empty($user->training_center_id), function ($query) use ($user) {
-                return $query->where('training_center_id', '=', $user->training_center_id);
-            })
             ->where('date', '>=', $startDate)
             ->where('date', '<=', $endDate)
             ->where('accounting_posting_id', '=', null)
@@ -44,32 +38,20 @@ class AccountingTransactionController extends Controller
         $search = trim($request->query('search', ''));
 
         $transactions = AccountingTransaction::query()
-            ->when(!empty($user->ibo_id), function ($query) use ($user) {
-                return $query->where('ibo_id', '=', $user->ibo_id);
-            })
-            ->when(!empty($user->training_center_id), function ($query) use ($user) {
-                return $query->where('training_center_id', '=', $user->training_center_id);
-            })
             ->when(!empty($search), function ($query) use ($search) {
                 return $query->where('label', 'LIKE', '%' . $search . '%')
                     ->orWhere('description', 'LIKE', '%' . $search . '%');
             })
             ->where('accounting_posting_id', '=', null)
-            ->orderBy('created_at', 'DESC');
+            ->orderBy('date', 'DESC');
 
         
         $total = AccountingTransaction::query()
-            ->when(!empty($user->ibo_id), function ($query) use ($user) {
-                return $query->where('ibo_id', '=', $user->ibo_id);
-            })
-            ->when(!empty($user->training_center_id), function ($query) use ($user) {
-                return $query->where('training_center_id', '=', $user->training_center_id);
-            })
             ->where('accounting_posting_id', '=', null)
             ->count();
 
         return [
-            'page' => new AccountingTransactionCollection($transactions->paginate($limit)),
+            'page' => new AccountingTransactionCollection($transactions->paginate(100)),
             'meta' => [
                 'total' => $total
             ]
@@ -80,12 +62,6 @@ class AccountingTransactionController extends Controller
         $user = Auth::user();
 
         $transaction = AccountingTransaction::query()
-            ->when(!empty($user->ibo_id), function ($query) use ($user) {
-                return $query->where('ibo_id', '=', $user->ibo_id);
-            })
-            ->when(!empty($user->training_center_id), function ($query) use ($user) {
-                return $query->where('training_center_id', '=', $user->training_center_id);
-            })
             ->where('id', '=', $request->route('id'))
             ->first();
 
@@ -105,15 +81,15 @@ class AccountingTransactionController extends Controller
             'details.*.type' => 'required|in:debit,credit',
         ]);
         $validator->validate();
-
+        // $test = Carbon::parse($request->input('date'), 'Asia/Jakarta');
+        
+        // return response()->json(['message' => $test], 400);
         $user = Auth::user();
         DB::beginTransaction();
         $transaction = AccountingTransaction::create([
             'label' => $request->input('label'),
             'date' => Carbon::parse($request->input('date')),
             'description' => $request->input('description'),
-            'ibo_id' => $user->ibo_id,
-            'training_center_id' => $user->training_center_id,
         ]);
 
         foreach ($request->input('details') as $detail) {
@@ -161,7 +137,7 @@ class AccountingTransactionController extends Controller
             ($transaction->training_center_id != null && $transaction->training_center_id != $user->training_center_id))) {
             return response()->json(['message' => 'Transaction not found'], 404);
         }
-
+        // return response()->json(['message' => Carbon::parse($request->input('date'))], 404);
         $transaction->label = $request->input('label');
         $transaction->date = Carbon::parse($request->input('date'));
         $transaction->description = $request->input('description');

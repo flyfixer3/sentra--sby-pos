@@ -65,11 +65,11 @@
                                         <div class="form-group">
                                             <label for="payment_method">Payment Method <span class="text-danger">*</span></label>
                                             <select class="form-control" name="payment_method" id="payment_method" required>
-                                                <option value="Cash">Cash</option>
-                                                <option value="Credit Card">Credit Card</option>
-                                                <option value="Bank Transfer">Bank Transfer</option>
-                                                <option value="Cheque">Cheque</option>
-                                                <option value="Other">Other</option>
+                                                @foreach(\App\Models\AccountingSubaccount::join('accounting_accounts', 'accounting_accounts.id', '=', 'accounting_subaccounts.accounting_account_id')
+                                                ->where('accounting_accounts.is_active', '=', '1')->where('accounting_accounts.account_number', 3)
+                                                ->select('accounting_subaccounts.*', 'accounting_accounts.account_number')->get(); as $account)
+                                                    <option value="{{ $account->subaccount_number }}">({{$account->subaccount_number }}) - {{ $account->subaccount_name }}</option>
+                                                @endforeach
                                             </select>
                                         </div>
                                     </div>

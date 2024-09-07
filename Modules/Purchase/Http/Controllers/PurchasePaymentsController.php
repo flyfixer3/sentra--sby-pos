@@ -2,6 +2,8 @@
 
 namespace Modules\Purchase\Http\Controllers;
 
+
+use App\Helpers\Helper;
 use Modules\Purchase\DataTables\PurchasePaymentsDataTable;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
@@ -42,9 +44,9 @@ class PurchasePaymentsController extends Controller
             'purchase_id' => 'required',
             'payment_method' => 'required|string|max:255'
         ]);
-
+        $created_payment = null;
         DB::transaction(function () use ($request) {
-            PurchasePayment::create([
+            $created_payment = PurchasePayment::create([
                 'date' => $request->date,
                 'reference' => $request->reference,
                 'amount' => $request->amount,
@@ -52,7 +54,8 @@ class PurchasePaymentsController extends Controller
                 'purchase_id' => $request->purchase_id,
                 'payment_method' => $request->payment_method
             ]);
-
+            // dd($created_payment);
+        
             $purchase = Purchase::findOrFail($request->purchase_id);
 
             $due_amount = $purchase->due_amount - $request->amount;
@@ -69,6 +72,29 @@ class PurchasePaymentsController extends Controller
                 'paid_amount' => ($purchase->paid_amount + $request->amount) * 1,
                 'due_amount' => $due_amount * 1,
                 'payment_status' => $payment_status
+            ]);
+            Helper::addNewTransaction([
+                'label' => "Payment for Supplier Order",
+                'description' => "Order ID: ".$request->reference,
+                'purchase_id' => null,
+                'purchase_payment_id' => $created_payment->id,
+                'purchase_return_id' => null,
+                'purchase_return_payment_id' => null,
+                'sale_id' => null,
+                'sale_payment_id' => null,
+                'sale_return_id' => null,
+                'sale_return_payment_id' => null,
+            ], [
+                [
+                    'subaccount_number' => '2-20100', // Persediaan dalam pengiriman
+                    'amount' => $request->amount,
+                    'type' => 'debit'
+                ],
+                [
+                    'subaccount_number' => $request->payment_method, // Kas
+                    'amount' => $request->amount,
+                    'type' => 'credit'
+                ]
             ]);
         });
 

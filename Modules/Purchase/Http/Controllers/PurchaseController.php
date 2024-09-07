@@ -75,7 +75,6 @@ class PurchaseController extends Controller
                     'product_name' => $cart_item->name,
                     'product_code' => $cart_item->options->code,
                     'quantity' => $cart_item->qty,
-                    'warehouse_id' => $cart_item->options->warehouse_id,
                     'price' => $cart_item->price * 1,
                     'unit_price' => $cart_item->options->unit_price * 1,
                     'sub_total' => $cart_item->options->sub_total * 1,
@@ -133,6 +132,27 @@ class PurchaseController extends Controller
                         'stock_last'=> $_stock_last,
                     ]);
 
+                    $subaccount = AccountingSubaccount::find($validatedData['subaccount_id']);
+                    Helper::addNewTransaction([
+                        'label' => "Payment for Supplier Order",
+                        'description' => "Order ID: ".$orderHeaderData->id,
+                        'training_center_id' => null,
+                        'ibo_id' => '1',
+                        'ibo_order_header_id' => $orderHeaderData->id,
+                        'tc_order_header_id' => null,
+                    ], [
+                        [
+                            'subaccount_number' => '1-10201', // Persediaan dalam pengiriman
+                            'amount' => $totalPrice,
+                            'type' => 'debit'
+                        ],
+                        [
+                            'subaccount_number' => $subaccount->subaccount_number, // Kas
+                            'amount' => $totalPrice,
+                            'type' => 'credit'
+                        ]
+                    ]);
+
                 }
             }
 
@@ -174,15 +194,12 @@ class PurchaseController extends Controller
         $cart = Cart::instance('purchase');
 
         foreach ($purchase_details as $purchase_detail) {
-            $storage = Mutation::with('warehouse')
-            ->where('warehouse_id', $purchase_detail->warehouse_id)
-            ->where('product_id', $purchase_detail->product_id)
+            $total_stock = Mutation::with('warehouse')->where('product_id',$purchase_detail->product_id)
             ->latest()
-            ->first();
-            $stock_last = 0;
-            if($storage){
-                $stock_last = $storage->stock_last;
-            }
+            ->get()
+            ->unique('warehouse_id')
+            ->sortByDesc('stock_last')
+            ->sum('stock_last');
             // dd($purchase_detail);
             $cart->add([
                 'id'      => $purchase_detail->product_id,
@@ -195,8 +212,8 @@ class PurchaseController extends Controller
                     'product_discount_type' => $purchase_detail->product_discount_type,
                     'sub_total'   => $purchase_detail->sub_total,
                     'code'        => $purchase_detail->product_code,
-                    'warehouse_id'=> $purchase_detail->warehouse_id,
-                    'stock'       => $stock_last,
+                    'warehouse_id'=> 99,
+                    'stock'       => $total_stock,
                     'product_tax' => $purchase_detail->product_tax_amount,
                     'unit_price'  => $purchase_detail->unit_price
                 ]
@@ -217,7 +234,7 @@ class PurchaseController extends Controller
             } else {
                 $payment_status = 'Paid';
             }
-            dd($purchase->purchaseDetails);
+            // dd($purchase->purchaseDetails);
             foreach ($purchase->purchaseDetails as $purchase_detail) {
                 if ($purchase->status == 'Completed') {
                     if($purchase_detail->warehouse_id != 2){
@@ -298,7 +315,7 @@ class PurchaseController extends Controller
                 'discount_amount' => Cart::instance('purchase')->discount() * 1,
             ]);
             
-            dd(Cart::instance('purchase')->content());
+            // dd(Cart::instance('purchase')->content());
             foreach (Cart::instance('purchase')->content() as $cart_item) {
                 PurchaseDetail::create([
                     'purchase_id' => $purchase->id,

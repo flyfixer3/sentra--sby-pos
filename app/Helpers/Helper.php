@@ -1,6 +1,6 @@
 <?php
 
-namespace App\Http\Helpers;
+namespace App\Helpers;
 
 use App\Models\AccountingSubaccount;
 use App\Models\AccountingTransaction;
@@ -50,26 +50,26 @@ class Helper
     }
 
     public static function addNewTransaction ($data, $entries) {
+
+        // dd($data['purchase_payment_id']);
         DB::beginTransaction();
         $transaction = AccountingTransaction::create([
+            'date' => Carbon::now(),
+            'automated' => true,
             'label' => $data['label'],
             'description' => $data['description'],
-            'date' => Carbon::now(),
-            'training_center_id' => $data['training_center_id'],
-            'ibo_id' => $data['ibo_id'],
-            'ibo_order_header_id' => $data['ibo_order_header_id'],
-            'tc_order_header_id' => $data['tc_order_header_id'],
-            'automated' => true,
-        ]);
+            'purchase_id' => $data['purchase_id'],
+            'purchase_payment_id' => $data['purchase_payment_id'],
+            'purchase_return_id' => $data['purchase_return_id'],
+            'purchase_return_payment_id' => $data['purchase_return_payment_id'],
+            'sale_id' => $data['sale_id'],
+            'sale_payment_id' => $data['sale_payment_id'],
+            'sale_return_id' => $data['sale_return_id'],
+            'sale_return_payment_id' => $data['sale_return_payment_id']
+    ]);
         foreach ($entries as $entry) {
             $subaccount = AccountingSubaccount::query()
                 ->join('accounting_accounts', 'accounting_accounts.id', '=', 'accounting_subaccounts.accounting_account_id')
-                ->when(!empty($data['ibo_id']), function ($query) use ($data) {
-                    return $query->where('accounting_accounts.ibo_id', '=', $data['ibo_id']);
-                })
-                ->when(!empty($data['training_center_id']), function ($query) use ($data) {
-                    return $query->where('accounting_accounts.training_center_id', '=', $data['training_center_id']);
-                })
                 ->where('accounting_accounts.is_active', '=', '1')
                 ->where('accounting_subaccounts.subaccount_number', '=', $entry['subaccount_number'])
                 ->select('accounting_subaccounts.*')

@@ -3,6 +3,7 @@
 namespace App\Http\Resources;
 
 use Illuminate\Http\Resources\Json\JsonResource;
+use Carbon\Carbon;
 
 class AccountingTransactionCollectionResource extends JsonResource
 {
@@ -17,7 +18,7 @@ class AccountingTransactionCollectionResource extends JsonResource
             'id' => $this->id,
             'label' => $this->label,
             'description' => $this->description,
-            'date' => $this->date,
+            'date' => Carbon::parse($this->date)->addHours(7),
             'automated' => $this->automated,
             'created_at' => $this->created_at,
             'updated_at' => $this->updated_at,

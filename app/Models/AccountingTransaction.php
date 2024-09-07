@@ -14,7 +14,14 @@ class AccountingTransaction extends Model
         'description',
         'date',
         'automated',
-        'order_header_id',
+        'purchase_id',
+        'purchase_payment_id',
+        'purchase_return_id',
+        'purchase_return_payment_id',
+        'sale_id',
+        'sale_payment_id',
+        'sale_return_id',
+        'sale_return_payment_id'
     ];
 
     public function details() {
