@@ -22,8 +22,7 @@ class AccountingTransactionController extends Controller
         $user = Auth::user();
 
         $transactions = AccountingTransaction::query()
-            ->where('date', '>=', $startDate)
-            ->where('date', '<=', $endDate)
+            ->whereMonth('date','=','02')
             ->where('accounting_posting_id', '=', null)
             ->orderBy('created_at', 'ASC');
 
