@@ -42,7 +42,7 @@ Route::group(['middleware' => 'auth'], function () {
             // ->setOption('margin-left', 5)
             // ->setOption('margin-right', 5);
 
-        return $pdf->stream('sale-'. $sale->reference .'.pdf');
+        return $pdf->download('sale-'. $sale->reference .'.pdf');
     })->name('sales.pos.pdf');
 
     //Sales

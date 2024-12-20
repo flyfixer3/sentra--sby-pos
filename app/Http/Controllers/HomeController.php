@@ -101,13 +101,15 @@ class HomeController extends Controller
             ->groupBy('month')->orderBy('month')
             ->get()->pluck('amount', 'month');
 
-        $purchase_payments = PurchasePayment::where('date', '>=', $date_range)
+        $purchase_payments = Purchase::where('date', '>=', $date_range)
             ->select([
                 DB::raw("DATE_FORMAT(date, '%m-%Y') as month"),
-                DB::raw("SUM(amount) as amount")
+                DB::raw("SUM(total_amount) as amount")
             ])
             ->groupBy('month')->orderBy('month')
             ->get()->pluck('amount', 'month');
+
+            // dd($purchase_payments);
 
         $purchase_return_payments = PurchaseReturnPayment::where('date', '>=', $date_range)
             ->select([

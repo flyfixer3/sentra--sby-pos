@@ -93,7 +93,7 @@ class PurchaseController extends Controller
                             $product->update([
                                 'product_cost' => (($cart_item->options->sub_total - ($cart_item->options->sub_total * $request->discount_percentage)) / 
                                     ($cart_item->qty) + ($request->shipping_amount / $request->total_quantity)),
-                                // 'product_quantity' => $product->product_quantity + $cart_item->qty
+                                'product_quantity' => $product->product_quantity + $cart_item->qty
                             ]);
                         }else{
                             $product->update([
@@ -102,14 +102,14 @@ class PurchaseController extends Controller
                                      * $request->discount_percentage)) + (($request->shipping_amount
                                      / $request->total_quantity) * $cart_item->qty)))
                                       / ($mutation->stock_last + $cart_item->qty)),
-                                // 'product_quantity' => $product->product_quantity + $cart_item->qty
+                                'product_quantity' => $product->product_quantity + $cart_item->qty
                             ]);
                         }
                     }else{
                         $product->update([
                             'product_cost' => (($cart_item->options->sub_total - ($cart_item->options->sub_total * $request->discount_percentage)) / 
                                 ($cart_item->qty) + ($request->shipping_amount / $request->total_quantity)),
-                            // 'product_quantity' => $product->product_quantity + $cart_item->qty
+                            'product_quantity' => $product->product_quantity + $cart_item->qty
                         ]);
                     }
                     
@@ -132,23 +132,27 @@ class PurchaseController extends Controller
                         'stock_last'=> $_stock_last,
                     ]);
 
-                    $subaccount = AccountingSubaccount::find($validatedData['subaccount_id']);
                     Helper::addNewTransaction([
-                        'label' => "Payment for Supplier Order",
-                        'description' => "Order ID: ".$orderHeaderData->id,
-                        'training_center_id' => null,
-                        'ibo_id' => '1',
-                        'ibo_order_header_id' => $orderHeaderData->id,
-                        'tc_order_header_id' => null,
+                        'date' => Carbon::now(),
+                        'label' => "Purchase Invoice for #". $purchase->reference,
+                        'description' => "Order ID: ".$purchase->reference,
+                        'purchase_id' => $purchase->id,
+                        'purchase_payment_id' => null,
+                        'purchase_return_id' => null,
+                        'purchase_return_payment_id' => null,
+                        'sale_id' => null,
+                        'sale_payment_id' => null,
+                        'sale_return_id' => null,
+                        'sale_return_payment_id' => null,
                     ], [
                         [
-                            'subaccount_number' => '1-10201', // Persediaan dalam pengiriman
-                            'amount' => $totalPrice,
+                            'subaccount_number' => '1-10200', // Beban Pokok Pendapatan
+                            'amount' => $purchase->total_amount,
                             'type' => 'debit'
                         ],
                         [
-                            'subaccount_number' => $subaccount->subaccount_number, // Kas
-                            'amount' => $totalPrice,
+                            'subaccount_number' => '2-20100', // Hutang usaha
+                            'amount' => $purchase->total_amount,
                             'type' => 'credit'
                         ]
                     ]);
@@ -165,6 +169,30 @@ class PurchaseController extends Controller
                     'amount' => $purchase->paid_amount,
                     'purchase_id' => $purchase->id,
                     'payment_method' => $request->payment_method
+                ]);
+                Helper::addNewTransaction([
+                    'date'=> Carbon::now(),
+                    'label' => "Payment for Purchase Order #".$purchase->reference,
+                    'description' => "Purchase ID: ".$purchase->reference,
+                    'purchase_id' => null,
+                    'purchase_payment_id' => $created_payment->id,
+                    'purchase_return_id' => null,
+                    'purchase_return_payment_id' => null,
+                    'sale_id' => null,
+                    'sale_payment_id' => null,
+                    'sale_return_id' => null,
+                    'sale_return_payment_id' => null,
+                ], [
+                    [
+                        'subaccount_number' => '1-10200', // Persediaan dalam pengiriman
+                        'amount' => $created_payment->amount,
+                        'type' => 'debit'
+                    ],
+                    [
+                        'subaccount_number' => $created_payment->payment_method, // Kas
+                        'amount' => $created_payment->amount,
+                        'type' => 'credit'
+                    ]
                 ]);
             }
         });

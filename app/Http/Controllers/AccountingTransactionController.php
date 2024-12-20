@@ -18,30 +18,67 @@ class AccountingTransactionController extends Controller
     function allTransactions (Request $request) {
         $startDate = $request->query('startDate', null);
         $endDate = $request->query('endDate', null);
-
+        $month = $request->query('month', null);
         $user = Auth::user();
 
-        $transactions = AccountingTransaction::query()
-            ->where('date', '>=', $startDate)
-            ->where('date', '<=', $endDate)
+        $transactions = AccountingTransaction::query()  
+            ->whereMonth('date','=',$month)
+            ->whereYear('date' ,'=', 2024)
+            // ->where('date', '>=', $startDate)
+            // ->where('date', '<=', $endDate)
             ->where('accounting_posting_id', '=', null)
-            ->orderBy('created_at', 'ASC');
+            ->orderBy('date', 'ASC');
 
+        //     $transactions = AccountingTransaction::withWhereHas('details', fn($query) =>
+        //     $query->where('accounting_subaccount_id', '=', 1)
+        //    )->whereMonth('date','=','02');
         return [
             'data' => new AccountingTransactionCollection($transactions->get()),
         ];
     }
 
     function transactions (Request $request) {
+        // $user = Auth::user();
+        // $limit = $request->query('limit', 20);
+        // $search = trim($request->query('search', ''));
+
+        // $transactions = AccountingTransaction::query()
+        //     ->when(!empty($search), function ($query) use ($search) {
+        //         return $query->where('label', 'LIKE', '%' . $search . '%')
+        //             ->orWhere('description', 'LIKE', '%' . $search . '%');
+        //     })
+        //     ->where('accounting_posting_id', '=', null)
+        //     ->orderBy('date', 'DESC');
+
+        
+        // $total = AccountingTransaction::query()
+        //     ->where('accounting_posting_id', '=', null)
+        //     ->count();
+
+        // return [
+        //     'page' => new AccountingTransactionCollection($transactions->paginate($limit)),
+        //     'meta' => [
+        //         'total' => $total
+        //     ]
+        // ];
+
         $user = Auth::user();
         $limit = $request->query('limit', 20);
+        $month = $request->query('month', null);
+        $year = $request->query('year', null);
         $search = trim($request->query('search', ''));
 
         $transactions = AccountingTransaction::query()
-            ->when(!empty($search), function ($query) use ($search) {
-                return $query->where('label', 'LIKE', '%' . $search . '%')
-                    ->orWhere('description', 'LIKE', '%' . $search . '%');
-            })
+        ->when(!empty($year), function ($query) use ($year) {
+            return $query->whereYear('date','=',$year);
+        })
+        ->when(!empty($month), function ($query) use ($month) {
+            return $query->whereMonth('date','=',$month);
+        })
+        ->when(!empty($search), function ($query) use ($search) {
+            return $query->where('label', 'LIKE', '%' . $search . '%')
+                ->orWhere('description', 'LIKE', '%' . $search . '%');
+        })
             ->where('accounting_posting_id', '=', null)
             ->orderBy('date', 'DESC');
 
@@ -51,7 +88,7 @@ class AccountingTransactionController extends Controller
             ->count();
 
         return [
-            'page' => new AccountingTransactionCollection($transactions->paginate(100)),
+            'page' => new AccountingTransactionCollection($transactions->paginate($total)),
             'meta' => [
                 'total' => $total
             ]

@@ -147,38 +147,16 @@
                 <div class="card-body">
                     <div class="row mb-4" style="margin: 0px 0px 0px -32px;padding: 0px;">
                         <div class="col-xs-8 mb-3 mb-md-0 ml-0 pl-0">
-                            <div class="col-xs-12 mb-2 ml-0 pl-0" >
+                            <!-- <div class="col-xs-12 mb-2 ml-0 pl-0" >
                                 <img width="180" src="{{ public_path('images/logo-dark.png') }}" alt="Logo">
-                            </div>
+                            </div> -->
                             <!-- <h4 class="mb-2" style="border-bottom: 1px solid #dddddd;padding-bottom: 10px;">Company Info:</h4> -->
-                            
-                        </div>
-
-                        <!-- <div class="col-xs-4 mb-3 mb-md-0">
-                            <h4 class="mb-2" style="border-bottom: 1px solid #dddddd;padding-bottom: 10px;">Customer Info:</h4>
-                            <div><strong>{{ $customer->customer_name }}</strong></div>
-                            <div>{{ $customer->address }}</div>
-                            <div>Email: {{ $customer->customer_email }}</div>
-                            <div>Phone: {{ $customer->customer_phone }}</div>
-                        </div> -->
-
-                        <div class="col-xs-4 mb-3 mb-md-0">
-                            <!-- <h4 class="mb-2" style="border-bottom: 1px solid #dddddd;padding-bottom: 10px;">Invoice Info:</h4> -->
-                            <div>Invoice: <strong>{{ $sale->reference }}</strong></div>
-                            <div>Tanggal : {{ \Carbon\Carbon::parse($sale->date)->format('d M Y') }}</div>
-                        </div>
-
-                    </div>
-                    <div class="row mb-4" style="margin: 0px 0px 0px -32px;padding: 0px;">
-                        <div class="col-xs-8 mb-3 mb-md-0 ml-0 pl-0">
                             <div class="col-xs-12 mb-2 ml-0 pl-0" >
                                 <!-- <img width="180" src="{{ public_path('images/logo-dark.png') }}" alt="Logo"> -->
-                                <h4><strong>{{ settings()->company_name }}</strong></h4>  
+                                <h4 style="margin: 0; padding: 0;text-transform: uppercase;letter-spacing: 8px;"><strong>{{ settings()->company_name }}</strong></h4>  
                                 <div>{{ settings()->company_address }}</div>
-                                <div>(+62) {{ settings()->company_phone }} | {{ settings()->company_email }}</div>
+                                <div> {{ settings()->company_phone }} | {{ settings()->company_email }}</div>
                             </div>
-                            <!-- <h4 class="mb-2" style="border-bottom: 1px solid #dddddd;padding-bottom: 10px;">Company Info:</h4> -->
-                            
                         </div>
 
                         <!-- <div class="col-xs-4 mb-3 mb-md-0">
@@ -191,10 +169,13 @@
 
                         <div class="col-xs-4 mb-3 mb-md-0">
                             <!-- <h4 class="mb-2" style="border-bottom: 1px solid #dddddd;padding-bottom: 10px;">Invoice Info:</h4> -->
-                            <!-- <div>Invoice: <strong>INV/{{ $sale->reference }}</strong></div> -->
-                            <!-- <div>Tanggal : {{ \Carbon\Carbon::parse($sale->date)->format('d M Y') }}</div> -->
+                            <div>Invoice: <strong>{{ $sale->note }}</strong></div>
+                            <div>Tanggal : {{ \Carbon\Carbon::parse($sale->date)->format('d M Y') }}</div>
                             <div>
-                                Kepada Yth. {{ $customer->customer_name }}
+                                Kepada Yth. 
+                            </div>
+                            <div>
+                            {{ $customer->customer_name }}
                             </div>
                             <div>
                             ( {{ $customer->customer_phone }} )
@@ -205,9 +186,12 @@
                         </div>
 
                     </div>
+                 
                     <div class="col-xs-12" style="text-align: center; margin: 20px 0px">
-                        <h4>
-                            Nota Penjualan
+                        <h4 style="text-transform: uppercase;">
+                            <strong>
+                                Nota Penjualan
+                            </strong>
                         </h4>
                     </div>
                     <div class="table-responsive-sm" style="margin-top: 30px;">
@@ -216,12 +200,13 @@
                             <thead>
                             <tr>
                                 <th class="align-middle">No</th>
-                                <th class="align-middle">Produk</th>
-                                <th class="align-middle">Harga</th>
+                                <th class="align-middle">Kode</th>
+                                <th class="align-middle">Nama Barang</th>
                                 <th class="align-middle">Qty</th>
-                                <th class="align-middle">Diskon</th>
+                                <th class="align-middle">Harga Satuan</th>
+                                <!-- <th class="align-middle">Diskon</th> -->
                                 <!-- <th class="align-middle">Tax</th> -->
-                                <th class="align-middle">Sub Total</th>
+                                <th class="align-middle">Jumlah</th>
                             </tr>
                             </thead>
                             <tbody>
@@ -231,22 +216,22 @@
                                         {{ $loop->index +1 }}
                                     </td>
                                     <td class="align-middle">
-                                    {{ $item->product_code }} - {{ $item->product_name}} <br>
-                                        <span class="badge badge-success">{{ str_contains($item->product_code, "LFW") ? "(Kaca Depan) ":
-                                             (str_contains($item->product_code, "TRW") ? "(Kaca Belakang) " :
-                                             (str_contains($item->product_code, "FDL") ? "(Kaca Pintu Depan Kiri) " : "Test"))}}
-                                            </span>
+                                    {{ $item->product_code }}
                                     </td>
-
-                                    <td class="align-middle">{{ format_currency($item->unit_price) }}</td>
-
+                                    <td class="align-middle">
+                                    {{ $item->product_name }}
+                                    </td>
+                                    
                                     <td class="align-middle">
                                         {{ $item->quantity }}
                                     </td>
-
                                     <td class="align-middle">
-                                        {{ format_currency($item->product_discount_amount) }}
+                                        {{ format_currency($item->unit_price) }}
                                     </td>
+
+                                    <!-- <td class="align-middle">
+                                        {{ format_currency($item->product_discount_amount) }}
+                                    </td> -->
 
                                     <!-- <td class="align-middle">
                                         {{ format_currency($item->product_tax_amount) }}
@@ -263,48 +248,41 @@
                     <div class="container" style="width: 100%;margin-top: 20px;padding: 20px 0 0 50px;box-sizing: border-box;border-bottom: 1px solid #a6a6a6;">
                         <div><strong> BCA 7610244321 an Cecilia Michelle </strong></div>
                     </div>
-                    <div class="container" style="display:table;width: 100%;margin-top: 10px;padding: 0;box-sizing: border-box;">
+                    <div class="container" style="display:table;width: 100%;margin-top: 0px;padding: 0;box-sizing: border-box;">
                         <div class="row" style=" height: 100%;display: table-row;">
-                            <div class="col-xs-2" style="display: table-cell; float: none;padding:0 8px; margin: 0;">
-                                <div style="border-bottom: 1px dotted black; text-align: center;padding-right: 8px;margin: 0; padding-bottom: 92px">Hormat Kami</div>
+                            <div class="col-xs-8" style="height: 100%;display: flex; padding: 60px 0px 0px 0px">
+                                <img width="150" src="{{ public_path('images/logo-dark.png') }}" alt="Logo">
+                                <div>Trust the Experts, Drive Safer and Clearer</div>
                             </div>
-                            <div class="col-xs-1" style="display: table-cell;float: none; text-align: center;padding: 0; vertical-align: middle;">
-                                <!-- <h5 style="width: 60%; margin: auto;    ">Kaca yang sudah dipesan/dipasang tidak dapat dibatalkan/dikembalikan.</h5> -->
+                            <div class="col-xs-4" style="height: 100%;display: flex; padding: 30px 30px 0px 0px; text-align: center;justify-content: center;">
+                                <div>Kaca yang sudah dipesan/dipasang tidak dapat dibatalkan/dikembalikan.</div>
                             </div>
-                            <div class="col-xs-2" style="display: table-cell; float: none;padding:0 8px; margin: 0;">
-                                <div style="border-bottom: 1px dotted black; text-align: center;padding-right: 8px;margin: 0; padding-bottom: 92px">Penerima</div>
-                            </div>
-                            <div class="col-xs-3" style="display: table-cell;float: none; text-align: center;padding: 0; vertical-align: middle;">
-                                <!-- <h5 style="width: 60%; margin: auto;    ">Kaca yang sudah dipesan/dipasang tidak dapat dibatalkan/dikembalikan.</h5> -->
-                            </div>
-                            <div class="col-xs-4" style="display: table-cell;float: none;">
+                            <div class="col-xs-3" style="display: table-cell;float: none;">
                                 <table class="table">
                                     <tbody>
                                     <tr>
                                         <td class="left">Total</td>
                                         <td class="right">{{ format_currency($sale->total_amount + $sale->discount_amount ) }}</td>
                                     </tr>
-                                    <tr>
+                                    <!-- <tr>
                                         <td class="left">Biaya kirim</td>
                                         <td class="right">{{ format_currency($sale->shipping_amount) }}</td>
-                                    </tr>
+                                    </tr> -->
                                     <tr>
-                                        <td class="left">Diskon ({{ $sale->discount_percentage }}%)</td>
+                                        <td class="left">Diskon</td>
                                         <td class="right">{{ format_currency($sale->discount_amount) }}</td>
                                     </tr>
                                     <tr>
                                         <td class="left"><strong>Netto</strong></td>
                                         <td class="right"><strong>{{ format_currency($sale->total_amount) }}</strong></td>
                                     </tr>
+                                    <tr>
+                                        <td class="left"><strong>Ket</strong></td>
+                                        <td class="right"><strong></strong></td>
+                                    </tr>
                                     </tbody>
                                 </table>
                             </div>
-                        </div>
-                    </div>
-                    
-                    <div class="row" style="margin-top: 0px;">
-                        <div class="col-xs-12">
-                            <p style="font-style: italic;text-align: center;">Kaca yang sudah dipesan/dipasang tidak dapat dibatalkan/dikembalikan.</p>
                         </div>
                     </div>
                 </div>

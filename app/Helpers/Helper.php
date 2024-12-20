@@ -52,9 +52,10 @@ class Helper
     public static function addNewTransaction ($data, $entries) {
 
         // dd($data['purchase_payment_id']);
+        // Carbon::createFromFormat('Y-m-d', $data['date'])->subHour(7)->format('Y-m-d H:i:s')
         DB::beginTransaction();
         $transaction = AccountingTransaction::create([
-            'date' => Carbon::now(),
+            'date' => Carbon::createFromFormat('d/m/Y', $data['date'])->subHour(7)->format('Y-m-d H:i:s'),
             'automated' => true,
             'label' => $data['label'],
             'description' => $data['description'],
