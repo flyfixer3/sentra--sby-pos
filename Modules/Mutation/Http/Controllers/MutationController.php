@@ -117,42 +117,82 @@ class MutationController extends Controller
         // $sheet = $pdf->setPaper('a4', 'landscape');
         // return $sheet->download('download.pdf');
 
-        //Download All PDF POS
+        // Download All PDF POS
         // ini_set('max_execution_time',3600);
         // $sales = \Modules\Sale\Entities\Sale::whereMonth('date','=','10')->get();
-        // // dd($sales);
-        // // $html='';
         // foreach($sales as $index=>$sale){
-        //     // dd($sale);
         //     $customer = \Modules\People\Entities\Customer::findOrFail($sale->customer_id);
-        //     // $html .= $view->render();
-        //     //     // ->setOption('margin-top', 8)
-        //     //     // ->setOption('margin-bottom', 8)
-        //     //     // ->setOption('margin-left', 5)
-        //     //     // ->setOption('margin-right', 5);
-        //     // $user_details = Users::where('id',$invoice->user_id)->first();
         //     $html = '';
         //     $view =view('sale::print-pos', [
         //         'sale' => $sale,
         //         'customer' => $customer,
         //     ]);
-        //     // $view = view('pdf.invoice_compact')->with(compact('user_details','invoice'));
         //     $html .= $view->render();
         //     \PDF::loadHTML($html)->save(public_path().'/oktober/'.$sale->reference.'.pdf');
         // }
-        // // $pdf = \PDF::loadHtml($html);
+        // ini_set('max_execution_time', 3600);
+        // $sales = \Modules\Sale\Entities\Sale::whereMonth('date', '=', '12')->get();
+        // foreach ($sales as $index => $sale) {
+        //     $customer = \Modules\People\Entities\Customer::findOrFail($sale->customer_id);
+        //     $html = '';
+        //     $view = view('sale::print-pos', [
+        //         'sale' => $sale,
+        //         'customer' => $customer,
+        //     ]);
+        //     $html .= $view->render();
+
+        //     // Load the HTML and customize the page
+        //     $pdf = \PDF::loadHTML($html)
+        //         ->setPaper('A4', 'portrait') // Set paper size and orientation ('A4', 'landscape' for horizontal)
+        //         ->setOptions([
+        //             'margin-top' => 10,
+        //             'margin-right' => 4,
+        //             'margin-bottom' => 10,
+        //             'margin-left' => 4,
+        //             'dpi' => 150,
+        //             'zoom' => 1.0
+        //         ]);
+
+        //     // Save the file
+        //     $pdf->save(public_path() . '/desember/' . $sale->note . '.pdf');
+        //     // break;
+        // }
+        // $pdf = \PDF::loadHtml($html);
         // $sheet = $pdf->setPaper('a4');
         // return $sheet->download('sale.pdf');
 
-        // //penjualan header & detil
-        // $csvFileName = "penj_b_okt_2.csv";
+        // penjualan header & detil
+        // $csvFileName = "penj_b_des.csv";
         // $csvFile = public_path('csv/' . $csvFileName);
         // $konsyinasi = $this->readCSV($csvFile,array('delimiter' => ','));
         // $header_temp="";
         // $total_amount = 0;
         // $total_quantity = 0;
         // $total_hpp = 0;
-        // // dd($konsyinasi);
+        // dd($konsyinasi);
+        // foreach($konsyinasi as $index=>$ks){
+        //     $created_sale = Sale::where('note','=',$ks[0])->first();
+        //     if($created_sale){
+        //         $customer = Customer::where('customer_name', $ks[10])->first();
+        //         // dd($customer);
+        //         if(!$customer){
+        //             $customer = Customer::create([
+        //                 'customer_name' => $ks[10],
+        //                 'customer_email'=> $ks[12],
+        //                 'customer_phone'=> $ks[11],
+        //                 'city' => $ks[14],
+        //                 'address'=> $ks[14],
+        //                 'country' => 'Indonesia'
+        //             ]);
+                  
+        //         }
+        //         $created_sale->update([
+        //             'customer_id' => $customer->id,
+        //             'customer_name' => $customer->customer_name,
+        //         ]);
+        //     }
+        // }
+        // dd($konsyinasi);
         // foreach($konsyinasi as $index=>$ks){
         //     // dd($index);
         //     // dd($ks[0]);
@@ -566,7 +606,7 @@ class MutationController extends Controller
         //                 'product_quantity' => $_stock_last,
         //                 'product_price' => (int)$ks[8] / $ks[4]
         //             ]);
-        //             $total_amount += $ks[8];
+        //             $total_amount += (int)$ks[8];
         //             $total_quantity += $ks[4];
         //             $total_hpp += $product->product_cost * $ks[4];
         //             $header_temp = trim($ks[0]);
@@ -749,9 +789,9 @@ class MutationController extends Controller
 
 
         //  //pembelian header
-        //  $csvFileName = "header_bekasi.csv";
+        //  $csvFileName = "header_nov.csv";
         //  $csvFile = public_path('csv/' . $csvFileName);
-        //  $konsyinasi = $this->readCSV($csvFile,array('delimiter' => ';'));
+        //  $konsyinasi = $this->readCSV($csvFile,array('delimiter' => ','));
         // //  dd($konsyinasi);    
         //  $header_temp;
         //  foreach($konsyinasi as $ks){
@@ -842,9 +882,9 @@ class MutationController extends Controller
 
 
         //  //purchase_detail
-        //  $csvFileName = "penj_2024.csv";
+        //  $csvFileName = "nov.csv";
         //  $csvFile = public_path('csv/' . $csvFileName);
-        //  $konsyinasi = $this->readCSV($csvFile,array('delimiter' => ';'));
+        //  $konsyinasi = $this->readCSV($csvFile,array('delimiter' => ','));
         //  $header_temp;
         //  $jasa_kirim=0;
         // //  dd($konsyinasi);

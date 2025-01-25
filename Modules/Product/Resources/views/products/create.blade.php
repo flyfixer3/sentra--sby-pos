@@ -40,7 +40,7 @@
                             </div>
 
                             <div class="form-row">
-                                <div class="col-md-6">
+                                <!-- <div class="col-md-6">
                                     <div class="form-group">
                                         <label for="category_id">Rack <span class="text-danger">*</span></label>
                                         <select class="form-control" name="category_id" id="category_id" required>
@@ -50,7 +50,7 @@
                                             @endforeach
                                         </select>
                                     </div>
-                                </div>
+                                </div> -->
                                 <div class="col-md-6">
                                     <div class="form-group">
                                         <label for="accessory_code">Accessory <span class="text-danger">*</span></label>

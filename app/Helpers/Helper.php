@@ -55,7 +55,7 @@ class Helper
         // Carbon::createFromFormat('Y-m-d', $data['date'])->subHour(7)->format('Y-m-d H:i:s')
         DB::beginTransaction();
         $transaction = AccountingTransaction::create([
-            'date' => Carbon::createFromFormat('d/m/Y', $data['date'])->subHour(7)->format('Y-m-d H:i:s'),
+            'date' => $data['date'],
             'automated' => true,
             'label' => $data['label'],
             'description' => $data['description'],

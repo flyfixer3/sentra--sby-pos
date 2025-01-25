@@ -9,6 +9,7 @@ use Illuminate\Routing\Controller;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\Storage;
 use Modules\Product\Entities\Product;
+use Modules\Mutation\Entities\Mutation;
 use Modules\Product\Http\Requests\StoreProductRequest;
 use Modules\Product\Http\Requests\UpdateProductRequest;
 use Modules\Upload\Entities\Upload;
@@ -47,13 +48,19 @@ class ProductController extends Controller
 
     public function show(Product $product) {
         abort_if(Gate::denies('show_products'), 403);
+        $temp = Mutation::with('warehouse')->where('product_id',$product->id)
+        ->latest()
+        ->get()
+        ->unique('warehouse_id')
+        ->sortByDesc('stock_last');
 
-        return view('product::products.show', compact('product'));
+        return view('product::products.show', compact('product'))->with("warehouses",$temp);
     }
 
 
     public function edit(Product $product) {
         abort_if(Gate::denies('edit_products'), 403);
+    
 
         return view('product::products.edit', compact('product'));
     }

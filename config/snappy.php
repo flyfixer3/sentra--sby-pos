@@ -40,7 +40,10 @@ return [
         'timeout' => false,
         'options' => [
             'enable-local-file-access' => true,
-            'print-media-type' => true
+            'print-media-type' => true,
+            // 'isHtml5ParserEnabled' => true,
+            // 'isPhpEnabled' => true,
+            // 'remote_enabled' => true,
         ],
         'env'     => [],
     ],

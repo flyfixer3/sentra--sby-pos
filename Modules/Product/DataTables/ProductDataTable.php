@@ -8,6 +8,7 @@ use Yajra\DataTables\Html\Column;
 use Yajra\DataTables\Html\Editor\Editor;
 use Yajra\DataTables\Html\Editor\Fields;
 use Yajra\DataTables\Services\DataTable;
+use Modules\Mutation\Entities\Mutation;
 
 class ProductDataTable extends DataTable
 {
@@ -21,7 +22,28 @@ class ProductDataTable extends DataTable
             })
             ->addColumn('product_image', function ($data) {
                 $url = $data->getFirstMediaUrl('images', 'thumb');
+                // dd($data);
                 return '<img src="'.$url.'" border="0" width="50" class="img-thumbnail" align="center"/>';
+            })
+            ->editColumn('category.category_code', function ($data) {
+                $temp = Mutation::with('warehouse')->where('product_id',$data->id)
+                    ->latest()
+                    ->get()
+                    ->unique('warehouse_id')
+                    ->sortByDesc('stock_last')->pluck('warehouse')->pluck('warehouse_name');
+
+                // $str ="test";
+                // dd($temp);
+                // if($temp != null){
+                    // foreach ($temp as $index => $value) {
+                    //     if($index == array_key_first($temp)){
+                    //         $str="";
+                    //         $str .= $value->warehouse_name;
+                    //     }else{
+                    //         $str .= ", ".$value->warehouse_name;
+                    //     }
+                    // }
+                return count($temp) > 0 ? $temp : '-';
             })
             ->editColumn('product_price', function ($data) {
                 return format_currency($data->product_price);
@@ -65,7 +87,6 @@ class ProductDataTable extends DataTable
             Column::computed('product_image')
                 ->title('Image')
                 ->className('text-center align-middle'),
-
             Column::make('product_name')
                 ->title('Name')
                 ->className('text-center align-middle'),

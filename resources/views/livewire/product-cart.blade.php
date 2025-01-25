@@ -95,7 +95,7 @@
                     <tr>
                         <th>Platform Fee</th>
                         <input type="hidden" value="{{ $platform_fee }}" name="fee_amount">
-                        <td>(+) {{ format_currency($platform_fee) }}</td>
+                        <td>(-) {{ format_currency($platform_fee) }}</td>
                     </tr>
                 @endif
                     <tr>
@@ -114,7 +114,7 @@
                     <tr>
                         <th>Grand Total</th>
                         @php
-                            $total_with_shipping = Cart::instance($cart_instance)->total() + (float) $shipping + (float) $platform_fee
+                            $total_with_shipping = Cart::instance($cart_instance)->total() + (float) $shipping - (float) $platform_fee
                         @endphp
                         <th>
                             (=) {{ format_currency($total_with_shipping) }}

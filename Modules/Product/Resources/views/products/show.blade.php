@@ -36,8 +36,19 @@
                                     <td>{{ $product->product_name }}</td>
                                 </tr>
                                 <tr>
-                                    <th>Rack</th>
+                                    <th>Category</th>
                                     <td>{{ $product->category->category_name }}</td>
+                                </tr>
+                                <tr>
+                                    <th>Rack</th>
+                                    <td> @foreach($warehouses as $warehouse)
+                                            @if($warehouse->stock_last > 0)
+                                                &#x2022; {{$warehouse->warehouse->warehouse_name}} ({{$warehouse->stock_last}})<br>
+                                            @else
+                                                -
+                                            @endif
+                                        @endforeach
+                                    </td>
                                 </tr>
                                 <tr>
                                     <th>Accessory</th>

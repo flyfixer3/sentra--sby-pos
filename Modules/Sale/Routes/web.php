@@ -29,21 +29,42 @@ Route::group(['middleware' => 'auth'], function () {
 
         return $pdf->stream('sale-'. $sale->reference .'.pdf');
     })->name('sales.pdf');
-
     Route::get('/sales/pos/pdf/{id}', function ($id) {
         $sale = \Modules\Sale\Entities\Sale::findOrFail($id);
         $customer = \Modules\People\Entities\Customer::findOrFail($sale->customer_id);
+        $watermarkText = "ANJING KAMU MICEL"; 
         $pdf = \PDF::loadView('sale::print-pos', [
             'sale' => $sale,
             'customer' => $customer,
-        ])->setPaper('a4');
-            // ->setOption('margin-top', 8)
-            // ->setOption('margin-bottom', 8)
-            // ->setOption('margin-left', 5)
-            // ->setOption('margin-right', 5);
+            'watermarkText' => $watermarkText,
+        ])->setPaper('a4', 'portrait')
+        ->setOption('margin-top', 10)
+        ->setOption('margin-bottom', 10)
+        ->setOption('margin-left', 5)
+        ->setOption('margin-right', 5)
+            ->setOption('dpi', 150)
+            ->setOption('enable-external-links', true)
+            ->setOption('enable-local-file-access', true)
+            ->setOption('no-outline', true) // Prevents issues with outlines
+    ->setOption('disable-javascript', false) // Enable Javascript if needed
+    ->setOption('zoom', 1.0);// Improves rendering quality
 
-        return $pdf->download('sale-'. $sale->reference .'.pdf');
+        return $pdf->stream('sale-'. $sale->reference .'.pdf');
     })->name('sales.pos.pdf');
+
+    Route::get('/sales/pos/debug/{id}', function ($id) {
+        // Fetch the sale and customer data
+        $sale = \Modules\Sale\Entities\Sale::findOrFail($id);
+        $customer = \Modules\People\Entities\Customer::findOrFail($sale->customer_id);
+    
+        // Return the Blade view directly for debugging
+        return view('sale::print-pos', [
+            'sale' => $sale,
+            'customer' => $customer,
+        ]);
+    })->name('sales.pos.debug');
+
+    // Route::get('/sales/pos/pdf/{id}', 'PosController@show')->name('app.pos.show');
 
     //Sales
     Route::resource('sales', 'SaleController');
