@@ -18,7 +18,7 @@ class ProductCartSale extends Component
     public $global_tax;
     public $global_qty;
     public $shipping;
-    public $platform_fee;
+    public $platform_fee = 0;
     public $quantity;
     public $warehouse_id;
     public $warehouses;
@@ -38,7 +38,7 @@ class ProductCartSale extends Component
             $this->global_tax = $data->tax_percentage;
             $this->global_qty = Cart::instance($this->cart_instance)->count();
             $this->shipping = $data->shipping_amount;
-            $this->platform_fee = $data->fee_amount;
+            $this->platform_fee = $data->fee_amount ?? 0;
             
             $this->updatedGlobalTax();
             $this->updatedGlobalDiscount();
@@ -65,7 +65,7 @@ class ProductCartSale extends Component
             $this->global_tax = 0;
             $this->global_qty = 0;
             $this->shipping = 0.00;
-            $this->platform_fee = 0.00;
+            $this->platform_fee = 0;
             $this->check_quantity = [];
             $this->quantity = [];
             $this->warehouse_id = [];

@@ -26,6 +26,11 @@
                             <i class="bi bi-save"></i> Save
                         </a>
                     </div>
+                    @if($purchase_order->status != 'Completed')
+                        <a href="{{ route('purchase-order-purchases.create', $purchase_order->id) }}" class="btn btn-success">
+                            Convert to Purchase <i class="bi bi-arrow-right-circle"></i>
+                        </a>
+                    @endif
                     <div class="card-body">
                         <div class="row mb-4">
                             <div class="col-sm-4 mb-3 mb-md-0">
@@ -125,6 +130,20 @@
                                     </tbody>
                                 </table>
                             </div>
+                        </div>
+                        <div class="row">
+                            @if($purchase_order->purchases->isNotEmpty())
+                                <h5>Related Purchases:</h5>
+                                <ul>
+                                    @foreach($purchase_order->purchases as $purchase)
+                                        <li>
+                                            <a href="{{ route('purchases.show', $purchase->id) }}" class="text-primary">
+                                                {{ $purchase->reference ?? 'Purchase #' . $purchase->id }}
+                                            </a>
+                                        </li>
+                                    @endforeach
+                                </ul>
+                            @endif
                         </div>
                     </div>
                 </div>

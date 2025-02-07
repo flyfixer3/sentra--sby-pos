@@ -3,9 +3,11 @@
 namespace Modules\Sale\Entities;
 
 use Illuminate\Database\Eloquent\Model;
+use App\Models\BaseModel;
+use App\Models\User;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 
-class Sale extends Model
+class Sale extends BaseModel
 {
     use HasFactory;
 
@@ -23,9 +25,20 @@ class Sale extends Model
         parent::boot();
 
         static::creating(function ($model) {
+            // dd($model);
             $number = Sale::count()+1;
-            $model->reference = make_reference_id('SL', $number);
+            $model->reference = make_sale_id('B', $number, $model);
         });
+    }
+
+    public function creator()
+    {
+        return $this->belongsTo(User::class, 'created_by');
+    }
+
+    public function updater()
+    {
+        return $this->belongsTo(User::class, 'updated_by');
     }
 
     public function scopeCompleted($query) {
@@ -33,7 +46,7 @@ class Sale extends Model
     }
 
     public function getShippingAmountAttribute($value) {
-        return $value / 1;
+        return $value / 1;  
     }
 
     public function getPaidAmountAttribute($value) {

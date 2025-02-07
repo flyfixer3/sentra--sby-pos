@@ -63,7 +63,7 @@
                                     <div class="from-group">
                                         <div class="form-group">
                                             <label for="due_date">Due Date (Days) <span class="text-danger">*</span></label>
-                                            <input type="number" class="form-control" name="due_date" required >
+                                            <input type="number" class="form-control" name="due_date" required placeholder=0 >
                                         </div>
                                     </div>
                                 </div>
@@ -98,7 +98,7 @@
                                         </div>
                                     </div>
                                 </div>
-                                <div class="col-lg-4" hidden>
+                                <div class="col-lg-4">
                                     <div class="form-group">
                                         <label for="paid_amount">Amount Paid <span class="text-danger">*</span></label>
                                         <div class="input-group">

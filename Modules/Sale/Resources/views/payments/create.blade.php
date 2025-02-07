@@ -41,17 +41,17 @@
                             </div>
 
                             <div class="form-row">
-                                <div class="col-lg-4">
+                                <div class="col-lg-3">
                                     <div class="form-group">
                                         <label for="due_amount">Due Amount <span class="text-danger">*</span></label>
                                         <input type="text" class="form-control" name="due_amount" required value="{{ format_currency($sale->due_amount) }}" readonly>
                                     </div>
                                 </div>
-                                <div class="col-lg-4">
+                                <div class="col-lg-3">
                                     <div class="form-group">
                                         <label for="amount">Amount <span class="text-danger">*</span></label>
                                         <div class="input-group">
-                                            <input id="amount" type="text" class="form-control" name="amount" required value="{{ old('amount') }}">
+                                            <input id="amount" type="text" class="form-control" name="amount" required value="{{ old('amount') ?? 0}}" placeholder= 0>
                                             <div class="input-group-append">
                                                 <button id="getTotalAmount" class="btn btn-primary" type="button">
                                                     <i class="bi bi-check-square"></i>
@@ -60,7 +60,7 @@
                                         </div>
                                     </div>
                                 </div>
-                                <div class="col-lg-4">
+                                <div class="col-lg-3">
                                     <div class="from-group">
                                         <div class="form-group">
                                             <label for="payment_method">Payment Method <span class="text-danger">*</span></label>
@@ -72,6 +72,25 @@
                                                 <option value="Other">Other</option>
                                             </select>
                                         </div>
+                                    </div>
+                                </div>
+                                <div class="col-lg-3">
+                                    <div class="form-group">
+                                        <label for="deposit_code">Deposit To <span class="text-danger">*</span></label>
+                                        <select class="form-control" name="deposit_code" id="deposit_code" required>
+                                            @foreach(\App\Models\AccountingSubaccount::join('accounting_accounts', 'accounting_accounts.id', '=', 'accounting_subaccounts.accounting_account_id')
+                                            ->where('accounting_accounts.is_active', '=', '1')->where('accounting_accounts.account_number', 3)
+                                            ->select('accounting_subaccounts.*', 'accounting_accounts.account_number')->get(); as $account)
+                                                <option value="{{ $account->subaccount_number }}">({{$account->subaccount_number }}) - {{ $account->subaccount_name }}</option>
+                                            @endforeach
+                                        </select>
+                                        <!-- <select class="form-control" name="payment_method" id="payment_method" required>
+                                            <option value="Cash">Cash</option>
+                                            <option value="Credit Card">Credit Card</option>
+                                            <option value="Bank Transfer">Bank Transfer</option>
+                                            <option value="Cheque">Cheque</option>
+                                            <option value="Other">Other</option>
+                                        </select> -->
                                     </div>
                                 </div>
                             </div>
@@ -104,10 +123,15 @@
             $('#getTotalAmount').click(function () {
                 $('#amount').maskMoney('mask', {{ $sale->due_amount }});
             });
-
+            var dueAmount = {{ $sale->due_amount }};
             $('#payment-form').submit(function () {
                 var amount = $('#amount').maskMoney('destroy')[0];
                 var new_number = parseInt(amount.value.toString().replaceAll(/[Rp.]/g, ""));
+                // if (new_number > dueAmount) {
+                //     event.preventDefault();
+                //     alert('Error: The amount cannot be greater than the due amount of ' + dueAmount);
+                //     return false;
+                // }
                 $('#amount').val(new_number);
             });
         });

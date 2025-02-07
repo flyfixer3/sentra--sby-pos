@@ -32,13 +32,51 @@ if (!function_exists('format_currency')) {
     }
 }
 
-if (!function_exists('make_reference_id')) {
-    function make_reference_id($prefix, $number) {
-        $padded_text = $prefix . '-' . str_pad($number, 5, 0, STR_PAD_LEFT);
+if (!function_exists('make_sale_id')) {
+    function make_sale_id($branchCode, $number, $sale) {
+        // $branchCode = 'B'; // Default: Cabang pertama
 
+        // Tentukan bulan (A, B, C, ...)
+        $saleDate = \Carbon\Carbon::parse($sale->date);
+        $monthCode = chr(65 + $saleDate->month - 1); // Januari = A, Februari = B, dst.
+
+        // Tentukan tahun (2 digit)
+        $yearCode = $saleDate->format('y'); // Format: YY
+
+        // Hitung nomor urut
+        $key = "{$branchCode}{$monthCode}{$yearCode}";
+        // $counters[$key] = ($counters[$key] ?? 0) + 1; // Increment counter
+        $lastCode = DB::table('sales')
+        ->where('reference', 'LIKE', "{$branchCode}{$monthCode}{$yearCode}%")
+        ->orderBy('id', 'desc')
+        ->first();
+
+        // Nomor urut dimulai dari 001 setiap kali tahun dan bulan berganti
+        $nextCounter = $lastCode ? intval(substr($lastCode->reference, -3)) + 1 : 1;
+
+        // Format nomor urut ke 3 digit
+        $counterFormatted = str_pad($nextCounter, 3, '0', STR_PAD_LEFT);
+
+        // Buat kode nota baru
+        $newInvoiceCode = "{$branchCode}{$monthCode}{$yearCode}{$counterFormatted}";
+
+        // Update kode nota di database
+        // $sale->update([
+        //     'reference' => $newInvoiceCode
+        // ]);
+        // $padded_text = $prefix . '-' . str_pad($number, 5, 0, STR_PAD_LEFT);
+
+        return $newInvoiceCode;
+    }
+}
+if (!function_exists('make_reference_id')) {
+    function make_reference_id($prefix ,$number) {
+
+        $padded_text = $prefix . '-' . str_pad($number, 5, 0, STR_PAD_LEFT);
         return $padded_text;
     }
 }
+
 
 if (!function_exists('array_merge_numeric_values')) {
     function array_merge_numeric_values() {

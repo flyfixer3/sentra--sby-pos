@@ -41,7 +41,7 @@
                             </div>
 
                             <div class="form-row">
-                                <!-- <div class="col-md-6">
+                                <div class="col-md-6" hidden>
                                     <div class="form-group">
                                         <label for="category_id">Rack <span class="text-danger">*</span></label>
                                         <select class="form-control" name="category_id" id="category_id" required>
@@ -50,7 +50,7 @@
                                             @endforeach
                                         </select>
                                     </div>
-                                </div> -->
+                                </div>
                                 <div class="col-md-6">
                                     <div class="form-group">
                                         <label for="accessory_code">Accessory <span class="text-danger">*</span></label>
@@ -61,7 +61,7 @@
                                         </select>
                                     </div>
                                 </div>
-                                <div class="col-md-6">
+                                <div class="col-md-6">  
                                     <div class="form-group">
                                         <label for="barcode_symbology">Barcode Symbology <span class="text-danger">*</span></label>
                                         <select class="form-control" name="product_barcode_symbology" id="barcode_symbology" required>
@@ -95,7 +95,7 @@
                                 <div class="col-md-6">
                                     <div class="form-group">
                                         <label for="product_quantity">Quantity <span class="text-danger">*</span></label>
-                                        <input type="number" class="form-control" name="product_quantity" value="{{ $product->product_quantity }}" min="0">
+                                        <input type="number" class="form-control" name="product_quantity" value="{{ $product->product_quantity }}" min="0" disabled>
                                     </div>
                                 </div>
                                 <div class="col-md-6">

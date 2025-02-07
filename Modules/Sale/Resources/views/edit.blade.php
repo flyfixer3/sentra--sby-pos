@@ -27,13 +27,13 @@
                             @csrf
                             @method('patch')
                             <div class="form-row">
-                                <div class="col-lg-4">
+                                <div class="col-lg-3">
                                     <div class="form-group">
                                         <label for="reference">Reference <span class="text-danger">*</span></label>
                                         <input type="text" class="form-control" name="reference" required value="{{ $sale->reference }}" readonly>
                                     </div>
                                 </div>
-                                <div class="col-lg-4">
+                                <div class="col-lg-3">
                                     <div class="from-group">
                                         <div class="form-group">
                                             <label for="customer_id">Customer <span class="text-danger">*</span></label>
@@ -45,7 +45,28 @@
                                         </div>
                                     </div>
                                 </div>
-                                <div class="col-lg-4">
+                                <div class="col-lg-2">
+                                    <div class="form-group">
+                                        <label for="reference">Car Plate<span class="text-danger">*</span></label>
+                                        <input type="text" class="form-control" name="car_number_plate" id="car_number_plate" required >
+                                    </div>
+                                </div>
+                              
+                                <div class="col-lg-2">
+                                    <div class="form-group">
+                                        <label for="sale_form">Sales From <span class="text-danger">*</span></label>
+                                        <select class="form-control" name="sale_from" id="sale_from" required>
+                                            <option {{ $sale->sale_from == 'Google Ads' ? 'selected' : '' }} value="Google Ads">Google Ads</option>
+                                            <option {{ $sale->sale_from == 'Marketplace' ? 'selected' : '' }} value="Marketplace">Marketplace</option>
+                                            <option {{ $sale->sale_from == 'Tokopedia' ? 'selected' : '' }} value="Tokopedia">Tokopedia</option>
+                                            <option {{ $sale->sale_from == 'Instagram' ? 'selected' : '' }} value="Instragram">Instagram</option>
+                                            <option {{ $sale->sale_from == 'Tiktok' ? 'selected' : '' }} value="Tiktok">Tiktok</option>
+                                            <option {{ $sale->sale_from == 'Offline' ? 'selected' : '' }} value="Offline">Offline</option>
+                                            <option {{ $sale->sale_from == 'Other' ? 'selected' : '' }} value="Other">Other</option>
+                                        </select>
+                                    </div>
+                                </div>
+                                <div class="col-lg-2">
                                     <div class="from-group">
                                         <div class="form-group">
                                             <label for="date">Date <span class="text-danger">*</span></label>

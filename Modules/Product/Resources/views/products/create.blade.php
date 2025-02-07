@@ -40,17 +40,17 @@
                             </div>
 
                             <div class="form-row">
-                                <!-- <div class="col-md-6">
+                                <div class="col-md-6" hidden>
                                     <div class="form-group">
                                         <label for="category_id">Rack <span class="text-danger">*</span></label>
                                         <select class="form-control" name="category_id" id="category_id" required>
-                                            <option value="" selected disabled>Select Category</option>
+                                            <option value="99" selected disabled>Select Category</option>
                                             @foreach(\Modules\Product\Entities\Category::all() as $category)
                                                 <option value="{{ $category->id }}">{{ $category->category_code }}</option>
                                             @endforeach
                                         </select>
                                     </div>
-                                </div> -->
+                                </div>
                                 <div class="col-md-6">
                                     <div class="form-group">
                                         <label for="accessory_code">Accessory <span class="text-danger">*</span></label>
@@ -96,7 +96,7 @@
                                 <div class="col-md-6">
                                     <div class="form-group">
                                         <label for="product_quantity">Quantity <span class="text-danger">*</span></label>
-                                        <input type="number" class="form-control" name="product_quantity" required value="{{ old('product_quantity') }}" min="0">
+                                        <input type="number" class="form-control" name="product_quantity" required value="{{ old('product_quantity') }}" min="0" placeholder="0" disabled>
                                     </div>
                                 </div>
                                 <div class="col-md-6">

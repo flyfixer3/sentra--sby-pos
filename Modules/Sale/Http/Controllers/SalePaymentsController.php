@@ -9,6 +9,7 @@ use Illuminate\Routing\Controller;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
 use Modules\Sale\Entities\Sale;
+use App\Helpers\Helper;
 use Modules\Sale\Entities\SalePayment;
 
 class SalePaymentsController extends Controller
@@ -34,28 +35,41 @@ class SalePaymentsController extends Controller
 
     public function store(Request $request) {
         abort_if(Gate::denies('access_sale_payments'), 403);
-
+        
+        $sale = Sale::findOrFail($request->sale_id);
         $request->validate([
             'date' => 'required|date',
             'reference' => 'required|string|max:255',
             'amount' => 'required|numeric',
             'note' => 'nullable|string|max:1000',
             'sale_id' => 'required',
-            'payment_method' => 'required|string|max:255'
+            'payment_method' => 'required|string|max:255',
+            'deposit_code' => 'required|string|max:255'
         ]);
 
+        $request->validate([
+            'amount' => ['required', 'numeric', 'min:1', 'max:' . $sale->due_amount],
+            'payment_method' => 'required',
+            'deposit_code' => 'required',
+        ], [
+            'amount.required' => 'The amount field is required.',
+            'amount.min' => 'The amount must be at least 1.',
+            'amount.max' => 'The amount cannot be greater than the due amount of ' . format_currency($sale->due_amount) . '.',
+        ]);
+    
+        // dd($request);
         DB::transaction(function () use ($request) {
-            SalePayment::create([
+            $sale_payment = SalePayment::create([
                 'date' => $request->date,
                 'reference' => $request->reference,
                 'amount' => $request->amount,
                 'note' => $request->note,
                 'sale_id' => $request->sale_id,
-                'payment_method' => $request->payment_method
+                'payment_method' => $request->payment_method,
+                'deposit_code' => $request->deposit_code
             ]);
 
             $sale = Sale::findOrFail($request->sale_id);
-
             $due_amount = $sale->due_amount - $request->amount;
 
             if ($due_amount == $sale->total_amount) {
@@ -71,7 +85,32 @@ class SalePaymentsController extends Controller
                 'due_amount' => $due_amount * 1,
                 'payment_status' => $payment_status
             ]);
+            Helper::addNewTransaction([
+                'date' =>  $request->date,
+                'label' => "Payment For Sale #".$request->reference,
+                'description' => "Sale ID: ".$request->reference,
+                'purchase_id' => null,
+                'purchase_payment_id' => null,
+                'purchase_return_id' => null,
+                'purchase_return_payment_id' => null,
+                'sale_id' =>$request->sale_id,
+                'sale_payment_id' => $sale_payment->id,
+                'sale_return_id' => null,
+                'sale_return_payment_id' => null,
+            ], [
+                [
+                    'subaccount_number' => $sale_payment->deposit_code, // Persediaan
+                    'amount' => $request->amount,
+                    'type' => 'debit'
+                ],
+                [
+                    'subaccount_number' => '1-10100', // Hutang Usaha
+                    'amount' => $request->amount,
+                    'type' => 'credit'
+                ],
+            ]);
         });
+
 
         toast('Sale Payment Created!', 'success');
 
@@ -97,7 +136,8 @@ class SalePaymentsController extends Controller
             'amount' => 'required|numeric',
             'note' => 'nullable|string|max:1000',
             'sale_id' => 'required',
-            'payment_method' => 'required|string|max:255'
+            'payment_method' => 'required|string|max:255',
+            'deposit_code' => 'required|string|max:255'
         ]);
 
         DB::transaction(function () use ($request, $salePayment) {

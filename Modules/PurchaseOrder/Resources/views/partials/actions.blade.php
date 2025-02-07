@@ -4,8 +4,10 @@
     </button>
     <div class="dropdown-menu">
         @can('create_purchase_order_purchases')
-            <a href="{{ route('purchase-order-purchases.create', $data) }}" class="dropdown-item">
-                <i class="bi bi-check2-circle mr-2 text-success" style="line-height: 1;"></i> Make Sale
+            <a href="{{ route('purchase-order-purchases.create', $data) }}" 
+            class="dropdown-item {{ $data->status == 'Completed' ? 'disabled' : '' }}"
+            onclick="{{ $data->status == 'Completed' ? 'return false;' : '' }}">
+                <i class="bi bi-check2-circle mr-2 text-success" style="line-height: 1;"></i> Make Purchase
             </a>
         @endcan
         @can('send_purchase_order_mails')

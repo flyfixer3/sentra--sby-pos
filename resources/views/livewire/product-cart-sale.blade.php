@@ -48,7 +48,7 @@
                                 <td class="align-middle">{{ format_currency($cart_item->options->unit_price) }}</td>
                                 
                                 <td class="align-middle text-center">
-                                    @include('livewire.includes.product-cart-warehouse')
+                                    @include('livewire.includes.product-cart-warehouse-sale')
                                 </td>
                                 
                                 <td class="align-middle text-center">
@@ -133,27 +133,27 @@
     <input type="hidden" name="total_quantity" value="{{ $global_qty}}">
 
     <div class="form-row">
-        <div class="{{$cart_instance == 'sale' ? 'col-lg-2' : 'col-lg-4'}}">
+        <div class="{{$cart_instance == 'sale' ? 'col-lg-3' : 'col-lg-4'}}">
             <div class="form-group">
                 <label for="tax_percentage">Order Tax (%)</label>
                 <input wire:model.lazy="global_tax" type="number" class="form-control" name="tax_percentage" min="0" max="100" value="{{ $global_tax }}" required>
             </div>
         </div>
-        <div class="{{$cart_instance == 'sale' ? 'col-lg-2' : 'col-lg-4'}}">
+        <div class="{{$cart_instance == 'sale' ? 'col-lg-3' : 'col-lg-4'}}">
             <div class="form-group">
                 <label for="discount_percentage">Discount (%)</label>
                 <input wire:model.lazy="global_discount" type="number" class="form-control" name="discount_percentage" min="0" max="100" value="{{ $global_discount }}" required>
             </div>
         </div>
-        @if($cart_instance == 'sale')
-        <div class="col-lg-4">
+        <!-- @if($cart_instance == 'sale') -->
+        <div class="col-lg-3">
             <div class="form-group">
                 <label for="fee_amount">Platform Fee</label>
                 <input wire:model.lazy="platform_fee" type="number" class="form-control" name="fee_amount" min="0" value="0" required>
             </div>
         </div>
-        @endif
-        <div class="col-lg-4">
+        <!-- @endif -->
+        <div class="col-lg-3">
             <div class="form-group">
                 <label for="shipping_amount">Shipping</label>
                 <input wire:model.lazy="shipping" type="number" class="form-control" name="shipping_amount" min="0" value="0" required step="0.01">

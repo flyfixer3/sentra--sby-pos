@@ -52,17 +52,23 @@
                             <div class="input-group mb-4">
                                 <div class="input-group-prepend">
                                     <span class="input-group-text">
-                                      <i class="bi bi-lock"></i>
+                                        <i class="bi bi-lock"></i>
                                     </span>
                                 </div>
-                                <input type="password"
-                                       class="form-control @error('password') is-invalid @enderror"
-                                       placeholder="Password" name="password">
+                                <input type="password" id="password"
+                                    class="form-control @error('password') is-invalid @enderror"
+                                    placeholder="Password" name="password">
+                                <div class="input-group-append">
+                                    <button type="button" class="btn btn-outline-secondary" 
+                                            onclick="togglePassword()">
+                                        <i id="toggleIcon" class="bi bi-eye"></i>
+                                    </button>
+                                </div>
                                 @error('password')
                                 <div class="invalid-feedback">{{ $message }}</div>
                                 @enderror
                             </div>
-                            <div class="row">
+                                                        <div class="row">
                                 <div class="col-4">
                                     <button class="btn btn-primary px-4" type="submit">Login</button>
                                 </div>
@@ -93,6 +99,22 @@
 
 <!-- CoreUI -->
 <script src="{{ mix('js/app.js') }}" defer></script>
+<script>
+    function togglePassword() {
+        var passwordField = document.getElementById("password");
+        var toggleIcon = document.getElementById("toggleIcon");
+        
+        if (passwordField.type === "password") {
+            passwordField.type = "text";
+            toggleIcon.classList.remove("bi-eye");
+            toggleIcon.classList.add("bi-eye-slash");
+        } else {
+            passwordField.type = "password";
+            toggleIcon.classList.remove("bi-eye-slash");
+            toggleIcon.classList.add("bi-eye");
+        }
+    }
+</script>
 
 </body>
 </html>

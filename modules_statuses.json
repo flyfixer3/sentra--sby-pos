@@ -16,5 +16,6 @@
     "Reports": true,
     "Mutation": true,
     "PurchaseOrder": true,
-    "Accounting": true
+    "Accounting": true,
+    "ActivityLog": true
 }

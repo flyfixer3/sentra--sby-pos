@@ -5,6 +5,7 @@ namespace Modules\PurchaseOrder\Entities;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Support\Carbon;
+use Modules\Purchase\Entities\Purchase;
 use Modules\People\Entities\Supplier;
 
 class PurchaseOrder extends Model
@@ -13,8 +14,27 @@ class PurchaseOrder extends Model
 
     protected $guarded = [];
 
+    public function purchases()
+    {
+        return $this->hasMany(Purchase::class, 'purchase_order_id');
+    }
+
     public function purchaseOrderDetails() {
         return $this->hasMany(PurchaseOrderDetails::class, 'purchase_order_id', 'id');
+    }
+
+    public function remainingQuantity()
+    {
+        return $this->purchaseOrderDetails->sum('quantity');
+    }
+
+    public function markAsCompleted()
+    {
+        if ($this->remainingQuantity() <= 0) {
+            $this->update(['status' => 'Completed']);
+        } else {
+            $this->update(['status' => 'Partially Sent']);
+        }
     }
 
     public function supplier() {

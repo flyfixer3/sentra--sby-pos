@@ -379,5 +379,14 @@
             </li>
         </ul>
         @endcan
+        <ul class="c-sidebar-nav-dropdown-items">
+            <li class="c-sidebar-nav-item">
+                <a class="c-sidebar-nav-link {{ request()->routeIs('logs*') ? 'c-active' : '' }}" href="{{ route('logs.index') }}">
+                    <i class="c-sidebar-nav-icon bi bi-sliders" style="line-height: 1;"></i> Activity Logs
+                </a>
+            </li>
+        </ul>
     </li>
 @endcan
+
+

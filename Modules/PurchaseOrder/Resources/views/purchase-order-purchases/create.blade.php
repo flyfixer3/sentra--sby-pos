@@ -27,19 +27,25 @@
                             @csrf
 
                             <div class="form-row">
-                                <div class="col-lg-4">
+                                <div class="col-lg-2">
                                     <div class="form-group">
                                         <label for="reference">Reference <span class="text-danger">*</span></label>
                                         <input type="text" class="form-control" name="reference" required readonly value="PR">
                                     </div>
                                 </div>
-                                <div class="col-lg-4">
+                                <div class="col-lg-2">
                                     <div class="form-group">
                                         <label for="reference">PO<span class="text-danger">*</span></label>
                                         <input type="text" class="form-control" name="reference" required readonly value="{{make_reference_id('PO', $purchase->id)}}">
                                     </div>
                                 </div>
-                                <div class="col-lg-4">
+                                <div class="col-lg-2">
+                                    <div class="form-group">
+                                        <label for="reference_supplier">Supplier Invoice <span class="text-danger">*</span></label>
+                                        <input type="text" class="form-control" name="reference_supplier">
+                                    </div>
+                                </div>
+                                <div class="col-lg-2">
                                     <div class="from-group">
                                         <div class="form-group">
                                             <label for="supplier_id">Supplier <span class="text-danger">*</span></label>
@@ -51,11 +57,19 @@
                                         </div>
                                     </div>
                                 </div>
-                                <div class="col-lg-4">
+                                <div class="col-lg-2">
                                     <div class="from-group">
                                         <div class="form-group">
                                             <label for="date">Date <span class="text-danger">*</span></label>
                                             <input type="date" class="form-control" name="date" required value="{{ now()->format('Y-m-d') }}">
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="col-lg-2">
+                                    <div class="from-group">
+                                        <div class="form-group">
+                                            <label for="due_date">Due Date (Days) <span class="text-danger">*</span></label>
+                                            <input type="number" class="form-control" name="due_date" required placeholder=0 >
                                         </div>
                                     </div>
                                 </div>

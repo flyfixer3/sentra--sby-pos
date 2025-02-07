@@ -76,6 +76,7 @@ class Helper
                 ->select('accounting_subaccounts.*')
                 ->first();
             if ($subaccount == null) {
+                dd($entry);
                 DB::rollBack();
                 throw new \Exception('Subaccount not found: ' . $entry['subaccount_number']);
             }

@@ -103,6 +103,14 @@
                             </table>
                         </div>
                         <div class="row">
+                            <div class="col-lg-5 col-sm-5 d-flex flex-column mt-auto">
+                                <div class="mt-auto d-flex justify-content-between">
+                                    <span><strong>Created At:</strong> {{ \Carbon\Carbon::parse($sale->created_at)->format('d M, Y H:i') }} <strong>By:</strong> {{ $sale->creator->name ?? 'System' }}</span>
+                                    <span><strong>Last Updated At:</strong> {{ \Carbon\Carbon::parse($sale->updated_at)->format('d M, Y H:i') }} <strong>By:</strong> {{ $sale->updater->name ?? 'System' }}</span>
+                                </div>
+                            </div>
+
+
                             <div class="col-lg-4 col-sm-5 ml-md-auto">
                                 <table class="table">
                                     <tbody>

@@ -66,14 +66,14 @@ class LoginController extends Controller
         return new UserCredentialResource($user);
     }
 
-    function logout(Request $request)
-    {
-        auth('sanctum')->user()->currentAccessToken()->delete();
+    // function logout(Request $request)
+    // {
+    //     auth('sanctum')->user()->currentAccessToken()->delete();
 
-        return response()->json([
-            'message' => 'Logout successfully.'
-        ], 200);
-    }
+    //     return response()->json([
+    //         'message' => 'Logout successfully.'
+    //     ], 200);
+    // }
     
     function changePassword(ChangePasswordRequest $request)
     {
