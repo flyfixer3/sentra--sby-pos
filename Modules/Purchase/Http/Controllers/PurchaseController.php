@@ -44,21 +44,14 @@ class PurchaseController extends Controller
             $due_amount = $request->total_amount - $request->paid_amount;
             $payment_status = $due_amount == $request->total_amount ? 'Unpaid' : ($due_amount > 0 ? 'Partial' : 'Paid');
     
-            // 🔹 Jika Purchase dibuat dari Purchase Order
+            // 🔹 If Purchase is created from Purchase Order
             $purchase_order = null;
             if ($request->has('purchase_order_id')) {
                 $purchase_order = PurchaseOrder::findOrFail($request->purchase_order_id);
-                $purchase_order->update(['status' => 'Partially Sent']); // Update status PO sementara
+                $purchase_order->update(['status' => 'Partially Sent']);
             }
-            // $total_amount = 0;
-            // $total_quantity = 0;
-
-            // foreach (Cart::instance('purchase')->content() as $cart_item) {
-            //     $total_amount += $cart_item->options->sub_total; // ✅ Ensure total_amount is recalculated
-            //     $total_quantity += $cart_item->qty;
-            // }
     
-            // 🔹 Buat Purchase Invoice
+            // 🔹 Create Purchase Invoice
             $purchase = Purchase::create([
                 'purchase_order_id' => $request->purchase_order_id ?? null,
                 'date' => $request->date,
@@ -82,7 +75,7 @@ class PurchaseController extends Controller
             ]);
     
             foreach (Cart::instance('purchase')->content() as $cart_item) {
-                // 🔹 Simpan Detail Purchase
+                // 🔹 Save Purchase Details
                 PurchaseDetail::create([
                     'purchase_id' => $purchase->id,
                     'product_id' => $cart_item->id,
@@ -97,21 +90,24 @@ class PurchaseController extends Controller
                     'product_tax_amount' => $cart_item->options->product_tax * 1,
                 ]);
     
-                // 🔹 Jika Purchase berasal dari PO, update jumlah barang di PO
+                // 🔹 If Purchase comes from PO, update fulfilled quantity in PO details
                 if ($purchase_order) {
                     $purchase_order_detail = $purchase_order->purchaseOrderDetails()->where('product_id', $cart_item->id)->first();
     
                     if ($purchase_order_detail) {
-                        $new_quantity = $purchase_order_detail->quantity - $cart_item->qty;
-                        if ($new_quantity < 0) {
-                            throw new \Exception("Jumlah barang dalam Purchase Order tidak mencukupi!");
+                        $new_fulfilled_quantity = $purchase_order_detail->fulfilled_quantity + $cart_item->qty;
+    
+                        // Ensure fulfilled quantity does not exceed ordered quantity
+                        if ($new_fulfilled_quantity > $purchase_order_detail->quantity) {
+                            throw new \Exception("Cannot fulfill more than ordered quantity!");
                         }
     
-                        $purchase_order_detail->update(['quantity' => $new_quantity]);
+                        // ✅ Update fulfilled_quantity (NEW LOGIC ADDED)
+                        $purchase_order_detail->update(['fulfilled_quantity' => $new_fulfilled_quantity]);
                     }
                 }
     
-                // 🔹 Jika status Purchase "Completed", update stok produk
+                // 🔹 Update stock if purchase is "Completed"
                 if ($request->status == 'Completed') {
                     $mutation = Mutation::with('product')->where('product_id', $cart_item->id)
                         ->where('warehouse_id', $cart_item->options->warehouse_id)
@@ -151,9 +147,9 @@ class PurchaseController extends Controller
                 }
             }
     
-            // 🔹 Jika Purchase berasal dari PO, update status PO
+            // 🔹 If Purchase comes from PO, update PO status
             if ($purchase_order) {
-                $total_remaining = $purchase_order->purchaseOrderDetails()->sum('quantity');
+                $total_remaining = $purchase_order->purchaseOrderDetails()->sum('quantity') - $purchase_order->purchaseOrderDetails()->sum('fulfilled_quantity');
                 $purchase_order->update(['status' => $total_remaining > 0 ? 'Partially Sent' : 'Completed']);
             }
     
@@ -167,7 +163,7 @@ class PurchaseController extends Controller
                     'purchase_id' => $purchase->id,
                     'payment_method' => $request->payment_method
                 ]);
-                
+    
                 Helper::addNewTransaction([
                     'date' => Carbon::now(),
                     'label' => "Payment for Purchase Order #" . $purchase->reference,
@@ -180,7 +176,6 @@ class PurchaseController extends Controller
                     'sale_payment_id' => null,
                     'sale_return_id' => null,
                     'sale_return_payment_id' => null,
-
                 ], [
                     [
                         'subaccount_number' => '1-10200',
@@ -199,6 +194,7 @@ class PurchaseController extends Controller
         toast('Purchase Created!', 'success');
         return redirect()->route('purchases.index');
     }
+    
     
 
     public function show(Purchase $purchase) {

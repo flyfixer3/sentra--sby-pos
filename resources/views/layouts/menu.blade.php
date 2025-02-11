@@ -115,6 +115,11 @@
                     <i class="c-sidebar-nav-icon bi bi-journals" style="line-height: 1;"></i> All PO
                 </a>
             </li>
+            <li class="c-sidebar-nav-item">
+                <a class="c-sidebar-nav-link {{ request()->routeIs('purchase-deliveries.index') ? 'c-active' : '' }}" href="{{  route('purchase-deliveries.index') }}">
+                    <i class="c-sidebar-nav-icon bi bi-truck" style="line-height: 1;"></i> Purchase Deliveries
+                </a>
+            </li>
         </ul>
     </li>
 @endcan
@@ -156,6 +161,7 @@
                 </li>
             </ul>
         @endcan
+
         <ul class="c-sidebar-nav-dropdown-items">
             <li class="c-sidebar-nav-item">
                 <a class="c-sidebar-nav-link {{ request()->routeIs('purchases.index') ? 'c-active' : '' }}" href="{{ route('purchases.index') }}">

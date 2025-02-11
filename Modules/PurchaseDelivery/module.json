@@ -1,0 +1,13 @@
+{
+    "name": "PurchaseDelivery",
+    "alias": "purchasedelivery",
+    "description": "",
+    "keywords": [],
+    "priority": 0,
+    "providers": [
+        "Modules\\PurchaseDelivery\\Providers\\PurchaseDeliveryServiceProvider"
+    ],
+    "aliases": {},
+    "files": [],
+    "requires": []
+}

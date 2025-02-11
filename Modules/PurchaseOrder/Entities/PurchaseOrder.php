@@ -25,8 +25,20 @@ class PurchaseOrder extends Model
 
     public function remainingQuantity()
     {
-        return $this->purchaseOrderDetails->sum('quantity');
+        return $this->purchaseOrderDetails->sum('quantity') - $this->fulfilled_quantity;;
     }
+
+    public function calculateFulfilledQuantity()
+    {
+        $this->fulfilled_quantity = $this->purchaseOrderDetails->sum('fulfilled_quantity');
+        $this->save();
+    }
+
+    public function isFullyFulfilled()
+    {
+        return $this->fulfilled_quantity >= $this->purchaseOrderDetails->sum('quantity');
+    }
+
 
     public function markAsCompleted()
     {

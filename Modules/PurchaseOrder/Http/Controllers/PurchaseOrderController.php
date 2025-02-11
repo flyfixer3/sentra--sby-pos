@@ -77,11 +77,16 @@ class PurchaseOrderController extends Controller
 
     public function show(PurchaseOrder $purchase_order) {
         abort_if(Gate::denies('show_purchase_orders'), 403);
-
+    
         $supplier = Supplier::findOrFail($purchase_order->supplier_id);
-
-        return view('purchase-orders::show', compact('purchase_order', 'supplier'));
+    
+        // ✅ Load `purchaseOrderDetails()` to track fulfilled quantities
+        $purchase_order->load('purchaseOrderDetails', 'purchases.purchaseDetails');
+        $deliveries = $purchase_order->purchaseDeliveries; // Get all deliveries related to PO
+    
+        return view('purchase-orders::show', compact('purchase_order', 'supplier', 'deliveries'));
     }
+    
 
 
     public function edit(PurchaseOrder $purchase_order) {
@@ -118,10 +123,10 @@ class PurchaseOrderController extends Controller
 
     public function update(UpdatePurchaseOrderRequest $request, PurchaseOrder $purchase_order) {
         DB::transaction(function () use ($request, $purchase_order) {
-            foreach ($purchase_order->purchase_orderDetails as $purchase_order_detail) {
+            foreach ($purchase_order->purchaseOrderDetails as $purchase_order_detail) {
                 $purchase_order_detail->delete();
             }
-
+    
             $purchase_order->update([
                 'date' => $request->date,
                 'reference' => $request->reference,
@@ -136,14 +141,19 @@ class PurchaseOrderController extends Controller
                 'tax_amount' => Cart::instance('purchase_order')->tax() * 1,
                 'discount_amount' => Cart::instance('purchase_order')->discount() * 1,
             ]);
-
+    
             foreach (Cart::instance('purchase_order')->content() as $cart_item) {
+                // ✅ Fetch old fulfilled quantity if available
+                $existing_detail = $purchase_order->purchaseOrderDetails()->where('product_id', $cart_item->id)->first();
+                $fulfilled_qty = $existing_detail ? $existing_detail->fulfilled_quantity : 0;
+    
                 PurchaseOrderDetails::create([
                     'purchase_order_id' => $purchase_order->id,
                     'product_id' => $cart_item->id,
                     'product_name' => $cart_item->name,
                     'product_code' => $cart_item->options->code,
                     'quantity' => $cart_item->qty,
+                    'fulfilled_quantity' => $fulfilled_qty, // ✅ Preserve fulfilled quantity
                     'price' => $cart_item->price * 1,
                     'unit_price' => $cart_item->options->unit_price * 1,
                     'sub_total' => $cart_item->options->sub_total * 1,
@@ -152,14 +162,14 @@ class PurchaseOrderController extends Controller
                     'product_tax_amount' => $cart_item->options->product_tax * 1,
                 ]);
             }
-
+    
             Cart::instance('purchase_order')->destroy();
         });
-
+    
         toast('Purchase Order Updated!', 'info');
-
         return redirect()->route('purchase-orders.index');
     }
+    
 
 
     public function destroy(PurchaseOrder $purchase_order) {
