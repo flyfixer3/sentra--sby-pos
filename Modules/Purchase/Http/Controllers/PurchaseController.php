@@ -14,6 +14,7 @@ use Modules\Mutation\Entities\Mutation;
 use Modules\Purchase\Entities\Purchase;
 use Modules\Purchase\Entities\PurchaseDetail;
 use Modules\PurchaseOrder\Entities\PurchaseOrder;
+use Modules\PurchaseDelivery\Entities\PurchaseDelivery;
 use Modules\Purchase\Entities\PurchasePayment;
 use App\Helpers\Helper;
 use Carbon\Carbon;
@@ -27,6 +28,46 @@ class PurchaseController extends Controller
         abort_if(Gate::denies('access_purchases'), 403);
 
         return $dataTable->render('purchase::index');
+    }
+
+    public function createFromDelivery(PurchaseDelivery $purchaseDelivery) {
+        abort_if(Gate::denies('create_purchases'), 403);
+    
+        Cart::instance('purchase')->destroy();
+        $cart = Cart::instance('purchase');
+    
+        $purchase_order = $purchaseDelivery->purchaseOrder;
+    
+        foreach ($purchaseDelivery->purchaseDeliveryDetails as $item) {
+            // Get the price from the corresponding Purchase Order item
+            $po_detail = $purchase_order->purchaseOrderDetails()
+                ->where('product_id', $item->product_id)
+                ->first();
+    
+            // $buying_price = $po_detail ? $po_detail->price : $item->unit_price;
+            $cart->add([
+                'id'      => $item->product_id,
+                'name'    => $item->product_name,
+                'qty'     => $item->quantity,
+                'price'   => $po_detail->price, // ✅ Use price from PO
+                'weight'  => 1,
+                'options' => [
+                    'product_discount' => $po_detail->product_discount_amount,
+                    'product_discount_type' => 'fixed',
+                    'sub_total'   => $item->quantity * $po_detail->price,
+                    'code'        => $item->product_code,
+                    'stock'       => Product::findOrFail($po_detail->product_id)->product_quantity,
+                    'product_tax' => $po_detail->product_tax_amount,
+                    'unit_price'  => $po_detail->unit_price
+                ]
+            ]);
+        }
+        // dd($cart);
+        return view('purchase-orders::purchase-order-purchases.create', [
+            'purchase_delivery_id' => $purchaseDelivery->id,
+            'purchaseDelivery' => $purchaseDelivery,
+            'purchase_order_id' => $purchase_order->id
+        ]);
     }
 
 

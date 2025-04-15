@@ -11,6 +11,8 @@
 |
 */
 
+use Barryvdh\DomPDF\Facade\Pdf;
+
 Route::group(['middleware' => 'auth'], function () {
 
     //POS
@@ -32,24 +34,14 @@ Route::group(['middleware' => 'auth'], function () {
     Route::get('/sales/pos/pdf/{id}', function ($id) {
         $sale = \Modules\Sale\Entities\Sale::findOrFail($id);
         $customer = \Modules\People\Entities\Customer::findOrFail($sale->customer_id);
-        $watermarkText = "ANJING KAMU MICEL"; 
-        $pdf = \PDF::loadView('sale::print-pos', [
+    
+        $pdf = Pdf::loadView('sale::print-pos', [
             'sale' => $sale,
             'customer' => $customer,
-            'watermarkText' => $watermarkText,
-        ])->setPaper('a4', 'portrait')
-        ->setOption('margin-top', 10)
-        ->setOption('margin-bottom', 10)
-        ->setOption('margin-left', 5)
-        ->setOption('margin-right', 5)
-            ->setOption('dpi', 150)
-            ->setOption('enable-external-links', true)
-            ->setOption('enable-local-file-access', true)
-            ->setOption('no-outline', true) // Prevents issues with outlines
-    ->setOption('disable-javascript', false) // Enable Javascript if needed
-    ->setOption('zoom', 1.0);// Improves rendering quality
-
-        return $pdf->stream('sale-'. $sale->reference .'.pdf');
+            'watermarkText' => "ANJING KAMU MICEL"
+        ])->setPaper('a4', 'portrait');
+    
+        return $pdf->stream('sale-' . $sale->reference . '.pdf');
     })->name('sales.pos.pdf');
 
     Route::get('/sales/pos/debug/{id}', function ($id) {

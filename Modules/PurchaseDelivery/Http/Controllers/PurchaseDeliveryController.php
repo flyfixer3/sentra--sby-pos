@@ -7,18 +7,24 @@ use Illuminate\Routing\Controller;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
 use Modules\PurchaseOrder\Entities\PurchaseOrder;
+use Modules\PurchaseDelivery\DataTables\PurchaseDeliveriesDataTable;
 use Modules\PurchaseOrder\Entities\PurchaseOrderDetails;
 use Modules\PurchaseDelivery\Entities\PurchaseDelivery;
 use Modules\PurchaseDelivery\Entities\PurchaseDeliveryDetails;
 
 class PurchaseDeliveryController extends Controller
 {
-    public function index()
-    {
+    public function index(PurchaseDeliveriesDataTable $dataTable) {
         abort_if(Gate::denies('access_purchase_deliveries'), 403);
-        $purchaseDeliveries = PurchaseDelivery::with('purchaseOrder')->latest()->paginate(10);
-        return view('purchasedelivery::index', compact('purchaseDeliveries'));
+
+        return $dataTable->render('purchase-deliveries::index');
     }
+    // public function index()
+    // {
+    //     abort_if(Gate::denies('access_purchase_deliveries'), 403);
+    //     $purchaseDeliveries = PurchaseDelivery::with('purchaseOrder')->latest()->paginate(10);
+    //     return view('purchasedelivery::index', compact('purchaseDeliveries'));
+    // }
 
     public function create(PurchaseOrder $purchaseOrder)
     {
@@ -34,7 +40,7 @@ class PurchaseDeliveryController extends Controller
                 ->with('error', 'All items have been delivered.');
         }
 
-        return view('purchasedelivery::create', compact('purchaseOrder', 'remainingItems'));
+        return view('purchase-deliveries::create', compact('purchaseOrder', 'remainingItems'));
     }
 
     public function store(Request $request)
@@ -87,7 +93,7 @@ class PurchaseDeliveryController extends Controller
 
     public function show(PurchaseDelivery $purchaseDelivery)
     {
-        return view('purchasedelivery::show', compact('purchaseDelivery'));
+        return view('purchase-deliveries::show', compact('purchaseDelivery'));
     }
 
     public function edit($id)

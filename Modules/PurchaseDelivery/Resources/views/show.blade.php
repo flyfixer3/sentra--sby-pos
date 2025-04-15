@@ -94,7 +94,7 @@
                     <a href="{{ route('purchase-deliveries.edit', $purchaseDelivery->id) }}" class="btn btn-sm btn-warning">
                         <i class="bi bi-pencil"></i> Edit
                     </a>
-                    <a href="{{ route('purchases.create', ['purchase_delivery_id' => $purchaseDelivery->id]) }}" class="btn btn-sm btn-primary">
+                    <a href="{{ route('purchases.createFromDelivery', ['purchase_delivery' => $purchaseDelivery]) }}" class="btn btn-sm btn-primary">
                         Create Invoice
                     </a>
                 </div>

@@ -2,7 +2,7 @@
 
 use Modules\PurchaseDelivery\Http\Controllers\PurchaseDeliveryController;
 
-Route::prefix('purchase-delivery')->group(function () {
+Route::prefix('purchase-deliveries')->group(function () {
     Route::get('/', [PurchaseDeliveryController::class, 'index'])
         ->name('purchase-deliveries.index')
         ->middleware('can:access_purchase_deliveries');

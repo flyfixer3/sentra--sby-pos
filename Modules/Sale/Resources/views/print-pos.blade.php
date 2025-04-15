@@ -269,7 +269,7 @@
         </div>
     </div>
     
-    <div class="half" style="width: 100%;background-color: lightblue; height: 50%; box-sizing: border-box;padding-top: 40px;">
+    <div class="half" style="width: 100%; height: 50%; box-sizing: border-box;padding-top: 40px;">
         <div class="col-xs-12">
             <div class="card">
                 <div class="card-body">

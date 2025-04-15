@@ -39,8 +39,7 @@
                     @endif
                     @if($purchase_order->status != 'Completed')
                         <div class="mb-3">
-                            
-                            <a href="{{ route('purchase-deliveries.create', $purchase_order->id) }}" class="btn btn-success">
+                            <a href="{{ route('purchase-deliveries.create', $purchase_order) }}" class="btn btn-success">
                                 Create Purchase Delivery <i class="bi bi-truck"></i>
                             </a>
                         </div>
@@ -149,6 +148,18 @@
                                     @endforeach
                                 </ul>
                             </div>
+                        @endif
+                        @if($purchase_order->purchaseDeliveries->isNotEmpty())
+                            <h5>Related Deliveries:</h5>
+                            <ul>
+                                @foreach($purchase_order->purchaseDeliveries as $delivery)
+                                    <li>
+                                        <a href="{{ route('purchase-deliveries.show', $delivery->id) }}" class="text-primary">
+                                            {{ $delivery->date }} - Status: {{ $delivery->status }}
+                                        </a>
+                                    </li>
+                                @endforeach
+                            </ul>
                         @endif
                     </div>
 

@@ -13,7 +13,9 @@ class PurchaseDelivery extends Model
         'purchase_order_id',
         'date',
         'status',
-        'note'
+        'note',
+        'tracking_number',
+        'ship_via'
     ];
 
     public function purchaseOrder()

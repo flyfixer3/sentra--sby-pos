@@ -7,6 +7,7 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Support\Carbon;
 use Modules\Purchase\Entities\Purchase;
 use Modules\People\Entities\Supplier;
+use Modules\PurchaseDelivery\Entities\PurchaseDelivery;
 
 class PurchaseOrder extends Model
 {
@@ -19,6 +20,10 @@ class PurchaseOrder extends Model
         return $this->hasMany(Purchase::class, 'purchase_order_id');
     }
 
+    public function purchaseDeliveries()
+    {
+        return $this->hasMany(PurchaseDelivery::class, 'purchase_order_id');
+    }
     public function purchaseOrderDetails() {
         return $this->hasMany(PurchaseOrderDetails::class, 'purchase_order_id', 'id');
     }

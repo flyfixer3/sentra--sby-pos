@@ -15,7 +15,7 @@ class PurchaseDeliveryServiceProvider extends ServiceProvider
     /**
      * @var string $moduleNameLower
      */
-    protected $moduleNameLower = 'purchasedelivery';
+    protected $moduleNameLower = 'purchase-deliveries';
 
     /**
      * Boot the application events.
