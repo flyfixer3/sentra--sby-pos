@@ -39,7 +39,7 @@ Route::group(['middleware' => 'auth'], function () {
             'sale' => $sale,
             'customer' => $customer,
             'watermarkText' => "ANJING KAMU MICEL"
-        ])->setPaper('a4', 'portrait');
+        ])->setPaper('a5', 'landscape');
     
         return $pdf->stream('sale-' . $sale->reference . '.pdf');
     })->name('sales.pos.pdf');

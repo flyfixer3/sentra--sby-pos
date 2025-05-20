@@ -1,399 +1,222 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport"
-          content="width=device-width, user-scalable=no, initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0">
-    <meta http-equiv="X-UA-Compatible" content="ie=edge">
-    <title>Sale Details</title>
-    <link rel="stylesheet" href="{{ public_path('b3/bootstrap.min.css') }}">
-    <style>
-          table {
-    width: 100%;
-    border-collapse: collapse;
-  }
-
-
-
-  thead, tr {
-    display: table;
-    width: 100%;
-    table-layout: fixed; /* Ensure consistent column widths */
-  }
-
-  tbody tr {
-    display: table;
-    width: 100%;
-    table-layout: fixed;
-  }
-  .body-1{
-    width: 60px;
-    text-align: center;
-  }
-  .body-2{
-    width: 200px;
-    text-align: start;
-  }
-  .body-3{
-    width: 400px;
-    text-align: start;
-  }
-  .body-4{
-    width: 40px;
-    text-align: center;
-  }
-  .body-5{
-    width: 110px;
-    text-align: end;
-  }
-  .body-6{
-    width: 110px;
-    text-align: end;
-  }
-  .header-1{
-    width: 60px;
-    text-align: center;
-  }
-  .header-2{
-    width: 200px;
-    text-align: center;
-  }
-  .header-3{
-    width: 400px;
-    text-align: center;
-  }
-  .header-4{
-    width: 40px;
-    text-align: center;
-  }
-  .header-5{
-    width: 110px;
-    text-align: center;
-  }
-  .header-6{
-    width: 110px;
-    text-align: center;
-  }
-  html, body {
-        margin: 0;
-        padding: 0;
-        height: 100%;
-    }
-    .page {
-        width: 100%;
-        height: 1300px; /* Ensure full height */
-        display: flex;
-        flex-direction: column;
-        margin: 0;
-        padding: 0;
-        box-sizing: border-box;
-        position: relative;
-        z-index: 1;
-        overflow: hidden;
+  <meta charset="UTF-8">
+  <style>
+    @page {
+      size: A5 landscape;
+      margin: 2mm 4mm;
     }
 
-    .half {
-        width: 100%;
-        flex: 1; /* Ensures equal vertical distribution */
-        /* border: 1px solid black; Optional for layout visualization */
-        box-sizing: border-box;
-        overflow: hidden;
+    body {
+      font-family: sans-serif;
+      font-size: 10px;
+      margin: 0;
+      color: #222;
     }
 
-    </style>
+    .header {
+      background-color: #c62828;
+      color: white;
+      padding: 12px;
+    }
+
+    .header img {
+      height: 40px;
+    }
+
+    .info-bar {
+      margin-top: 10px;
+      display: flex;
+      justify-content: space-between;
+      font-size: 10px;
+    }
+
+    .invoice-title {
+      font-size: 13px;
+      font-weight: bold;
+      text-align: center;
+      margin: 15px 0;
+      text-transform: uppercase;
+    }
+
+    table.detail-table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 5px;
+    }
+
+    table.detail-table th {
+      background-color: #ef5350;
+      color: white;
+      padding: 6px;
+      font-size: 10px;
+      border: 1px solid #c62828;
+    }
+
+    table.detail-table td {
+      border: 1px solid #ddd;
+      padding: 5px;
+      font-size: 10px;
+    }
+
+    .totals-box {
+      margin-top: 12px;
+      width: 40%;
+      float: right;
+      font-size: 10px;
+    }
+
+    .totals-box table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+
+    .totals-box td {
+      padding: 6px;
+      border: 1px solid #333;
+      font-weight: bold;
+    }
+
+    .terms {
+      margin-top: 10px;
+      font-size: 9.5px;
+      line-height: 1.5;
+      display: flex;
+      justify-content: space-between;
+      gap: 20px;
+    }
+
+    .terms .col {
+      width: 50%;
+    }
+
+    .signature {
+      margin-top: 30px;
+      font-size: 10px;
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-end;
+    }
+
+    .signature-line {
+      border-top: 1px solid #000;
+      width: 200px;
+      margin-top: 30px;
+      margin-bottom: 5px;
+    }
+
+    .footer-note {
+      text-align: center;
+      font-size: 10px;
+      margin-top: 10px;
+      font-style: italic;
+      color: #333;
+    }
+  </style>
 </head>
 <body>
-<!-- <div class="watermark">
-    <img src="{{ public_path('images/logo-dark.png') }}" 
-         alt="Watermark" 
-         style="position: fixed; 
-                top: 50%; 
-                left: 50%; 
-                transform: translate(-50%, -50%);
-                max-width: 30%; /* Sesuaikan ukuran */
-                height: auto; 
-                z-index: -1;">
-</div> -->
-<div class="page">
-    
-    <div class="half" style="width: 100%;background-color: lightblue; height: 50%; box-sizing: border-box;">
-        <div class="col-xs-12">
-            <div class="card">
-                <div class="card-body">
-                    <div class="row mb-4" style="margin: 0px 0px 0px -32px;padding: 0px;">
-                        <div class="col-xs-8 mb-3 mb-md-0 ml-0 pl-0">
-                            <!-- <div class="col-xs-12 mb-2 ml-0 pl-0" >
-                                <img width="180" src="{{ public_path('images/logo-dark.png') }}" alt="Logo">
-                            </div> -->
-                            <!-- <h4 class="mb-2" style="border-bottom: 1px solid #dddddd;padding-bottom: 10px;">Company Info:</h4> -->
-                            <div class="col-xs-12 mb-2 ml-0 pl-0" >
-                                <!-- <img width="180" src="{{ public_path('images/logo-dark.png') }}" alt="Logo"> -->
-                                <h4 style="margin: 0; padding: 0;padding-bottom: 1px;text-transform: uppercase;letter-spacing: 1px;border-bottom: 1px solid black"><strong>{{ settings()->company_name }}</strong></h4>  
-                                <div>{{ settings()->company_address }}</div>
-                                <div> {{ settings()->company_phone }} | {{ settings()->company_email }}</div>
-                            </div>
-                        </div>
+  <div class="header">
+    <table width="100%">
+      <tr>
+        <td><img src="{{ public_path('images/logo.png') }}" alt="Logo"></td>
+        <td style="text-align: right; font-size: 10px;">
+          <strong>Invoice</strong><br>
+          No: {{ $sale->note }}<br>
+          Tanggal: {{ \Carbon\Carbon::parse($sale->date)->format('d M Y') }}
+        </td>
+      </tr>
+    </table>
+  </div>
 
-                        <!-- <div class="col-xs-4 mb-3 mb-md-0">
-                            <h4 class="mb-2" style="border-bottom: 1px solid #dddddd;padding-bottom: 10px;">Customer Info:</h4>
-                            <div><strong>{{ $customer->customer_name }}</strong></div>
-                            <div>{{ $customer->address }}</div>
-                            <div>Email: {{ $customer->customer_email }}</div>
-                            <div>Phone: {{ $customer->customer_phone }}</div>
-                        </div> -->
-
-                        <div class="col-xs-4 mb-3 mb-md-0" style="padding-left: 120px;">
-                            <div>        
-                                <!-- <h4 class="mb-2" style="border-bottom: 1px solid #dddddd;padding-bottom: 10px;">Invoice Info:</h4> -->
-                                <div>Tanggal : {{ \Carbon\Carbon::parse($sale->date)->format('d M Y') }}</div>
-                                <div>
-                                    Kepada Yth. 
-                                </div>
-                                <div>
-                                {{ $customer->customer_name }}
-                                </div>
-                                <div>
-                                {{ $customer->customer_phone }}
-                                </div>
-                                <div>
-                                {{ $customer->address }}
-                                </div>
-                            </div>
-                        </div>
-
-                    </div>
-                 
-                    <div class="col-xs-12" style="text-align: center; margin: 20px 0px">
-                        <h4 style="text-transform: uppercase;">
-                            <strong>
-                                Nota Penjualan
-                            </strong>
-                        </h4>
-                    </div>
-                    <div class="table-responsive-sm" style="margin-top: 30px;">
-                        <!-- <span>INV :</span> <strong>{{ $sale->reference }}</strong> -->
-                        <table class="">
-                            <div> 
-                                <strong>&ensp;INV &emsp;&ensp;{{ $sale->note }}</strong>
-                            </div>
-                            <thead style="border-top: 1px solid black;border-bottom: 1px solid black; font-weight: normal;margin-bottom: 2px;">
-                            <tr>
-                                <th class="align-middle header-1">No</th>
-                                <th class="align-middle header-2">Kode</th>
-                                <th class="align-middle header-3">Nama Barang</th>
-                                <th class="align-middle header-4">Qty</th>
-                                <th class="align-middle header-5">Harga Satuan</th>
-                                <!-- <th class="align-middle">Diskon</th> -->
-                                <!-- <th class="align-middle">Tax</th> -->
-                                <th class="align-middle header-6">Jumlah</th>
-                            </tr>
-                            </thead>
-                            <tbody style="margin: 0;min-height: 180px;display: block;">
-                            @foreach($sale->saleDetails as $item)
-                                <tr>
-                                    <td class="align-middle body-1">
-                                        {{ $loop->index +1 }}
-                                    </td>
-                                    <td class="align-middle body-2">
-                                    {{ $item->product_code }}
-                                    </td>
-                                    <td class="align-middle body-3">
-                                    {{ $item->product_name }}
-                                    </td>
-                                    
-                                    <td class="align-middle body-4">
-                                        {{ $item->quantity }} PC
-                                    </td>
-                                    <td class="align-middle body-5">
-                                        {{ format_currency($item->unit_price) }}
-                                    </td>
-
-                                    <!-- <td class="align-middle">
-                                        {{ format_currency($item->product_discount_amount) }}
-                                    </td> -->
-
-                                    <!-- <td class="align-middle">
-                                        {{ format_currency($item->product_tax_amount) }}
-                                    </td> -->
-
-                                    <td class="align-middle body-6">
-                                        {{ format_currency($item->sub_total) }}
-                                    </td>
-                                </tr>
-                            @endforeach
-                            </tbody>
-                        </table>
-                    </div>
-                    <div class="container" style="width: 100%;margin-top: 20px;padding: 20px 0 0 50px;box-sizing: border-box;border-bottom: 1px solid black;">
-                        <div><strong> BCA 6041794388 an Alvin WIjaya </strong></div>
-                    </div>
-                    <div class="container" style="display:table;width: 100%;margin-top: 0px;padding: 0;box-sizing: border-box;">
-                        <div class="row" style=" height: 100%;display: table-row;">
-                            <div class="col-xs-5" style="height: 100%;display: flex; padding: 60px 0px 0px 0px">
-                                <img width="150" src="{{ public_path('images/logo-dark.png') }}" alt="Logo">
-                                <div>Trust the Experts, Drive Safer and Clearer</div>
-                            </div>
-                            <div class="col-xs-3" style="height: 100%;display: flex; padding: 30px 30px 0px 0px; text-align: center;justify-content: center;">
-                                <div>Penerima</div>
-                                <div style="margin-top: 66px;">......................</div>
-                            </div>
-                            <div class="col-xs-3" style="height: 100%;display: flex; padding: 30px 30px 0px 30px; text-align: center;justify-content: center;">
-                                <div>Kaca yang sudah dipesan/dipasang tidak dapat dibatalkan/dikembalikan.</div>
-                            </div>
-                            <div class="col-xs-2" style="display: table-cell;float: none;padding: 0;">
-                                <table>
-                                    <tbody>
-                                    <tr>
-                                        <td class="left" style="width: 45%;">Total</td>
-                                        <td class="right" style="border-left: 1px solid black;padding: 2px;text-align: end;width: 100%;">{{ format_currency($sale->total_amount + $sale->discount_amount ) }}</td>
-                                    </tr>
-                                    <!-- <tr>
-                                        <td class="left">Biaya kirim</td>
-                                        <td class="right">{{ format_currency($sale->shipping_amount) }}</td>
-                                    </tr> -->
-                                    <tr>
-                                        <td class="left" style="width: 45%;">Diskon</td>
-                                        <td class="right" style="border-left: 1px solid black;padding: 2px;text-align: end;width: 100%;">{{ format_currency($sale->discount_amount) }}</td>
-                                    </tr>
-                                    <tr>
-                                        <td class="left" style="width: 45%;"><strong>Netto</strong></td>
-                                        <td class="right" style="border: 1px solid black; padding: 2px; text-align: end;width: 100%;"><strong>{{ format_currency($sale->total_amount) }}</strong></td>
-                                    </tr>
-                                    </tbody>
-                                </table>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
+  <div class="info-bar">
+    <div>
+      <strong>Kepada Yth:</strong><br>
+      {{ $customer->customer_name }}<br>
+      {{ $customer->customer_phone }}<br>
+      {{ $customer->address }}
     </div>
-    
-    <div class="half" style="width: 100%; height: 50%; box-sizing: border-box;padding-top: 40px;">
-        <div class="col-xs-12">
-            <div class="card">
-                <div class="card-body">
-                    <div class="row mb-4" style="margin: 0px 0px 0px -32px;padding: 0px;">
-                        <div class="col-xs-8 mb-3 mb-md-0 ml-0 pl-0">
-                            <div class="col-xs-12 mb-2 ml-0 pl-0" >
-                                <h4 style="margin: 0; padding: 0;padding-bottom: 1px;text-transform: uppercase;letter-spacing: 1px;border-bottom: 1px solid black"><strong>{{ settings()->company_name }}</strong></h4>  
-                                <div>{{ settings()->company_address }}</div>
-                                <div> {{ settings()->company_phone }} | {{ settings()->company_email }}</div>
-                            </div>
-                        </div>
-
-                        <div class="col-xs-4 mb-3 mb-md-0" style="padding-left: 120px;">
-                            <div>        
-                                <div>Tanggal : {{ \Carbon\Carbon::parse($sale->date)->format('d M Y') }}</div>
-                                <div>
-                                    Kepada Yth. 
-                                </div>
-                                <div>
-                                {{ $customer->customer_name }}
-                                </div>
-                                <div>
-                                {{ $customer->customer_phone }}
-                                </div>
-                                <div>
-                                {{ $customer->address }}
-                                </div>
-                            </div>
-                        </div>
-
-                    </div>
-                 
-                    <div class="col-xs-12" style="text-align: center; margin: 20px 0px">
-                        <h4 style="text-transform: uppercase;">
-                            <strong>
-                                Nota Penjualan
-                            </strong>
-                        </h4>
-                    </div>
-                    <div class="table-responsive-sm" style="margin-top: 30px;">
-                        <table class="">
-                            <div> 
-                                <strong>&ensp;INV &emsp;&ensp;{{ $sale->note }}</strong>
-                            </div>
-                            <thead style="border-top: 1px solid black;border-bottom: 1px solid black; font-weight: normal;margin-bottom: 2px;">
-                            <tr>
-                                <th class="align-middle header-1">No</th>
-                                <th class="align-middle header-2">Kode</th>
-                                <th class="align-middle header-3">Nama Barang</th>
-                                <th class="align-middle header-4">Qty</th>
-                                <th class="align-middle header-5">Harga Satuan</th>
-                                <th class="align-middle header-6">Jumlah</th>
-                            </tr>
-                            </thead>
-                            <tbody style="margin: 0;min-height: 180px;display: block;">
-                            @foreach($sale->saleDetails as $item)
-                                <tr>
-                                    <td class="align-middle body-1">
-                                        {{ $loop->index +1 }}
-                                    </td>
-                                    <td class="align-middle body-2">
-                                    {{ $item->product_code }}
-                                    </td>
-                                    <td class="align-middle body-3">
-                                    {{ $item->product_name }}
-                                    </td>
-                                    
-                                    <td class="align-middle body-4">
-                                        {{ $item->quantity }} PC
-                                    </td>
-                                    <td class="align-middle body-5">
-                                        {{ format_currency($item->unit_price) }}
-                                    </td>
-
-                                    <td class="align-middle body-6">
-                                        {{ format_currency($item->sub_total) }}
-                                    </td>
-                                </tr>
-                            @endforeach
-                            </tbody>
-                        </table>
-                    </div>
-                    <div class="container" style="width: 100%;margin-top: 20px;padding: 20px 0 0 50px;box-sizing: border-box;border-bottom: 1px solid black;">
-                        <div><strong> BCA 604179388 an Alvin WIjaya </strong></div>
-                    </div>
-                    <div class="container" style="display:table;width: 100%;margin-top: 0px;padding: 0;box-sizing: border-box;">
-                        <div class="row" style=" height: 100%;display: table-row;">
-                            <div class="col-xs-5" style="height: 100%;display: flex; padding: 60px 0px 0px 0px">
-                                <img width="150" src="{{ public_path('images/logo-dark.png') }}" alt="Logo">
-                                <div>Trust the Experts, Drive Safer and Clearer</div>
-                            </div>
-                            <div class="col-xs-3" style="height: 100%;display: flex; padding: 30px 30px 0px 0px; text-align: center;justify-content: center;">
-                                <div>Penerima</div>
-                                <div style="margin-top: 66px;">......................</div>
-                            </div>
-                            <div class="col-xs-3" style="height: 100%;display: flex; padding: 30px 30px 0px 30px; text-align: center;justify-content: center;">
-                                <div>Kaca yang sudah dipesan/dipasang tidak dapat dibatalkan/dikembalikan.</div>
-                            </div>
-                            <div class="col-xs-2" style="display: table-cell;float: none;padding: 0;">
-                                <table>
-                                    <tbody>
-                                    <tr>
-                                        <td class="left" style="width: 40%;">Total</td>
-                                        <td class="right" style="border-left: 1px solid black;padding: 2px;text-align: end;width: 100%;">{{ format_currency($sale->total_amount + $sale->discount_amount ) }}</td>
-                                    </tr>
-                                    <tr>
-                                        <td class="left" style="width: 40%;">Diskon</td>
-                                        <td class="right" style="border-left: 1px solid black;padding: 2px;text-align: end;width: 100%;">{{ format_currency($sale->discount_amount) }}</td>
-                                    </tr>
-                                    <tr>
-                                        <td class="left" style="width: 40%;"><strong>Netto</strong></td>
-                                        <td class="right" style="border: 1px solid black; padding: 2px; text-align: end;width: 100%;"><strong>{{ format_currency($sale->total_amount) }}</strong></td>
-                                    </tr>
-                                    </tbody>
-                                </table>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
+    <div style="text-align: right;">
+      <strong>Metode Pembayaran:</strong><br>
+      Transfer ke BCA<br>
+      a.n. Alvin Wijaya<br>
+      No Rek: 6041794388
     </div>
+  </div>
 
-    
-</div>
+  <div class="invoice-title">Nota Penjualan</div>
+
+  <table class="detail-table">
+    <thead>
+      <tr>
+        <th>No</th>
+        <th>Kode</th>
+        <th>Nama Barang</th>
+        <th>Qty</th>
+        <th>Harga Satuan</th>
+        <th>Jumlah</th>
+      </tr>
+    </thead>
+    <tbody>
+      @foreach($sale->saleDetails as $item)
+      <tr>
+        <td>{{ $loop->iteration }}</td>
+        <td>{{ $item->product_code }}</td>
+        <td>{{ $item->product_name }}</td>
+        <td>{{ $item->quantity }} PC</td>
+        <td class="text-right">{{ format_currency($item->unit_price) }}</td>
+        <td class="text-right">{{ format_currency($item->sub_total) }}</td>
+      </tr>
+      @endforeach
+    </tbody>
+  </table>
+
+  <div class="totals-box">
+    <table>
+      <tr>
+        <td>Subtotal</td>
+        <td class="text-right">{{ format_currency($sale->total_amount + $sale->discount_amount) }}</td>
+      </tr>
+      <tr>
+        <td>Diskon</td>
+        <td class="text-right">{{ format_currency($sale->discount_amount) }}</td>
+      </tr>
+      <tr>
+        <td><strong>Total</strong></td>
+        <td class="text-right"><strong>{{ format_currency($sale->total_amount) }}</strong></td>
+      </tr>
+    </table>
+  </div>
+
+  <div class="terms">
+    <div class="col">
+      <strong>Syarat & Ketentuan:</strong>
+      <ul>
+        <li>Garansi pemasangan 7 hari sejak tanggal invoice.</li>
+        <li>Garansi hanya berlaku apabila tidak ada kerusakan akibat benturan atau kecelakaan.</li>
+        <li>Komplain setelah masa garansi tidak akan diterima.</li>
+      </ul>
+    </div>
+    <div class="col">
+      <strong>Cabang:</strong><br>
+      Tangerang | Bekasi | Surabaya<br>
+      Hotline: 0812-8800-9878<br>
+      Email: sentraautoglass.sby@gmail.com<br><br>
+      <strong>Catatan:</strong><br>
+      Mohon simpan invoice ini sebagai bukti resmi pemasangan kaca mobil.
+    </div>
+  </div>
+
+  <div class="signature">
+    <div>
+      <div class="signature-line"></div>
+      Tanda Tangan Penerima<br>
+      Tanggal: ______________________
+    </div>
+  </div>
+
+  <div class="footer-note">
+    Terima kasih telah mempercayakan pemasangan kaca mobil kepada kami.
+  </div>
 </body>
 </html>
