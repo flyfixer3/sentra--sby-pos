@@ -18,5 +18,7 @@
     "PurchaseOrder": true,
     "Accounting": true,
     "ActivityLog": true,
-    "PurchaseDelivery": true
+    "PurchaseDelivery": true,
+    "Branch": true,
+    "Transfer": true
 }

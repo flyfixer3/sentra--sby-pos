@@ -5,23 +5,28 @@ namespace Modules\Product\DataTables;
 use Modules\Product\Entities\Warehouse;
 use Yajra\DataTables\Html\Button;
 use Yajra\DataTables\Html\Column;
-use Yajra\DataTables\Html\Editor\Editor;
-use Yajra\DataTables\Html\Editor\Fields;
 use Yajra\DataTables\Services\DataTable;
 
 class WarehouseDataTable extends DataTable
 {
-
     public function dataTable($query) {
         return datatables()
             ->eloquent($query)
+            ->editColumn('warehouse_name', function ($data) {
+                return $data->is_main
+                    ? $data->warehouse_name . ' <span class="badge badge-success">Main</span>'
+                    : $data->warehouse_name;
+            })
+            ->rawColumns(['warehouse_name', 'action'])
             ->addColumn('action', function ($data) {
                 return view('product::warehouses.partials.actions', compact('data'));
             });
     }
 
     public function query(Warehouse $model) {
-        return $model->newQuery();
+        return $model->newQuery()->select([
+            'id', 'warehouse_code', 'warehouse_name', 'is_main', 'created_at'
+        ]);
     }
 
     public function html() {
@@ -29,19 +34,15 @@ class WarehouseDataTable extends DataTable
             ->setTableId('product_warehouses-table')
             ->columns($this->getColumns())
             ->minifiedAjax()
-            ->dom("<'row'<'col-md-3'l><'col-md-5 mb-2'B><'col-md-4'f>> .
-                                'tr' .
-                                <'row'<'col-md-5'i><'col-md-7 mt-2'p>>")
+            ->dom("<'row'<'col-md-3'l><'col-md-5 mb-2'B><'col-md-4'f>>" .
+                  "tr" .
+                  "<'row'<'col-md-5'i><'col-md-7 mt-2'p>>")
             ->orderBy(3)
             ->buttons(
-                Button::make('excel')
-                    ->text('<i class="bi bi-file-earmark-excel-fill"></i> Excel'),
-                Button::make('print')
-                    ->text('<i class="bi bi-printer-fill"></i> Print'),
-                Button::make('reset')
-                    ->text('<i class="bi bi-x-circle"></i> Reset'),
-                Button::make('reload')
-                    ->text('<i class="bi bi-arrow-repeat"></i> Reload')
+                Button::make('excel')->text('<i class="bi bi-file-earmark-excel-fill"></i> Excel'),
+                Button::make('print')->text('<i class="bi bi-printer-fill"></i> Print'),
+                Button::make('reset')->text('<i class="bi bi-x-circle"></i> Reset'),
+                Button::make('reload')->text('<i class="bi bi-arrow-repeat"></i> Reload')
             );
     }
 
@@ -60,8 +61,8 @@ class WarehouseDataTable extends DataTable
                 ->printable(false)
                 ->addClass('text-center'),
 
-            Column::make('created_at')
-                ->visible(false)
+            Column::make('is_main')->visible(false),
+            Column::make('created_at')->visible(false),
         ];
     }
 

@@ -7,9 +7,38 @@
 </button>
 
 <ul class="c-header-nav ml-auto">
-
 </ul>
+
 <ul class="c-header-nav ml-auto mr-4">
+
+    {{-- ✅ Dropdown Cabang Aktif --}}
+    @if (auth()->check())
+        @php
+            $userBranches = auth()->user()->allAvailableBranches();
+            $activeBranchId = session('active_branch');
+
+            if (!$activeBranchId && $userBranches->count() > 0) {
+                $fallback = $userBranches->first();
+                session(['active_branch' => $fallback->id]);
+                $activeBranchId = $fallback->id;
+            }
+        @endphp
+
+        <li class="c-header-nav-item dropdown mr-3">
+            <form action="{{ route('switch-branch') }}" method="POST">
+                @csrf
+                <select name="branch_id" class="form-control" onchange="this.form.submit()" style="min-width: 180px;" {{ $userBranches->count() === 1 ? 'disabled' : '' }}>
+                    @foreach($userBranches as $branch)
+                        <option value="{{ $branch->id }}" {{ $activeBranchId == $branch->id ? 'selected' : '' }}>
+                            {{ $branch->name }}
+                        </option>
+                    @endforeach
+                </select>
+            </form>
+        </li>
+    @endif
+    {{-- ✅ End Dropdown Cabang Aktif --}}
+
     @can('create_pos_sales')
     <li class="c-header-nav-item mr-3">
         <a class="btn btn-primary btn-pill {{ request()->routeIs('app.pos.index') ? 'disabled' : '' }}" href="{{ route('app.pos.index') }}">

@@ -53,11 +53,30 @@
                             <label for="warehouse_code">Warehouse Code <span class="text-danger">*</span></label>
                             <input class="form-control" type="text" name="warehouse_code" required>
                         </div>
+
                         <div class="form-group">
                             <label for="warehouse_name">Warehouse Name <span class="text-danger">*</span></label>
                             <input class="form-control" type="text" name="warehouse_name" required>
                         </div>
+
+                        <div class="form-group">
+                            <label for="branch_id">Branch <span class="text-danger">*</span></label>
+                            <select class="form-control" name="branch_id" required>
+                                <option value="" disabled selected>Select Branch</option>
+                                @foreach(\Modules\Branch\Entities\Branch::all() as $branch)
+                                    <option value="{{ $branch->id }}">{{ $branch->name }}</option>
+                                @endforeach
+                            </select>
+                        </div>
+
+                        <div class="form-group mt-3">
+                            <div class="form-check">
+                                <input type="checkbox" class="form-check-input" name="is_main" value="1" id="isMainWarehouse">
+                                <label class="form-check-label" for="isMainWarehouse">Set as Main Warehouse</label>
+                            </div>
+                        </div>
                     </div>
+
                     <div class="modal-footer">
                         <button type="submit" class="btn btn-primary">Create <i class="bi bi-check"></i></button>
                     </div>

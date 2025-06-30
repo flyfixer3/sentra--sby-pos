@@ -60,4 +60,19 @@ class User extends Authenticatable implements HasMedia
     public function scopeIsActive(Builder $builder) {
         return $builder->where('is_active', 1);
     }
+    public function branches()
+    {
+        return $this->belongsToMany(\Modules\Branch\Entities\Branch::class, 'branch_user');
+    }
+    
+
+    public function allAvailableBranches()
+    {
+        if ($this->hasRole('Super Admin')) {
+            return \Modules\Branch\Entities\Branch::all(); // akses semua
+        }
+
+        return $this->branches; // akses biasa via pivot
+    }
+
 }

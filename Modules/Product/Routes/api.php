@@ -16,3 +16,5 @@ use Illuminate\Http\Request;
 Route::middleware('auth:api')->get('/product', function (Request $request) {
     return $request->user();
 });
+
+Route::get('/warehouses/{id}/preview', [WarehouseController::class, 'preview']);

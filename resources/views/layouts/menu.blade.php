@@ -3,6 +3,12 @@
         <i class="c-sidebar-nav-icon bi bi-house" style="line-height: 1;"></i> Home
     </a>
 </li>
+<li class="nav-item">
+    <a class="nav-link {{ request()->is('transfers*') ? 'active' : '' }}" href="{{ route('transfers.index') }}">
+        <i class="bi bi-arrow-left-right"></i> Transfer Antar Cabang
+    </a>
+</li>
+
 
 @can('access_products')
 <li class="c-sidebar-nav-item c-sidebar-nav-dropdown {{ request()->routeIs('products.*') || request()->routeIs('product-categories.*') ? 'c-show' : '' }}">
@@ -293,6 +299,27 @@
                     </a>
                 </li>
             @endcan
+        </ul>
+    </li>
+@endcan
+@can('access_branches')
+    <li class="c-sidebar-nav-item c-sidebar-nav-dropdown {{ request()->routeIs('branches.*') ? 'c-show' : '' }}">
+        <a class="c-sidebar-nav-link c-sidebar-nav-dropdown-toggle" href="#">
+            <i class="c-sidebar-nav-icon bi bi-wallet2" style="line-height: 1;"></i> Branches
+        </a>
+        <ul class="c-sidebar-nav-dropdown-items">
+            @can('create_branches')
+                <li class="c-sidebar-nav-item">
+                    <a class="c-sidebar-nav-link {{ request()->routeIs('branches.create') ? 'c-active' : '' }}" href="{{ route('branches.create') }}">
+                        <i class="c-sidebar-nav-icon bi bi-journal-plus" style="line-height: 1;"></i> Create Branch
+                    </a>
+                </li>
+            @endcan
+            <li class="c-sidebar-nav-item">
+                <a class="c-sidebar-nav-link {{ request()->routeIs('branches.index') ? 'c-active' : '' }}" href="{{ route('branches.index') }}">
+                    <i class="c-sidebar-nav-icon bi bi-journals" style="line-height: 1;"></i> All Branches
+                </a>
+            </li>
         </ul>
     </li>
 @endcan

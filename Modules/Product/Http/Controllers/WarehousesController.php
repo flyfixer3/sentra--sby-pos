@@ -18,25 +18,46 @@ class WarehousesController extends Controller
         return $dataTable->render('product::warehouses.index');
     }
 
+    public function preview($id)
+    {
+        $warehouse = \Modules\Product\Entities\Warehouse::findOrFail($id);
 
-    public function store(Request $request) {
+        return response()->json([
+            'warehouse_code' => $warehouse->warehouse_code,
+            'warehouse_name' => $warehouse->warehouse_name,
+            'is_main' => $warehouse->is_main,
+        ]);
+    }
+
+
+
+    public function store(Request $request)
+    {
         abort_if(Gate::denies('access_warehouses'), 403);
 
         $request->validate([
             'warehouse_code' => 'required|unique:warehouses,warehouse_code',
-            'warehouse_name' => 'required'
+            'warehouse_name' => 'required',
+            'branch_id' => 'required|exists:branches,id',
+            'is_main' => 'nullable|boolean',
         ]);
+
+        if ($request->boolean('is_main')) {
+            // Reset all other warehouses on that branch
+            Warehouse::where('branch_id', $request->branch_id)->update(['is_main' => false]);
+        }
 
         Warehouse::create([
             'warehouse_code' => $request->warehouse_code,
             'warehouse_name' => $request->warehouse_name,
-            
+            'branch_id' => $request->branch_id,
+            'is_main' => $request->boolean('is_main'),
         ]);
 
         toast('Warehouse Created!', 'success');
-
         return redirect()->back();
     }
+
 
 
     public function edit($id) {
@@ -53,13 +74,22 @@ class WarehousesController extends Controller
 
         $request->validate([
             'warehouse_code' => 'required|unique:warehouses,warehouse_code,' . $id,
-            'warehouse_name' => 'required'
+            'warehouse_name' => 'required',
+            'is_main' => 'nullable|boolean',
         ]);
 
-        Warehouse::findOrFail($id)->update([
+        $warehouse = Warehouse::findOrFail($id);
+
+        if ($request->boolean('is_main')) {
+            Warehouse::where('branch_id', $warehouse->branch_id)->update(['is_main' => false]);
+        }
+
+        $warehouse->update([
             'warehouse_code' => $request->warehouse_code,
             'warehouse_name' => $request->warehouse_name,
+            'is_main' => $request->boolean('is_main'),
         ]);
+
 
         toast('Product Warehouse Updated!', 'info');
 

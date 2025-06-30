@@ -65,6 +65,11 @@ class PermissionsTableSeeder extends Seeder
             'show_customers',
             'edit_customers',
             'delete_customers',
+            //Branches
+            'access_branches',
+            'create_branches',
+            'edit_branches',
+            'delete_branches',
             //Suppliers
             'access_suppliers',
             'create_suppliers',

@@ -28,6 +28,11 @@
                                 <label class="font-weight-bold" for="warehouse_name">Warehouse Name <span class="text-danger">*</span></label>
                                 <input class="form-control" type="text" name="warehouse_name" required value="{{ $warehouse->warehouse_name }}">
                             </div>
+                            <div class="form-group form-check">
+                                <input type="checkbox" class="form-check-input" id="is_main" name="is_main" value="1" {{ $warehouse->is_main ? 'checked' : '' }}>
+                                <label class="form-check-label" for="is_main">Set as Main Warehouse</label>
+                            </div>
+
                             <div class="form-group">
                                 <button type="submit" class="btn btn-primary">Update <i class="bi bi-check"></i></button>
                             </div>

@@ -4,6 +4,7 @@ namespace Modules\User\Http\Controllers;
 
 use Modules\User\DataTables\UsersDataTable;
 use App\Models\User;
+use Modules\Branch\Entities\Branch;
 use Illuminate\Contracts\Support\Renderable;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
@@ -11,6 +12,7 @@ use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Storage;
 use Modules\Upload\Entities\Upload;
+
 
 class UsersController extends Controller
 {
@@ -20,11 +22,12 @@ class UsersController extends Controller
         return $dataTable->render('user::users.index');
     }
 
-
     public function create() {
         abort_if(Gate::denies('access_user_management'), 403);
 
-        return view('user::users.create');
+        $branches = Branch::all(); // ambil semua cabang
+
+        return view('user::users.create', compact('branches'));
     }
 
 
@@ -34,9 +37,11 @@ class UsersController extends Controller
         $request->validate([
             'name'     => 'required|string|max:255',
             'email'    => 'required|email|max:255|unique:users,email',
-            'password' => 'required|string|min:8|max:255|confirmed'
+            'password' => 'required|string|min:8|max:255|confirmed',
+            'role'     => 'required|string',
+            'branches' => 'required|array|min:1', // ← tambahan validasi cabang
         ]);
-
+        
         $user = User::create([
             'name'     => $request->name,
             'email'    => $request->email,
@@ -45,6 +50,9 @@ class UsersController extends Controller
         ]);
 
         $user->assignRole($request->role);
+
+        // Assign cabang ke user
+        $user->branches()->sync($request->branches);
 
         if ($request->has('image')) {
             $tempFile = Upload::where('folder', $request->image)->first();
@@ -65,8 +73,8 @@ class UsersController extends Controller
 
     public function edit(User $user) {
         abort_if(Gate::denies('access_user_management'), 403);
-
-        return view('user::users.edit', compact('user'));
+        $branches = Branch::all(); // ambil semua cabang
+        return view('user::users.edit', compact('user','branches'));
     }
 
 
@@ -85,6 +93,8 @@ class UsersController extends Controller
         ]);
 
         $user->syncRoles($request->role);
+
+        $user->branches()->sync($request->input('branches', []));
 
         if ($request->has('image')) {
             $tempFile = Upload::where('folder', $request->image)->first();

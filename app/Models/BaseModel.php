@@ -4,10 +4,11 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Model;
 use Spatie\Activitylog\Traits\LogsActivity;
 use Spatie\Activitylog\LogOptions;
+use App\Traits\HasBranchScope;
 
 class BaseModel extends Model
 {
-    use LogsActivity;
+    use LogsActivity, HasBranchScope;
 
     protected static function boot()
     {

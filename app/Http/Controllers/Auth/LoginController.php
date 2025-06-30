@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Auth;
 
 use App\Models\User;
+use Modules\Branch\Entities\Branch;
 use App\Http\Resources\UserCredentialResource;
 use App\Http\Controllers\Controller;
 use App\Providers\RouteServiceProvider;
@@ -96,15 +97,28 @@ class LoginController extends Controller
         ], 200);
     }
 
-    protected function authenticated(Request $request, $user) {
+    protected function authenticated(Request $request, $user)
+    {
         if ($user->is_active != 1) {
             Auth::logout();
 
             return back()->with([
-                'account_deactivated' => 'Your account is deactivated! Please contact with Super Admin.'
+                'account_deactivated' => 'Your account is deactivated! Please contact with Super Admin.',
             ]);
+        }
+
+        // ✅ SET branch_id sesuai role
+        if ($user->hasRole('Super Admin')) {
+            $branch = Branch::first(); // default: ambil cabang pertama
+        } else {
+            $branch = $user->branches->first(); // ambil dari relasi branch_user
+        }
+
+        if ($branch) {
+            session(['active_branch' => $branch->id]);
         }
 
         return redirect()->intended();
     }
+
 }

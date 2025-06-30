@@ -10,6 +10,16 @@ class Warehouse extends Model
     use HasFactory;
 
     protected $guarded = [];
+    protected $fillable = [
+        'warehouse_code',
+        'warehouse_name',
+        'branch_id',
+        'is_main',
+    ];
 
-    
+
+    public function branch()
+    {
+        return $this->belongsTo(\Modules\Branch\Entities\Branch::class);
+    }    
 }

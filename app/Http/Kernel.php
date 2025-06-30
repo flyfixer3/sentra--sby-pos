@@ -37,6 +37,9 @@ class Kernel extends HttpKernel
             \Illuminate\View\Middleware\ShareErrorsFromSession::class,
             \App\Http\Middleware\VerifyCsrfToken::class,
             \Illuminate\Routing\Middleware\SubstituteBindings::class,
+
+            // ✅ Tambahkan middleware ini agar session('active_branch') otomatis terset
+            \App\Http\Middleware\SetActiveBranch::class,
         ],
 
         'api' => [

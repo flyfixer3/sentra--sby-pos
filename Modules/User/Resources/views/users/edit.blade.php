@@ -28,6 +28,8 @@
                         <button class="btn btn-primary">Update User <i class="bi bi-check"></i></button>
                     </div>
                 </div>
+
+                {{-- FORM UTAMA --}}
                 <div class="col-md-8">
                     <div class="card">
                         <div class="card-body">
@@ -55,6 +57,40 @@
                                 </select>
                             </div>
 
+                            {{-- UPGRADED ASSIGNED BRANCHES --}}
+                            <div class="card border-0 shadow-sm mb-4">
+                                <div class="card-header bg-light">
+                                    <strong>Branch Access</strong>
+                                    <div class="small text-muted">Assign this user to one or more branches</div>
+                                </div>
+
+                                <div class="card-body">
+                                    @if ($branches->count())
+                                        <div class="row">
+                                            @foreach($branches as $branch)
+                                                <div class="col-md-6 col-lg-4 mb-3">
+                                                    <div class="custom-control custom-checkbox">
+                                                        <input 
+                                                            type="checkbox"
+                                                            class="custom-control-input"
+                                                            id="branch_{{ $branch->id }}"
+                                                            name="branches[]"
+                                                            value="{{ $branch->id }}"
+                                                            {{ $user->branches->contains($branch->id) ? 'checked' : '' }}>
+                                                        <label class="custom-control-label" for="branch_{{ $branch->id }}">
+                                                            {{ $branch->name }}
+                                                        </label>
+                                                    </div>
+                                                </div>
+                                            @endforeach
+                                        </div>
+                                        <small class="form-text text-muted">You can assign multiple branches to this user.</small>
+                                    @else
+                                        <p class="text-muted">No branches available to assign.</p>
+                                    @endif
+                                </div>
+                            </div>
+
                             <div class="form-group">
                                 <label for="is_active">Status <span class="text-danger">*</span></label>
                                 <select class="form-control" name="is_active" id="is_active" required>
@@ -65,6 +101,8 @@
                         </div>
                     </div>
                 </div>
+
+                {{-- FOTO PROFIL --}}
                 <div class="col-lg-4">
                     <div class="card">
                         <div class="card-body">
@@ -83,10 +121,8 @@
 
 @section('third_party_scripts')
     <script src="https://unpkg.com/filepond-plugin-image-preview/dist/filepond-plugin-image-preview.js"></script>
-    <script
-        src="https://unpkg.com/filepond-plugin-file-validate-size/dist/filepond-plugin-file-validate-size.js"></script>
-    <script
-        src="https://unpkg.com/filepond-plugin-file-validate-type/dist/filepond-plugin-file-validate-type.js"></script>
+    <script src="https://unpkg.com/filepond-plugin-file-validate-size/dist/filepond-plugin-file-validate-size.js"></script>
+    <script src="https://unpkg.com/filepond-plugin-file-validate-type/dist/filepond-plugin-file-validate-type.js"></script>
     <script src="https://unpkg.com/filepond/dist/filepond.js"></script>
 @endsection
 
@@ -111,5 +147,3 @@
         });
     </script>
 @endpush
-
-
