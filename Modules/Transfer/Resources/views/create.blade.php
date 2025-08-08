@@ -59,18 +59,26 @@
                                                 <option value="{{ $wh->id }}">{{ $wh->warehouse_name }}</option>
                                             @endforeach
                                         </select>
+                                        @error('from_warehouse_id')
+                                            <div class="text-danger">{{ $message }}</div>
+                                        @enderror
                                     </div>
                                 </div>
 
                                 <div class="col-lg-6">
                                     <div class="form-group">
-                                        <label for="to_warehouse_id">To Warehouse <span class="text-danger">*</span></label>
-                                        <select class="form-control" name="to_warehouse_id" required>
-                                            <option value="" disabled selected>Select Destination Warehouse</option>
-                                            @foreach ($warehouses as $wh)
-                                                <option value="{{ $wh->id }}">{{ $wh->warehouse_name }}</option>
+                                        <label for="to_branch_id">To Branch <span class="text-danger">*</span></label>
+                                        <select class="form-control" name="to_branch_id" required>
+                                            <option value="" disabled selected>Select Destination Branch</option>
+                                            @foreach (\Modules\Branch\Entities\Branch::where('id', '!=', session('active_branch'))->get() as $branch)
+                                                <option value="{{ $branch->id }}" {{ old('to_branch_id') == $branch->id ? 'selected' : '' }}>
+                                                    {{ $branch->name }}
+                                                </option>
                                             @endforeach
                                         </select>
+                                        @error('to_branch_id')
+                                            <div class="text-danger">{{ $message }}</div>
+                                        @enderror
                                     </div>
                                 </div>
                             </div>

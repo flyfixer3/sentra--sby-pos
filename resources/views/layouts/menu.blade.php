@@ -3,12 +3,12 @@
         <i class="c-sidebar-nav-icon bi bi-house" style="line-height: 1;"></i> Home
     </a>
 </li>
-<li class="nav-item">
+
+<!-- <li class="nav-item">
     <a class="nav-link {{ request()->is('transfers*') ? 'active' : '' }}" href="{{ route('transfers.index') }}">
         <i class="bi bi-arrow-left-right"></i> Transfer Antar Cabang
     </a>
-</li>
-
+</li> -->
 
 @can('access_products')
 <li class="c-sidebar-nav-item c-sidebar-nav-dropdown {{ request()->routeIs('products.*') || request()->routeIs('product-categories.*') ? 'c-show' : '' }}">
@@ -60,6 +60,27 @@
 </li>
 @endcan
 
+@can('access_transfers')
+    <li class="c-sidebar-nav-item c-sidebar-nav-dropdown {{ request()->routeIs('transfers.*') ? 'c-show' : '' }}">
+        <a class="c-sidebar-nav-link c-sidebar-nav-dropdown-toggle" href="#">
+            <i class="c-sidebar-nav-icon bi bi-clipboard-check" style="line-height: 1;"></i> Transfers Stock
+        </a>
+        <ul class="c-sidebar-nav-dropdown-items">
+            @can('create_transfers')
+                <li class="c-sidebar-nav-item">
+                    <a class="c-sidebar-nav-link {{ request()->routeIs('transfers.create') ? 'c-active' : '' }}" href="{{ route('transfers.create') }}">
+                        <i class="c-sidebar-nav-icon bi bi-journal-plus" style="line-height: 1;"></i> Create Transfer
+                    </a>
+                </li>
+            @endcan
+            <li class="c-sidebar-nav-item">
+                <a class="c-sidebar-nav-link {{ request()->routeIs('transfers.index') ? 'c-active' : '' }}" href="{{ route('transfers.index') }}">
+                    <i class="c-sidebar-nav-icon bi bi-journals" style="line-height: 1;"></i> All Transfers
+                </a>
+            </li>
+        </ul>
+    </li>
+@endcan
 @can('access_adjustments')
     <li class="c-sidebar-nav-item c-sidebar-nav-dropdown {{ request()->routeIs('adjustments.*') ? 'c-show' : '' }}">
         <a class="c-sidebar-nav-link c-sidebar-nav-dropdown-toggle" href="#">

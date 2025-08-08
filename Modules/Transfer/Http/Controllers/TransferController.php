@@ -11,16 +11,21 @@ use Modules\Transfer\Entities\TransferRequestItem;
 use Modules\Product\Entities\Warehouse;
 use Modules\Product\Entities\Product;
 use Modules\Mutation\Entities\Mutation;
+use Modules\Transfer\DataTables\TransfersDataTable;
+use Modules\Setting\Entities\Setting;
+use Modules\Transfer\Entities\PrintLog; // kita buat di step 6
+use Illuminate\Support\Facades\Auth;
 use Carbon\Carbon;
+use Barryvdh\DomPDF\Facade\Pdf;
+
 
 class TransferController extends Controller
 {
-    public function index()
+    public function index(TransfersDataTable $dataTable)
     {
         abort_if(Gate::denies('access_transfers'), 403);
 
-        $transfers = TransferRequest::with(['fromWarehouse', 'toWarehouse', 'items'])->latest()->get();
-        return view('transfer::index', compact('transfers'));
+        return $dataTable->render('transfer::index');
     }
 
     public function create()
@@ -41,7 +46,7 @@ class TransferController extends Controller
             'reference' => 'required|string|max:255|unique:transfer_requests,reference',
             'date' => 'required|date',
             'from_warehouse_id' => 'required|exists:warehouses,id',
-            'to_warehouse_id' => 'required|exists:warehouses,id|different:from_warehouse_id',
+            'to_branch_id' => 'required|exists:branches,id|different:' . session('active_branch'),
             'product_ids' => 'required|array',
             'quantities' => 'required|array',
         ]);
@@ -51,7 +56,7 @@ class TransferController extends Controller
                 'reference' => $request->reference,
                 'date' => $request->date,
                 'from_warehouse_id' => $request->from_warehouse_id,
-                'to_warehouse_id' => $request->to_warehouse_id,
+                'to_branch_id' => $request->to_branch_id,
                 'note' => $request->note,
                 'status' => 'pending',
                 'branch_id' => session('active_branch'),
@@ -65,7 +70,6 @@ class TransferController extends Controller
                     'quantity' => $request->quantities[$key],
                 ]);
 
-                // Insert mutation OUT from sender warehouse
                 $prev = Mutation::where('product_id', $product_id)
                     ->where('warehouse_id', $request->from_warehouse_id)
                     ->latest()->first();
@@ -77,10 +81,10 @@ class TransferController extends Controller
                     'note' => 'Auto OUT from Transfer #' . $request->reference,
                     'warehouse_id' => $request->from_warehouse_id,
                     'product_id' => $product_id,
-                    'stock_early' => $prev ? $prev->stock_last : 0,
+                    'stock_early' => $prev?->stock_last ?? 0,
                     'stock_in' => 0,
                     'stock_out' => $request->quantities[$key],
-                    'stock_last' => ($prev ? $prev->stock_last : 0) - $request->quantities[$key],
+                    'stock_last' => ($prev?->stock_last ?? 0) - $request->quantities[$key],
                 ]);
             }
         });
@@ -89,14 +93,99 @@ class TransferController extends Controller
         return redirect()->route('transfers.index');
     }
 
-    public function confirm(TransferRequest $transfer)
+    public function show($id)
+    {
+        $transfer = TransferRequest::with([
+            'fromWarehouse', 'toWarehouse', 'toBranch', 'creator', 'confirmedBy', 'items.product'
+        ])->findOrFail($id);
+
+        return view('transfer::show', compact('transfer'));
+    }
+
+
+
+
+    public function printPdf($id)
+    {
+        $transfer = TransferRequest::with(['items.product', 'fromWarehouse', 'toBranch'])->findOrFail($id);
+        $setting = Setting::first();
+        $user = Auth::user();
+
+        // Jika belum pernah dicetak
+        if (!$transfer->printed_at) {
+            $transfer->printed_at = now();
+            $transfer->printed_by = $user->id;
+            $transfer->status = 'shipped';
+            $transfer->save();
+        }
+
+        // Jika sudah pernah dicetak → hanya boleh admin/supervisor
+        if ($transfer->printed_at && $transfer->status !== 'pending') {
+            if (!$user->hasAnyRole(['Super Admin', 'Administrator', 'Supervisor'])) {
+                abort(403, 'Hanya pengguna dengan hak akses yang dapat mencetak ulang surat jalan.');
+            }
+        }
+        // Log aktivitas cetak
+        PrintLog::create([
+            'user_id' => $user->id,
+            'transfer_request_id' => $transfer->id,
+            'printed_at' => now(),
+            'ip_address' => request()->ip(),
+        ]);
+
+        $pdf = Pdf::loadView('transfer::print', compact('transfer', 'setting'))
+                ->setPaper('A4', 'portrait');
+
+        return $pdf->download("Surat_Jalan_{$transfer->reference}.pdf");
+    }
+
+
+
+
+
+
+    // ✅ Menampilkan halaman konfirmasi
+    public function showConfirmationForm(TransferRequest $transfer)
     {
         abort_if(Gate::denies('confirm_transfers'), 403);
 
-        DB::transaction(function () use ($transfer) {
+        if ($transfer->to_branch_id != session('active_branch')) {
+            abort(403, 'Unauthorized');
+        }
+
+        $warehouses = Warehouse::where('branch_id', session('active_branch'))->get();
+        return view('transfer::confirm', compact('transfer', 'warehouses'));
+    }
+
+    // ✅ Menyimpan hasil konfirmasi dan membuat mutasi
+    public function storeConfirmation(Request $request, TransferRequest $transfer)
+    {
+        abort_if(Gate::denies('confirm_transfers'), 403);
+
+        if ($transfer->to_branch_id != session('active_branch')) {
+            abort(403, 'Unauthorized');
+        }
+
+        $request->validate([
+            'to_warehouse_id' => 'required|exists:warehouses,id',
+            'delivery_proof' => 'required|file|mimes:jpg,jpeg,png,pdf|max:2048',
+        ]);
+
+        DB::transaction(function () use ($request, $transfer) {
+            $path = $request->file('delivery_proof')->store('public/transfer_proofs');
+            $filename = str_replace('public/', 'storage/', $path);
+
+            $transfer->update([
+                'to_warehouse_id' => $request->to_warehouse_id,
+                'delivery_proof_path' => $filename,
+                'status' => 'confirmed',
+                'confirmed_by' => auth()->id(),
+                'confirmed_at' => now(),
+            ]);
+
             foreach ($transfer->items as $item) {
                 $prev = Mutation::where('product_id', $item->product_id)
-                    ->where('warehouse_id', $transfer->to_warehouse_id)
+                    ->where('warehouse_id', $request->to_warehouse_id)
                     ->latest()->first();
 
                 Mutation::create([
@@ -104,23 +193,25 @@ class TransferController extends Controller
                     'date' => now(),
                     'mutation_type' => 'Transfer',
                     'note' => 'Auto IN from confirmed Transfer #' . $transfer->reference,
-                    'warehouse_id' => $transfer->to_warehouse_id,
+                    'warehouse_id' => $request->to_warehouse_id,
                     'product_id' => $item->product_id,
-                    'stock_early' => $prev ? $prev->stock_last : 0,
+                    'stock_early' => $prev?->stock_last ?? 0,
                     'stock_in' => $item->quantity,
                     'stock_out' => 0,
-                    'stock_last' => ($prev ? $prev->stock_last : 0) + $item->quantity,
+                    'stock_last' => ($prev?->stock_last ?? 0) + $item->quantity,
                 ]);
             }
-
-            $transfer->update([
-                'status' => 'confirmed',
-                'confirmed_by' => auth()->id(),
-                'confirmed_at' => Carbon::now(),
-            ]);
         });
 
-        toast('Transfer confirmed and stock updated', 'success');
+        toast('Transfer confirmed successfully', 'success');
         return redirect()->route('transfers.index');
     }
+    public function destroy($id)
+    {
+        $transfer = TransferRequest::findOrFail($id);
+        $transfer->delete();
+
+        return response()->json(['message' => 'Transfer deleted successfully']);
+    }
+
 }

@@ -1,46 +1,56 @@
 <?php
 
-namespace Modules\Transfer\Http\Livewire;
+namespace App\Http\Livewire\Transfer;
 
+use Illuminate\Support\Collection;
 use Livewire\Component;
 use Modules\Product\Entities\Product;
 
 class ProductTable extends Component
 {
-    public $products = [];
 
     protected $listeners = ['productSelected'];
 
-    public function productSelected($productId)
-    {
-        $product = Product::find($productId);
+    public $products;
+    public $hadTransfers;
 
-        if (!$product) return;
+    public function mount($transferProducts = null) {
+        $this->products = [];
 
-        foreach ($this->products as $item) {
-            if ($item['id'] == $product->id) return;
+        if ($transferProducts) {
+            $this->hadTransfers = true;
+            $this->products = $transferProducts;
+        } else {
+            $this->hadTransfers = false;
+        }
+    }
+
+    public function render() {
+        return view('livewire.transfer.product-table');
+    }
+
+    public function productSelected($product) {
+        switch ($this->hadTransfers) {
+            case true:
+                if (in_array($product, array_map(function ($transfer) {
+                    return $mutation['product'];
+                }, $this->products))) {
+                    return session()->flash('message', 'Already exists in the product list!');
+                }
+                break;
+            case false:
+                if (in_array($product, $this->products)) {
+                    return session()->flash('message', 'Already exists in the product list!');
+                }
+                break;
+            default:
+                return session()->flash('message', 'Something went wrong!');
         }
 
-        $this->products[] = [
-            'id' => $product->id,
-            'name' => $product->product_name,
-            'quantity' => 1,
-        ];
+        array_push($this->products, $product);
     }
 
-    public function removeProduct($index)
-    {
-        unset($this->products[$index]);
-        $this->products = array_values($this->products);
-    }
-
-    public function updatedProducts()
-    {
-        // Real-time update handled here
-    }
-
-    public function render()
-    {
-        return view('transfer::livewire.product-table');
+    public function removeProduct($key) {
+        unset($this->products[$key]);
     }
 }

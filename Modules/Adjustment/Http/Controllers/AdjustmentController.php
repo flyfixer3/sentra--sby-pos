@@ -22,13 +22,11 @@ class AdjustmentController extends Controller
         return $dataTable->render('adjustment::index');
     }
 
-
     public function create() {
         abort_if(Gate::denies('create_adjustments'), 403);
 
         return view('adjustment::create');
     }
-
 
     public function store(Request $request) {
         abort_if(Gate::denies('create_adjustments'), 403);
@@ -44,8 +42,9 @@ class AdjustmentController extends Controller
 
         DB::transaction(function () use ($request) {
             $adjustment = Adjustment::create([
-                'date' => $request->date,
-                'note' => $request->note
+                'date'       => $request->date,
+                'note'       => $request->note,
+                'branch_id'  => session('active_branch') // ✅ disisipkan cabang aktif
             ]);
 
             foreach ($request->product_ids as $key => $id) {
@@ -75,20 +74,17 @@ class AdjustmentController extends Controller
         return redirect()->route('adjustments.index');
     }
 
-
     public function show(Adjustment $adjustment) {
         abort_if(Gate::denies('show_adjustments'), 403);
 
         return view('adjustment::show', compact('adjustment'));
     }
 
-
     public function edit(Adjustment $adjustment) {
         abort_if(Gate::denies('edit_adjustments'), 403);
 
         return view('adjustment::edit', compact('adjustment'));
     }
-
 
     public function update(Request $request, Adjustment $adjustment) {
         abort_if(Gate::denies('edit_adjustments'), 403);
@@ -151,7 +147,6 @@ class AdjustmentController extends Controller
 
         return redirect()->route('adjustments.index');
     }
-
 
     public function destroy(Adjustment $adjustment) {
         abort_if(Gate::denies('delete_adjustments'), 403);

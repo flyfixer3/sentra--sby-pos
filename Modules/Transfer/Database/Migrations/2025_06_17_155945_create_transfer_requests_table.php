@@ -17,21 +17,29 @@ class CreateTransferRequestsTable extends Migration
             $table->id();
             $table->string('reference')->unique();
             $table->date('date');
+            
+            // Gudang asal pengirim
             $table->unsignedBigInteger('from_warehouse_id');
-            $table->unsignedBigInteger('to_warehouse_id');
-            $table->text('note')->nullable();
-            $table->enum('status', ['pending', 'confirmed', 'rejected'])->default('pending');
-            $table->unsignedBigInteger('confirmed_by')->nullable();
-            $table->timestamp('confirmed_at')->nullable();
-            $table->unsignedBigInteger('branch_id');
-            $table->unsignedBigInteger('created_by');
-            $table->timestamps();
+            
+            // Cabang tujuan WAJIB diketahui saat pembuatan transfer
+            $table->unsignedBigInteger('to_branch_id');
 
-            $table->foreign('from_warehouse_id')->references('id')->on('warehouses');
-            $table->foreign('to_warehouse_id')->references('id')->on('warehouses');
-            $table->foreign('confirmed_by')->references('id')->on('users');
-            $table->foreign('created_by')->references('id')->on('users');
+            // Gudang tujuan hanya diketahui saat konfirmasi oleh penerima
+            $table->unsignedBigInteger('to_warehouse_id')->nullable();
+
+            $table->text('note')->nullable();
+            
+            $table->enum('status', ['pending', 'confirmed', 'rejected'])->default('pending');
+
+            // Cabang pengirim
+            $table->unsignedBigInteger('branch_id');
+
+            // Pembuat transfer
+            $table->unsignedBigInteger('created_by');
+            
+            $table->timestamps();
         });
+
     }
 
     /**

@@ -4,6 +4,7 @@ namespace Modules\Transfer\Entities;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Modules\Product\Entities\Product;
 
 class TransferRequestItem extends Model
 {
@@ -11,11 +12,15 @@ class TransferRequestItem extends Model
 
     protected $fillable = ['transfer_request_id', 'product_id', 'quantity'];
 
-    public function transferRequest() {
+    // ✅ relasi ke header TransferRequest
+    public function transferRequest()
+    {
         return $this->belongsTo(TransferRequest::class);
     }
 
-    public function product() {
+    // ✅ relasi ke produk
+    public function product()
+    {
         return $this->belongsTo(Product::class);
     }
 
