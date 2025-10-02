@@ -2,13 +2,13 @@
 
 namespace Modules\Transfer\Entities;
 
-use Illuminate\Database\Eloquent\Model;
+use App\Models\BaseModel;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use App\Models\User;
 use Modules\Product\Entities\Warehouse;
 use Modules\Branch\Entities\Branch;
 
-class TransferRequest extends Model
+class TransferRequest extends BaseModel
 {
     use HasFactory;
 

@@ -2,11 +2,11 @@
 
 namespace Modules\Transfer\Entities;
 
-use Illuminate\Database\Eloquent\Model;
+use App\Models\BaseModel;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Modules\Product\Entities\Product;
 
-class TransferRequestItem extends Model
+class TransferRequestItem extends BaseModel
 {
     use HasFactory;
 

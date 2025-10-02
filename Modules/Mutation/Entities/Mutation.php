@@ -2,12 +2,12 @@
 
 namespace Modules\Mutation\Entities;
 
-use Illuminate\Database\Eloquent\Model;
+use App\Models\BaseModel;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Modules\Product\Entities\Product;
 use Modules\Product\Entities\Warehouse;
 
-class Mutation extends Model
+class Mutation extends BaseModel
 {
     use HasFactory;
 

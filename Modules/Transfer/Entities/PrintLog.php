@@ -2,10 +2,10 @@
 
 namespace Modules\Transfer\Entities;
 
-use Illuminate\Database\Eloquent\Model;
+use App\Models\BaseModel;
 use App\Models\User;
 
-class PrintLog extends Model
+class PrintLog extends BaseModel
 {
     protected $fillable = [
         'user_id',
