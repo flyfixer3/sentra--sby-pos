@@ -31,6 +31,10 @@ class Sale extends BaseModel
         });
     }
 
+    public function branch() { return $this->belongsTo(\Modules\Branch\Entities\Branch::class); }
+    public function rack() { return $this->belongsTo(\Modules\Inventory\Entities\Rack::class); }
+
+
     public function creator()
     {
         return $this->belongsTo(User::class, 'created_by');

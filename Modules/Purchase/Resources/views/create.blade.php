@@ -11,6 +11,24 @@
 @endsection
 
 @section('content')
+    @php
+        // Ambil cabang aktif dari session (sesuaikan dengan proyekmu)
+        $activeBranchId = session('active_branch_id') ?? session('active_branch') ?? null;
+
+        // Cari gudang utama (is_main = 1) di cabang aktif
+        $defaultWarehouse = \Modules\Product\Entities\Warehouse::query()
+            ->when($activeBranchId, fn($q) => $q->where('branch_id', $activeBranchId))
+            ->where('is_main', 1)
+            ->orderBy('id')
+            ->first(); // <- tidak pakai findOrFail agar aman null
+
+        // Ambil daftar gudang untuk dropdown (urut pakai warehouse_name, bukan name)
+        $warehouses = \Modules\Product\Entities\Warehouse::query()
+            ->when($activeBranchId, fn($q) => $q->where('branch_id', $activeBranchId))
+            ->orderBy('warehouse_name')
+            ->get();
+    @endphp
+
     <div class="container-fluid mb-4">
         <div class="row">
             <div class="col-12">
@@ -29,53 +47,70 @@
                             <div class="form-row">
                                 <div class="col-lg-2">
                                     <div class="form-group">
-                                        <label for="reference">Reference <span class="text-danger">*</span></label>
+                                        <label>Reference <span class="text-danger">*</span></label>
                                         <input type="text" class="form-control" name="reference" required readonly value="PR">
                                     </div>
                                 </div>
                                 <div class="col-lg-2">
                                     <div class="form-group">
-                                        <label for="reference_supplier">Supplier Invoice <span class="text-danger">*</span></label>
+                                        <label>Supplier Invoice <span class="text-danger">*</span></label>
                                         <input type="text" class="form-control" name="reference_supplier">
                                     </div>
                                 </div>
                                 <div class="col-lg-3">
-                                    <div class="from-group">
-                                        <div class="form-group">
-                                            <label for="supplier_id">Supplier <span class="text-danger">*</span></label>
-                                            <select class="form-control" name="supplier_id" id="supplier_id" required>
-                                                @foreach(\Modules\People\Entities\Supplier::all() as $supplier)
-                                                    <option value="{{ $supplier->id }}">{{ $supplier->supplier_name }}</option>
-                                                @endforeach
-                                            </select>
-                                        </div>
+                                    <div class="form-group">
+                                        <label>Supplier <span class="text-danger">*</span></label>
+                                        <select class="form-control" name="supplier_id" id="supplier_id" required>
+                                            @foreach(\Modules\People\Entities\Supplier::orderBy('supplier_name')->get() as $supplier)
+                                                <option value="{{ $supplier->id }}">{{ $supplier->supplier_name }}</option>
+                                            @endforeach
+                                        </select>
                                     </div>
                                 </div>
                                 <div class="col-lg-3">
-                                    <div class="from-group">
-                                        <div class="form-group">
-                                            <label for="date">Date <span class="text-danger">*</span></label>
-                                            <input type="date" class="form-control" name="date" required value="{{ now()->format('Y-m-d') }}">
-                                        </div>
+                                    <div class="form-group">
+                                        <label>Date <span class="text-danger">*</span></label>
+                                        <input type="date" class="form-control" name="date" required value="{{ now()->format('Y-m-d') }}">
                                     </div>
                                 </div>
                                 <div class="col-lg-2">
-                                    <div class="from-group">
-                                        <div class="form-group">
-                                            <label for="due_date">Due Date (Days) <span class="text-danger">*</span></label>
-                                            <input type="number" class="form-control" name="due_date" required placeholder=0 >
-                                        </div>
+                                    <div class="form-group">
+                                        <label>Due Date (Days) <span class="text-danger">*</span></label>
+                                        <input type="number" class="form-control" name="due_date" required placeholder="0">
                                     </div>
                                 </div>
                             </div>
 
-                            <livewire:product-cart-purchase :cartInstance="'purchase'" :data=null :loading_warehouse="\Modules\Product\Entities\Warehouse::findOrFail(99)"/>
-                            <!-- <livewire:product-cart :cartInstance="'purchase'" :data=null /> -->
+                            {{-- Dropdown gudang tujuan penerimaan (pakai warehouse_name) --}}
+                            <div class="form-row">
+                                <div class="col-lg-4">
+                                    <div class="form-group">
+                                        <label>Receive To Warehouse <span class="text-danger">*</span></label>
+                                        <select class="form-control" name="receive_warehouse_id" id="receive_warehouse_id" required>
+                                            <option value="">— Select Warehouse —</option>
+                                            @foreach($warehouses as $wh)
+                                                <option value="{{ $wh->id }}"
+                                                    {{ $defaultWarehouse && $defaultWarehouse->id === $wh->id ? 'selected' : '' }}>
+                                                    {{ $wh->warehouse_name }}
+                                                </option>
+                                            @endforeach
+                                        </select>
+                                        <small class="text-muted">Barang hasil pembelian akan masuk ke gudang ini.</small>
+                                    </div>
+                                </div>
+                            </div>
+
+                            {{-- Penting: kirim object/nullable ke Livewire TANPA findOrFail --}}
+                            <livewire:product-cart-purchase
+                                :cartInstance="'purchase'"
+                                :data="null"
+                                :loading_warehouse="$defaultWarehouse"
+                            />
 
                             <div class="form-row">
                                 <div class="col-lg-4">
                                     <div class="form-group">
-                                        <label for="status">Status <span class="text-danger">*</span></label>
+                                        <label>Status <span class="text-danger">*</span></label>
                                         <select class="form-control" name="status" id="status" required>
                                             <option value="Pending">Pending</option>
                                             <option value="Ordered">Ordered</option>
@@ -83,26 +118,30 @@
                                         </select>
                                     </div>
                                 </div>
+
                                 <div class="col-lg-4" hidden>
-                                    <div class="from-group">
-                                        <div class="form-group">
-                                            <label for="payment_method">Payment Method <span class="text-danger">*</span></label>
-                                            <select class="form-control" name="payment_method" id="payment_method" required>
-                                                <option selected>-</option>
-                                                @foreach(\App\Models\AccountingSubaccount::join('accounting_accounts', 'accounting_accounts.id', '=', 'accounting_subaccounts.accounting_account_id')
-                                                ->where('accounting_accounts.is_active', '=', '1')->where('accounting_accounts.account_number', 3)
-                                                ->select('accounting_subaccounts.*', 'accounting_accounts.account_number')->get(); as $account)
-                                                    <option value="{{ $account->id }}">({{$account->subaccount_number }}) - {{ $account->subaccount_name }}</option>
-                                                @endforeach
-                                            </select>
-                                        </div>
+                                    <div class="form-group">
+                                        <label>Payment Method <span class="text-danger">*</span></label>
+                                        <select class="form-control" name="payment_method" id="payment_method" required>
+                                            <option selected>-</option>
+                                            @foreach(
+                                                \App\Models\AccountingSubaccount::join('accounting_accounts','accounting_accounts.id','=','accounting_subaccounts.accounting_account_id')
+                                                ->where('accounting_accounts.is_active', 1)
+                                                ->where('accounting_accounts.account_number', 3)
+                                                ->select('accounting_subaccounts.*','accounting_accounts.account_number')
+                                                ->orderBy('subaccount_number')
+                                                ->get() as $account)
+                                                <option value="{{ $account->id }}">({{ $account->subaccount_number }}) - {{ $account->subaccount_name }}</option>
+                                            @endforeach
+                                        </select>
                                     </div>
                                 </div>
+
                                 <div class="col-lg-4">
                                     <div class="form-group">
-                                        <label for="paid_amount">Amount Paid <span class="text-danger">*</span></label>
+                                        <label>Amount Paid <span class="text-danger">*</span></label>
                                         <div class="input-group">
-                                            <input id="paid_amount" type="text" class="form-control" name="paid_amount" value=0 required>
+                                            <input id="paid_amount" type="text" class="form-control" name="paid_amount" value="0" required>
                                             <div class="input-group-append">
                                                 <button id="getTotalAmount" class="btn btn-primary" type="button">
                                                     <i class="bi bi-check-square"></i>
@@ -114,7 +153,7 @@
                             </div>
 
                             <div class="form-group">
-                                <label for="note">Note (If Needed)</label>
+                                <label>Note (If Needed)</label>
                                 <textarea name="note" id="note" rows="5" class="form-control"></textarea>
                             </div>
 
@@ -134,7 +173,7 @@
 @push('page_scripts')
     <script src="{{ asset('js/jquery-mask-money.js') }}"></script>
     <script>
-        $(document).ready(function () {
+        $(function () {
             $('#paid_amount').maskMoney({
                 prefix:'{{ settings()->currency->symbol }}',
                 thousands:'{{ settings()->currency->thousand_separator }}',
@@ -144,14 +183,12 @@
             });
 
             $('#getTotalAmount').click(function () {
-                console.log({{Cart::instance("purchase")->total()}})
                 $('#paid_amount').maskMoney('mask', {{ Cart::instance('purchase')->total() }});
             });
 
-            $('#purchase-form').submit(function () {
+            $('#purchase-form').on('submit', function () {
                 var paid_amount = $('#paid_amount').maskMoney('destroy')[0];
-                var new_number = parseInt(paid_amount.value.toString().replaceAll(/[Rp.]/g, ""));
-                console.log(new_number)
+                var new_number = parseInt((paid_amount.value || '').toString().replaceAll(/[Rp.]/g, "")) || 0;
                 $('#paid_amount').val(new_number);
             });
         });

@@ -5,6 +5,7 @@ use Illuminate\Database\Eloquent\Model;
 use Spatie\Activitylog\Traits\LogsActivity;
 use Spatie\Activitylog\LogOptions;
 use App\Traits\HasBranchScope;
+use Illuminate\Support\Facades\Schema;
 
 class BaseModel extends Model
 {
@@ -16,13 +17,19 @@ class BaseModel extends Model
 
         static::creating(function ($model) {
             if (auth()->check()) {
-                $model->created_by = auth()->id();
+                $table = $model->getTable();
+                if (Schema::hasColumn($table, 'created_by')) {
+                    $model->created_by = auth()->id();
+                }
             }
         });
 
         static::updating(function ($model) {
             if (auth()->check()) {
-                $model->updated_by = auth()->id();
+                $table = $model->getTable();
+                if (Schema::hasColumn($table, 'updated_by')) {
+                    $model->updated_by = auth()->id();
+                }
             }
         });
 

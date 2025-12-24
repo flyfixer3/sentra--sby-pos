@@ -209,6 +209,14 @@ class TransferController extends Controller
     public function destroy($id)
     {
         $transfer = TransferRequest::findOrFail($id);
+
+        // Prevent deletion if stock mutations exist to avoid stock inconsistencies
+        if (\Modules\Mutation\Entities\Mutation::where('reference', $transfer->reference)->exists()) {
+            return response()->json([
+                'message' => 'Cannot delete transfer with existing stock movements. Please cancel via proper reversal flow.'
+            ], 422);
+        }
+
         $transfer->delete();
 
         return response()->json(['message' => 'Transfer deleted successfully']);

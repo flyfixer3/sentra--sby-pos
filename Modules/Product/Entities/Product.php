@@ -9,11 +9,12 @@ use Modules\Product\Notifications\NotifyQuantityAlert;
 use Spatie\MediaLibrary\HasMedia;
 use Spatie\MediaLibrary\InteractsWithMedia;
 use Spatie\MediaLibrary\MediaCollections\Models\Media;
+use Modules\Inventory\Traits\HasStocks;
 
 class Product extends BaseModel implements HasMedia
 {
 
-    use HasFactory, InteractsWithMedia;
+    use HasStocks,HasFactory, InteractsWithMedia;
 
     protected $guarded = [];
  
@@ -51,5 +52,23 @@ class Product extends BaseModel implements HasMedia
 
     public function getProductPriceAttribute($value) {
         return ($value / 1);
+    }
+
+    //fungsi with trait
+    public function getStockOnHandAttribute(): int
+    {
+        // Jika query sudah pakai withBranchStock(), field agregat langsung tersedia
+        if (array_key_exists('stock_on_hand', $this->attributes)) {
+            return (int) $this->attributes['stock_on_hand'];
+        }
+
+        // Fallback: hitung dinamis (dipakai di halaman show/edit, dll.)
+        $branchId = session('active_branch');
+        if (!$branchId) return 0;
+
+        // Ganti 'qty_available' menjadi 'qty' bila kolommu bernama 'qty'
+        return (int) $this->stockRacks()
+            ->where('branch_id', $branchId)
+            ->sum('qty_available');
     }
 }

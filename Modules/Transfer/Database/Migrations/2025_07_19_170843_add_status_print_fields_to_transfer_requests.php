@@ -40,8 +40,15 @@ class AddStatusPrintFieldsToTransferRequests extends Migration
      */
     public function down()
     {
-        Schema::table('', function (Blueprint $table) {
-
+        Schema::table('transfer_requests', function (Blueprint $table) {
+            if (Schema::hasColumn('transfer_requests', 'printed_by')) {
+                $table->dropForeign(['printed_by']);
+                $table->dropColumn('printed_by');
+            }
+            if (Schema::hasColumn('transfer_requests', 'printed_at')) {
+                $table->dropColumn('printed_at');
+            }
+            // Note: We do not revert the 'status' enum here; handled by a dedicated migration if needed.
         });
     }
 }

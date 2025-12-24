@@ -98,11 +98,7 @@ class ProductDataTable extends DataTable
             Column::make('product_price')
                 ->title('Price')
                 ->className('text-center align-middle'),
-
-            Column::make('product_quantity')
-                ->title('Quantity')
-                ->className('text-center align-middle'),
-
+                
             Column::make('category.category_code')
                 ->title('Rack')
                 ->className('text-center align-middle'),

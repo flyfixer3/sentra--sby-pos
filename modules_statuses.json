@@ -20,5 +20,6 @@
     "ActivityLog": true,
     "PurchaseDelivery": true,
     "Branch": true,
-    "Transfer": true
+    "Transfer": true,
+    "Inventory": true
 }

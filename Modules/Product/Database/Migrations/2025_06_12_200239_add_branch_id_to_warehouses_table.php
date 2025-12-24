@@ -14,7 +14,9 @@ class AddBranchIdToWarehousesTable extends Migration
     public function up()
     {
         Schema::table('warehouses', function (Blueprint $table) {
-
+            $table->unsignedBigInteger('branch_id')->nullable()->after('id')->index();
+            // Optional: Uncomment the next line to add foreign key constraint
+            $table->foreign('branch_id')->references('id')->on('branches')->onDelete('set null');
         });
     }
 

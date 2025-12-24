@@ -1,7 +1,14 @@
 <!-- Button trigger Discount Modal -->
-<span wire:click="$emitSelf('discountModalRefresh', '{{ $cart_item->id }}', '{{ $cart_item->rowId }}')" role="button" class="badge badge-warning pointer-event" data-toggle="modal" data-target="#discountModal{{ $cart_item->id }}">
+<span
+    wire:click="$emitSelf('discountModalRefresh', '{{ $cart_item->id }}', '{{ $cart_item->rowId }}')"
+    role="button"
+    class="badge badge-warning pointer-event"
+    data-toggle="modal"
+    data-target="#discountModal{{ $cart_item->id }}"
+>
     <i class="bi bi-pencil-square text-white"></i>
 </span>
+
 <!-- Discount Modal -->
 <div wire:ignore.self class="modal fade" id="discountModal{{ $cart_item->id }}" tabindex="-1" role="dialog" aria-labelledby="discountModalLabel" aria-hidden="true">
     <div class="modal-dialog" role="document">
@@ -18,6 +25,7 @@
                     <span aria-hidden="true">&times;</span>
                 </button>
             </div>
+
             <form wire:submit.prevent="setProductDiscount('{{ $cart_item->rowId }}', '{{ $cart_item->id }}')" method="POST">
                 <div class="modal-body">
                     @if (session()->has('discount_message' . $cart_item->id))
@@ -30,6 +38,7 @@
                             </div>
                         </div>
                     @endif
+
                     <div class="form-group">
                         <label>Discount By <span class="text-danger">*</span></label>
                         <select wire:model="discount_type.{{ $cart_item->id }}" class="form-control" required>
@@ -37,24 +46,57 @@
                             <option value="percentage">Percentage</option>
                         </select>
                     </div>
+
                     <div class="form-group">
-                        @if($discount_type[$cart_item->id] == 'percentage')
+                        @if(($discount_type[$cart_item->id] ?? null) === 'percentage')
                             <label>Discount(%) <span class="text-danger">*</span></label>
-                            <input wire:model.defer="item_discount.{{ $cart_item->id }}" type="number" class="form-control" value="{{ $item_discount[$cart_item->id] }}" min="0" max="100">
-                        @elseif($discount_type[$cart_item->id] == 'fixed')
+                            <input
+                                wire:model.defer="item_discount.{{ $cart_item->id }}"
+                                type="number"
+                                class="form-control"
+                                value="{{ $item_discount[$cart_item->id] ?? '' }}"
+                                min="0"
+                                max="100"
+                            >
+                        @elseif(($discount_type[$cart_item->id] ?? null) === 'fixed')
                             <label>Sell Price <span class="text-danger">*</span></label>
-                            <input wire:model.defer="item_discount.{{ $cart_item->id }}" type="number" class="form-control" value="{{ $item_discount[$cart_item->id] == 0 ? '' : $cart_item->price - $item_discount[$cart_item->id] }}" placeholder="0">
+                            <input
+                                wire:model.defer="item_discount.{{ $cart_item->id }}"
+                                type="number"
+                                class="form-control"
+                                value="{{ isset($item_discount[$cart_item->id]) && ($item_discount[$cart_item->id] ?? 0) != 0 ? ($cart_item->price - $item_discount[$cart_item->id]) : '' }}"
+                                placeholder="0"
+                            >
                         @endif
                     </div>
-                    @if(isset($warehouse_id[$cart_item->id]))
-                        @if(\Modules\Product\Entities\Warehouse::find($warehouse_id[$cart_item->id])->warehouse_code == 'KS')
+
+                    @php
+                        // --- SAFE CHECK untuk gudang / warehouse ---
+                        $wid  = $warehouse_id[$cart_item->id] ?? null; // id gudang yang dipilih untuk item ini (kalau ada)
+                        $wrec = null;
+                        if ($wid) {
+                            // ambil hanya kolom yang dibutuhkan, dan handle jika tidak ditemukan
+                            $wrec = \Modules\Product\Entities\Warehouse::query()
+                                ->select('id', 'warehouse_code')
+                                ->find($wid);
+                        }
+                        $warehouseCode = $wrec->warehouse_code ?? null;
+                    @endphp
+
+                    @if($warehouseCode === 'KS')
                         <div class="form-group">
                             <label>Konsyinasi Cost <span class="text-danger">*</span></label>
-                            <input wire:model.defer="item_cost_konsyinasi.{{ $cart_item->id }}" type="number" class="form-control" value="{{ $item_cost_konsyinasi[$cart_item->id] }}" placeholder="0">
+                            <input
+                                wire:model.defer="item_cost_konsyinasi.{{ $cart_item->id }}"
+                                type="number"
+                                class="form-control"
+                                value="{{ $item_cost_konsyinasi[$cart_item->id] ?? '' }}"
+                                placeholder="0"
+                            >
                         </div>
-                        @endif
                     @endif
                 </div>
+
                 <div class="modal-footer">
                     <button type="button" class="btn btn-secondary" data-dismiss="modal">Close</button>
                     <button type="submit" class="btn btn-primary">Save changes</button>

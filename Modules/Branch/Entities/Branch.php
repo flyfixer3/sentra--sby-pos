@@ -18,7 +18,7 @@ class Branch extends BaseModel
 
     public function warehouses()
     {
-        return $this->hasMany(\Modules\Product\Entities\ProductWarehouse::class);
+        return $this->hasMany(\Modules\Product\Entities\Warehouse::class, 'branch_id');
     }
 
 }
