@@ -1,6 +1,8 @@
 <?php
 
 use Illuminate\Support\Facades\Route;
+use App\Http\Controllers\SwitchBranchController;
+use Illuminate\Support\Facades\Auth;
 
 /*
 |--------------------------------------------------------------------------
@@ -14,11 +16,8 @@ Route::get('/', function () {
 
 Auth::routes(['register' => false]);
 
-// Route::post('login', 'Auth\LoginAPIController@login');
-
 Route::group(['middleware' => 'auth'], function () {
-    Route::get('/home', 'HomeController@index')
-        ->name('home');
+    Route::get('/home', 'HomeController@index')->name('home');
 
     Route::get('/sales-purchases/chart-data', 'HomeController@salesPurchasesChart')
         ->name('sales-purchases.chart');
@@ -28,5 +27,12 @@ Route::group(['middleware' => 'auth'], function () {
 
     Route::get('/payment-flow/chart-data', 'HomeController@paymentChart')
         ->name('payment-flow.chart');
-});
 
+    /**
+     * Switch Active Branch (session)
+     * - User harus punya permission switch_branch.
+     * - Option "all" hanya untuk user yang punya permission view_all_branches.
+     */
+    Route::post('/switch-branch', [SwitchBranchController::class, 'switch'])
+        ->name('switch-branch');
+});

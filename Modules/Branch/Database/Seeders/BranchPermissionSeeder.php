@@ -22,17 +22,38 @@ class BranchPermissionSeeder extends Seeder
             'create_branch',
             'edit_branches',
             'delete_branches',
+            'switch_branch',
+            'view_all_branches',
         ];
 
         foreach ($permissions as $permission) {
             Permission::firstOrCreate(['name' => $permission]);
         }
-        
-        $role = Role::where([
-            'name' => 'Admin'
-        ])->first();
 
-        $role->givePermissionTo($permissions);
-        $role->revokePermissionTo('access_user_management');
+        $adminRole = Role::firstOrCreate(['name' => 'Admin']);
+        $adminRole->givePermissionTo([
+            'access_branches',
+            'create_branch',
+            'edit_branches',
+            'delete_branches',
+            'switch_branch',
+        ]);
+
+        if (Permission::where('name', 'access_user_management')->exists()) {
+            $adminRole->revokePermissionTo('access_user_management');
+        }
+
+        $ownerRole = Role::firstOrCreate(['name' => 'Owner']);
+        $marketingRole = Role::firstOrCreate(['name' => 'Marketing']);
+
+        $ownerRole->givePermissionTo([
+            'switch_branch',
+            'view_all_branches',
+        ]);
+
+        $marketingRole->givePermissionTo([
+            'switch_branch',
+            'view_all_branches',
+        ]);
     }
 }

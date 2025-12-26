@@ -14,22 +14,37 @@
     {{-- ✅ Dropdown Cabang Aktif --}}
     @if (auth()->check())
         @php
-            $userBranches = auth()->user()->allAvailableBranches();
-            $activeBranchId = session('active_branch');
+            $userBranches = auth()->user()->allAvailableBranches(); // Collection
+            $activeBranch = session('active_branch');
 
-            if (!$activeBranchId && $userBranches->count() > 0) {
-                $fallback = $userBranches->first();
-                session(['active_branch' => $fallback->id]);
-                $activeBranchId = $fallback->id;
-            }
+            $canViewAll = auth()->user()->can('view_all_branches');
+            $canSwitch = auth()->user()->can('switch_branch');
         @endphp
 
         <li class="c-header-nav-item dropdown mr-3">
             <form action="{{ route('switch-branch') }}" method="POST">
                 @csrf
-                <select name="branch_id" class="form-control" onchange="this.form.submit()" style="min-width: 180px;" {{ $userBranches->count() === 1 ? 'disabled' : '' }}>
+
+                <select
+                    name="branch_id"
+                    class="form-control"
+                    onchange="this.form.submit()"
+                    style="min-width: 200px;"
+                    {{ !$canSwitch ? 'disabled' : '' }}
+                >
+                    {{-- Opsi ALL BRANCHES hanya untuk user yang punya permission view_all_branches --}}
+                    @if ($canViewAll)
+                        <option value="all" {{ $activeBranch === 'all' ? 'selected' : '' }}>
+                            All Branches
+                        </option>
+                    @endif
+
+                    {{-- List cabang yang user boleh akses --}}
                     @foreach($userBranches as $branch)
-                        <option value="{{ $branch->id }}" {{ $activeBranchId == $branch->id ? 'selected' : '' }}>
+                        <option
+                            value="{{ $branch->id }}"
+                            {{ (string)$activeBranch === (string)$branch->id ? 'selected' : '' }}
+                        >
                             {{ $branch->name }}
                         </option>
                     @endforeach

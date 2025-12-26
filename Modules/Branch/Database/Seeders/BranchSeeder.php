@@ -17,18 +17,32 @@ class BranchSeeder extends Seeder
     {
         Model::unguard();
 
-        Branch::create([
-            'name' => 'Cabang Bekasi',
-            'address' => 'Jl. Raya Bekasi',
-            'phone' => '0812-0000-0001',
-        ]);
+        $branches = [
+            [
+                'name' => 'Cabang Bekasi',
+                'address' => 'Jl. Raya Bekasi',
+                'phone' => '0812-0000-0001',
+            ],
+            [
+                'name' => 'Cabang Surabaya',
+                'address' => 'Jl. Mayjend Sungkono',
+                'phone' => '0821-0000-0002',
+            ],
+            [
+                'name' => 'Cabang Tangerang',
+                'address' => 'Jl. Raya Tangerang',
+                'phone' => '0813-0000-0003',
+            ],
+        ];
 
-        Branch::create([
-            'name' => 'Cabang Surabaya',
-            'address' => 'Jl. Mayjend Sungkono',
-            'phone' => '0821-0000-0002',
-        ]);
-
-        // $this->call("OthersTableSeeder");
+        foreach ($branches as $data) {
+            Branch::updateOrCreate(
+                ['name' => $data['name']],
+                [
+                    'address' => $data['address'],
+                    'phone' => $data['phone'],
+                ]
+            );
+        }
     }
 }

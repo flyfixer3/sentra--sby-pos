@@ -7,26 +7,22 @@ use Illuminate\Support\Facades\Gate;
 
 class AuthServiceProvider extends ServiceProvider
 {
-    /**
-     * The policy mappings for the application.
-     *
-     * @var array
-     */
-    protected $policies = [
-        // 'App\Models\Model' => 'App\Policies\ModelPolicy',
-    ];
+    protected $policies = [];
 
-    /**
-     * Register any authentication / authorization services.
-     *
-     * @return void
-     */
     public function boot()
     {
         $this->registerPolicies();
 
-        Gate::before(function ($user, $ability) {
-            return $user->hasRole('Super Admin') ? true : null;
+        $guard = config('auth.defaults.guard', 'web');
+
+        Gate::before(function ($user, $ability) use ($guard) {
+            return $user->hasRole('Super Admin', $guard) ? true : null;
+        });
+
+        Gate::define('view_all_branches', function ($user) use ($guard) {
+            return $user->hasAnyRole(['Owner', 'Super Admin'], $guard);
+            // kalau ada role lain:
+            // || $user->hasRole('Developer', $guard);
         });
     }
 }

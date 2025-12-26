@@ -2,10 +2,11 @@
 
 namespace Modules\Adjustment\Entities;
 
-use Illuminate\Database\Eloquent\Model;
-use Illuminate\Database\Eloquent\Factories\HasFactory;
-use Illuminate\Support\Carbon;
 use App\Models\BaseModel;
+use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Support\Carbon;
 
 class Adjustment extends BaseModel
 {
@@ -18,23 +19,32 @@ class Adjustment extends BaseModel
         'date',
         'note',
         'status',
-        'branch_id', // wajib ditambahkan agar fillable
+        'branch_id',
+        'warehouse_id',
     ];
 
     public function branch(): BelongsTo
     {
-        return $this->belongsTo(\Modules\Branch\Entities\Branch::class);
+        return $this->belongsTo(\Modules\Branch\Entities\Branch::class, 'branch_id');
     }
 
-    public function getDateAttribute($value) {
-        return Carbon::parse($value)->format('d M, Y');
+    public function warehouse(): BelongsTo
+    {
+        return $this->belongsTo(\Modules\Product\Entities\Warehouse::class, 'warehouse_id');
     }
 
-    public function adjustedProducts() {
+    public function adjustedProducts(): HasMany
+    {
         return $this->hasMany(AdjustedProduct::class, 'adjustment_id', 'id');
     }
 
-    public static function boot() {
+    public function getDateAttribute($value)
+    {
+        return Carbon::parse($value)->format('d M, Y');
+    }
+
+    public static function boot()
+    {
         parent::boot();
 
         static::creating(function ($model) {
@@ -42,5 +52,4 @@ class Adjustment extends BaseModel
             $model->reference = make_reference_id('ADJ', $number);
         });
     }
-
 }

@@ -15,56 +15,79 @@
 @endsection
 
 @section('content')
-    <div class="container-fluid">
-        <div class="row">
-            <div class="col-12">
-                <div class="card">
-                    <div class="card-body">
-                        <div class="table-responsive">
-                            <table class="table table-bordered">
+<div class="container-fluid">
+    <div class="row">
+        <div class="col-12">
+            <div class="card">
+                <div class="card-body">
+
+                    {{-- NOTE HEADER (general) --}}
+                    @if(!empty($adjustment->note))
+                        <div class="alert alert-info mb-3">
+                            <strong>Adjustment Note:</strong><br>
+                            {{ $adjustment->note }}
+                        </div>
+                    @endif
+
+                    <div class="table-responsive">
+                        <table class="table table-bordered">
+                            <tr>
+                                <th colspan="2">Date</th>
+                                <th colspan="2">Reference</th>
+                            </tr>
+                            <tr>
+                                <td colspan="2">{{ $adjustment->date }}</td>
+                                <td colspan="2">{{ $adjustment->reference }}</td>
+                            </tr>
+
+                            {{-- Optional: tampilkan warehouse --}}
+                            <tr>
+                                <th colspan="2">Warehouse</th>
+                                <th colspan="2">Branch</th>
+                            </tr>
+                            <tr>
+                                <td colspan="2">{{ optional($adjustment->warehouse)->warehouse_name ?? '-' }}</td>
+                                <td colspan="2">{{ optional($adjustment->branch)->name ?? '-' }}</td>
+                            </tr>
+
+                            <tr>
+                                <th>Product Name</th>
+                                <th>Code</th>
+                                <th>Quantity</th>
+                                <th>Type</th>
+                            </tr>
+
+                            @foreach($adjustment->adjustedProducts as $adjustedProduct)
+                            {{-- ROW UTAMA --}}
                                 <tr>
-                                    <th colspan="2">
-                                        Date
-                                    </th>
-                                    <th colspan="2">
-                                        Reference
-                                    </th>
-                                </tr>
-                                <tr>
-                                    <td colspan="2">
-                                        {{ $adjustment->date }}
-                                    </td>
-                                    <td colspan="2">
-                                        {{ $adjustment->reference }}
+                                    <td>{{ $adjustedProduct->product->product_name ?? '-' }}</td>
+                                    <td>{{ $adjustedProduct->product->product_code ?? '-' }}</td>
+                                    <td>{{ $adjustedProduct->quantity }}</td>
+                                    <td>
+                                        @if($adjustedProduct->type === 'add')
+                                            (+) Addition
+                                        @else
+                                            (-) Subtraction
+                                        @endif
                                     </td>
                                 </tr>
 
-                                <tr>
-                                    <th>Product Name</th>
-                                    <th>Code</th>
-                                    <th>Quantity</th>
-                                    <th>Type</th>
-                                </tr>
-
-                                @foreach($adjustment->adjustedProducts as $adjustedProduct)
+                                {{-- ROW NOTE (FULL WIDTH) --}}
+                                @if(!empty($adjustedProduct->note))
                                     <tr>
-                                        <td>{{ $adjustedProduct->product->product_name }}</td>
-                                        <td>{{ $adjustedProduct->product->product_code }}</td>
-                                        <td>{{ $adjustedProduct->quantity }}</td>
-                                        <td>
-                                            @if($adjustedProduct->type == 'add')
-                                                (+) Addition
-                                            @else
-                                                (-) Subtraction
-                                            @endif
+                                        <td colspan="4">
+                                            <strong>Item Note:</strong><br>
+                                            {{ $adjustedProduct->note }}
                                         </td>
                                     </tr>
-                                @endforeach
-                            </table>
-                        </div>
+                                @endif
+                            @endforeach
+                        </table>
                     </div>
+
                 </div>
             </div>
         </div>
     </div>
+</div>
 @endsection

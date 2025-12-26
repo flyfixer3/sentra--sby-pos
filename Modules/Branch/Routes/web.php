@@ -11,11 +11,8 @@
 |
 */
 use Illuminate\Support\Facades\Route;
-use App\Http\Controllers\BranchSwitchController;
+use App\Http\Controllers\SwitchBranchController;
 
 Route::middleware(['auth'])->group(function () {
     Route::resource('branches', BranchController::class);
 });
-
-
-Route::post('/switch-branch', [BranchSwitchController::class, 'switch'])->name('switch-branch');

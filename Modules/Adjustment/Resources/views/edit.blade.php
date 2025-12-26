@@ -27,38 +27,58 @@
                 <div class="card">
                     <div class="card-body">
                         @include('utils.alerts')
+
                         <form action="{{ route('adjustments.update', $adjustment) }}" method="POST">
                             @csrf
                             @method('patch')
+
                             <div class="form-row">
-                                <div class="col-lg-6">
+                                <div class="col-lg-4">
                                     <div class="form-group">
                                         <label for="reference">Reference <span class="text-danger">*</span></label>
                                         <input type="text" class="form-control" name="reference" required value="{{ $adjustment->getAttributes()['reference'] }}" readonly>
                                     </div>
                                 </div>
-                                <div class="col-lg-6">
-                                    <div class="from-group">
-                                        <div class="form-group">
-                                            <label for="date">Date <span class="text-danger">*</span></label>
-                                            <input type="date" class="form-control" name="date" required value="{{ $adjustment->getAttributes()['date'] }}">
-                                        </div>
+
+                                <div class="col-lg-4">
+                                    <div class="form-group">
+                                        <label for="date">Date <span class="text-danger">*</span></label>
+                                        <input type="date" class="form-control" name="date" required value="{{ $adjustment->getAttributes()['date'] }}">
+                                    </div>
+                                </div>
+
+                                <!-- ✅ NEW: Warehouse dropdown -->
+                                <div class="col-lg-4">
+                                    <div class="form-group">
+                                        <label for="warehouse_id">Warehouse <span class="text-danger">*</span></label>
+                                        <select name="warehouse_id" id="warehouse_id" class="form-control" required>
+                                            @foreach($warehouses as $wh)
+                                                <option value="{{ $wh->id }}" {{ (int)$adjustment->warehouse_id === (int)$wh->id ? 'selected' : '' }}>
+                                                    {{ $wh->warehouse_name }}{{ (int)$wh->is_main === 1 ? ' (Main)' : '' }}
+                                                </option>
+                                            @endforeach
+                                        </select>
+                                        <small class="text-muted">
+                                            Showing warehouses for active branch (ID: {{ $activeBranchId }})
+                                        </small>
                                     </div>
                                 </div>
                             </div>
+
                             <livewire:adjustment.product-table :adjustedProducts="$adjustment->adjustedProducts->toArray()"/>
+
                             <div class="form-group">
                                 <label for="note">Note (If Needed)</label>
-                                <textarea name="note" id="note" rows="5" class="form-control">
-                                    {{ $adjustment->note }}
-                                </textarea>
+                                <textarea name="note" id="note" rows="5" class="form-control">{{ $adjustment->note }}</textarea>
                             </div>
+
                             <div class="mt-3">
                                 <button type="submit" class="btn btn-primary">
                                     Update Adjustment <i class="bi bi-check"></i>
                                 </button>
                             </div>
                         </form>
+
                     </div>
                 </div>
             </div>
