@@ -8,7 +8,15 @@
                             <i class="bi bi-search text-primary"></i>
                         </div>
                     </div>
-                    <input wire:keydown.escape="resetQuery" wire:model.debounce.500ms="query" type="text" class="form-control" placeholder="Type product name or code....">
+                    <input
+                    type="text"
+                    wire:model.debounce.300ms="query"
+                    class="form-control"
+                    placeholder="Type product name or code..."
+                    {{ ($requireWarehouse && !$warehouseSelected) ? 'disabled' : '' }}
+                    >
+
+
                 </div>
             </div>
         </div>

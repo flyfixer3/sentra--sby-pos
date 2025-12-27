@@ -45,6 +45,16 @@ class TransferRequest extends BaseModel
         return $this->hasMany(PrintLog::class);
     }
 
+    protected static function booted()
+    {
+        static::created(function ($model) {
+            if (empty($model->reference)) {
+                $model->reference = make_reference_id('TRF', $model->id);
+                $model->saveQuietly();
+            }
+        });
+    }
+
     public function confirmedBy()
     {
         return $this->belongsTo(User::class, 'confirmed_by');

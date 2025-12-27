@@ -3,174 +3,252 @@
 @section('title', 'Detail Transfer')
 
 @section('breadcrumb')
-    <ol class="breadcrumb border-0 m-0">
-        <li class="breadcrumb-item"><a href="{{ route('home') }}">Home</a></li>
-        <li class="breadcrumb-item"><a href="{{ route('transfers.index') }}">Transfer</a></li>
-        <li class="breadcrumb-item active">Detail</li>
-    </ol>
+<ol class="breadcrumb border-0 m-0">
+    <li class="breadcrumb-item"><a href="{{ route('home') }}">Home</a></li>
+    <li class="breadcrumb-item"><a href="{{ route('transfers.index') }}">Transfer</a></li>
+    <li class="breadcrumb-item active">Detail</li>
+</ol>
 @endsection
 
 @section('content')
 <div class="container-fluid">
-    <div class="row">
-        <div class="col-lg-12">
-            <div class="card mb-3">
-                <div class="card-header d-flex justify-content-between align-items-center">
-                    <div>
-                        Reference: <strong>{{ $transfer->reference }}</strong>
-                    </div>
 
-                    <div class="d-print-none d-flex flex-wrap gap-2">
-                        {{-- Tombol Cetak Surat Jalan --}}
-                        @if ($transfer->status === 'pending')
-                            <a href="{{ route('transfers.print.pdf', $transfer->id) }}"
-                               class="btn btn-sm btn-dark" target="_blank">
-                                <i class="bi bi-printer"></i> Cetak Surat Jalan
-                            </a>
-                        @endif
+    {{-- ================= HEADER CARD ================= --}}
+    <div class="card mb-3 shadow-sm">
+        <div class="card-body d-flex flex-wrap justify-content-between align-items-center">
+            <div>
+                <div class="text-muted small">Reference</div>
+                <h5 class="mb-0">{{ $transfer->reference }}</h5>
+            </div>
 
-                        {{-- Tombol Konfirmasi Penerimaan --}}
-                        @if ($transfer->status === 'pending')
-                            <a href="{{ route('transfers.confirm', $transfer->id) }}" class="btn btn-sm btn-success">
-                                <i class="bi bi-check-circle"></i> Konfirmasi Penerimaan
-                            </a>
-                        @endif
+            <div class="d-flex flex-wrap gap-2 mt-2 mt-md-0">
+                @if ($transfer->status === 'pending')
+                    <a href="{{ route('transfers.print.pdf', $transfer->id) }}"
+                       class="btn btn-sm btn-dark" target="_blank">
+                        <i class="bi bi-printer"></i> Cetak Surat Jalan
+                    </a>
+                @endif
 
-                        {{-- Tombol + Modal Cancel (ambil dari partial) --}}
-                        @include('transfer::partials.cancel-transfer-modal')
-                    </div>
-                </div>
+                @if (
+                    $transfer->status === 'shipped'
+                    && session('active_branch') !== 'all'
+                    && (int) session('active_branch') === (int) $transfer->to_branch_id
+                )
+                    <a href="{{ route('transfers.confirm', $transfer->id) }}"
+                       class="btn btn-sm btn-success">
+                        <i class="bi bi-check-circle"></i> Konfirmasi
+                    </a>
+                @endif
 
-                @php
-                    $status = strtolower((string) $transfer->status);
+                @include('transfer::partials.cancel-transfer-modal')
+            </div>
+        </div>
+    </div>
 
-                    // Bootstrap 5 badge color mapping
-                    $statusClassMap = [
-                        'pending'   => 'warning text-dark',
-                        'shipped'   => 'info',
-                        'confirmed' => 'success',
-                        'cancelled' => 'danger',
-                    ];
-
-                    $badgeClass = $statusClassMap[$status] ?? 'secondary';
-                @endphp
-
+    {{-- ================= INFO GRID ================= --}}
+    <div class="row g-3 mb-4">
+        <div class="col-md-4">
+            <div class="card h-100 border-0 shadow-sm">
                 <div class="card-body">
-                    <div class="row mb-4">
-                        <div class="col-md-4">
-                            <h6 class="text-muted">Dari Gudang</h6>
-                            <p class="mb-0"><strong>{{ $transfer->fromWarehouse->warehouse_name ?? '-' }}</strong></p>
-                        </div>
+                    <div class="text-muted small mb-1">Dari Gudang</div>
+                    <strong>{{ $transfer->fromWarehouse->warehouse_name ?? '-' }}</strong>
+                </div>
+            </div>
+        </div>
 
-                        <div class="col-md-4">
-                            <h6 class="text-muted">Ke Cabang</h6>
-                            <p class="mb-0"><strong>{{ $transfer->toBranch->name ?? '-' }}</strong></p>
-                        </div>
+        <div class="col-md-4">
+            <div class="card h-100 border-0 shadow-sm">
+                <div class="card-body">
+                    <div class="text-muted small mb-1">Ke Cabang</div>
+                    <strong>{{ $transfer->toBranch->name ?? '-' }}</strong>
+                </div>
+            </div>
+        </div>
 
-                        <div class="col-md-4">
-                            <h6 class="text-muted">Informasi Transfer</h6>
-                            <p class="mb-0">
-                                Tanggal: {{ \Carbon\Carbon::parse($transfer->date)->format('d M Y') }} <br>
-                                Status:
-                                <span class="badge bg-{{ $badgeClass }}">
-                                    {{ ucfirst($status) }}
-                                </span>
-
-                                @if($status === 'cancelled')
-                                    <br>
-                                    <span class="small text-muted">
-                                        Cancelled at:
-                                        {{ $transfer->cancelled_at ? \Carbon\Carbon::parse($transfer->cancelled_at)->format('d M Y H:i') : '-' }}
-                                    </span>
-
-                                    @if(!empty($transfer->cancel_note))
-                                        <br>
-                                        <span class="small text-muted">
-                                            Note: {{ $transfer->cancel_note }}
-                                        </span>
-                                    @endif
-                                @endif
-                            </p>
-                        </div>
+        <div class="col-md-4">
+            <div class="card h-100 border-0 shadow-sm">
+                <div class="card-body">
+                    <div class="text-muted small mb-1">Informasi Transfer</div>
+                    <div class="mb-1">
+                        Tanggal:
+                        <strong>{{ \Carbon\Carbon::parse($transfer->date)->format('d M Y') }}</strong>
                     </div>
-
-                    <div class="table-responsive">
-                        <table class="table table-bordered table-sm">
-                            <thead class="table-light">
-                                <tr>
-                                    <th style="width: 50px;">#</th>
-                                    <th>Produk</th>
-                                    <th style="width: 120px;">Jumlah</th>
-                                    <th style="width: 120px;">Satuan</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                @forelse($transfer->items as $index => $item)
-                                    <tr>
-                                        <td>{{ $index + 1 }}</td>
-                                        <td>{{ $item->product->name ?? '-' }}</td>
-                                        <td>{{ number_format($item->quantity) }}</td>
-                                        <td>{{ $item->unit ?? '-' }}</td>
-                                    </tr>
-                                @empty
-                                    <tr>
-                                        <td colspan="4" class="text-center">Tidak ada item dalam transfer ini.</td>
-                                    </tr>
-                                @endforelse
-                            </tbody>
-                        </table>
+                    <div class="mb-1">
+                        Status:
+                        <span class="badge bg-info text-dark text-uppercase">
+                            {{ $transfer->status }}
+                        </span>
                     </div>
-
-                    {{-- Jika ada bukti pengiriman --}}
-                    @if($transfer->delivery_proof_path)
-                        <div class="mt-4">
-                            <label><strong>Lampiran Surat Jalan:</strong></label><br>
-                            <a href="{{ asset('storage/' . $transfer->delivery_proof_path) }}"
-                               class="btn btn-sm btn-outline-primary"
-                               target="_blank">
-                                <i class="bi bi-file-earmark-arrow-down"></i> Lihat File
-                            </a>
+                    @if($transfer->delivery_code)
+                        <div class="small text-muted">
+                            Delivery Code:
+                            <strong>{{ $transfer->delivery_code }}</strong>
                         </div>
                     @endif
-
-                    {{-- Riwayat Cetak --}}
-                    @if($transfer->printLogs->isNotEmpty())
-                        <hr>
-                        <h5 class="mt-4">Riwayat Cetak Surat Jalan</h5>
-
-                        <div class="table-responsive">
-                            <table class="table table-sm table-bordered">
-                                <thead class="table-light">
-                                    <tr>
-                                        <th style="width: 50px;">#</th>
-                                        <th>User</th>
-                                        <th style="width: 180px;">Tanggal Cetak</th>
-                                        <th style="width: 160px;">IP Address</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    @forelse($transfer->printLogs as $index => $log)
-                                        <tr>
-                                            <td>{{ $index + 1 }}</td>
-                                            <td>{{ $log->user->name ?? '-' }}</td>
-                                            <td>{{ \Carbon\Carbon::parse($log->printed_at)->format('d M Y H:i') }}</td>
-                                            <td>{{ $log->ip_address ?? '-' }}</td>
-                                        </tr>
-                                    @empty
-                                        <tr>
-                                            <td colspan="4" class="text-center text-muted">
-                                                Belum ada cetakan surat jalan untuk transfer ini.
-                                            </td>
-                                        </tr>
-                                    @endforelse
-                                </tbody>
-                            </table>
-                        </div>
-                    @endif
-
                 </div>
             </div>
         </div>
     </div>
+
+    {{-- ================= ITEM TABLE ================= --}}
+    <div class="card mb-4 shadow-sm">
+        <div class="card-header bg-white">
+            <strong>Daftar Produk</strong>
+        </div>
+        <div class="card-body p-0">
+            <div class="table-responsive">
+                <table class="table table-hover table-bordered mb-0">
+                    <thead class="table-light">
+                        <tr>
+                            <th width="50">#</th>
+                            <th>Produk</th>
+                            <th class="text-center" width="120">Sent</th>
+                            @if($transfer->status === 'confirmed')
+                                <th class="text-center">Received</th>
+                                <th class="text-center">Defect</th>
+                                <th class="text-center">Damaged</th>
+                            @else
+                                <th class="text-center">Jumlah</th>
+                            @endif
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @forelse($transfer->items as $i => $item)
+                            @php
+                                $product = $item->product;
+                                $pid = (int) $item->product_id;
+                                $summary = $itemSummaries[$pid] ?? [];
+                            @endphp
+                            <tr>
+                                <td>{{ $i + 1 }}</td>
+                                <td>
+                                    @if($product)
+                                        <div class="fw-semibold">{{ $product->product_name }}</div>
+                                        <div class="text-muted small">{{ $product->product_code }}</div>
+                                    @else
+                                        <span class="text-danger">Product ID {{ $pid }} not found</span>
+                                    @endif
+                                </td>
+                                <td class="text-center">
+                                    <span class="badge bg-primary text-white fw-semibold">{{ $item->quantity }}</span>
+                                </td>
+
+                                @if($transfer->status === 'confirmed')
+                                    <td class="text-center">
+                                        <span class="badge bg-success">
+                                            {{ $summary['received_good'] ?? 0 }}
+                                        </span>
+                                    </td>
+                                    <td class="text-center">
+                                        <span class="badge bg-warning text-dark">
+                                            {{ $summary['defect'] ?? 0 }}
+                                        </span>
+                                    </td>
+                                    <td class="text-center">
+                                        <span class="badge bg-danger">
+                                            {{ $summary['damaged'] ?? 0 }}
+                                        </span>
+                                    </td>
+                                @else
+                                    <td class="text-center">{{ $item->quantity }}</td>
+                                @endif
+                            </tr>
+                        @empty
+                            <tr>
+                                <td colspan="6" class="text-center text-muted py-4">
+                                    Tidak ada item dalam transfer ini.
+                                </td>
+                            </tr>
+                        @endforelse
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    {{-- ================= DEFECT ================= --}}
+    @if($transfer->status === 'confirmed' && $defects->isNotEmpty())
+        <div class="card mb-4 shadow-sm border-warning">
+            <div class="card-header bg-warning bg-opacity-25 fw-semibold">
+                Defect Details
+            </div>
+            <div class="card-body p-0">
+                <table class="table table-sm table-bordered mb-0">
+                    <thead class="table-light">
+                        <tr>
+                            <th>#</th>
+                            <th>Produk</th>
+                            <th class="text-center">Qty</th>
+                            <th>Type</th>
+                            <th>Desc</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach($defects as $i => $d)
+                            @php
+                                $item = $transfer->items->firstWhere('product_id', $d->product_id);
+                                $product = optional($item)->product;
+                            @endphp
+                            <tr>
+                                <td>{{ $i + 1 }}</td>
+                                <td>
+                                    {{ $product
+                                        ? $product->product_name . ' (' . $product->product_code . ')'
+                                        : 'Product ID ' . $d->product_id }}
+                                </td>
+                                <td class="text-center">{{ $d->quantity }}</td>
+                                <td>{{ $d->defect_type }}</td>
+                                <td>{{ $d->description ?? '-' }}</td>
+                            </tr>
+                        @endforeach
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    @endif
+
+    {{-- ================= DAMAGED ================= --}}
+    @if($transfer->status === 'confirmed' && $damaged->isNotEmpty())
+        <div class="card mb-4 shadow-sm border-danger">
+            <div class="card-header bg-danger bg-opacity-10 fw-semibold">
+                Damaged / Pecah Details
+            </div>
+            <div class="card-body p-0">
+                <table class="table table-sm table-bordered mb-0">
+                    <thead class="table-light">
+                        <tr>
+                            <th>#</th>
+                            <th>Produk</th>
+                            <th class="text-center">Qty</th>
+                            <th>Reason</th>
+                            <th class="text-center">IN</th>
+                            <th class="text-center">OUT</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach($damaged as $i => $dm)
+                            @php
+                                $item = $transfer->items->firstWhere('product_id', $dm->product_id);
+                                $product = optional($item)->product;
+                            @endphp
+                            <tr>
+                                <td>{{ $i + 1 }}</td>
+                                <td>
+                                    {{ $product
+                                        ? $product->product_name . ' (' . $product->product_code . ')'
+                                        : 'Product ID ' . $dm->product_id }}
+                                </td>
+                                <td class="text-center">{{ $dm->quantity }}</td>
+                                <td>{{ $dm->reason }}</td>
+                                <td class="text-center">#{{ $dm->mutation_in_id }}</td>
+                                <td class="text-center">#{{ $dm->mutation_out_id }}</td>
+                            </tr>
+                        @endforeach
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    @endif
+
 </div>
 @endsection

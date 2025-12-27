@@ -112,6 +112,14 @@
                 <i class="c-sidebar-nav-icon bi bi-journals" style="line-height: 1;"></i> All Transfers
             </a>
         </li>
+
+        <li class="c-sidebar-nav-item">
+            <a class="c-sidebar-nav-link {{ request()->routeIs('transfers.quality-report.*') ? 'c-active' : '' }}"
+            href="{{ route('transfers.quality-report.index') }}">
+                <i class="c-sidebar-nav-icon bi bi-clipboard-data" style="line-height: 1;"></i> Quality Report
+            </a>
+        </li>
+
     </ul>
 </li>
 @endcan

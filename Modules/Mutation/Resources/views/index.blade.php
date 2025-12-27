@@ -51,7 +51,6 @@
                                 <option value="">-- All --</option>
                                 <option value="In">IN</option>
                                 <option value="Out">OUT</option>
-                                <option value="Transfer">TRANSFER</option>
                             </select>
                         </div>
 

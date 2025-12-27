@@ -11,93 +11,229 @@
 
 @section('content')
 <div class="container-fluid">
-    <div class="card">
-        <div class="card-header d-flex flex-wrap align-items-center">
-            <div class="h5 m-0">Transfers</div>
-
-            <div class="btn-group mfs-auto" role="group" aria-label="tabs">
-                <a href="{{ route('transfers.index', ['tab' => 'outgoing']) }}"
-                   class="btn btn-sm btn-outline-primary {{ ($activeTab ?? 'outgoing') === 'outgoing' ? 'active' : '' }}">
-                    Outgoing (Dikirim)
-                </a>
-                <a href="{{ route('transfers.index', ['tab' => 'incoming']) }}"
-                   class="btn btn-sm btn-outline-success {{ ($activeTab ?? 'outgoing') === 'incoming' ? 'active' : '' }}">
-                    Incoming (Diterima)
-                </a>
-            </div>
-        </div>
-
+    <div class="card card-modern">
         <div class="card-body">
+            {{-- Header --}}
+            <div class="d-flex flex-wrap align-items-center gap-2 mb-3">
+                <div>
+                    <div class="page-title">Transfers</div>
+                    <div class="page-subtitle text-muted">Kelola pengiriman antar cabang (Outgoing) & penerimaan (Incoming).</div>
+                </div>
+
+                <div class="ms-auto d-flex align-items-center gap-2">
+                    @if(($activeTab ?? 'outgoing') === 'outgoing')
+                        <a href="{{ route('transfers.create') }}" class="btn btn-primary btn-sm btn-modern">
+                            <i class="bi bi-plus"></i> Add Transfer
+                        </a>
+                    @endif
+
+                    {{-- Tabs --}}
+                    <div class="btn-group tabs-modern" role="group" aria-label="tabs">
+                        <a href="{{ route('transfers.index', ['tab' => 'outgoing']) }}"
+                           class="btn btn-sm {{ ($activeTab ?? 'outgoing') === 'outgoing' ? 'active' : '' }}">
+                            Outgoing
+                            <span class="badge bg-light text-dark ms-1">Dikirim</span>
+                        </a>
+                        <a href="{{ route('transfers.index', ['tab' => 'incoming']) }}"
+                           class="btn btn-sm {{ ($activeTab ?? 'outgoing') === 'incoming' ? 'active' : '' }}">
+                            Incoming
+                            <span class="badge bg-light text-dark ms-1">Diterima</span>
+                        </a>
+                    </div>
+                </div>
+            </div>
+
+            {{-- Divider --}}
+            <div class="divider-soft mb-3"></div>
+
             {{-- ================= OUTGOING ================= --}}
             <div class="{{ ($activeTab ?? 'outgoing') === 'outgoing' ? '' : 'd-none' }}">
-                <div class="d-flex flex-wrap align-items-center justify-content-between mb-3">
-                    <a href="{{ route('transfers.create') }}" class="btn btn-primary btn-sm">
-                        <i class="bi bi-plus"></i> Add Transfer
-                    </a>
+                <div class="d-flex flex-wrap align-items-end justify-content-between mb-3 gap-2">
+                    <div class="filter-wrap">
+                        <label class="small text-muted mb-1 d-block">Filter Status</label>
+                        <select id="filter_status_outgoing" class="form-control form-control-sm form-control-modern">
+                            <option value="">-- All Status --</option>
+                            <option value="pending">PENDING</option>
+                            <option value="shipped">SHIPPED</option>
+                            <option value="confirmed">CONFIRMED</option>
+                            <option value="cancelled">CANCELLED</option>
+                        </select>
+                    </div>
 
-                    <div class="d-flex align-items-center gap-2 mt-2 mt-md-0">
-                        <div>
-                            <label class="small text-muted mb-1 d-block">Filter Status</label>
-                            <select id="filter_status_outgoing" class="form-control form-control-sm">
-                                <option value="">-- All Status --</option>
-                                <option value="pending">PENDING</option>
-                                <option value="shipped">SHIPPED</option>
-                                <option value="confirmed">CONFIRMED</option>
-                                <option value="cancelled">CANCELLED</option>
-                            </select>
-                        </div>
+                    <div class="text-muted small ms-auto">
+                        Tip: pakai filter status untuk mempercepat pencarian transfer.
                     </div>
                 </div>
 
                 {{-- Empty State Outgoing --}}
-                <div id="empty-outgoing" class="alert alert-info d-none">
-                    <div class="d-flex align-items-center">
-                        <i class="bi bi-inbox me-2"></i>
+                <div id="empty-outgoing" class="empty-state d-none">
+                    <div class="d-flex align-items-start gap-3">
+                        <div class="empty-icon">
+                            <i class="bi bi-inbox"></i>
+                        </div>
                         <div>
-                            <div class="fw-bold">Belum ada transfer yang dikirim dari cabang ini.</div>
-                            <div class="small">Klik <strong>Add Transfer</strong> untuk membuat pengiriman baru.</div>
+                            <div class="fw-bold mb-1">Belum ada transfer outgoing.</div>
+                            <div class="small text-muted">Klik <strong>Add Transfer</strong> untuk membuat pengiriman baru.</div>
                         </div>
                     </div>
                 </div>
 
-                {!! $outgoingTable->table(['class' => 'table table-striped table-bordered w-100'], true) !!}
+                <div class="table-wrap">
+                    {!! $outgoingTable->table(['class' => 'table table-striped table-bordered w-100 table-modern'], true) !!}
+                </div>
             </div>
 
             {{-- ================= INCOMING ================= --}}
             <div class="{{ ($activeTab ?? 'outgoing') === 'incoming' ? '' : 'd-none' }}">
-                <div class="d-flex flex-wrap align-items-center justify-content-end mb-3">
-                    <div class="d-flex align-items-center gap-2">
-                        <div>
-                            <label class="small text-muted mb-1 d-block">Filter Status</label>
-                            <select id="filter_status_incoming" class="form-control form-control-sm">
-                                <option value="">-- All Status --</option>
-                                <option value="pending">PENDING</option>
-                                <option value="shipped">SHIPPED</option>
-                                <option value="confirmed">CONFIRMED</option>
-                                <option value="cancelled">CANCELLED</option>
-                            </select>
-                        </div>
+                <div class="d-flex flex-wrap align-items-end justify-content-between mb-3 gap-2">
+                    <div class="filter-wrap">
+                        <label class="small text-muted mb-1 d-block">Filter Status</label>
+                        <select id="filter_status_incoming" class="form-control form-control-sm form-control-modern">
+                            <option value="">-- All Status --</option>
+                            <option value="pending">PENDING</option>
+                            <option value="shipped">SHIPPED</option>
+                            <option value="confirmed">CONFIRMED</option>
+                            <option value="cancelled">CANCELLED</option>
+                        </select>
+                    </div>
+
+                    <div class="text-muted small ms-auto">
+                        Tip: incoming biasanya status <strong>shipped</strong> → butuh konfirmasi.
                     </div>
                 </div>
 
                 {{-- Empty State Incoming --}}
-                <div id="empty-incoming" class="alert alert-warning d-none">
-                    <div class="d-flex align-items-center">
-                        <i class="bi bi-archive me-2"></i>
+                <div id="empty-incoming" class="empty-state warning d-none">
+                    <div class="d-flex align-items-start gap-3">
+                        <div class="empty-icon">
+                            <i class="bi bi-archive"></i>
+                        </div>
                         <div>
-                            <div class="fw-bold">Tidak ada transfer yang perlu diterima.</div>
-                            <div class="small">Semua pengiriman ke cabang ini sudah dikonfirmasi, atau belum ada kiriman baru.</div>
+                            <div class="fw-bold mb-1">Tidak ada transfer incoming yang perlu diproses.</div>
+                            <div class="small text-muted">Semua pengiriman sudah dikonfirmasi atau belum ada kiriman baru.</div>
                         </div>
                     </div>
                 </div>
 
-                {!! $incomingTable->table(['class' => 'table table-striped table-bordered w-100'], true) !!}
+                <div class="table-wrap">
+                    {!! $incomingTable->table(['class' => 'table table-striped table-bordered w-100 table-modern'], true) !!}
+                </div>
             </div>
         </div>
     </div>
 </div>
 
-{{-- ====== MUAT LIBRARY WAJIB (CDN) SEBELUM INISIALISASI DATATABLES ====== --}}
+{{-- ===== CSS modern (samakan feel dengan create/confirm) ===== --}}
+@push('page_css')
+<style>
+    .card-modern{
+        border: 1px solid #e2e8f0;
+        border-radius: 12px;
+        box-shadow: 0 8px 22px rgba(15, 23, 42, 0.06);
+    }
+    .page-title{
+        font-weight: 800;
+        font-size: 18px;
+        color: #0f172a;
+        line-height: 1.2;
+    }
+    .page-subtitle{
+        font-size: 13px;
+    }
+    .divider-soft{
+        height: 1px;
+        background: #e2e8f0;
+        opacity: .9;
+    }
+    .btn-modern{
+        border-radius: 999px;
+        padding: 8px 14px;
+        font-weight: 700;
+        box-shadow: 0 6px 14px rgba(2, 6, 23, 0.12);
+    }
+    .tabs-modern{
+        background: #f8fafc;
+        border: 1px solid #e2e8f0;
+        border-radius: 999px;
+        padding: 4px;
+        gap: 4px;
+    }
+    .tabs-modern .btn{
+        border: 0;
+        border-radius: 999px !important;
+        font-weight: 700;
+        color: #334155;
+        background: transparent;
+        padding: 7px 12px;
+    }
+    .tabs-modern .btn.active{
+        background: #2563eb;
+        color: #fff;
+        box-shadow: 0 8px 18px rgba(37, 99, 235, 0.25);
+    }
+    .tabs-modern .btn .badge{
+        border-radius: 999px;
+        font-weight: 700;
+    }
+
+    .form-control-modern{
+        border-radius: 10px;
+        border-color: #e2e8f0;
+    }
+    .form-control-modern:focus{
+        border-color: #93c5fd;
+        box-shadow: 0 0 0 0.2rem rgba(147,197,253,0.25);
+    }
+    .filter-wrap{
+        min-width: 220px;
+    }
+
+    .empty-state{
+        border: 1px solid #e2e8f0;
+        background: #f8fafc;
+        border-radius: 12px;
+        padding: 14px 16px;
+        margin-bottom: 14px;
+    }
+    .empty-state.warning{
+        background: #fffbeb;
+        border-color: #fde68a;
+    }
+    .empty-icon{
+        width: 40px;
+        height: 40px;
+        border-radius: 12px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: #e0f2fe;
+        color: #0369a1;
+        font-size: 18px;
+        flex: 0 0 auto;
+    }
+    .empty-state.warning .empty-icon{
+        background: #fef3c7;
+        color: #92400e;
+    }
+
+    .table-wrap{
+        border: 1px solid #e2e8f0;
+        border-radius: 12px;
+        overflow: hidden;
+    }
+    .table-modern thead th{
+        background: #f8fafc !important;
+        color: #334155;
+        font-weight: 800;
+        border-bottom: 1px solid #e2e8f0 !important;
+    }
+    .table-modern td, .table-modern th{
+        vertical-align: middle;
+    }
+</style>
+@endpush
+
+{{-- ====== LIBRARY DATATABLES (tetap seperti kamu) ====== --}}
 <link rel="stylesheet" href="https://cdn.datatables.net/1.13.8/css/dataTables.bootstrap5.min.css">
 <link rel="stylesheet" href="https://cdn.datatables.net/buttons/2.4.3/css/buttons.bootstrap5.min.css">
 
@@ -105,17 +241,16 @@
 <script src="https://cdn.datatables.net/1.13.8/js/jquery.dataTables.min.js"></script>
 <script src="https://cdn.datatables.net/1.13.8/js/dataTables.bootstrap5.min.js"></script>
 
-{{-- Buttons (karena kita pakai dom: "Bfrtip" -> excel/print/reset/reload) --}}
 <script src="https://cdn.datatables.net/buttons/2.4.3/js/dataTables.buttons.min.js"></script>
 <script src="https://cdn.datatables.net/buttons/2.4.3/js/buttons.bootstrap5.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 <script src="https://cdn.datatables.net/buttons/2.4.3/js/buttons.html5.min.js"></script>
 <script src="https://cdn.datatables.net/buttons/2.4.3/js/buttons.print.min.js"></script>
 
-{{-- ====== INISIALISASI DARI YAJRA (WAJIB SETELAH LIBRARY DI ATAS) ====== --}}
 {!! $outgoingTable->scripts() !!}
 {!! $incomingTable->scripts() !!}
 
+@push('page_scripts')
 <script>
 document.addEventListener("DOMContentLoaded", function () {
   $('#filter_status_outgoing').on('change', function () {
@@ -127,5 +262,6 @@ document.addEventListener("DOMContentLoaded", function () {
   });
 });
 </script>
+@endpush
 
 @endsection

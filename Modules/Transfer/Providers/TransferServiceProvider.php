@@ -4,6 +4,7 @@ namespace Modules\Transfer\Providers;
 
 use Illuminate\Support\ServiceProvider;
 use Illuminate\Database\Eloquent\Factory;
+use Livewire\Livewire;
 
 class TransferServiceProvider extends ServiceProvider
 {
@@ -28,6 +29,9 @@ class TransferServiceProvider extends ServiceProvider
         $this->registerConfig();
         $this->registerViews();
         $this->loadMigrationsFrom(module_path($this->moduleName, 'Database/Migrations'));
+
+        // ✅ REGISTER LIVEWIRE COMPONENTS
+        $this->registerLivewireComponents();
     }
 
     /**
@@ -50,8 +54,10 @@ class TransferServiceProvider extends ServiceProvider
         $this->publishes([
             module_path($this->moduleName, 'Config/config.php') => config_path($this->moduleNameLower . '.php'),
         ], 'config');
+
         $this->mergeConfigFrom(
-            module_path($this->moduleName, 'Config/config.php'), $this->moduleNameLower
+            module_path($this->moduleName, 'Config/config.php'),
+            $this->moduleNameLower
         );
     }
 
@@ -63,7 +69,6 @@ class TransferServiceProvider extends ServiceProvider
     public function registerViews()
     {
         $viewPath = resource_path('views/modules/' . $this->moduleNameLower);
-
         $sourcePath = module_path($this->moduleName, 'Resources/views');
 
         $this->publishes([
@@ -87,6 +92,18 @@ class TransferServiceProvider extends ServiceProvider
         } else {
             $this->loadTranslationsFrom(module_path($this->moduleName, 'Resources/lang'), $this->moduleNameLower);
         }
+    }
+
+    /**
+     * Register Livewire components for this module.
+     *
+     * @return void
+     */
+    protected function registerLivewireComponents(): void
+    {
+        // ✅ Karena file class kamu ada di: app/Http/Livewire/Transfer/ProductTable.php
+        // Maka class yang benar adalah: App\Http\Livewire\Transfer\ProductTable
+        Livewire::component('transfer.product-table', \App\Http\Livewire\Transfer\ProductTable::class);
     }
 
     /**

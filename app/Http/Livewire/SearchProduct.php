@@ -9,9 +9,36 @@ use Modules\Product\Entities\Product;
 class SearchProduct extends Component
 {
 
+    public bool $requireWarehouse = false;
+    public bool $warehouseSelected = true;
+
+    protected $listeners = [
+        'fromWarehouseSelected' => 'onWarehouseSelected',
+        'enableWarehouseRequirement' => 'enableWarehouseRequirement',
+    ];
+
     public $query;
     public $search_results;
     public $how_many;
+
+    public function enableWarehouseRequirement()
+    {
+        $this->requireWarehouse = true;
+        $this->warehouseSelected = false;
+    }
+
+    public function onWarehouseSelected($payload)
+    {
+        if (!$this->requireWarehouse) return;
+
+        if (is_array($payload)) {
+            $payload = $payload['warehouseId'] ?? null;
+        }
+
+        $this->warehouseSelected = !empty($payload);
+    }
+
+
 
     public function mount() {
         $this->query = '';
