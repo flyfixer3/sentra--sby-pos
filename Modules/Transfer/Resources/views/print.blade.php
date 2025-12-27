@@ -106,6 +106,11 @@
                     <td></td>
                 </tr>
             @endforeach
+            <tr>
+                <td><strong>No. Referensi:</strong> {{ $transfer->reference }}</td>
+                <td><strong>Delivery Code:</strong> {{ $transfer->delivery_code ?? '-' }}</td>
+            </tr>
+
         </tbody>
     </table>
 

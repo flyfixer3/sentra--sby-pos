@@ -8,7 +8,6 @@ use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
 use Barryvdh\DomPDF\Facade\Pdf;
-use Carbon\Carbon;
 
 use Modules\Transfer\Entities\TransferRequest;
 use Modules\Transfer\Entities\TransferRequestItem;
@@ -30,10 +29,6 @@ class TransferController extends Controller
         $this->mutationController = $mutationController;
     }
 
-    /**
-     * Cabang aktif (session) harus numeric untuk operasional transaksi.
-     * Kalau 'all' => tidak boleh create/store (biar data tidak nyasar + mencegah error SQL).
-     */
     protected function activeBranch(): mixed
     {
         return session('active_branch');
@@ -55,7 +50,6 @@ class TransferController extends Controller
         abort_if(Gate::denies('create_transfers'), 403);
 
         $branchId = $this->activeBranchIdOrFail();
-
         $warehouses = Warehouse::where('branch_id', $branchId)->get();
         $products   = Product::all();
 
@@ -81,12 +75,10 @@ class TransferController extends Controller
             'quantities.*'      => 'required|integer|min:1',
         ]);
 
-        // Pastikan qty array sejajar
         if (count($request->product_ids) !== count($request->quantities)) {
             abort(422, 'Product and quantity counts do not match.');
         }
 
-        // Warehouse asal harus milik branch aktif
         $fromWarehouse = Warehouse::findOrFail($request->from_warehouse_id);
         if ((int) $fromWarehouse->branch_id !== $branchId) {
             abort(403, 'From Warehouse must belong to active branch.');
@@ -96,12 +88,15 @@ class TransferController extends Controller
             $transfer = TransferRequest::create([
                 'reference'          => $request->reference,
                 'date'               => $request->date,
-                'from_warehouse_id'   => $request->from_warehouse_id,
-                'to_branch_id'        => $request->to_branch_id,
+                'from_warehouse_id'  => $request->from_warehouse_id,
+                'to_branch_id'       => $request->to_branch_id,
                 'note'               => $request->note,
                 'status'             => 'pending',
-                'branch_id'           => $branchId,
-                'created_by'          => auth()->id(),
+                'branch_id'          => $branchId,
+                'created_by'         => auth()->id(),
+
+                // delivery_code dibuat saat print pertama (bukan saat create)
+                'delivery_code'      => null,
             ]);
 
             foreach ($request->product_ids as $i => $productId) {
@@ -133,9 +128,9 @@ class TransferController extends Controller
 
     /**
      * PRINT SURAT JALAN:
-     * - Print pertama kali => set shipped + mutation OUT dari gudang asal
-     * - Reprint => hanya admin/supervisor
-     * - Semua print dicatat di PrintLog
+     * - print pertama: generate delivery_code + set shipped + mutation OUT
+     * - reprint: hanya admin/supervisor (delivery_code tetap sama)
+     * - semua print dicatat di PrintLog
      */
     public function printPdf($id)
     {
@@ -145,10 +140,8 @@ class TransferController extends Controller
         $setting  = Setting::first();
         $user     = Auth::user();
 
-        // Pastikan items kebaca
         $transfer->loadMissing('items');
 
-        // Reprint guard (kalau sudah pernah print)
         if ($transfer->printed_at) {
             if (!$user->hasAnyRole(['Super Admin', 'Administrator', 'Supervisor'])) {
                 abort(403, 'Only admin/supervisor can reprint.');
@@ -156,17 +149,21 @@ class TransferController extends Controller
         }
 
         DB::transaction(function () use ($transfer, $user) {
-            // Print pertama kali => shipped + OUT stok
+
+            // FIRST PRINT
             if (!$transfer->printed_at) {
 
-                // Update status + printed mark
+                // generate code kalau belum ada
+                $code = $transfer->delivery_code ?: $this->generateUniqueDeliveryCode();
+
                 $transfer->update([
-                    'printed_at' => now(),
-                    'printed_by' => $user->id,
-                    'status'     => 'shipped',
+                    'printed_at'    => now(),
+                    'printed_by'    => $user->id,
+                    'status'        => 'shipped',
+                    'delivery_code' => $code,
                 ]);
 
-                // Anti dobel OUT: kalau ternyata mutation OUT sudah ada, jangan bikin lagi
+                // anti dobel OUT
                 $alreadyOut = Mutation::withoutGlobalScopes()
                     ->where('reference', $transfer->reference)
                     ->where('note', 'like', 'Transfer OUT%')
@@ -190,7 +187,7 @@ class TransferController extends Controller
                 }
             }
 
-            // Log print (SELALU)
+            // log print selalu
             PrintLog::create([
                 'user_id'             => $user->id,
                 'transfer_request_id' => $transfer->id,
@@ -199,38 +196,28 @@ class TransferController extends Controller
             ]);
         });
 
+        // reload relasi supaya code kebaca di view
+        $transfer->refresh();
+        $transfer->loadMissing(['items.product', 'fromWarehouse', 'toBranch']);
+
         $pdf = Pdf::loadView('transfer::print', compact('transfer', 'setting'))
             ->setPaper('A4', 'portrait');
 
         return $pdf->download("Surat_Jalan_{$transfer->reference}.pdf");
     }
 
-    /**
-     * Halaman konfirmasi penerimaan
-     */
-    public function showConfirmationForm(TransferRequest $transfer)
+    public function showConfirmationForm(int $id)
     {
         abort_if(Gate::denies('confirm_transfers'), 403);
 
+        $transfer = $this->findTransferOrFail($id);
+
         $active = $this->activeBranch();
+        if ($active === 'all') abort(422, "Please choose a specific branch (not 'All Branch') to confirm incoming transfer.");
+        if ((int) $transfer->to_branch_id !== (int) $active) abort(403, 'Unauthorized.');
 
-        // Incoming side: active branch harus sama dengan to_branch_id (kecuali all: biasanya jangan dipakai untuk konfirmasi)
-        if ($active === 'all') {
-            abort(422, "Please choose a specific branch (not 'All Branch') to confirm incoming transfer.");
-        }
-
-        if ((int) $transfer->to_branch_id !== (int) $active) {
-            abort(403, 'Unauthorized.');
-        }
-
-        if (in_array($transfer->status, ['cancelled'], true)) {
-            abort(422, 'Transfer already cancelled.');
-        }
-
-        // Idealnya confirm hanya setelah shipped
-        if (!in_array($transfer->status, ['shipped'], true)) {
-            abort(422, 'Only shipped transfer can be confirmed.');
-        }
+        if ($transfer->status === 'cancelled') abort(422, 'Transfer already cancelled.');
+        if ($transfer->status !== 'shipped') abort(422, 'Only shipped transfer can be confirmed.');
 
         $warehouses = Warehouse::where('branch_id', (int) $active)->get();
 
@@ -238,55 +225,52 @@ class TransferController extends Controller
     }
 
     /**
-     * Simpan konfirmasi: set confirmed + mutation IN ke gudang tujuan
+     * Confirm pakai delivery_code (tanpa upload file lagi)
      */
-    public function storeConfirmation(Request $request, TransferRequest $transfer)
+    public function storeConfirmation(Request $request, int $id)
     {
         abort_if(Gate::denies('confirm_transfers'), 403);
 
+        $transfer = TransferRequest::withoutGlobalScopes()
+            ->with(['items.product'])
+            ->findOrFail($id);
+
         $active = $this->activeBranch();
-        if ($active === 'all') {
-            abort(422, "Please choose a specific branch (not 'All Branch') to confirm incoming transfer.");
-        }
-
-        if ((int) $transfer->to_branch_id !== (int) $active) {
-            abort(403, 'Unauthorized.');
-        }
-
-        if (in_array($transfer->status, ['cancelled'], true)) {
-            abort(422, 'Transfer already cancelled.');
-        }
-
-        if (!in_array($transfer->status, ['shipped'], true)) {
-            abort(422, 'Only shipped transfer can be confirmed.');
-        }
+        if ($active === 'all') abort(422, "Please choose a specific branch (not 'All Branch') to confirm incoming transfer.");
+        if ((int) $transfer->to_branch_id !== (int) $active) abort(403, 'Unauthorized.');
+        if ($transfer->status === 'cancelled') abort(422, 'Transfer already cancelled.');
+        if ($transfer->status !== 'shipped') abort(422, 'Only shipped transfer can be confirmed.');
 
         $request->validate([
             'to_warehouse_id' => 'required|exists:warehouses,id',
-            'delivery_proof'  => 'required|file|mimes:jpg,jpeg,png,pdf|max:2048',
+            'delivery_code'   => 'required|string|size:6',
         ]);
 
-        // to warehouse harus milik branch tujuan
+        // normalize input
+        $inputCode = strtoupper(trim((string) $request->delivery_code));
+
+        // validasi code harus match yang ada di surat jalan
+        if (!$transfer->delivery_code) {
+            abort(422, 'Delivery code is not generated yet. Please print the delivery note first.');
+        }
+        if ($inputCode !== strtoupper((string) $transfer->delivery_code)) {
+            abort(422, 'Invalid delivery code. Please check the code on the delivery note.');
+        }
+
         $toWarehouse = Warehouse::findOrFail($request->to_warehouse_id);
         if ((int) $toWarehouse->branch_id !== (int) $transfer->to_branch_id) {
             abort(422, 'To Warehouse must belong to destination branch.');
         }
 
         DB::transaction(function () use ($request, $transfer) {
-            $transfer->loadMissing('items');
-
-            $path     = $request->file('delivery_proof')->store('public/transfer_proofs');
-            $filename = str_replace('public/', 'storage/', $path);
 
             $transfer->update([
-                'to_warehouse_id'      => (int) $request->to_warehouse_id,
-                'delivery_proof_path'  => $filename,
-                'status'               => 'confirmed',
-                'confirmed_by'         => auth()->id(),
-                'confirmed_at'         => now(),
+                'to_warehouse_id' => (int) $request->to_warehouse_id,
+                'status'          => 'confirmed',
+                'confirmed_by'    => auth()->id(),
+                'confirmed_at'    => now(),
             ]);
 
-            // Anti dobel IN
             $alreadyIn = Mutation::withoutGlobalScopes()
                 ->where('reference', $transfer->reference)
                 ->where('note', 'like', 'Transfer IN%')
@@ -311,7 +295,7 @@ class TransferController extends Controller
         });
 
         toast('Transfer confirmed successfully', 'success');
-        return redirect()->route('transfers.index');
+        return redirect()->route('transfers.index', ['tab' => 'incoming']);
     }
 
     public function destroy($id)
@@ -320,7 +304,6 @@ class TransferController extends Controller
 
         $transfer = TransferRequest::findOrFail($id);
 
-        // Jangan delete kalau ada mutation
         if (Mutation::where('reference', $transfer->reference)->exists()) {
             return response()->json([
                 'message' => 'Cannot delete transfer with existing stock movements. Please cancel via proper reversal flow.'
@@ -331,44 +314,30 @@ class TransferController extends Controller
         return response()->json(['message' => 'Transfer deleted successfully']);
     }
 
-    /**
-     * Cancel Transfer:
-     * - shipped   => IN balik ke asal
-     * - confirmed => OUT tujuan + IN asal
-     * - log mutation tidak dihapus
-     */
-    public function cancel(Request $request, TransferRequest $transfer)
+    public function cancel(Request $request, int $id)
     {
         abort_if(Gate::denies('cancel_transfers'), 403);
+
+        $transfer = TransferRequest::withoutGlobalScopes()->with(['items.product'])->findOrFail($id);
 
         $request->validate([
             'note' => 'required|string|max:1000',
         ]);
 
-        if ($transfer->status === 'cancelled') {
-            abort(422, 'Transfer already cancelled.');
-        }
-
-        if (!in_array($transfer->status, ['shipped', 'confirmed'], true)) {
-            abort(422, 'Only shipped/confirmed transfer can be cancelled.');
-        }
+        if ($transfer->status === 'cancelled') abort(422, 'Transfer already cancelled.');
+        if (!in_array($transfer->status, ['shipped', 'confirmed'], true)) abort(422, 'Only shipped/confirmed transfer can be cancelled.');
 
         DB::transaction(function () use ($request, $transfer) {
-            $transfer->loadMissing('items');
 
-            // Idempotent guard: cancel mutation sudah ada
             $alreadyCancelled = Mutation::withoutGlobalScopes()
                 ->where('reference', $transfer->reference)
                 ->where('note', 'like', 'Transfer CANCEL%')
                 ->exists();
 
-            if ($alreadyCancelled) {
-                abort(422, 'Cancel mutation already exists for this transfer.');
-            }
+            if ($alreadyCancelled) abort(422, 'Cancel mutation already exists for this transfer.');
 
             $cancelNote = trim((string) $request->note);
 
-            // CASE shipped: IN balik ke gudang asal
             if ($transfer->status === 'shipped') {
                 foreach ($transfer->items as $item) {
                     $note = "Transfer CANCEL IN #{$transfer->reference} | Return to WH {$transfer->from_warehouse_id} | {$cancelNote}";
@@ -386,13 +355,9 @@ class TransferController extends Controller
                 }
             }
 
-            // CASE confirmed: OUT tujuan + IN asal
             if ($transfer->status === 'confirmed') {
-                if (!$transfer->to_warehouse_id) {
-                    abort(422, 'Invalid transfer data: destination warehouse is empty.');
-                }
+                if (!$transfer->to_warehouse_id) abort(422, 'Invalid transfer data: destination warehouse is empty.');
 
-                // OUT tujuan
                 foreach ($transfer->items as $item) {
                     $note = "Transfer CANCEL OUT #{$transfer->reference} | Return from WH {$transfer->to_warehouse_id} | {$cancelNote}";
 
@@ -408,7 +373,6 @@ class TransferController extends Controller
                     );
                 }
 
-                // IN asal
                 foreach ($transfer->items as $item) {
                     $note = "Transfer CANCEL IN #{$transfer->reference} | Return to WH {$transfer->from_warehouse_id} | {$cancelNote}";
 
@@ -435,5 +399,33 @@ class TransferController extends Controller
 
         toast('Transfer cancelled successfully', 'warning');
         return redirect()->route('transfers.index');
+    }
+
+    /**
+     * Generate code 6 char huruf+angka, dan pastikan unique di tabel.
+     */
+    private function generateUniqueDeliveryCode(): string
+    {
+        do {
+            $code = strtoupper(substr(bin2hex(random_bytes(4)), 0, 6)); // 6 hex chars
+        } while (
+            TransferRequest::withoutGlobalScopes()
+                ->where('delivery_code', $code)
+                ->exists()
+        );
+
+        return $code;
+    }
+
+    private function findTransferOrFail(int $id): TransferRequest
+    {
+        return TransferRequest::withoutGlobalScopes()
+            ->with([
+                'fromWarehouse', 'toWarehouse', 'toBranch',
+                'creator', 'confirmedBy',
+                'items.product',
+                'printLogs',
+            ])
+            ->findOrFail($id);
     }
 }

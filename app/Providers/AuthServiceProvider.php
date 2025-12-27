@@ -13,16 +13,13 @@ class AuthServiceProvider extends ServiceProvider
     {
         $this->registerPolicies();
 
-        $guard = config('auth.defaults.guard', 'web');
-
-        Gate::before(function ($user, $ability) use ($guard) {
-            return $user->hasRole('Super Admin', $guard) ? true : null;
+        Gate::before(function ($user, $ability) {
+            return $user->hasRole('Super Admin') ? true : null;
         });
 
-        Gate::define('view_all_branches', function ($user) use ($guard) {
-            return $user->hasAnyRole(['Owner', 'Super Admin'], $guard);
-            // kalau ada role lain:
-            // || $user->hasRole('Developer', $guard);
+        Gate::define('view_all_branches', function ($user) {
+            return $user->hasAnyRole(['Owner', 'Super Admin']);
         });
     }
+
 }

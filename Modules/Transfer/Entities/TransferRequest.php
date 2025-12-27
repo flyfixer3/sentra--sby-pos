@@ -22,20 +22,28 @@ class TransferRequest extends BaseModel
         'status',
         'branch_id',
         'created_by',
+
+        // NEW
+        'delivery_code',
+
         'delivery_proof_path',
         'confirmed_by',
         'confirmed_at',
         'printed_at',
         'printed_by',
+
+        // NEW cancel
+        'cancelled_by',
+        'cancelled_at',
+        'cancel_note',
     ];
 
-    protected $dates = ['date', 'printed_at', 'confirmed_at'];
+    protected $dates = ['date', 'printed_at', 'confirmed_at', 'cancelled_at'];
 
     public function printLogs()
     {
         return $this->hasMany(PrintLog::class);
     }
-
 
     public function confirmedBy()
     {
@@ -44,7 +52,7 @@ class TransferRequest extends BaseModel
 
     public function toWarehouse()
     {
-        return $this->belongsTo(Warehouse::class, 'to_warehouse_id');
+        return $this->belongsTo(Warehouse::class, 'to_warehouse_id')->withoutGlobalScopes();
     }
 
     public function items()
@@ -59,7 +67,7 @@ class TransferRequest extends BaseModel
 
     public function fromWarehouse()
     {
-        return $this->belongsTo(Warehouse::class, 'from_warehouse_id');
+        return $this->belongsTo(Warehouse::class, 'from_warehouse_id')->withoutGlobalScopes();
     }
 
     public function creator()

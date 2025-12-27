@@ -42,7 +42,6 @@ class MutationController extends Controller
         return $dataTable->render('mutation::index', compact('warehouses'));
     }
 
-
     public function create()
     {
         abort_if(Gate::denies('create_mutations'), 403);
@@ -77,14 +76,13 @@ class MutationController extends Controller
             'quantities.*'  => 'required|integer|min:1',
             'mutation_type' => 'required|in:Out,In,Transfer',
 
-            // ini biasanya ada di form kamu:
             'warehouse_out_id' => 'nullable|integer',
             'warehouse_in_id'  => 'nullable|integer',
         ]);
 
         DB::transaction(function () use ($request) {
 
-            $active = session('active_branch'); // 'all' atau branch_id
+            $active = session('active_branch');
 
             if ($request->mutation_type === 'Out') {
 
@@ -183,20 +181,10 @@ class MutationController extends Controller
         return view('mutation::edit', compact('mutation'));
     }
 
-    /**
-     * NOTE:
-     * update() manual mutation ini di code lama kamu punya relasi "adjustedProducts" dll,
-     * tapi secara konsep Mutations itu log kartu stok, bukan header-detail seperti Adjustment.
-     *
-     * Aku BIARIN dulu (nggak aku refactor), supaya nggak bikin efek samping modul lain.
-     * Nanti kalau kamu mau beresin, kita rapihin sekalian.
-     */
     public function update(Request $request, Mutation $mutation)
     {
         abort_if(Gate::denies('edit_mutations'), 403);
 
-        // ⚠️ Aku tidak ubah logic lama kamu di update() biar aman.
-        // Kalau kamu mau, kita refactor update() juga supaya pakai rollbackByReference + applyInOut.
         $request->validate([
             'reference'   => 'required|string|max:255',
             'date'        => 'required|date',
@@ -214,10 +202,8 @@ class MutationController extends Controller
     }
 
     /**
-     * INTERNAL: dipakai modul lain (Adjustment, Sale, Purchase, Transfer)
+     * PUBLIC: dipakai modul lain (Adjustment, Sale, Purchase, Transfer)
      * Bikin 1 mutation (In/Out) lalu update Stock table.
-     *
-     * @param string $mutationType 'In'|'Out'
      */
     public function applyInOut(
         int $branchId,
@@ -230,6 +216,62 @@ class MutationController extends Controller
         string $date
     ): void
     {
+        $this->applyInOutInternal(
+            $branchId,
+            $warehouseId,
+            $productId,
+            $mutationType,
+            $qty,
+            $reference,
+            $note,
+            $date
+        );
+    }
+
+    /**
+     * NEW: sama seperti applyInOut(), tapi mengembalikan ID mutation yang dibuat.
+     * Ini dibutuhkan untuk kasus "damaged" agar bisa disimpan ke product_damaged_items.mutation_in_id/mutation_out_id.
+     */
+    public function applyInOutAndGetMutationId(
+        int $branchId,
+        int $warehouseId,
+        int $productId,
+        string $mutationType,
+        int $qty,
+        string $reference,
+        string $note,
+        string $date
+    ): int
+    {
+        $mutation = $this->applyInOutInternal(
+            $branchId,
+            $warehouseId,
+            $productId,
+            $mutationType,
+            $qty,
+            $reference,
+            $note,
+            $date
+        );
+
+        return (int) $mutation->id;
+    }
+
+    /**
+     * INTERNAL CORE: melakukan lock stock, hitung early/last, create mutation, update stock.
+     * Return Mutation model supaya bisa dipakai dua versi method di atas.
+     */
+    private function applyInOutInternal(
+        int $branchId,
+        int $warehouseId,
+        int $productId,
+        string $mutationType,
+        int $qty,
+        string $reference,
+        string $note,
+        string $date
+    ): Mutation
+    {
         if (!in_array($mutationType, ['In', 'Out'], true)) {
             throw new \RuntimeException("Invalid mutationType: {$mutationType}");
         }
@@ -237,7 +279,6 @@ class MutationController extends Controller
             throw new \RuntimeException("Qty must be > 0");
         }
 
-        // lock row stock dulu
         $stock = Stock::withoutGlobalScopes()
             ->where('branch_id', $branchId)
             ->where('warehouse_id', $warehouseId)
@@ -276,14 +317,13 @@ class MutationController extends Controller
             throw new \RuntimeException("Stock minus tidak diizinkan. Product {$productId}, current {$early}, out {$qty}.");
         }
 
-        // create mutation log
-        Mutation::create([
+        $mutation = Mutation::create([
             'branch_id'     => $branchId,
             'warehouse_id'  => $warehouseId,
             'product_id'    => $productId,
             'reference'     => $reference,
             'date'          => $date,
-            'mutation_type' => $mutationType, // In/Out
+            'mutation_type' => $mutationType,
             'note'          => $note,
             'stock_early'   => $early,
             'stock_in'      => $in,
@@ -291,18 +331,14 @@ class MutationController extends Controller
             'stock_last'    => $last,
         ]);
 
-        // update stock current
         $stock->update([
             'qty_available' => $last,
             'updated_by'    => auth()->id(),
         ]);
+
+        return $mutation;
     }
 
-    /**
-     * INTERNAL: Transfer = 2 mutation log (Out dan In) + update stocks dua gudang.
-     * Untuk konsistensi UI, mutation_type diset "Transfer" (bukan In/Out),
-     * tapi stock_in/out tetap sesuai.
-     */
     public function applyTransfer(
         int $warehouseOutId,
         int $warehouseInId,
@@ -320,7 +356,6 @@ class MutationController extends Controller
         $warehouseOut = Warehouse::findOrFail($warehouseOutId);
         $warehouseIn  = Warehouse::findOrFail($warehouseInId);
 
-        // ===== OUT (Transfer) =====
         $this->applyTransferOneSide(
             (int) $warehouseOut->branch_id,
             (int) $warehouseOut->id,
@@ -332,7 +367,6 @@ class MutationController extends Controller
             $date
         );
 
-        // ===== IN (Transfer) =====
         $this->applyTransferOneSide(
             (int) $warehouseIn->branch_id,
             (int) $warehouseIn->id,
@@ -345,10 +379,6 @@ class MutationController extends Controller
         );
     }
 
-    /**
-     * Helper internal untuk transfer: bikin 1 row mutation_type="Transfer" dan update stock.
-     * @param string $direction 'In'|'Out'
-     */
     private function applyTransferOneSide(
         int $branchId,
         int $warehouseId,
@@ -422,10 +452,6 @@ class MutationController extends Controller
         ]);
     }
 
-    /**
-     * INTERNAL: rollback mutation berdasarkan reference (misal ADJ-xxxx).
-     * notePrefix dipakai buat filter biar aman (misal 'Adjustment', 'Transfer', dll).
-     */
     public function rollbackByReference(string $reference, string $notePrefix = ''): void
     {
         $mutations = Mutation::withoutGlobalScopes()

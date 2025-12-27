@@ -64,9 +64,14 @@
                             </div>
 
                             <div class="form-group mt-3">
-                                <label for="delivery_proof">Upload Signed Delivery Proof (Surat Jalan) <span class="text-danger">*</span></label>
-                                <input type="file" name="delivery_proof" class="form-control" accept="image/*,.pdf" required>
-                                @error('delivery_proof')
+                                <label for="delivery_code">Delivery Code (from Surat Jalan) <span class="text-danger">*</span></label>
+                                <input type="text"
+                                    name="delivery_code"
+                                    class="form-control"
+                                    maxlength="6"
+                                    required
+                                    placeholder="Contoh: A1B2C3">
+                                @error('delivery_code')
                                     <div class="text-danger">{{ $message }}</div>
                                 @enderror
                             </div>
