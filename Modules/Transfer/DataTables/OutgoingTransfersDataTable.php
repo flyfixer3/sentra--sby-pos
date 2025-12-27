@@ -20,7 +20,9 @@ class OutgoingTransfersDataTable extends DataTable
         return datatables()
             ->eloquent($query)
             ->with(['fromWarehouse', 'toBranch'])
-            ->addColumn('from_warehouse', fn ($row) => optional($row->fromWarehouse)->name ?? '-')
+            ->addColumn('from_warehouse', function ($row) {
+                return optional($row->fromWarehouse)->warehouse_name ?? '-';
+            })
             ->addColumn('to_branch', fn ($row) => optional($row->toBranch)->name ?? '-')
             ->addColumn('status_badge', function ($row) {
                 $status = $row->status ?? 'pending';
@@ -41,50 +43,43 @@ class OutgoingTransfersDataTable extends DataTable
     /** Outgoing = record milik cabang aktif (sender). */
     public function query(Transfer $model)
     {
-        $active = $this->activeBranchId();
+        $active = session('active_branch'); // 'all' / int
         $table  = $model->getTable();
 
-        return $model->newQuery()
+        $q = $model->newQuery()
             ->with(['fromWarehouse','toBranch'])
-            ->when(\Illuminate\Support\Facades\Schema::hasColumn($table, 'branch_id'), function ($q) use ($table, $active) {
-                $q->where($table.'.branch_id', $active);
-            })
             ->orderByDesc($table.'.created_at');
-    }
 
+        if ($active === 'all') {
+            $q->withoutGlobalScopes();
+        } else {
+            $q->where($table.'.branch_id', (int) $active);
+        }
+
+        // ✅ status filter (skip kalau kosong / all)
+        $status = request('status');
+        if ($status && $status !== 'all') {
+            $q->where($table.'.status', $status);
+        }
+
+        return $q;
+    }
     public function html()
     {
         return $this->builder()
             ->setTableId('outgoing-transfers-table')
             ->columns($this->getColumns())
-            ->ajax(['url'=>route('transfers.datatable.outgoing'),'type'=>'GET'])
+            ->ajax([
+                'url'  => route('transfers.datatable.outgoing'),
+                'type' => 'GET',
+                'data' => 'function(d){ d.status = $("#filter_status_outgoing").val(); }',
+            ])
             ->dom('Bfrtip')
             ->orderBy(5,'desc')
-            ->buttons([Button::make('excel'), Button::make('print'), Button::make('reset'), Button::make('reload')])
-            ->parameters([
-                'processing'  => true,
-                'serverSide'  => true,
-                'responsive'  => true,
-                'autoWidth'   => false,
-                'pageLength'  => 10,
-                'lengthMenu'  => [10, 25, 50, 100],
-                'language'    => [
-                    'emptyTable'   => 'Tidak ada data transfer yang dapat ditampilkan.',
-                    'zeroRecords'  => 'Data tidak ditemukan.',
-                    'info'         => 'Menampilkan _START_ sampai _END_ dari _TOTAL_ data',
-                    'infoEmpty'    => 'Menampilkan 0 data',
-                    'infoFiltered' => '(difilter dari total _MAX_ data)',
-                    'lengthMenu'   => 'Tampilkan _MENU_ data',
-                    'search'       => 'Cari:',
-                    'paginate'     => [
-                        'first'    => 'Pertama',
-                        'last'     => 'Terakhir',
-                        'next'     => 'Berikutnya',
-                        'previous' => 'Sebelumnya',
-                    ],
-                ],
-            ]);
+            ->buttons([Button::make('excel'), Button::make('print'), Button::make('reset'), Button::make('reload')]);
     }
+
+
 
     protected function getColumns()
     {

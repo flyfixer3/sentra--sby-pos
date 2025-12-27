@@ -14,25 +14,136 @@ class MutationsDataTable extends DataTable
     {
         return datatables()
             ->eloquent($query)
-            // ✅ bikin kolom aman walau relasi null
             ->addColumn('warehouse_name', function ($row) {
                 return optional($row->warehouse)->warehouse_name ?? '-';
             })
             ->addColumn('product_code', function ($row) {
                 return optional($row->product)->product_code ?? '-';
             })
-            ->addColumn('action', function ($data) {
-                return view('mutation::partials.actions', compact('data'));
+            ->addColumn('product_name', function ($row) {
+                return optional($row->product)->product_name ?? '-';
+            })
+
+            // ✅ FORMAT NOTE: jadi Item note #1, #2, dst
+            ->editColumn('note', function ($row) {
+                $note = trim((string) ($row->note ?? ''));
+                if ($note === '') return '-';
+
+                // Normalisasi separator biar gampang diproses
+                // Kita treat: " | " sebagai pemisah segmen
+                $parts = preg_split('/\s*\|\s*/', $note);
+
+                $headerParts = [];
+                $items = [];
+
+                foreach ($parts as $p) {
+                    $p = trim($p);
+                    if ($p === '') continue;
+
+                    // Deteksi item: "Item: xxx" (case-insensitive)
+                    if (preg_match('/^item\s*:\s*(.+)$/i', $p, $m)) {
+                        $items[] = trim($m[1]);
+                    } else {
+                        $headerParts[] = $p;
+                    }
+                }
+
+                $html = '';
+
+                // header tetap ditampilkan (kalau ada)
+                if (!empty($headerParts)) {
+                    $html .= '<div class="text-muted small mb-1">' . e(implode(' | ', $headerParts)) . '</div>';
+                }
+
+                // kalau ada item -> tampilkan bernomor
+                if (!empty($items)) {
+                    $html .= '<ol class="mb-0 ps-3">';
+                    foreach ($items as $i => $it) {
+                        $num = $i + 1;
+                        $html .= '<li><span class="fw-semibold">Item note #' . $num . ':</span> ' . e($it) . '</li>';
+                    }
+                    $html .= '</ol>';
+                    return $html;
+                }
+
+                // fallback kalau ga ada "Item:" sama sekali
+                return e($note);
+            })
+
+            ->editColumn('date', function ($row) {
+                return $row->date ? Carbon::parse($row->date)->format('d-m-Y') : '-';
             })
             ->editColumn('created_at', function ($row) {
-                return Carbon::parse($row->created_at)->format('d-m-Y H:i:s');
-            });
+                return $row->created_at ? Carbon::parse($row->created_at)->format('d-m-Y H:i:s') : '-';
+            })
+            // ✅ karena note sekarang HTML (ol/li)
+            ->rawColumns(['note']);
     }
 
     public function query(Mutation $model)
     {
-        // ✅ eager load tetap di sini
-        return $model->newQuery()->with(['product', 'warehouse']);
+        $active = session('active_branch');
+        $table  = $model->getTable();
+
+        // base query + eager load
+        $q = $model->newQuery()
+            ->with(['product', 'warehouse'])
+            ->orderByDesc($table.'.id');
+
+        // kalau active_branch = 'all' => jangan pakai global scope branch
+        if ($active === 'all') {
+            $q->withoutGlobalScopes();
+        }
+
+        /**
+         * ===== FILTERS (dibaca dari request Ajax DataTables) =====
+         * - car (keyword mobil)
+         * - warehouse_id
+         * - mutation_type
+         * - reference
+         * - date_from, date_to
+         */
+
+        if (request()->filled('warehouse_id')) {
+            $q->where($table.'.warehouse_id', (int) request('warehouse_id'));
+        }
+
+        if (request()->filled('mutation_type')) {
+            $type = request('mutation_type');
+            if (in_array($type, ['In','Out','Transfer'], true)) {
+                $q->where($table.'.mutation_type', $type);
+            }
+        }
+
+        if (request()->filled('reference')) {
+            $ref = trim((string) request('reference'));
+            $q->where($table.'.reference', 'like', "%{$ref}%");
+        }
+
+        // date range pakai kolom mutations.date (karena ada di tabel)
+        if (request()->filled('date_from')) {
+            $from = Carbon::parse(request('date_from'))->toDateString();
+            $q->whereDate($table.'.date', '>=', $from);
+        }
+
+        if (request()->filled('date_to')) {
+            $to = Carbon::parse(request('date_to'))->toDateString();
+            $q->whereDate($table.'.date', '<=', $to);
+        }
+
+        // filter "mobil" => cari di product_code / product_name
+        if (request()->filled('car')) {
+            $car = trim((string) request('car'));
+
+            $q->whereHas('product', function ($p) use ($car) {
+                $p->where(function ($x) use ($car) {
+                    $x->where('product_code', 'like', "%{$car}%")
+                      ->orWhere('product_name', 'like', "%{$car}%");
+                });
+            });
+        }
+
+        return $q;
     }
 
     public function html()
@@ -44,7 +155,7 @@ class MutationsDataTable extends DataTable
             ->dom("<'row'<'col-md-3'l><'col-md-5 mb-2'B><'col-md-4'f>> .
                   'tr' .
                   <'row'<'col-md-5'i><'col-md-7 mt-2'p>>")
-            ->orderBy(2)
+            ->orderBy(10, 'desc') // created_at index kolom terakhir (cek getColumns)
             ->buttons(
                 Button::make('excel')->text('<i class="bi bi-file-earmark-excel-fill"></i> Excel'),
                 Button::make('print')->text('<i class="bi bi-printer-fill"></i> Print'),
@@ -56,30 +167,21 @@ class MutationsDataTable extends DataTable
     protected function getColumns()
     {
         return [
-            // ✅ ganti dari warehouse.warehouse_name -> warehouse_name
-            Column::make('warehouse_name')
-                ->title('Warehouse')
-                ->className('text-center align-middle'),
-
-            // ✅ ganti dari product.product_code -> product_code
-            Column::make('product_code')
-                ->title('Product Code')
-                ->className('text-center align-middle'),
+            Column::make('warehouse_name')->title('Warehouse')->orderable(false)->searchable(false)->className('text-center align-middle'),
+            Column::make('product_code')->title('Code')->orderable(false)->searchable(false)->className('text-center align-middle'),
+            Column::make('product_name')->title('Product / Mobil')->orderable(false)->searchable(false)->className('text-start align-middle'),
 
             Column::make('mutation_type')->className('text-center align-middle'),
             Column::make('reference')->className('text-center align-middle'),
-            Column::make('note')->className('text-center align-middle'),
+            Column::make('note')->className('text-start align-middle'),
+
             Column::make('stock_early')->className('text-center align-middle'),
             Column::make('stock_in')->className('text-center align-middle'),
             Column::make('stock_out')->className('text-center align-middle'),
             Column::make('stock_last')->className('text-center align-middle'),
 
-            Column::make('created_at')->visible(true),
-
-            Column::computed('action')
-                ->exportable(false)
-                ->printable(false)
-                ->className('text-center align-middle'),
+            Column::make('date')->title('Date')->className('text-center align-middle'),
+            Column::make('created_at')->title('Created At')->className('text-center align-middle'),
         ];
     }
 

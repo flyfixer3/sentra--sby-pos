@@ -59,7 +59,7 @@
                                     class="form-control @error('password') is-invalid @enderror"
                                     placeholder="Password" name="password">
                                 <div class="input-group-append">
-                                    <button type="button" class="btn btn-outline-secondary" 
+                                    <button type="button" class="btn btn-outline-secondary"
                                             onclick="togglePassword()">
                                         <i id="toggleIcon" class="bi bi-eye"></i>
                                     </button>
@@ -103,7 +103,7 @@
     function togglePassword() {
         var passwordField = document.getElementById("password");
         var toggleIcon = document.getElementById("toggleIcon");
-        
+
         if (passwordField.type === "password") {
             passwordField.type = "text";
             toggleIcon.classList.remove("bi-eye");
@@ -115,6 +115,7 @@
         }
     }
 </script>
+@include('includes.snowfall')
 
 </body>
 </html>

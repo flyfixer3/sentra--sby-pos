@@ -3,9 +3,9 @@
 namespace Modules\User\Database\Seeders;
 
 use Illuminate\Database\Seeder;
-use Illuminate\Database\Eloquent\Model;
 use Spatie\Permission\Models\Permission;
 use Spatie\Permission\Models\Role;
+use Spatie\Permission\PermissionRegistrar;
 
 class PermissionsTableSeeder extends Seeder
 {
@@ -16,122 +16,162 @@ class PermissionsTableSeeder extends Seeder
      */
     public function run()
     {
+        // IMPORTANT: clear cache supaya permission baru kebaca
+        app(PermissionRegistrar::class)->forgetCachedPermissions();
+
         $permissions = [
             //User Mangement
             'edit_own_profile',
             'access_user_management',
+
             //Dashboard
             'show_total_stats',
             'show_month_overview',
             'show_weekly_sales_purchases',
             'show_monthly_cashflow',
             'show_notifications',
+
             //Products
             'access_products',
             'create_products',
             'show_products',
             'edit_products',
             'delete_products',
+
             //Product Categories
             'access_product_categories',
+
             //Barcode Printing
             'print_barcodes',
+
             //Adjustments
             'access_adjustments',
             'create_adjustments',
             'show_adjustments',
             'edit_adjustments',
             'delete_adjustments',
+
             //Quotaions
             'access_quotations',
             'create_quotations',
             'show_quotations',
             'edit_quotations',
             'delete_quotations',
+
             //Create Sale From Quotation
             'create_quotation_sales',
+
             //Send Quotation On Email
             'send_quotation_mails',
+
             //Expenses
             'access_expenses',
             'create_expenses',
             'edit_expenses',
             'delete_expenses',
+
             //Expense Categories
             'access_expense_categories',
+
             //Customers
             'access_customers',
             'create_customers',
             'show_customers',
             'edit_customers',
             'delete_customers',
+
             //Branches
             'access_branches',
             'create_branches',
             'edit_branches',
             'delete_branches',
+
             //Suppliers
             'access_suppliers',
             'create_suppliers',
             'show_suppliers',
             'edit_suppliers',
             'delete_suppliers',
+
             //Sales
             'access_sales',
             'create_sales',
             'show_sales',
             'edit_sales',
             'delete_sales',
+
             //POS Sale
             'create_pos_sales',
+
             //Sale Payments
             'access_sale_payments',
+
             //Sale Returns
             'access_sale_returns',
             'create_sale_returns',
             'show_sale_returns',
             'edit_sale_returns',
             'delete_sale_returns',
+
             //Sale Return Payments
             'access_sale_return_payments',
+
             //Purchases
             'access_purchases',
             'create_purchases',
             'show_purchases',
             'edit_purchases',
             'delete_purchases',
+
             //Purchase Payments
             'access_purchase_payments',
+
             //Purchase Returns
             'access_purchase_returns',
             'create_purchase_returns',
             'show_purchase_returns',
             'edit_purchase_returns',
             'delete_purchase_returns',
+
             //Purchase Return Payments
             'access_purchase_return_payments',
+
             //Reports
             'access_reports',
+
             //Currencies
             'access_currencies',
             'create_currencies',
             'edit_currencies',
             'delete_currencies',
+
             //Settings
-            'access_settings'
+            'access_settings',
+
+            // ✅ TRANSFER (tambahkan permission baru kamu di sini)
+            'cancel_transfers',
         ];
 
         foreach ($permissions as $permission) {
-            Permission::create([
-                'name' => $permission
+            Permission::firstOrCreate([
+                'name' => $permission,
+                'guard_name' => 'web',
             ]);
         }
 
-        $role = Role::create([
-            'name' => 'Admin'
+        // Pastikan role Admin ada
+        $role = Role::firstOrCreate([
+            'name' => 'Admin',
+            'guard_name' => 'web',
         ]);
 
-        $role->givePermissionTo($permissions);
+        // Beri semua permission ke Admin (pola kamu)
+        $role->syncPermissions($permissions);
+
+        // Tetap revoke ini sesuai pola kamu
         $role->revokePermissionTo('access_user_management');
+
+        // Clear cache lagi biar aman
+        app(PermissionRegistrar::class)->forgetCachedPermissions();
     }
 }

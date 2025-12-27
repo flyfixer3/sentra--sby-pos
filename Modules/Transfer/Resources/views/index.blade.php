@@ -28,12 +28,25 @@
         </div>
 
         <div class="card-body">
-            {{-- OUTGOING --}}
+            {{-- ================= OUTGOING ================= --}}
             <div class="{{ ($activeTab ?? 'outgoing') === 'outgoing' ? '' : 'd-none' }}">
-                <div class="d-flex align-items-center mb-3">
+                <div class="d-flex flex-wrap align-items-center justify-content-between mb-3">
                     <a href="{{ route('transfers.create') }}" class="btn btn-primary btn-sm">
                         <i class="bi bi-plus"></i> Add Transfer
                     </a>
+
+                    <div class="d-flex align-items-center gap-2 mt-2 mt-md-0">
+                        <div>
+                            <label class="small text-muted mb-1 d-block">Filter Status</label>
+                            <select id="filter_status_outgoing" class="form-control form-control-sm">
+                                <option value="">-- All Status --</option>
+                                <option value="pending">PENDING</option>
+                                <option value="shipped">SHIPPED</option>
+                                <option value="confirmed">CONFIRMED</option>
+                                <option value="cancelled">CANCELLED</option>
+                            </select>
+                        </div>
+                    </div>
                 </div>
 
                 {{-- Empty State Outgoing --}}
@@ -50,8 +63,23 @@
                 {!! $outgoingTable->table(['class' => 'table table-striped table-bordered w-100'], true) !!}
             </div>
 
-            {{-- INCOMING --}}
+            {{-- ================= INCOMING ================= --}}
             <div class="{{ ($activeTab ?? 'outgoing') === 'incoming' ? '' : 'd-none' }}">
+                <div class="d-flex flex-wrap align-items-center justify-content-end mb-3">
+                    <div class="d-flex align-items-center gap-2">
+                        <div>
+                            <label class="small text-muted mb-1 d-block">Filter Status</label>
+                            <select id="filter_status_incoming" class="form-control form-control-sm">
+                                <option value="">-- All Status --</option>
+                                <option value="pending">PENDING</option>
+                                <option value="shipped">SHIPPED</option>
+                                <option value="confirmed">CONFIRMED</option>
+                                <option value="cancelled">CANCELLED</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+
                 {{-- Empty State Incoming --}}
                 <div id="empty-incoming" class="alert alert-warning d-none">
                     <div class="d-flex align-items-center">
@@ -89,26 +117,15 @@
 {!! $incomingTable->scripts() !!}
 
 <script>
-    console.log('[Transfers] init DataTables...');
+document.addEventListener("DOMContentLoaded", function () {
+  $('#filter_status_outgoing').on('change', function () {
+    window.LaravelDataTables['outgoing-transfers-table'].ajax.reload();
+  });
 
-    (function () {
-        function bindEmptyState(tableKey, emptyElId) {
-            var dt = window.LaravelDataTables && window.LaravelDataTables[tableKey];
-            var emptyEl = document.getElementById(emptyElId);
-            if (!dt || !emptyEl) return;
-
-            dt.on('draw', function () {
-                var info = dt.page && dt.page.info ? dt.page.info() : null;
-                var isEmpty = info ? info.recordsDisplay === 0 : false;
-                emptyEl.classList.toggle('d-none', !isEmpty);
-            });
-
-            // Trigger awal
-            setTimeout(function(){ dt.draw(false); }, 0);
-        }
-
-        bindEmptyState('outgoing-transfers-table', 'empty-outgoing');
-        bindEmptyState('incoming-transfers-table', 'empty-incoming');
-    })();
+  $('#filter_status_incoming').on('change', function () {
+    window.LaravelDataTables['incoming-transfers-table'].ajax.reload();
+  });
+});
 </script>
+
 @endsection

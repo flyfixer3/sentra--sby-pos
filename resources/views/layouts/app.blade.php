@@ -32,6 +32,7 @@
         @include('layouts.footer')
     </div>
 
+    @include('includes.snowfall')
     @include('includes.main-js')
 </body>
 </html>

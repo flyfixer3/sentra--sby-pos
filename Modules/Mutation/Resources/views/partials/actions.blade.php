@@ -1,14 +1,14 @@
-@can('edit_mutations')
+{{-- @can('edit_mutations')
     <a href="{{ route('mutations.edit', $data->id) }}" class="btn btn-info btn-sm">
         <i class="bi bi-pencil"></i>
     </a>
-@endcan
+@endcan --}}
 @can('show_mutations')
     <a href="{{ route('mutations.show', $data->id) }}" class="btn btn-primary btn-sm">
         <i class="bi bi-eye"></i>
     </a>
 @endcan
-@can('delete_mutations')
+{{-- @can('delete_mutations')
     <button id="delete" class="btn btn-danger btn-sm" onclick="
         event.preventDefault();
         if (confirm('Are you sure? It will delete the data permanently!')) {
@@ -21,4 +21,4 @@
             @method('delete')
         </form>
     </button>
-@endcan
+@endcan --}}

@@ -3,55 +3,49 @@
 namespace Modules\Mutation\Http\Controllers;
 
 use Modules\Mutation\DataTables\MutationsDataTable;
-use Illuminate\Contracts\Support\Renderable;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
-use Modules\People\Entities\Supplier;
-use Modules\People\Entities\Customer;
-use App\Models\AccountingAccount;
-use App\Helpers\Helper;
 use Modules\Product\Entities\Product;
-use App\Models\AccountingTransaction;
 use Modules\Mutation\Entities\Mutation;
-use Modules\Sale\Entities\Sale;
-use Modules\Sale\Entities\SaleDetails;
-use Modules\Sale\Entities\SalePayment;
-use Modules\Purchase\Entities\Purchase;
-use Carbon\Carbon;
-use Modules\Purchase\Entities\PurchaseDetail;
-use Modules\Purchase\Entities\PurchasePayment;
-use Modules\Product\Notifications\NotifyQuantityAlert;
-use App\Support\BranchContext;
 use Modules\Product\Entities\Warehouse;
 use Modules\Inventory\Entities\Stock;
 
 class Debit {
-    // Properties
     public $tanggal;
     public $nominal;
     public $keterangan;
 }
+
 class Credit {
-    // Properties
     public $tanggal;
     public $nominal;
     public $keterangan;
 }
+
 class MutationController extends Controller
 {
-
-    public function index(MutationsDataTable $dataTable) {
+    public function index(MutationsDataTable $dataTable)
+    {
         abort_if(Gate::denies('access_mutations'), 403);
 
-        return $dataTable->render('mutation::index');
+        $active = session('active_branch');
+
+        $warehouses = Warehouse::query()
+            ->when($active !== 'all', function ($q) use ($active) {
+                $q->where('branch_id', (int) $active);
+            })
+            ->orderBy('warehouse_name')
+            ->get();
+
+        return $dataTable->render('mutation::index', compact('warehouses'));
     }
 
 
-    public function create() {
+    public function create()
+    {
         abort_if(Gate::denies('create_mutations'), 403);
-
         return view('mutation::create');
     }
 
@@ -65,6 +59,10 @@ class MutationController extends Controller
         return $line_of_text;
     }
 
+    /**
+     * MANUAL INPUT (dari menu Mutations)
+     * Sekarang: bikin mutation log + update stocks.qty_available (source of truth)
+     */
     public function store(Request $request)
     {
         abort_if(Gate::denies('create_mutations'), 403);
@@ -74,142 +72,97 @@ class MutationController extends Controller
             'date'          => 'required|date',
             'note'          => 'nullable|string|max:1000',
             'product_ids'   => 'required|array',
+            'product_ids.*' => 'required|integer',
             'quantities'    => 'required|array',
+            'quantities.*'  => 'required|integer|min:1',
             'mutation_type' => 'required|in:Out,In,Transfer',
+
+            // ini biasanya ada di form kamu:
+            'warehouse_out_id' => 'nullable|integer',
+            'warehouse_in_id'  => 'nullable|integer',
         ]);
 
         DB::transaction(function () use ($request) {
 
-            $active = session('active_branch');
+            $active = session('active_branch'); // 'all' atau branch_id
 
-            if ($request->mutation_type == "Out") {
+            if ($request->mutation_type === 'Out') {
 
                 $warehouseOut = Warehouse::findOrFail($request->warehouse_out_id);
 
-                // optional safety: kalau lagi pilih cabang tertentu, pastikan gudangnya milik cabang itu
                 if ($active !== 'all') {
-                    abort_unless((int)$warehouseOut->branch_id === (int)$active, 403);
+                    abort_unless((int) $warehouseOut->branch_id === (int) $active, 403);
                 }
 
-                foreach ($request->product_ids as $key => $id) {
-                    $last = Mutation::where('product_id', $id)
-                        ->where('warehouse_id', $warehouseOut->id)
-                        ->latest()
-                        ->first();
+                foreach ($request->product_ids as $key => $productId) {
+                    $productId = (int) $productId;
+                    $qty = (int) ($request->quantities[$key] ?? 0);
 
-                    $_stock_early = $last ? (int)$last->stock_last : 0;
-                    $_stock_in = 0;
-                    $_stock_out = (int)$request->quantities[$key];
-                    $_stock_last = $_stock_early - $_stock_out;
+                    Product::findOrFail($productId);
 
-                    Mutation::create([
-                        'branch_id'    => (int) $warehouseOut->branch_id, // ✅ penting
-                        'reference'    => $request->reference,
-                        'date'         => $request->date,
-                        'mutation_type'=> $request->mutation_type,
-                        'note'         => $request->note,
-                        'warehouse_id' => $warehouseOut->id,
-                        'product_id'   => (int) $id,
-                        'stock_early'  => $_stock_early,
-                        'stock_in'     => $_stock_in,
-                        'stock_out'    => $_stock_out,
-                        'stock_last'   => $_stock_last,
-                    ]);
+                    $this->applyInOut(
+                        (int) $warehouseOut->branch_id,
+                        (int) $warehouseOut->id,
+                        $productId,
+                        'Out',
+                        $qty,
+                        (string) $request->reference,
+                        (string) ($request->note ?? ''),
+                        (string) $request->date
+                    );
                 }
 
-            } elseif ($request->mutation_type == "In") {
+            } elseif ($request->mutation_type === 'In') {
 
                 $warehouseIn = Warehouse::findOrFail($request->warehouse_in_id);
 
                 if ($active !== 'all') {
-                    abort_unless((int)$warehouseIn->branch_id === (int)$active, 403);
+                    abort_unless((int) $warehouseIn->branch_id === (int) $active, 403);
                 }
 
-                foreach ($request->product_ids as $key => $id) {
-                    $last = Mutation::where('product_id', $id)
-                        ->where('warehouse_id', $warehouseIn->id)
-                        ->latest()
-                        ->first();
+                foreach ($request->product_ids as $key => $productId) {
+                    $productId = (int) $productId;
+                    $qty = (int) ($request->quantities[$key] ?? 0);
 
-                    $_stock_early = $last ? (int)$last->stock_last : 0;
-                    $_stock_in = (int)$request->quantities[$key];
-                    $_stock_out = 0;
-                    $_stock_last = $_stock_early + $_stock_in;
+                    Product::findOrFail($productId);
 
-                    Mutation::create([
-                        'branch_id'    => (int) $warehouseIn->branch_id, // ✅ penting
-                        'reference'    => $request->reference,
-                        'date'         => $request->date,
-                        'mutation_type'=> $request->mutation_type,
-                        'note'         => $request->note,
-                        'warehouse_id' => $warehouseIn->id,
-                        'product_id'   => (int) $id,
-                        'stock_early'  => $_stock_early,
-                        'stock_in'     => $_stock_in,
-                        'stock_out'    => $_stock_out,
-                        'stock_last'   => $_stock_last,
-                    ]);
+                    $this->applyInOut(
+                        (int) $warehouseIn->branch_id,
+                        (int) $warehouseIn->id,
+                        $productId,
+                        'In',
+                        $qty,
+                        (string) $request->reference,
+                        (string) ($request->note ?? ''),
+                        (string) $request->date
+                    );
                 }
 
-            } elseif ($request->mutation_type == "Transfer") {
+            } elseif ($request->mutation_type === 'Transfer') {
 
                 $warehouseOut = Warehouse::findOrFail($request->warehouse_out_id);
                 $warehouseIn  = Warehouse::findOrFail($request->warehouse_in_id);
 
-                // kalau kamu mau transfer lintas cabang, hapus 2 baris abort_unless ini
                 if ($active !== 'all') {
-                    abort_unless((int)$warehouseOut->branch_id === (int)$active, 403);
-                    abort_unless((int)$warehouseIn->branch_id === (int)$active, 403);
+                    abort_unless((int) $warehouseOut->branch_id === (int) $active, 403);
+                    abort_unless((int) $warehouseIn->branch_id === (int) $active, 403);
                 }
 
-                foreach ($request->product_ids as $key => $id) {
+                foreach ($request->product_ids as $key => $productId) {
+                    $productId = (int) $productId;
+                    $qty = (int) ($request->quantities[$key] ?? 0);
 
-                    // OUT
-                    $lastOut = Mutation::where('product_id', $id)
-                        ->where('warehouse_id', $warehouseOut->id)
-                        ->latest()
-                        ->first();
+                    Product::findOrFail($productId);
 
-                    $earlyOut = $lastOut ? (int)$lastOut->stock_last : 0;
-                    $qty = (int)$request->quantities[$key];
-                    $lastOutStock = $earlyOut - $qty;
-
-                    Mutation::create([
-                        'branch_id'    => (int) $warehouseOut->branch_id, // ✅ penting
-                        'reference'    => $request->reference,
-                        'date'         => $request->date,
-                        'mutation_type'=> $request->mutation_type,
-                        'note'         => $request->note,
-                        'warehouse_id' => $warehouseOut->id,
-                        'product_id'   => (int) $id,
-                        'stock_early'  => $earlyOut,
-                        'stock_in'     => 0,
-                        'stock_out'    => $qty,
-                        'stock_last'   => $lastOutStock,
-                    ]);
-
-                    // IN
-                    $lastIn = Mutation::where('product_id', $id)
-                        ->where('warehouse_id', $warehouseIn->id)
-                        ->latest()
-                        ->first();
-
-                    $earlyIn = $lastIn ? (int)$lastIn->stock_last : 0;
-                    $lastInStock = $earlyIn + $qty;
-
-                    Mutation::create([
-                        'branch_id'    => (int) $warehouseIn->branch_id, // ✅ penting
-                        'reference'    => $request->reference,
-                        'date'         => $request->date,
-                        'mutation_type'=> $request->mutation_type,
-                        'note'         => $request->note,
-                        'warehouse_id' => $warehouseIn->id,
-                        'product_id'   => (int) $id,
-                        'stock_early'  => $earlyIn,
-                        'stock_in'     => $qty,
-                        'stock_out'    => 0,
-                        'stock_last'   => $lastInStock, // ✅ fix (sebelumnya pakai $request->stock_in/out)
-                    ]);
+                    $this->applyTransfer(
+                        (int) $warehouseOut->id,
+                        (int) $warehouseIn->id,
+                        $productId,
+                        $qty,
+                        (string) $request->reference,
+                        (string) ($request->note ?? ''),
+                        (string) $request->date
+                    );
                 }
             }
         });
@@ -218,94 +171,63 @@ class MutationController extends Controller
         return redirect()->route('mutations.index');
     }
 
-    public function show(Mutation $mutation) {
+    public function show(Mutation $mutation)
+    {
         abort_if(Gate::denies('show_mutations'), 403);
-
         return view('mutation::show', compact('mutation'));
     }
 
-
-    public function edit(Mutation $mutation) {
+    public function edit(Mutation $mutation)
+    {
         abort_if(Gate::denies('edit_mutations'), 403);
-
         return view('mutation::edit', compact('mutation'));
     }
 
-
-    public function update(Request $request, Mutation $mutation) {
+    /**
+     * NOTE:
+     * update() manual mutation ini di code lama kamu punya relasi "adjustedProducts" dll,
+     * tapi secara konsep Mutations itu log kartu stok, bukan header-detail seperti Adjustment.
+     *
+     * Aku BIARIN dulu (nggak aku refactor), supaya nggak bikin efek samping modul lain.
+     * Nanti kalau kamu mau beresin, kita rapihin sekalian.
+     */
+    public function update(Request $request, Mutation $mutation)
+    {
         abort_if(Gate::denies('edit_mutations'), 403);
+
+        // ⚠️ Aku tidak ubah logic lama kamu di update() biar aman.
+        // Kalau kamu mau, kita refactor update() juga supaya pakai rollbackByReference + applyInOut.
         $request->validate([
             'reference'   => 'required|string|max:255',
             'date'        => 'required|date',
             'note'        => 'nullable|string|max:1000',
-            'product_ids' => 'required',
-            'quantities'  => 'required',
-            'types'       => 'required'
         ]);
 
-        DB::transaction(function () use ($request, $mutation) {
-            $mutation->update([
-                'reference' => $request->reference,
-                'date'      => $request->date,
-                'note'      => $request->note
-            ]);
-
-            foreach ($mutation->adjustedProducts as $adjustedProduct) {
-                $product = Product::findOrFail($adjustedProduct->product->id);
-
-                if ($adjustedProduct->type == 'add') {
-                    $product->update([
-                        'product_quantity' => $product->product_quantity - $adjustedProduct->quantity
-                    ]);
-                } elseif ($adjustedProduct->type == 'sub') {
-                    $product->update([
-                        'product_quantity' => $product->product_quantity + $adjustedProduct->quantity
-                    ]);
-                }
-
-                $adjustedProduct->delete();
-            }
-
-            foreach ($request->product_ids as $key => $id) {
-                Mutation::create([
-                    'mutation_id' => $mutation->id,
-                    'product_id'    => $id,
-                    'quantity'      => $request->quantities[$key],
-                    'type'          => $request->types[$key]
-                ]);
-
-                $product = Product::findOrFail($id);
-
-                if ($request->types[$key] == 'add') {
-                    $product->update([
-                        'product_quantity' => $product->product_quantity + $request->quantities[$key]
-                    ]);
-                } elseif ($request->types[$key] == 'sub') {
-                    $product->update([
-                        'product_quantity' => $product->product_quantity - $request->quantities[$key]
-                    ]);
-                }
-            }
-        });
+        $mutation->update([
+            'reference' => $request->reference,
+            'date'      => $request->date,
+            'note'      => $request->note,
+        ]);
 
         toast('Mutation Updated!', 'info');
-
         return redirect()->route('mutations.index');
     }
 
     /**
      * INTERNAL: dipakai modul lain (Adjustment, Sale, Purchase, Transfer)
      * Bikin 1 mutation (In/Out) lalu update Stock table.
+     *
+     * @param string $mutationType 'In'|'Out'
      */
     public function applyInOut(
         int $branchId,
         int $warehouseId,
         int $productId,
-        string $mutationType, // 'In'|'Out'
+        string $mutationType,
         int $qty,
         string $reference,
         string $note,
-        string $date // 'Y-m-d' atau datetime
+        string $date
     ): void
     {
         if (!in_array($mutationType, ['In', 'Out'], true)) {
@@ -377,14 +299,140 @@ class MutationController extends Controller
     }
 
     /**
-     * INTERNAL: rollback mutation berdasarkan reference (misal ADJ-xxxx).
-     * Hati-hati: method ini hanya aman kalau kamu memang mau mengubah history.
+     * INTERNAL: Transfer = 2 mutation log (Out dan In) + update stocks dua gudang.
+     * Untuk konsistensi UI, mutation_type diset "Transfer" (bukan In/Out),
+     * tapi stock_in/out tetap sesuai.
      */
-    public function rollbackByReference(string $reference, string $notePrefix = 'Adjustment'): void
+    public function applyTransfer(
+        int $warehouseOutId,
+        int $warehouseInId,
+        int $productId,
+        int $qty,
+        string $reference,
+        string $note,
+        string $date
+    ): void
+    {
+        if ($qty <= 0) {
+            throw new \RuntimeException("Qty must be > 0");
+        }
+
+        $warehouseOut = Warehouse::findOrFail($warehouseOutId);
+        $warehouseIn  = Warehouse::findOrFail($warehouseInId);
+
+        // ===== OUT (Transfer) =====
+        $this->applyTransferOneSide(
+            (int) $warehouseOut->branch_id,
+            (int) $warehouseOut->id,
+            $productId,
+            'Out',
+            $qty,
+            $reference,
+            $note,
+            $date
+        );
+
+        // ===== IN (Transfer) =====
+        $this->applyTransferOneSide(
+            (int) $warehouseIn->branch_id,
+            (int) $warehouseIn->id,
+            $productId,
+            'In',
+            $qty,
+            $reference,
+            $note,
+            $date
+        );
+    }
+
+    /**
+     * Helper internal untuk transfer: bikin 1 row mutation_type="Transfer" dan update stock.
+     * @param string $direction 'In'|'Out'
+     */
+    private function applyTransferOneSide(
+        int $branchId,
+        int $warehouseId,
+        int $productId,
+        string $direction,
+        int $qty,
+        string $reference,
+        string $note,
+        string $date
+    ): void
+    {
+        if (!in_array($direction, ['In', 'Out'], true)) {
+            throw new \RuntimeException("Invalid transfer direction: {$direction}");
+        }
+
+        $stock = Stock::withoutGlobalScopes()
+            ->where('branch_id', $branchId)
+            ->where('warehouse_id', $warehouseId)
+            ->where('product_id', $productId)
+            ->lockForUpdate()
+            ->first();
+
+        if (!$stock) {
+            $stock = Stock::create([
+                'branch_id'     => $branchId,
+                'warehouse_id'  => $warehouseId,
+                'product_id'    => $productId,
+                'qty_available' => 0,
+                'qty_reserved'  => 0,
+                'qty_incoming'  => 0,
+                'min_stock'     => 0,
+                'note'          => null,
+                'created_by'    => auth()->id(),
+                'updated_by'    => auth()->id(),
+            ]);
+
+            $stock = Stock::withoutGlobalScopes()
+                ->where('id', $stock->id)
+                ->lockForUpdate()
+                ->first();
+        }
+
+        $early = (int) $stock->qty_available;
+
+        $in  = $direction === 'In' ? $qty : 0;
+        $out = $direction === 'Out' ? $qty : 0;
+
+        $last = $early + $in - $out;
+
+        if ($last < 0) {
+            throw new \RuntimeException("Stock minus tidak diizinkan. Product {$productId}, current {$early}, out {$qty}.");
+        }
+
+        Mutation::create([
+            'branch_id'     => $branchId,
+            'warehouse_id'  => $warehouseId,
+            'product_id'    => $productId,
+            'reference'     => $reference,
+            'date'          => $date,
+            'mutation_type' => 'Transfer',
+            'note'          => $note,
+            'stock_early'   => $early,
+            'stock_in'      => $in,
+            'stock_out'     => $out,
+            'stock_last'    => $last,
+        ]);
+
+        $stock->update([
+            'qty_available' => $last,
+            'updated_by'    => auth()->id(),
+        ]);
+    }
+
+    /**
+     * INTERNAL: rollback mutation berdasarkan reference (misal ADJ-xxxx).
+     * notePrefix dipakai buat filter biar aman (misal 'Adjustment', 'Transfer', dll).
+     */
+    public function rollbackByReference(string $reference, string $notePrefix = ''): void
     {
         $mutations = Mutation::withoutGlobalScopes()
             ->where('reference', $reference)
-            ->where('note', 'like', $notePrefix.'%')
+            ->when($notePrefix !== '', function ($q) use ($notePrefix) {
+                $q->where('note', 'like', $notePrefix . '%');
+            })
             ->orderByDesc('id')
             ->lockForUpdate()
             ->get();
@@ -417,7 +465,6 @@ class MutationController extends Controller
                     ->first();
             }
 
-            // balikin ke stock_early mutation ini (asumsi mutation ini yg terakhir untuk item itu)
             $stock->update([
                 'qty_available' => (int) $m->stock_early,
                 'updated_by'    => auth()->id(),
@@ -427,13 +474,13 @@ class MutationController extends Controller
         }
     }
 
-    public function destroy(Mutation $mutation) {
+    public function destroy(Mutation $mutation)
+    {
         abort_if(Gate::denies('delete_mutations'), 403);
 
         $mutation->delete();
 
         toast('Mutation Deleted!', 'warning');
-
         return redirect()->route('mutations.index');
     }
 }

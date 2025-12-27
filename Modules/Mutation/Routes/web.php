@@ -11,7 +11,14 @@
 |
 */
 
+use Illuminate\Support\Facades\Route;
+use Modules\Mutation\Http\Controllers\MutationController;
+
 Route::group(['middleware' => 'auth'], function () {
     //Product Mutation
-    Route::resource('mutations', 'MutationController');
+    Route::get('mutations', [MutationController::class, 'index'])->name('mutations.index');
+    Route::get('mutations/create', [MutationController::class, 'create'])->name('mutations.create');
+    Route::post('mutations', [MutationController::class, 'store'])->name('mutations.store');
+    Route::get('mutations/{mutation}', [MutationController::class, 'show'])->name('mutations.show');
+
 });

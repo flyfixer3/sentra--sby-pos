@@ -112,15 +112,15 @@ class AdjustmentController extends Controller
                     . ($itemNote ? ' | Item: '.$itemNote : '')
                 );
 
-                $this->mutationController->applyInOut(
+               $this->mutationController->applyInOut(
                     $branchId,
                     $warehouseId,
                     $productId,
                     $mutationType,
                     $qty,
-                    $adjustment->reference,         // ADJ-xxxx
+                    $adjustment->reference,
                     $mutationNote,
-                    $adjustment->getRawOriginal('date') // pastiin Y-m-d raw
+                    $request->date
                 );
             }
         });
@@ -233,14 +233,15 @@ class AdjustmentController extends Controller
 
                 $this->mutationController->applyInOut(
                     $branchId,
-                    $newWarehouseId,                  // ✅ pakai new warehouse id
+                    $newWarehouseId,
                     $productId,
                     $mutationType,
                     $qty,
-                    $adjustment->reference,           // ADJ-xxxx (tetap)
+                    $adjustment->reference,
                     $mutationNote,
-                    $adjustment->getRawOriginal('date') // ✅ date raw setelah update
+                    $request->date
                 );
+
             }
         });
 

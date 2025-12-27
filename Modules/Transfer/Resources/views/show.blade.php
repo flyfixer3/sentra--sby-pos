@@ -19,42 +19,77 @@
                     <div>
                         Reference: <strong>{{ $transfer->reference }}</strong>
                     </div>
-                    <div class="d-print-none">
+
+                    <div class="d-print-none d-flex flex-wrap gap-2">
                         {{-- Tombol Cetak Surat Jalan --}}
                         @if ($transfer->status === 'pending')
                             <a href="{{ route('transfers.print.pdf', $transfer->id) }}"
-                            class="btn btn-sm btn-dark" target="_blank">
+                               class="btn btn-sm btn-dark" target="_blank">
                                 <i class="bi bi-printer"></i> Cetak Surat Jalan
                             </a>
                         @endif
 
-
                         {{-- Tombol Konfirmasi Penerimaan --}}
-                        @if ($transfer->status == 'pending')
+                        @if ($transfer->status === 'pending')
                             <a href="{{ route('transfers.confirm', $transfer->id) }}" class="btn btn-sm btn-success">
                                 <i class="bi bi-check-circle"></i> Konfirmasi Penerimaan
                             </a>
                         @endif
+
+                        {{-- Tombol + Modal Cancel (ambil dari partial) --}}
+                        @include('transfer::partials.cancel-transfer-modal')
                     </div>
                 </div>
+
+                @php
+                    $status = strtolower((string) $transfer->status);
+
+                    // Bootstrap 5 badge color mapping
+                    $statusClassMap = [
+                        'pending'   => 'warning text-dark',
+                        'shipped'   => 'info',
+                        'confirmed' => 'success',
+                        'cancelled' => 'danger',
+                    ];
+
+                    $badgeClass = $statusClassMap[$status] ?? 'secondary';
+                @endphp
 
                 <div class="card-body">
                     <div class="row mb-4">
                         <div class="col-md-4">
                             <h6 class="text-muted">Dari Gudang</h6>
-                            <p><strong>{{ $transfer->fromWarehouse->warehouse_name ?? '-' }}</strong></p>
+                            <p class="mb-0"><strong>{{ $transfer->fromWarehouse->warehouse_name ?? '-' }}</strong></p>
                         </div>
+
                         <div class="col-md-4">
                             <h6 class="text-muted">Ke Cabang</h6>
-                            <p><strong>{{ $transfer->toBranch->name ?? '-' }}</strong></p>
+                            <p class="mb-0"><strong>{{ $transfer->toBranch->name ?? '-' }}</strong></p>
                         </div>
+
                         <div class="col-md-4">
                             <h6 class="text-muted">Informasi Transfer</h6>
-                            <p>
+                            <p class="mb-0">
                                 Tanggal: {{ \Carbon\Carbon::parse($transfer->date)->format('d M Y') }} <br>
-                                Status: <span class="badge bg-{{ $transfer->status == 'confirmed' ? 'success' : ($transfer->status == 'pending' ? 'warning text-dark' : 'secondary') }}">
-                                    {{ ucfirst($transfer->status) }}
+                                Status:
+                                <span class="badge bg-{{ $badgeClass }}">
+                                    {{ ucfirst($status) }}
                                 </span>
+
+                                @if($status === 'cancelled')
+                                    <br>
+                                    <span class="small text-muted">
+                                        Cancelled at:
+                                        {{ $transfer->cancelled_at ? \Carbon\Carbon::parse($transfer->cancelled_at)->format('d M Y H:i') : '-' }}
+                                    </span>
+
+                                    @if(!empty($transfer->cancel_note))
+                                        <br>
+                                        <span class="small text-muted">
+                                            Note: {{ $transfer->cancel_note }}
+                                        </span>
+                                    @endif
+                                @endif
                             </p>
                         </div>
                     </div>
@@ -63,10 +98,10 @@
                         <table class="table table-bordered table-sm">
                             <thead class="table-light">
                                 <tr>
-                                    <th>#</th>
+                                    <th style="width: 50px;">#</th>
                                     <th>Produk</th>
-                                    <th>Jumlah</th>
-                                    <th>Satuan</th>
+                                    <th style="width: 120px;">Jumlah</th>
+                                    <th style="width: 120px;">Satuan</th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -97,6 +132,8 @@
                             </a>
                         </div>
                     @endif
+
+                    {{-- Riwayat Cetak --}}
                     @if($transfer->printLogs->isNotEmpty())
                         <hr>
                         <h5 class="mt-4">Riwayat Cetak Surat Jalan</h5>
@@ -105,10 +142,10 @@
                             <table class="table table-sm table-bordered">
                                 <thead class="table-light">
                                     <tr>
-                                        <th>#</th>
+                                        <th style="width: 50px;">#</th>
                                         <th>User</th>
-                                        <th>Tanggal Cetak</th>
-                                        <th>IP Address</th>
+                                        <th style="width: 180px;">Tanggal Cetak</th>
+                                        <th style="width: 160px;">IP Address</th>
                                     </tr>
                                 </thead>
                                 <tbody>
@@ -130,6 +167,7 @@
                             </table>
                         </div>
                     @endif
+
                 </div>
             </div>
         </div>
