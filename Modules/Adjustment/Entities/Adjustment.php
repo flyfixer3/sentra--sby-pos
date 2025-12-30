@@ -3,6 +3,7 @@
 namespace Modules\Adjustment\Entities;
 
 use App\Models\BaseModel;
+use App\Models\User;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
@@ -12,8 +13,11 @@ class Adjustment extends BaseModel
 {
     use HasFactory;
 
-    protected $guarded = [];
-
+    /**
+     * Catatan:
+     * - Tabel adjustments sudah punya kolom created_by (lihat phpMyAdmin).
+     * - Jadi kita tinggal expose di model + relasi creator().
+     */
     protected $fillable = [
         'reference',
         'date',
@@ -21,6 +25,7 @@ class Adjustment extends BaseModel
         'status',
         'branch_id',
         'warehouse_id',
+        'created_by',
     ];
 
     public function branch(): BelongsTo
@@ -38,6 +43,19 @@ class Adjustment extends BaseModel
         return $this->hasMany(AdjustedProduct::class, 'adjustment_id', 'id');
     }
 
+    /**
+     * Creator (audit trail)
+     */
+    public function creator(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'created_by')->withoutGlobalScopes();
+    }
+
+    /**
+     * WARNING:
+     * Kamu sebelumnya format date di accessor jadi string.
+     * Aku biarkan supaya tidak merusak flow UI existing kamu.
+     */
     public function getDateAttribute($value)
     {
         return Carbon::parse($value)->format('d M, Y');

@@ -4,127 +4,262 @@
     <meta charset="UTF-8">
     <title>Surat Jalan - {{ $transfer->reference }}</title>
     <style>
+        @page { margin: 18px 22px; }
+
         body {
-            font-family: "Arial", sans-serif;
-            font-size: 13px;
-            margin: 0;
-            padding: 10px 20px;
+            font-family: Arial, sans-serif;
+            font-size: 12px;
             color: #000;
+            margin: 0;
+            padding: 0;
         }
 
-        .header, .footer {
+        .text-center { text-align: center; }
+        .text-right  { text-align: right; }
+        .text-left   { text-align: left; }
+
+        .small { font-size: 11px; }
+        .muted { color: #444; }
+
+        .header {
             width: 100%;
             text-align: center;
+            margin-bottom: 10px;
         }
 
-        .header h2 {
+        .company-name {
+            font-size: 24px;
+            font-weight: 700;
+            margin: 0 0 4px 0;
+        }
+
+        .company-meta {
             margin: 0;
+            font-size: 12px;
         }
 
-        .info-table, .items-table {
+        .divider {
+            border: 0;
+            border-top: 2px solid #222;
+            margin: 10px 0 14px;
+        }
+
+        .title {
+            text-align: center;
+            font-size: 20px;
+            font-weight: 800;
+            letter-spacing: 1px;
+            margin: 0 0 10px 0;
+        }
+
+        /* Info block (No referensi, tanggal, gudang, cabang) */
+        .info-table {
             width: 100%;
             border-collapse: collapse;
-            margin-top: 20px;
+            margin-top: 4px;
+            margin-bottom: 12px;
         }
 
         .info-table td {
-            padding: 4px 8px;
+            padding: 6px 8px;
+            vertical-align: top;
+            font-size: 13px;
+        }
+
+        .info-label {
+            font-weight: 700;
+            width: 140px;
+            white-space: nowrap;
+        }
+
+        /* Items table */
+        .items-table {
+            width: 100%;
+            border-collapse: collapse;
+            table-layout: fixed;
+            margin-top: 10px;
         }
 
         .items-table th, .items-table td {
             border: 1px solid #000;
-            padding: 10px 6px;
-            text-align: left;
+            padding: 10px 8px;
+            vertical-align: top;
+            word-wrap: break-word;
         }
 
-        .items-table th {
-            background-color: #f2f2f2;
+        .items-table thead th {
+            background: #f1f1f1;
+            font-size: 14px;
+            font-weight: 800;
         }
 
-        .signature {
-            margin-top: 60px;
+        .col-no { width: 7%; text-align: center; }
+        .col-name { width: 58%; }
+        .col-qty { width: 13%; text-align: center; }
+        .col-unit { width: 10%; text-align: center; }
+        .col-note { width: 12%; }
+
+        /* Footer info block (Reference + Delivery Code) */
+        .footer-info {
             width: 100%;
-            text-align: center;
+            border-collapse: collapse;
+            margin-top: 12px;
         }
 
-        .signature td {
-            padding-top: 70px;
-            height: 100px;
+        .footer-info td {
+            border: 1px solid #000;
+            padding: 10px 12px;
+            vertical-align: top;
+            font-size: 13px;
+        }
+
+        .footer-info .box-label {
+            font-weight: 800;
+            display: inline-block;
+            min-width: 115px;
+        }
+
+        /* Signature */
+        .signature-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 26px;
+        }
+
+        .signature-table td {
+            width: 33.333%;
+            text-align: center;
+            padding: 8px 10px;
             vertical-align: top;
         }
 
-        .small {
-            font-size: 11px;
+        .signature-title {
+            font-weight: 800;
+            margin-bottom: 70px;
+        }
+
+        .signature-line {
+            border-top: 1px solid #000;
+            width: 80%;
+            margin: 0 auto;
+            height: 1px;
+        }
+
+        /* Watermark */
+        .watermark {
+            position: fixed;
+            top: 42%;
+            left: 18%;
+            transform: rotate(-28deg);
+            font-size: 84px;
+            font-weight: 800;
+            color: rgba(120,120,120,0.18);
+            z-index: 999;
+            letter-spacing: 2px;
         }
     </style>
 </head>
 <body>
-    @if ($transfer->printed_at && $transfer->status !== 'pending')
-        <div style="position: absolute; top: 40%; left: 25%; transform: rotate(-30deg); font-size: 60px; color: rgba(200,200,200,0.3); z-index: 999;">
-            COPY
-        </div>
+
+    @if (!empty($isReprint) && $isReprint === true)
+        <div class="watermark">COPY</div>
     @endif
 
     <div class="header">
-        <h2>{{ $setting->company_name ?? 'Nama Perusahaan' }}</h2>
-        <p class="small">
+        <div class="company-name">{{ $setting->company_name ?? 'Sentra Autoglass' }}</div>
+        <p class="company-meta small">
             {{ $setting->company_address ?? '-' }}
-            @if(!empty($setting->company_phone)) | Telp: {{ $setting->company_phone }} @endif
+            @if(!empty($setting->company_phone))
+                | Telp: {{ $setting->company_phone }}
+            @endif
         </p>
-        <hr>
-        <h3 style="margin-top: 10px;">SURAT JALAN</h3>
+        <hr class="divider">
+        <div class="title">SURAT JALAN</div>
     </div>
 
     <table class="info-table">
         <tr>
-            <td><strong>No. Referensi:</strong> {{ $transfer->reference }}</td>
-            <td><strong>Tanggal:</strong> {{ \Carbon\Carbon::parse($transfer->date)->format('d M Y') }}</td>
+            <td>
+                <span class="info-label">No. Referensi</span>:
+                <strong>{{ $transfer->reference }}</strong>
+            </td>
+            <td class="text-right">
+                <span class="info-label">Tanggal</span>:
+                <strong>{{ \Carbon\Carbon::parse($transfer->date)->format('d M Y') }}</strong>
+            </td>
         </tr>
         <tr>
-            <td><strong>Dari Gudang:</strong> {{ $transfer->fromWarehouse->warehouse_name ?? '-' }}</td>
-            <td><strong>Ke Cabang:</strong> {{ $transfer->toBranch->name ?? '-' }}</td>
+            <td>
+                <span class="info-label">Dari Gudang</span>:
+                <strong>{{ $transfer->fromWarehouse->warehouse_name ?? '-' }}</strong>
+            </td>
+            <td class="text-right">
+                <span class="info-label">Ke Cabang</span>:
+                <strong>{{ $transfer->toBranch->name ?? '-' }}</strong>
+            </td>
         </tr>
     </table>
 
-    <table class="items-table" style="margin-top: 25px;">
+    <table class="items-table">
         <thead>
             <tr>
-                <th style="width: 5%;">No</th>
-                <th style="width: 50%;">Nama Produk</th>
-                <th style="width: 15%;">Jumlah</th>
-                <th style="width: 15%;">Satuan</th>
-                <th style="width: 15%;">Keterangan</th>
+                <th class="col-no">No</th>
+                <th class="col-name">Nama Produk</th>
+                <th class="col-qty">Jumlah</th>
+                <th class="col-unit">Satuan</th>
+                <th class="col-note">Keterangan</th>
             </tr>
         </thead>
         <tbody>
             @foreach($transfer->items as $index => $item)
+                @php
+                    $productName = $item->product->product_name ?? ($item->product->name ?? '-');
+                    $productCode = $item->product->product_code ?? null;
+                    $displayName = $productCode ? ($productName . ' | ' . $productCode) : $productName;
+                    $unit = 'PCS';
+                @endphp
                 <tr>
-                    <td>{{ $index + 1 }}</td>
-                    <td style="padding-top: 14px; padding-bottom: 14px;">{{ $item->product->name ?? '-' }}</td>
-                    <td>{{ number_format($item->quantity) }}</td>
-                    <td>{{ $item->unit ?? '-' }}</td>
-                    <td></td>
+                    <td class="col-no">{{ $index + 1 }}</td>
+                    <td class="col-name">{{ $displayName }}</td>
+                    <td class="col-qty">{{ (int) $item->quantity }}</td>
+                    <td class="col-unit">{{ $unit }}</td>
+                    <td class="col-note"></td>
                 </tr>
             @endforeach
-            <tr>
-                <td><strong>No. Referensi:</strong> {{ $transfer->reference }}</td>
-                <td><strong>Delivery Code:</strong> {{ $transfer->delivery_code ?? '-' }}</td>
-            </tr>
-
         </tbody>
     </table>
 
-    <table class="signature">
+    <!-- IMPORTANT: Jangan taruh delivery code di tabel items (bikin garis berantakan).
+         Kita buat box sendiri biar rapi dan tidak ada garis "kosong". -->
+    <table class="footer-info">
         <tr>
-            <td><strong>Pengirim</strong></td>
-            <td><strong>Supir</strong></td>
-            <td><strong>Penerima</strong></td>
-        </tr>
-        <tr>
-            <td>________________________</td>
-            <td>________________________</td>
-            <td>________________________</td>
+            <td style="width: 40%;">
+                <span class="box-label">No. Referensi</span>:
+                <strong>{{ $transfer->reference }}</strong>
+            </td>
+            <td style="width: 60%;">
+                <span class="box-label">Delivery Code</span>:
+                <strong>{{ $transfer->delivery_code ?? '-' }}</strong>
+            </td>
         </tr>
     </table>
+
+    <table class="signature-table">
+        <tr>
+            <td>
+                <div class="signature-title">Pengirim</div>
+                <div class="signature-line"></div>
+            </td>
+            <td>
+                <div class="signature-title">Supir</div>
+                <div class="signature-line"></div>
+            </td>
+            <td>
+                <div class="signature-title">Penerima</div>
+                <div class="signature-line"></div>
+            </td>
+        </tr>
+    </table>
+
 </body>
 </html>

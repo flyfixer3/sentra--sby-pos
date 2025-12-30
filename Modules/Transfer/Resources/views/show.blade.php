@@ -90,6 +90,73 @@
         </div>
     </div>
 
+    {{-- ================= AUDIT TRAIL (CREATED BY, PRINTED BY, CONFIRMED BY, CANCELLED BY) ================= --}}
+    <div class="card mb-4 shadow-sm">
+        <div class="card-header bg-white">
+            <strong>Audit Trail</strong>
+            <span class="text-muted small ms-2">Untuk tracking siapa yang melakukan aksi</span>
+        </div>
+        <div class="card-body">
+            @php
+                $createdByName = optional($transfer->creator)->name ?? optional($transfer->creator)->username ?? '-';
+                $printedByName = optional($transfer->printedBy)->name ?? optional($transfer->printedBy)->username ?? '-';
+                $confirmedByName = optional($transfer->confirmedBy)->name ?? optional($transfer->confirmedBy)->username ?? '-';
+                $cancelledByName = optional($transfer->cancelledBy)->name ?? optional($transfer->cancelledBy)->username ?? '-';
+            @endphp
+
+            <div class="row g-3">
+                <div class="col-md-3">
+                    <div class="border rounded p-3 h-100">
+                        <div class="text-muted small">Created By</div>
+                        <div class="fw-semibold">{{ $createdByName }}</div>
+                        <div class="text-muted small">
+                            {{ $transfer->created_at ? \Carbon\Carbon::parse($transfer->created_at)->format('d M Y H:i') : '-' }}
+                        </div>
+                    </div>
+                </div>
+
+                <div class="col-md-3">
+                    <div class="border rounded p-3 h-100">
+                        <div class="text-muted small">Printed By</div>
+                        <div class="fw-semibold">{{ $transfer->printed_at ? $printedByName : '-' }}</div>
+                        <div class="text-muted small">
+                            {{ $transfer->printed_at ? \Carbon\Carbon::parse($transfer->printed_at)->format('d M Y H:i') : '-' }}
+                        </div>
+                    </div>
+                </div>
+
+                <div class="col-md-3">
+                    <div class="border rounded p-3 h-100">
+                        <div class="text-muted small">Confirmed By</div>
+                        <div class="fw-semibold">{{ $transfer->confirmed_at ? $confirmedByName : '-' }}</div>
+                        <div class="text-muted small">
+                            {{ $transfer->confirmed_at ? \Carbon\Carbon::parse($transfer->confirmed_at)->format('d M Y H:i') : '-' }}
+                        </div>
+                    </div>
+                </div>
+
+                <div class="col-md-3">
+                    <div class="border rounded p-3 h-100">
+                        <div class="text-muted small">Cancelled By</div>
+                        <div class="fw-semibold">{{ $transfer->cancelled_at ? $cancelledByName : '-' }}</div>
+                        <div class="text-muted small">
+                            {{ $transfer->cancelled_at ? \Carbon\Carbon::parse($transfer->cancelled_at)->format('d M Y H:i') : '-' }}
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            @if(!empty($transfer->cancel_note))
+                <div class="mt-3">
+                    <div class="text-muted small mb-1">Cancel Note</div>
+                    <div class="border rounded p-3 bg-light">
+                        {{ $transfer->cancel_note }}
+                    </div>
+                </div>
+            @endif
+        </div>
+    </div>
+
     {{-- ================= ITEM TABLE ================= --}}
     <div class="card mb-4 shadow-sm">
         <div class="card-header bg-white">

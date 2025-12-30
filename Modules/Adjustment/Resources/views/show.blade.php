@@ -29,6 +29,11 @@
                         </div>
                     @endif
 
+                    @php
+                        $creatorName = optional($adjustment->creator)->name ?? optional($adjustment->creator)->username ?? '-';
+                        $createdAt = $adjustment->created_at ? \Carbon\Carbon::parse($adjustment->created_at)->format('d M Y H:i') : '-';
+                    @endphp
+
                     <div class="table-responsive">
                         <table class="table table-bordered">
                             <tr>
@@ -40,7 +45,6 @@
                                 <td colspan="2">{{ $adjustment->reference }}</td>
                             </tr>
 
-                            {{-- Optional: tampilkan warehouse --}}
                             <tr>
                                 <th colspan="2">Warehouse</th>
                                 <th colspan="2">Branch</th>
@@ -48,6 +52,16 @@
                             <tr>
                                 <td colspan="2">{{ optional($adjustment->warehouse)->warehouse_name ?? '-' }}</td>
                                 <td colspan="2">{{ optional($adjustment->branch)->name ?? '-' }}</td>
+                            </tr>
+
+                            {{-- ✅ NEW: Audit --}}
+                            <tr>
+                                <th colspan="2">Created By</th>
+                                <th colspan="2">Created At</th>
+                            </tr>
+                            <tr>
+                                <td colspan="2">{{ $creatorName }}</td>
+                                <td colspan="2">{{ $createdAt }}</td>
                             </tr>
 
                             <tr>
@@ -58,7 +72,6 @@
                             </tr>
 
                             @foreach($adjustment->adjustedProducts as $adjustedProduct)
-                            {{-- ROW UTAMA --}}
                                 <tr>
                                     <td>{{ $adjustedProduct->product->product_name ?? '-' }}</td>
                                     <td>{{ $adjustedProduct->product->product_code ?? '-' }}</td>
@@ -72,7 +85,6 @@
                                     </td>
                                 </tr>
 
-                                {{-- ROW NOTE (FULL WIDTH) --}}
                                 @if(!empty($adjustedProduct->note))
                                     <tr>
                                         <td colspan="4">

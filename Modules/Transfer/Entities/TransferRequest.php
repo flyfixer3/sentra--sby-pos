@@ -23,27 +23,30 @@ class TransferRequest extends BaseModel
         'branch_id',
         'created_by',
 
-        // NEW
+        // delivery note
         'delivery_code',
-
         'delivery_proof_path',
+
+        // confirmation
         'confirmed_by',
         'confirmed_at',
+
+        // print
         'printed_at',
         'printed_by',
 
-        // NEW cancel
+        // cancel
         'cancelled_by',
         'cancelled_at',
         'cancel_note',
     ];
 
-    protected $dates = ['date', 'printed_at', 'confirmed_at', 'cancelled_at'];
-
-    public function printLogs()
-    {
-        return $this->hasMany(PrintLog::class);
-    }
+    protected $dates = [
+        'date',
+        'printed_at',
+        'confirmed_at',
+        'cancelled_at',
+    ];
 
     protected static function booted()
     {
@@ -55,14 +58,9 @@ class TransferRequest extends BaseModel
         });
     }
 
-    public function confirmedBy()
+    public function printLogs()
     {
-        return $this->belongsTo(User::class, 'confirmed_by');
-    }
-
-    public function toWarehouse()
-    {
-        return $this->belongsTo(Warehouse::class, 'to_warehouse_id')->withoutGlobalScopes();
+        return $this->hasMany(PrintLog::class);
     }
 
     public function items()
@@ -70,23 +68,41 @@ class TransferRequest extends BaseModel
         return $this->hasMany(TransferRequestItem::class);
     }
 
-    public function toBranch()
-    {
-        return $this->belongsTo(Branch::class, 'to_branch_id');
-    }
-
     public function fromWarehouse()
     {
         return $this->belongsTo(Warehouse::class, 'from_warehouse_id')->withoutGlobalScopes();
     }
 
+    public function toWarehouse()
+    {
+        return $this->belongsTo(Warehouse::class, 'to_warehouse_id')->withoutGlobalScopes();
+    }
+
+    public function toBranch()
+    {
+        return $this->belongsTo(Branch::class, 'to_branch_id');
+    }
+
+    /**
+     * Audit fields
+     */
     public function creator()
     {
-        return $this->belongsTo(User::class, 'created_by');
+        return $this->belongsTo(User::class, 'created_by')->withoutGlobalScopes();
     }
 
     public function printedBy()
     {
-        return $this->belongsTo(User::class, 'printed_by');
+        return $this->belongsTo(User::class, 'printed_by')->withoutGlobalScopes();
+    }
+
+    public function confirmedBy()
+    {
+        return $this->belongsTo(User::class, 'confirmed_by')->withoutGlobalScopes();
+    }
+
+    public function cancelledBy()
+    {
+        return $this->belongsTo(User::class, 'cancelled_by')->withoutGlobalScopes();
     }
 }

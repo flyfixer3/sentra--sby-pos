@@ -80,6 +80,9 @@ class AdjustmentController extends Controller
                 'note'         => $request->note,
                 'branch_id'    => $branchId,
                 'warehouse_id' => $warehouseId,
+
+                // ✅ AUDIT TRAIL
+                'created_by'   => auth()->id(),
             ]);
 
             foreach ($request->product_ids as $key => $productId) {
@@ -108,11 +111,11 @@ class AdjustmentController extends Controller
                 // IMPORTANT: note diawali "Adjustment" supaya rollbackByReference() bisa filter dengan aman
                 $mutationNote = trim(
                     'Adjustment #' . $adjustment->id
-                    . ($adjustment->note ? ' | '.$adjustment->note : '')
-                    . ($itemNote ? ' | Item: '.$itemNote : '')
+                    . ($adjustment->note ? ' | ' . $adjustment->note : '')
+                    . ($itemNote ? ' | Item: ' . $itemNote : '')
                 );
 
-               $this->mutationController->applyInOut(
+                $this->mutationController->applyInOut(
                     $branchId,
                     $warehouseId,
                     $productId,
@@ -132,6 +135,15 @@ class AdjustmentController extends Controller
     public function show(Adjustment $adjustment)
     {
         abort_if(Gate::denies('show_adjustments'), 403);
+
+        // ✅ biar creator/warehouse/branch/produk kebaca dan gak N+1 query
+        $adjustment->loadMissing([
+            'creator',
+            'branch',
+            'warehouse',
+            'adjustedProducts.product',
+        ]);
+
         return view('adjustment::show', compact('adjustment'));
     }
 
@@ -192,7 +204,7 @@ class AdjustmentController extends Controller
             // 2) hapus detail lama
             AdjustedProduct::where('adjustment_id', $adjustment->id)->delete();
 
-            // 3) update header (JANGAN update reference)
+            // 3) update header (JANGAN update reference, JANGAN ubah created_by)
             $adjustment->update([
                 'date'         => $request->date,
                 'note'         => $request->note,
@@ -200,7 +212,7 @@ class AdjustmentController extends Controller
                 'warehouse_id' => $newWarehouseId,
             ]);
 
-            // 4) create detail baru + mutation baru + update stock via MutationController
+            // 4) create detail baru + mutation baru
             foreach ($request->product_ids as $key => $productId) {
 
                 $productId = (int) $productId;
@@ -224,11 +236,10 @@ class AdjustmentController extends Controller
 
                 $mutationType = $type === 'add' ? 'In' : 'Out';
 
-                // pakai NOTE yang sudah ter-update (karena adjustment->note sudah diupdate)
                 $mutationNote = trim(
                     'Adjustment #' . $adjustment->id
-                    . ($adjustment->note ? ' | '.$adjustment->note : '')
-                    . ($itemNote ? ' | Item: '.$itemNote : '')
+                    . ($adjustment->note ? ' | ' . $adjustment->note : '')
+                    . ($itemNote ? ' | Item: ' . $itemNote : '')
                 );
 
                 $this->mutationController->applyInOut(
@@ -241,7 +252,6 @@ class AdjustmentController extends Controller
                     $mutationNote,
                     $request->date
                 );
-
             }
         });
 

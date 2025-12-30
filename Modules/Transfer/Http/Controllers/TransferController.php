@@ -260,7 +260,10 @@ class TransferController extends Controller
 
         $transfer->loadMissing('items');
 
-        if ($transfer->printed_at) {
+        // penting: tentukan reprint SEBELUM update printed_at
+        $isReprint = (bool) $transfer->printed_at;
+
+        if ($isReprint) {
             if (!$user->hasAnyRole(['Super Admin', 'Administrator', 'Supervisor'])) {
                 abort(403, 'Only admin/supervisor can reprint.');
             }
@@ -318,11 +321,17 @@ class TransferController extends Controller
         $transfer->refresh();
         $transfer->loadMissing(['items.product', 'fromWarehouse', 'toBranch']);
 
-        $pdf = Pdf::loadView('transfer::print', compact('transfer', 'setting'))
+        // PASS $isReprint ke view untuk watermark COPY
+        $pdf = Pdf::loadView('transfer::print', [
+                'transfer'  => $transfer,
+                'setting'   => $setting,
+                'isReprint' => $isReprint,
+            ])
             ->setPaper('A4', 'portrait');
 
         return $pdf->download("Surat_Jalan_{$transfer->reference}.pdf");
     }
+
 
     public function showConfirmationForm(int $id)
     {
