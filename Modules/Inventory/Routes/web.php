@@ -25,4 +25,9 @@ Route::middleware(['auth'])
             '/stocks/rack-details/{productId}/{branchId}/{warehouseId}',
             [StockController::class, 'rackDetails']
         )->name('stocks.rack-details');
-    });
+        Route::get(
+            '/stocks/quality-details/{type}/{productId}',
+            [StockController::class, 'qualityDetails']
+        )->name('stocks.quality-details');
+    }
+);

@@ -40,7 +40,8 @@
                     </a>
                 @endif
 
-                @include('transfer::partials.cancel-transfer-modal')
+                {{-- Cancel modal + button --}}
+                @include('transfer::partials.cancel-transfer-modal', ['transfer' => $transfer])
             </div>
         </div>
     </div>
@@ -69,16 +70,19 @@
             <div class="card h-100 border-0 shadow-sm">
                 <div class="card-body">
                     <div class="text-muted small mb-1">Informasi Transfer</div>
+
                     <div class="mb-1">
                         Tanggal:
                         <strong>{{ \Carbon\Carbon::parse($transfer->date)->format('d M Y') }}</strong>
                     </div>
+
                     <div class="mb-1">
                         Status:
                         <span class="badge bg-info text-dark text-uppercase">
                             {{ $transfer->status }}
                         </span>
                     </div>
+
                     @if($transfer->delivery_code)
                         <div class="small text-muted">
                             Delivery Code:
@@ -90,12 +94,13 @@
         </div>
     </div>
 
-    {{-- ================= AUDIT TRAIL (CREATED BY, PRINTED BY, CONFIRMED BY, CANCELLED BY) ================= --}}
+    {{-- ================= AUDIT TRAIL ================= --}}
     <div class="card mb-4 shadow-sm">
         <div class="card-header bg-white">
             <strong>Audit Trail</strong>
             <span class="text-muted small ms-2">Untuk tracking siapa yang melakukan aksi</span>
         </div>
+
         <div class="card-body">
             @php
                 $createdByName = optional($transfer->creator)->name ?? optional($transfer->creator)->username ?? '-';
@@ -162,6 +167,7 @@
         <div class="card-header bg-white">
             <strong>Daftar Produk</strong>
         </div>
+
         <div class="card-body p-0">
             <div class="table-responsive">
                 <table class="table table-hover table-bordered mb-0">
@@ -179,6 +185,7 @@
                             @endif
                         </tr>
                     </thead>
+
                     <tbody>
                         @forelse($transfer->items as $i => $item)
                             @php
@@ -186,6 +193,7 @@
                                 $pid = (int) $item->product_id;
                                 $summary = $itemSummaries[$pid] ?? [];
                             @endphp
+
                             <tr>
                                 <td>{{ $i + 1 }}</td>
                                 <td>
@@ -196,6 +204,7 @@
                                         <span class="text-danger">Product ID {{ $pid }} not found</span>
                                     @endif
                                 </td>
+
                                 <td class="text-center">
                                     <span class="badge bg-primary text-white fw-semibold">{{ $item->quantity }}</span>
                                 </td>
@@ -239,23 +248,27 @@
             <div class="card-header bg-warning bg-opacity-25 fw-semibold">
                 Defect Details
             </div>
+
             <div class="card-body p-0">
                 <table class="table table-sm table-bordered mb-0">
                     <thead class="table-light">
                         <tr>
-                            <th>#</th>
+                            <th style="width: 55px;">#</th>
                             <th>Produk</th>
-                            <th class="text-center">Qty</th>
-                            <th>Type</th>
+                            <th class="text-center" style="width: 70px;">Qty</th>
+                            <th style="width: 180px;">Type</th>
                             <th>Desc</th>
+                            <th class="text-center" style="width: 110px;">Photo</th>
                         </tr>
                     </thead>
+
                     <tbody>
                         @foreach($defects as $i => $d)
                             @php
                                 $item = $transfer->items->firstWhere('product_id', $d->product_id);
                                 $product = optional($item)->product;
                             @endphp
+
                             <tr>
                                 <td>{{ $i + 1 }}</td>
                                 <td>
@@ -266,9 +279,23 @@
                                 <td class="text-center">{{ $d->quantity }}</td>
                                 <td>{{ $d->defect_type }}</td>
                                 <td>{{ $d->description ?? '-' }}</td>
+                                <td class="text-center">
+                                    @if(!empty($d->photo_path))
+                                        <a href="{{ asset('storage/'.$d->photo_path) }}" target="_blank" title="Open Photo">
+                                            <img
+                                                src="{{ asset('storage/'.$d->photo_path) }}"
+                                                alt="defect-photo"
+                                                style="height:45px; width:auto; border-radius:6px; border:1px solid #e5e7eb;"
+                                            >
+                                        </a>
+                                    @else
+                                        <span class="text-muted">-</span>
+                                    @endif
+                                </td>
                             </tr>
                         @endforeach
                     </tbody>
+
                 </table>
             </div>
         </div>
@@ -280,24 +307,28 @@
             <div class="card-header bg-danger bg-opacity-10 fw-semibold">
                 Damaged / Pecah Details
             </div>
+
             <div class="card-body p-0">
                 <table class="table table-sm table-bordered mb-0">
                     <thead class="table-light">
                         <tr>
-                            <th>#</th>
+                            <th style="width: 55px;">#</th>
                             <th>Produk</th>
-                            <th class="text-center">Qty</th>
+                            <th class="text-center" style="width: 70px;">Qty</th>
                             <th>Reason</th>
-                            <th class="text-center">IN</th>
-                            <th class="text-center">OUT</th>
+                            <th class="text-center" style="width: 90px;">IN</th>
+                            <th class="text-center" style="width: 90px;">OUT</th>
+                            <th class="text-center" style="width: 110px;">Photo</th>
                         </tr>
                     </thead>
+
                     <tbody>
                         @foreach($damaged as $i => $dm)
                             @php
                                 $item = $transfer->items->firstWhere('product_id', $dm->product_id);
                                 $product = optional($item)->product;
                             @endphp
+
                             <tr>
                                 <td>{{ $i + 1 }}</td>
                                 <td>
@@ -309,9 +340,23 @@
                                 <td>{{ $dm->reason }}</td>
                                 <td class="text-center">#{{ $dm->mutation_in_id }}</td>
                                 <td class="text-center">#{{ $dm->mutation_out_id }}</td>
+                                <td class="text-center">
+                                    @if(!empty($dm->photo_path))
+                                        <a href="{{ asset('storage/'.$dm->photo_path) }}" target="_blank" title="Open Photo">
+                                            <img
+                                                src="{{ asset('storage/'.$dm->photo_path) }}"
+                                                alt="damaged-photo"
+                                                style="height:45px; width:auto; border-radius:6px; border:1px solid #e5e7eb;"
+                                            >
+                                        </a>
+                                    @else
+                                        <span class="text-muted">-</span>
+                                    @endif
+                                </td>
                             </tr>
                         @endforeach
                     </tbody>
+
                 </table>
             </div>
         </div>
@@ -319,3 +364,40 @@
 
 </div>
 @endsection
+
+@push('scripts')
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+
+    // Debug helper (boleh hapus kalau sudah beres)
+    // console.log('Cancel modal binder loaded');
+
+    document.querySelectorAll('[data-open-cancel-modal]').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+            const modalId = btn.getAttribute('data-open-cancel-modal');
+            const modalEl = document.getElementById(modalId);
+
+            if (!modalEl) {
+                console.error('Modal element not found:', modalId);
+                return;
+            }
+
+            // Bootstrap 5
+            if (typeof window.bootstrap !== 'undefined' && window.bootstrap.Modal) {
+                window.bootstrap.Modal.getOrCreateInstance(modalEl).show();
+                return;
+            }
+
+            // CoreUI
+            if (typeof window.coreui !== 'undefined' && window.coreui.Modal) {
+                window.coreui.Modal.getOrCreateInstance(modalEl).show();
+                return;
+            }
+
+            console.error('Modal library not found. bootstrap/coreui JS is not loaded.');
+        });
+    });
+
+});
+</script>
+@endpush

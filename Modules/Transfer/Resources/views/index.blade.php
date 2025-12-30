@@ -119,9 +119,57 @@
                     {!! $incomingTable->table(['class' => 'table table-striped table-bordered w-100 table-modern'], true) !!}
                 </div>
             </div>
+
         </div>
     </div>
 </div>
+
+{{-- ✅ Global Cancel Modal (single modal) --}}
+<div class="modal fade" id="cancelTransferModal" tabindex="-1" role="dialog" aria-hidden="true">
+    <div class="modal-dialog modal-lg modal-dialog-centered" role="document">
+        <form method="POST" id="cancelTransferForm" action="">
+            @csrf
+
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="cancelTransferTitle">Cancel Transfer</h5>
+
+                    {{-- Close (BS4/CoreUI) --}}
+                    <button type="button" class="close" data-dismiss="modal" aria-label="Close" style="font-size:24px;">
+                        <span aria-hidden="true">&times;</span>
+                    </button>
+
+                    {{-- Close (BS5) --}}
+                    <button type="button" class="btn-close d-none" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+
+                <div class="modal-body">
+                    <div class="alert alert-warning mb-3">
+                        <strong>Warning:</strong> Cancel akan membuat <strong>reversal mutation</strong> (log mutation tidak dihapus).
+                    </div>
+
+                    <div class="mb-2">
+                        <div class="small text-muted">Reference</div>
+                        <div class="fw-bold" id="cancelTransferRef">-</div>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label">Cancel Reason / Note</label>
+                        <textarea class="form-control" name="note" rows="4" required
+                                  placeholder="Contoh: Barang rusak saat pengiriman, return ke gudang asal..."></textarea>
+                        <div class="form-text">Wajib diisi agar histori jelas.</div>
+                    </div>
+                </div>
+
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-dismiss="modal" data-bs-dismiss="modal">Close</button>
+                    <button type="submit" class="btn btn-danger">Yes, Cancel Transfer</button>
+                </div>
+            </div>
+        </form>
+    </div>
+</div>
+@endsection
 
 {{-- ===== CSS modern (samakan feel dengan create/confirm) ===== --}}
 @push('page_css')
@@ -137,9 +185,8 @@
         color: #0f172a;
         line-height: 1.2;
     }
-    .page-subtitle{
-        font-size: 13px;
-    }
+    .page-subtitle{ font-size: 13px; }
+
     .divider-soft{
         height: 1px;
         background: #e2e8f0;
@@ -151,6 +198,7 @@
         font-weight: 700;
         box-shadow: 0 6px 14px rgba(2, 6, 23, 0.12);
     }
+
     .tabs-modern{
         background: #f8fafc;
         border: 1px solid #e2e8f0;
@@ -184,9 +232,7 @@
         border-color: #93c5fd;
         box-shadow: 0 0 0 0.2rem rgba(147,197,253,0.25);
     }
-    .filter-wrap{
-        min-width: 220px;
-    }
+    .filter-wrap{ min-width: 220px; }
 
     .empty-state{
         border: 1px solid #e2e8f0;
@@ -233,7 +279,7 @@
 </style>
 @endpush
 
-{{-- ====== LIBRARY DATATABLES (tetap seperti kamu) ====== --}}
+{{-- ====== LIBRARY DATATABLES ====== --}}
 <link rel="stylesheet" href="https://cdn.datatables.net/1.13.8/css/dataTables.bootstrap5.min.css">
 <link rel="stylesheet" href="https://cdn.datatables.net/buttons/2.4.3/css/buttons.bootstrap5.min.css">
 
@@ -252,16 +298,67 @@
 
 @push('page_scripts')
 <script>
-document.addEventListener("DOMContentLoaded", function () {
-  $('#filter_status_outgoing').on('change', function () {
-    window.LaravelDataTables['outgoing-transfers-table'].ajax.reload();
-  });
+function openModal(modalId) {
+    const modalEl = document.getElementById(modalId);
 
-  $('#filter_status_incoming').on('change', function () {
-    window.LaravelDataTables['incoming-transfers-table'].ajax.reload();
-  });
+    // 1) Bootstrap 5
+    try {
+        if (typeof bootstrap !== 'undefined' && bootstrap.Modal) {
+            const modal = bootstrap.Modal.getOrCreateInstance(modalEl);
+            modal.show();
+            return true;
+        }
+    } catch(e) {}
+
+    // 2) CoreUI
+    try {
+        if (typeof coreui !== 'undefined' && coreui.Modal) {
+            const modal = coreui.Modal.getOrCreateInstance(modalEl);
+            modal.show();
+            return true;
+        }
+    } catch(e) {}
+
+    // 3) Bootstrap 4 / CoreUI jQuery
+    try {
+        if (window.jQuery && typeof jQuery(modalEl).modal === 'function') {
+            jQuery(modalEl).modal('show');
+            return true;
+        }
+    } catch(e) {}
+
+    return false;
+}
+
+document.addEventListener("DOMContentLoaded", function () {
+
+    // ✅ Cancel Transfer (delegated karena DataTables redraw)
+    $(document).on('click', '.js-open-cancel-transfer', function () {
+        const id  = $(this).data('transfer-id');
+        const ref = $(this).data('transfer-ref') || ('#' + id);
+
+        $('#cancelTransferTitle').text('Cancel Transfer - ' + ref);
+        $('#cancelTransferRef').text(ref);
+        $('#cancelTransferForm textarea[name="note"]').val('');
+
+        const actionUrl = "{{ route('transfers.cancel', ':id') }}".replace(':id', id);
+        $('#cancelTransferForm').attr('action', actionUrl);
+
+        const opened = openModal('cancelTransferModal');
+        if (!opened) {
+            alert('Cancel modal: library modal tidak terdeteksi. Cek includes.main-js / bootstrap/coreui.');
+        }
+    });
+
+    // Filter status DT
+    $('#filter_status_outgoing').on('change', function () {
+        window.LaravelDataTables['outgoing-transfers-table'].ajax.reload();
+    });
+
+    $('#filter_status_incoming').on('change', function () {
+        window.LaravelDataTables['incoming-transfers-table'].ajax.reload();
+    });
+
 });
 </script>
 @endpush
-
-@endsection

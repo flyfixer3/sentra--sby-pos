@@ -16,7 +16,6 @@ use Modules\Transfer\Entities\PrintLog;
 use Modules\Setting\Entities\Setting;
 use Modules\Product\Entities\Warehouse;
 use Modules\Product\Entities\Product;
-
 use Modules\Mutation\Entities\Mutation;
 use Modules\Mutation\Http\Controllers\MutationController;
 
@@ -386,9 +385,12 @@ class TransferController extends Controller
             'items.*.defects' => 'nullable|array',
             'items.*.defects.*.defect_type' => 'nullable|string|max:255',
             'items.*.defects.*.defect_description' => 'nullable|string|max:1000',
+            'items.*.defects.*.photo' => 'nullable|image|max:4096',
 
             'items.*.damaged_items' => 'nullable|array',
             'items.*.damaged_items.*.damaged_reason' => 'nullable|string|max:1000',
+            'items.*.damaged_items.*.photo' => 'nullable|image|max:4096',
+
         ]);
 
         $inputCode = strtoupper(trim((string) $request->delivery_code));
@@ -502,7 +504,7 @@ class TransferController extends Controller
                 return;
             }
 
-            foreach ($itemsInput as $row) {
+            foreach ($itemsInput as $rowIdx => $row) {
                 $productId = (int) $row['product_id'];
 
                 $qtyReceived = (int) $row['qty_received'];
@@ -531,9 +533,21 @@ class TransferController extends Controller
                 if ($qtyDefect > 0) {
                     $defectsArr = is_array($row['defects'] ?? null) ? $row['defects'] : [];
 
-                    foreach ($defectsArr as $defRow) {
+                    foreach ($defectsArr as $k => $defRow) {
                         $defectType = trim((string) ($defRow['defect_type'] ?? ''));
                         $defectDesc = trim((string) ($defRow['defect_description'] ?? ''));
+
+                        // ambil file upload (kalau ada)
+                        $photoPath = null;
+                        $photoFile = $request->file("items.$rowIdx.defects.$k.photo");
+                        if ($photoFile && $photoFile->isValid()) {
+                            // simpan ke storage public
+                            // contoh path: transfers/TRF0001/defects/xxx.jpg
+                            $photoPath = $photoFile->store(
+                                "transfers/{$transfer->reference}/defects",
+                                'public'
+                            );
+                        }
 
                         ProductDefectItem::create([
                             'branch_id'      => (int) $transfer->to_branch_id,
@@ -541,13 +555,14 @@ class TransferController extends Controller
                             'product_id'     => (int) $productId,
                             'reference_id'   => (int) $transfer->id,
                             'reference_type' => TransferRequest::class,
-                            'quantity'       => 1, // IMPORTANT: per unit
+                            'quantity'       => 1,
                             'defect_type'    => $defectType,
                             'description'    => $defectDesc !== '' ? $defectDesc : null,
-                            'photo_path'     => null,
+                            'photo_path'     => $photoPath,
                             'created_by'     => auth()->id(),
                         ]);
                     }
+
                 }
 
                 // 3) DAMAGED:
@@ -581,8 +596,18 @@ class TransferController extends Controller
                         (string) now()->toDateString()
                     );
 
-                    foreach ($damArr as $damRow) {
+                    foreach ($damArr as $k => $damRow) {
                         $reason = trim((string) ($damRow['damaged_reason'] ?? ''));
+
+                        // ambil file upload (kalau ada)
+                        $photoPath = null;
+                        $photoFile = $request->file("items.$rowIdx.damaged_items.$k.photo");
+                        if ($photoFile && $photoFile->isValid()) {
+                            $photoPath = $photoFile->store(
+                                "transfers/{$transfer->reference}/damaged",
+                                'public'
+                            );
+                        }
 
                         ProductDamagedItem::create([
                             'branch_id'       => (int) $transfer->to_branch_id,
@@ -590,14 +615,15 @@ class TransferController extends Controller
                             'product_id'      => (int) $productId,
                             'reference_id'    => (int) $transfer->id,
                             'reference_type'  => TransferRequest::class,
-                            'quantity'        => 1, // IMPORTANT: per unit
+                            'quantity'        => 1,
                             'reason'          => $reason !== '' ? $reason : null,
-                            'photo_path'      => null,
+                            'photo_path'      => $photoPath,
                             'mutation_in_id'  => (int) $mutationInId,
                             'mutation_out_id' => (int) $mutationOutId,
                             'created_by'      => auth()->id(),
                         ]);
                     }
+
                 }
             }
         });
@@ -627,17 +653,22 @@ class TransferController extends Controller
     {
         abort_if(Gate::denies('cancel_transfers'), 403);
 
-        $transfer = TransferRequest::withoutGlobalScopes()->with(['items.product'])->findOrFail($id);
+        $transfer = TransferRequest::withoutGlobalScopes()
+            ->with(['items.product'])
+            ->findOrFail($id);
 
         $request->validate([
             'note' => 'required|string|max:1000',
         ]);
 
         if ($transfer->status === 'cancelled') abort(422, 'Transfer already cancelled.');
-        if (!in_array($transfer->status, ['shipped', 'confirmed'], true)) abort(422, 'Only shipped/confirmed transfer can be cancelled.');
+        if (!in_array($transfer->status, ['shipped', 'confirmed'], true)) {
+            abort(422, 'Only shipped/confirmed transfer can be cancelled.');
+        }
 
         DB::transaction(function () use ($request, $transfer) {
 
+            // Anti dobel cancel mutation
             $alreadyCancelled = Mutation::withoutGlobalScopes()
                 ->where('reference', $transfer->reference)
                 ->where('note', 'like', 'Transfer CANCEL%')
@@ -647,8 +678,16 @@ class TransferController extends Controller
 
             $cancelNote = trim((string) $request->note);
 
+            // ============ CASE 1: SHIPPED ============
+            // shipped artinya: sudah ada OUT dari gudang asal (saat print)
+            // cancel shipped: balikkan IN full qty ke gudang asal (balik ke kondisi sebelum transfer)
             if ($transfer->status === 'shipped') {
+
                 foreach ($transfer->items as $item) {
+                    $qty = (int) $item->quantity;
+
+                    if ($qty <= 0) continue;
+
                     $note = "Transfer CANCEL IN #{$transfer->reference} | Return to WH {$transfer->from_warehouse_id} | {$cancelNote}";
 
                     $this->mutationController->applyInOut(
@@ -656,7 +695,7 @@ class TransferController extends Controller
                         (int) $transfer->from_warehouse_id,
                         (int) $item->product_id,
                         'In',
-                        (int) $item->quantity,
+                        $qty,
                         (string) $transfer->reference,
                         $note,
                         (string) now()->toDateString()
@@ -664,40 +703,72 @@ class TransferController extends Controller
                 }
             }
 
+            // ============ CASE 2: CONFIRMED ============
+            // confirmed artinya: sudah ada IN ke gudang tujuan (good+defect),
+            // dan damaged dibuat IN+OUT (net 0).
+            // cancel confirmed: keluarkan dari gudang tujuan hanya sebesar (sent - damaged),
+            // lalu masukkan ke gudang asal sebesar (sent - damaged).
             if ($transfer->status === 'confirmed') {
+
                 if (!$transfer->to_warehouse_id) abort(422, 'Invalid transfer data: destination warehouse is empty.');
 
-                foreach ($transfer->items as $item) {
-                    $note = "Transfer CANCEL OUT #{$transfer->reference} | Return from WH {$transfer->to_warehouse_id} | {$cancelNote}";
-
-                    $this->mutationController->applyInOut(
-                        (int) $transfer->to_branch_id,
-                        (int) $transfer->to_warehouse_id,
-                        (int) $item->product_id,
-                        'Out',
-                        (int) $item->quantity,
-                        (string) $transfer->reference,
-                        $note,
-                        (string) now()->toDateString()
-                    );
-                }
+                // Hitung damaged per product (berdasarkan product_damaged_items ref transfer ini)
+                $damagedQtyByProduct = ProductDamagedItem::query()
+                    ->where('reference_type', TransferRequest::class)
+                    ->where('reference_id', (int) $transfer->id)
+                    ->selectRaw('product_id, COALESCE(SUM(quantity),0) as qty')
+                    ->groupBy('product_id')
+                    ->pluck('qty', 'product_id')
+                    ->toArray();
 
                 foreach ($transfer->items as $item) {
-                    $note = "Transfer CANCEL IN #{$transfer->reference} | Return to WH {$transfer->from_warehouse_id} | {$cancelNote}";
+                    $pid  = (int) $item->product_id;
+                    $sent = (int) $item->quantity;
 
-                    $this->mutationController->applyInOut(
-                        (int) $transfer->branch_id,
-                        (int) $transfer->from_warehouse_id,
-                        (int) $item->product_id,
-                        'In',
-                        (int) $item->quantity,
-                        (string) $transfer->reference,
-                        $note,
-                        (string) now()->toDateString()
-                    );
+                    if ($sent <= 0) continue;
+
+                    $damaged = (int) ($damagedQtyByProduct[$pid] ?? 0);
+                    if ($damaged < 0) $damaged = 0;
+                    if ($damaged > $sent) $damaged = $sent;
+
+                    // qty yang benar-benar ada di gudang tujuan (good+defect) = sent - damaged
+                    $moveBackQty = $sent - $damaged;
+
+                    // 1) OUT dari gudang tujuan (hanya yang benar-benar masuk)
+                    if ($moveBackQty > 0) {
+                        $noteOut = "Transfer CANCEL OUT #{$transfer->reference} | Return from WH {$transfer->to_warehouse_id} | {$cancelNote}";
+
+                        $this->mutationController->applyInOut(
+                            (int) $transfer->to_branch_id,
+                            (int) $transfer->to_warehouse_id,
+                            $pid,
+                            'Out',
+                            $moveBackQty,
+                            (string) $transfer->reference,
+                            $noteOut,
+                            (string) now()->toDateString()
+                        );
+                    }
+
+                    // 2) IN ke gudang asal (hanya yang benar-benar kembali)
+                    if ($moveBackQty > 0) {
+                        $noteIn = "Transfer CANCEL IN #{$transfer->reference} | Return to WH {$transfer->from_warehouse_id} | {$cancelNote}";
+
+                        $this->mutationController->applyInOut(
+                            (int) $transfer->branch_id,
+                            (int) $transfer->from_warehouse_id,
+                            $pid,
+                            'In',
+                            $moveBackQty,
+                            (string) $transfer->reference,
+                            $noteIn,
+                            (string) now()->toDateString()
+                        );
+                    }
                 }
             }
 
+            // Update status transfer
             $transfer->update([
                 'status'       => 'cancelled',
                 'cancelled_by' => auth()->id(),
@@ -709,6 +780,7 @@ class TransferController extends Controller
         toast('Transfer cancelled successfully', 'warning');
         return redirect()->route('transfers.index');
     }
+
 
     /**
      * Generate code 6 char huruf+angka, dan pastikan unique di tabel.

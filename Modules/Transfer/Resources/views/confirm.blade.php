@@ -50,7 +50,10 @@
                             </table>
                         </div>
 
-                        <form id="confirm-form" action="{{ route('transfers.confirm.store', $transfer->id) }}" method="POST">
+                        <form id="confirm-form"
+                              action="{{ route('transfers.confirm.store', $transfer->id) }}"
+                              method="POST"
+                              enctype="multipart/form-data">
                             @csrf
                             @method('PUT')
 
@@ -97,7 +100,8 @@
                                         <div class="text-muted mt-2">
                                             <small>
                                                 - <strong>Defect</strong> tetap masuk stok, tapi dicatat sebagai defect (per unit).<br>
-                                                - <strong>Damaged/Pecah</strong> dibuat mutasi IN lalu OUT (stok tidak bertambah bersih), dicatat sebagai damaged (per unit).
+                                                - <strong>Damaged/Pecah</strong> dibuat mutasi IN lalu OUT (stok tidak bertambah bersih), dicatat sebagai damaged (per unit).<br>
+                                                - Foto opsional, tapi sangat disarankan untuk audit.
                                             </small>
                                         </div>
                                     </div>
@@ -216,7 +220,7 @@
                                                             </div>
                                                             <div class="text-muted mt-1">
                                                                 <small>
-                                                                    Defect/Damaged disimpan <b>per unit</b> (masing-masing baris qty = 1), jadi tiap unit bisa punya catatan sendiri.
+                                                                    Defect/Damaged disimpan <b>per unit</b> (masing-masing baris qty = 1), jadi tiap unit bisa punya catatan + foto sendiri.
                                                                 </small>
                                                             </div>
                                                         </div>
@@ -234,6 +238,7 @@
                                                                                     <th style="width: 55px;" class="text-center">#</th>
                                                                                     <th style="min-width: 160px;">Defect Type *</th>
                                                                                     <th>Defect Description</th>
+                                                                                    <th style="width: 190px;">Photo (optional)</th>
                                                                                 </tr>
                                                                             </thead>
                                                                             <tbody class="defect-tbody">
@@ -256,6 +261,7 @@
                                                                                 <tr>
                                                                                     <th style="width: 55px;" class="text-center">#</th>
                                                                                     <th>Damaged Reason *</th>
+                                                                                    <th style="width: 190px;">Photo (optional)</th>
                                                                                 </tr>
                                                                             </thead>
                                                                             <tbody class="damaged-tbody">
@@ -312,18 +318,14 @@
 
 @push('page_css')
 <style>
-    /* Modern table look */
     .table-modern thead th {
         background: #f8fafc;
         font-weight: 600;
         color: #334155;
         border-bottom: 1px solid #e2e8f0;
     }
-    .table-modern tbody td {
-        vertical-align: middle;
-    }
+    .table-modern tbody td { vertical-align: middle; }
 
-    /* Notes button modern */
     .btn-notes {
         background: #ffffff;
         border: 1px solid #dbeafe;
@@ -342,27 +344,15 @@
         box-shadow: 0 6px 14px rgba(29,78,216,0.10);
     }
 
-    .badge-defect {
-        background: #2563eb;
-        color: #fff;
-        font-weight: 700;
-        padding: 5px 8px;
-    }
-    .badge-damaged {
-        background: #ef4444;
-        color: #fff;
-        font-weight: 700;
-        padding: 5px 8px;
-    }
+    .badge-defect { background: #2563eb; color: #fff; font-weight: 700; padding: 5px 8px; }
+    .badge-damaged { background: #ef4444; color: #fff; font-weight: 700; padding: 5px 8px; }
 
-    /* Per-unit wrapper cell */
     .perunit-td {
         background: #f1f5f9;
         border-top: 0 !important;
         padding: 14px !important;
     }
 
-    /* Per-unit card modern */
     .perunit-card {
         background: #ffffff;
         border-radius: 12px;
@@ -375,11 +365,8 @@
         background: linear-gradient(90deg, #f8fafc, #ffffff);
         border-bottom: 1px solid #e2e8f0;
     }
-    .perunit-card-body {
-        padding: 14px;
-    }
+    .perunit-card-body { padding: 14px; }
 
-    /* Section titles */
     .section-title {
         font-weight: 800;
         font-size: 14px;
@@ -399,7 +386,6 @@
         border: 1px solid #fee2e2;
     }
 
-    /* Per-unit tables */
     .section-table thead th {
         background: #f8fafc;
         color: #334155;
@@ -409,13 +395,11 @@
         border-color: #e2e8f0 !important;
     }
 
-    /* Status badge polish */
     .row-status.badge-success { background: #16a34a; }
     .row-status.badge-danger  { background: #ef4444; }
     .row-status.badge-warning { background: #f59e0b; color: #111827; }
     .row-status.badge-secondary { background: #64748b; }
 
-    /* Inputs look a bit cleaner */
     .form-control-sm {
         border-radius: 10px;
         border-color: #e2e8f0;
@@ -423,6 +407,15 @@
     .form-control-sm:focus {
         border-color: #93c5fd;
         box-shadow: 0 0 0 0.2rem rgba(147,197,253,0.25);
+    }
+
+    .photo-input {
+        border: 1px dashed #cbd5e1;
+        padding: 6px;
+        border-radius: 10px;
+        background: #fff;
+        width: 100%;
+        font-size: 12px;
     }
 </style>
 @endpush
@@ -603,6 +596,15 @@
                         rows="2"
                         placeholder="keterangan defect (bagian mana / catatan)">${(prev.defect_description || '')}</textarea>
                 </td>
+                <td class="align-middle">
+                    <input
+                        type="file"
+                        accept="image/*"
+                        class="photo-input"
+                        name="items[${idx}][defects][${i}][photo]"
+                    >
+                    <div class="text-muted mt-1"><small>jpg/png/webp (opsional)</small></div>
+                </td>
             `;
             defectTbody.appendChild(tr);
         }
@@ -621,6 +623,15 @@
                         rows="2"
                         placeholder="contoh: pecah di sudut kiri saat bongkar peti"
                         required>${(prev.damaged_reason || '')}</textarea>
+                </td>
+                <td class="align-middle">
+                    <input
+                        type="file"
+                        accept="image/*"
+                        class="photo-input"
+                        name="items[${idx}][damaged_items][${i}][photo]"
+                    >
+                    <div class="text-muted mt-1"><small>jpg/png/webp (opsional)</small></div>
                 </td>
             `;
             damagedTbody.appendChild(tr);

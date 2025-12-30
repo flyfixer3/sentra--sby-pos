@@ -1,15 +1,17 @@
 @php
     $canCancel = isset($transfer) && in_array($transfer->status, ['confirmed','shipped'], true);
+    $modalId = 'cancelTransferModal-'.$transfer->id;
 @endphp
 
 @can('cancel_transfers')
     @if($canCancel)
-        <button type="button" class="btn btn-sm btn-danger"
-                data-bs-toggle="modal" data-bs-target="#cancelTransferModal">
+        <button type="button"
+                class="btn btn-sm btn-danger"
+                data-open-cancel-modal="{{ $modalId }}">
             <i class="bi bi-x-circle"></i> Cancel Transfer
         </button>
 
-        <div class="modal fade" id="cancelTransferModal" tabindex="-1" aria-hidden="true">
+        <div class="modal fade" id="{{ $modalId }}" tabindex="-1" aria-hidden="true">
             <div class="modal-dialog modal-lg">
                 <form method="POST" action="{{ route('transfers.cancel', $transfer->id) }}">
                     @csrf
@@ -30,7 +32,10 @@
 
                             <div class="mb-3">
                                 <label class="form-label">Cancel Reason / Note</label>
-                                <textarea class="form-control" name="note" rows="4" required
+                                <textarea class="form-control"
+                                          name="note"
+                                          rows="4"
+                                          required
                                           placeholder="Contoh: Barang rusak saat pengiriman, return ke gudang asal..."></textarea>
                                 <div class="form-text">Wajib diisi agar histori jelas.</div>
                             </div>
@@ -41,6 +46,7 @@
                             <button type="submit" class="btn btn-danger">Yes, Cancel Transfer</button>
                         </div>
                     </div>
+
                 </form>
             </div>
         </div>

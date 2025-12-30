@@ -14,40 +14,15 @@
 @can('cancel_transfers')
     @if(in_array($status, ['shipped','confirmed'], true))
         <button type="button"
-                class="btn btn-sm btn-danger"
-                data-bs-toggle="modal"
-                data-bs-target="#cancelModal-{{ $data->id }}"
+                class="btn btn-sm btn-danger js-open-cancel-transfer"
+                data-transfer-id="{{ $data->id }}"
+                data-transfer-ref="{{ $data->reference ?? ('#'.$data->id) }}"
                 title="Cancel Transfer">
             <i class="bi bi-x-circle"></i> Cancel
         </button>
-
-        <div class="modal fade" id="cancelModal-{{ $data->id }}" tabindex="-1" aria-hidden="true">
-            <div class="modal-dialog modal-dialog-centered">
-                <form method="POST" action="{{ route('transfers.cancel', $data->id) }}" class="modal-content">
-                    @csrf
-                    <div class="modal-header">
-                        <h5 class="modal-title">Cancel Transfer</h5>
-                        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-                    </div>
-                    <div class="modal-body">
-                        <div class="mb-2">
-                            <div class="small text-muted">Reference</div>
-                            <div class="fw-bold">{{ $data->reference }}</div>
-                        </div>
-
-                        <label class="form-label">Reason</label>
-                        <textarea name="note" class="form-control" rows="3" required
-                                  placeholder="Isi alasan cancel..."></textarea>
-                    </div>
-                    <div class="modal-footer">
-                        <button type="button" class="btn btn-light" data-bs-dismiss="modal">Close</button>
-                        <button type="submit" class="btn btn-danger">Yes, Cancel</button>
-                    </div>
-                </form>
-            </div>
-        </div>
     @endif
 @endcan
+
 
 @can('show_transfers')
     <a href="{{ route('transfers.show', $data->id) }}" class="btn btn-sm btn-primary" title="Lihat Detail Transfer">
