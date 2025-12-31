@@ -65,19 +65,6 @@
                     </div>
                 </div>
 
-                {{-- Empty State Outgoing --}}
-                <div id="empty-outgoing" class="empty-state d-none">
-                    <div class="d-flex align-items-start gap-3">
-                        <div class="empty-icon">
-                            <i class="bi bi-inbox"></i>
-                        </div>
-                        <div>
-                            <div class="fw-bold mb-1">Belum ada transfer outgoing.</div>
-                            <div class="small text-muted">Klik <strong>Add Transfer</strong> untuk membuat pengiriman baru.</div>
-                        </div>
-                    </div>
-                </div>
-
                 <div class="table-wrap">
                     {!! $outgoingTable->table(['class' => 'table table-striped table-bordered w-100 table-modern'], true) !!}
                 </div>
@@ -99,19 +86,6 @@
 
                     <div class="text-muted small ms-auto">
                         Tip: incoming biasanya status <strong>shipped</strong> → butuh konfirmasi.
-                    </div>
-                </div>
-
-                {{-- Empty State Incoming --}}
-                <div id="empty-incoming" class="empty-state warning d-none">
-                    <div class="d-flex align-items-start gap-3">
-                        <div class="empty-icon">
-                            <i class="bi bi-archive"></i>
-                        </div>
-                        <div>
-                            <div class="fw-bold mb-1">Tidak ada transfer incoming yang perlu diproses.</div>
-                            <div class="small text-muted">Semua pengiriman sudah dikonfirmasi atau belum ada kiriman baru.</div>
-                        </div>
                     </div>
                 </div>
 
@@ -171,115 +145,27 @@
 </div>
 @endsection
 
-{{-- ===== CSS modern (samakan feel dengan create/confirm) ===== --}}
 @push('page_css')
 <style>
-    .card-modern{
-        border: 1px solid #e2e8f0;
-        border-radius: 12px;
-        box-shadow: 0 8px 22px rgba(15, 23, 42, 0.06);
-    }
-    .page-title{
-        font-weight: 800;
-        font-size: 18px;
-        color: #0f172a;
-        line-height: 1.2;
-    }
-    .page-subtitle{ font-size: 13px; }
-
-    .divider-soft{
-        height: 1px;
-        background: #e2e8f0;
-        opacity: .9;
-    }
-    .btn-modern{
-        border-radius: 999px;
-        padding: 8px 14px;
-        font-weight: 700;
-        box-shadow: 0 6px 14px rgba(2, 6, 23, 0.12);
-    }
-
-    .tabs-modern{
-        background: #f8fafc;
-        border: 1px solid #e2e8f0;
-        border-radius: 999px;
-        padding: 4px;
-        gap: 4px;
-    }
-    .tabs-modern .btn{
-        border: 0;
-        border-radius: 999px !important;
-        font-weight: 700;
-        color: #334155;
-        background: transparent;
-        padding: 7px 12px;
-    }
-    .tabs-modern .btn.active{
-        background: #2563eb;
-        color: #fff;
-        box-shadow: 0 8px 18px rgba(37, 99, 235, 0.25);
-    }
-    .tabs-modern .btn .badge{
-        border-radius: 999px;
-        font-weight: 700;
-    }
-
-    .form-control-modern{
-        border-radius: 10px;
-        border-color: #e2e8f0;
-    }
-    .form-control-modern:focus{
-        border-color: #93c5fd;
-        box-shadow: 0 0 0 0.2rem rgba(147,197,253,0.25);
-    }
-    .filter-wrap{ min-width: 220px; }
-
-    .empty-state{
-        border: 1px solid #e2e8f0;
-        background: #f8fafc;
-        border-radius: 12px;
-        padding: 14px 16px;
-        margin-bottom: 14px;
-    }
-    .empty-state.warning{
-        background: #fffbeb;
-        border-color: #fde68a;
-    }
-    .empty-icon{
-        width: 40px;
-        height: 40px;
-        border-radius: 12px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        background: #e0f2fe;
-        color: #0369a1;
-        font-size: 18px;
-        flex: 0 0 auto;
-    }
-    .empty-state.warning .empty-icon{
-        background: #fef3c7;
-        color: #92400e;
-    }
-
-    .table-wrap{
-        border: 1px solid #e2e8f0;
-        border-radius: 12px;
-        overflow: hidden;
-    }
-    .table-modern thead th{
-        background: #f8fafc !important;
-        color: #334155;
-        font-weight: 800;
-        border-bottom: 1px solid #e2e8f0 !important;
-    }
-    .table-modern td, .table-modern th{
-        vertical-align: middle;
-    }
+    .card-modern{ border:1px solid #e2e8f0; border-radius:12px; box-shadow:0 8px 22px rgba(15,23,42,.06); }
+    .page-title{ font-weight:800; font-size:18px; color:#0f172a; line-height:1.2; }
+    .page-subtitle{ font-size:13px; }
+    .divider-soft{ height:1px; background:#e2e8f0; opacity:.9; }
+    .btn-modern{ border-radius:999px; padding:8px 14px; font-weight:700; box-shadow:0 6px 14px rgba(2,6,23,.12); }
+    .tabs-modern{ background:#f8fafc; border:1px solid #e2e8f0; border-radius:999px; padding:4px; gap:4px; }
+    .tabs-modern .btn{ border:0; border-radius:999px !important; font-weight:700; color:#334155; background:transparent; padding:7px 12px; }
+    .tabs-modern .btn.active{ background:#2563eb; color:#fff; box-shadow:0 8px 18px rgba(37,99,235,.25); }
+    .tabs-modern .btn .badge{ border-radius:999px; font-weight:700; }
+    .form-control-modern{ border-radius:10px; border-color:#e2e8f0; }
+    .form-control-modern:focus{ border-color:#93c5fd; box-shadow:0 0 0 .2rem rgba(147,197,253,.25); }
+    .filter-wrap{ min-width:220px; }
+    .table-wrap{ border:1px solid #e2e8f0; border-radius:12px; overflow:hidden; }
+    .table-modern thead th{ background:#f8fafc !important; color:#334155; font-weight:800; border-bottom:1px solid #e2e8f0 !important; }
+    .table-modern td, .table-modern th{ vertical-align:middle; }
 </style>
 @endpush
 
-{{-- ====== LIBRARY DATATABLES ====== --}}
+{{-- NOTE: kalau project kamu sudah include jquery + datatables dari layout, bagian CDN ini sebaiknya DIHAPUS biar gak double --}}
 <link rel="stylesheet" href="https://cdn.datatables.net/1.13.8/css/dataTables.bootstrap5.min.css">
 <link rel="stylesheet" href="https://cdn.datatables.net/buttons/2.4.3/css/buttons.bootstrap5.min.css">
 
@@ -304,8 +190,7 @@ function openModal(modalId) {
     // 1) Bootstrap 5
     try {
         if (typeof bootstrap !== 'undefined' && bootstrap.Modal) {
-            const modal = bootstrap.Modal.getOrCreateInstance(modalEl);
-            modal.show();
+            bootstrap.Modal.getOrCreateInstance(modalEl).show();
             return true;
         }
     } catch(e) {}
@@ -313,8 +198,7 @@ function openModal(modalId) {
     // 2) CoreUI
     try {
         if (typeof coreui !== 'undefined' && coreui.Modal) {
-            const modal = coreui.Modal.getOrCreateInstance(modalEl);
-            modal.show();
+            coreui.Modal.getOrCreateInstance(modalEl).show();
             return true;
         }
     } catch(e) {}
@@ -352,13 +236,12 @@ document.addEventListener("DOMContentLoaded", function () {
 
     // Filter status DT
     $('#filter_status_outgoing').on('change', function () {
-        window.LaravelDataTables['outgoing-transfers-table'].ajax.reload();
+        window.LaravelDataTables['outgoing-transfers-table']?.ajax?.reload();
     });
 
     $('#filter_status_incoming').on('change', function () {
-        window.LaravelDataTables['incoming-transfers-table'].ajax.reload();
+        window.LaravelDataTables['incoming-transfers-table']?.ajax?.reload();
     });
-
 });
 </script>
 @endpush

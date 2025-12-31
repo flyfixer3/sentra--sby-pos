@@ -26,16 +26,24 @@ class TransfersDataTable extends DataTable
                 return optional($row->toBranch)->name ?? '-';
             })
             ->addColumn('status_badge', function ($row) {
-                $status = strtolower((string) ($row->status ?? 'pending'));
-                $map = [
-                    'pending'   => 'warning text-dark',
-                    'shipped'   => 'info',
-                    'confirmed' => 'success',
-                    'cancelled' => 'danger',
-                ];
-                $cls = $map[$status] ?? 'secondary';
-                return '<span class="badge bg-'.$cls.'">'.strtoupper($status).'</span>';
+            // ✅ ambil raw status dari DB (anti ketipu accessor/cast)
+            $raw = $row->getRawOriginal('status');
+            $status = strtolower(trim((string) ($raw ?? $row->status ?? 'pending')));
+
+            $map = [
+                'pending'   => ['warning', 'text-dark'],
+                'shipped'   => ['info', ''],
+                'confirmed' => ['success', ''],
+                'cancelled' => ['danger', ''],
+            ];
+
+            [$bg, $extra] = $map[$status] ?? ['secondary', ''];
+
+            $label = strtoupper($status);
+
+            return '<span class="badge bg-' . $bg . ' ' . $extra . '">' . $label . '</span>';
             })
+
             ->addColumn('print_count', function ($row) {
                 $count = $row->printLogs ? $row->printLogs->count() : 0;
                 if ($count > 0) {

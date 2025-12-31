@@ -661,14 +661,17 @@ class TransferController extends Controller
             'note' => 'required|string|max:1000',
         ]);
 
-        if ($transfer->status === 'cancelled') abort(422, 'Transfer already cancelled.');
-        if (!in_array($transfer->status, ['shipped', 'confirmed'], true)) {
+        // ✅ 1) RAW status sekali aja
+        $status = strtolower(trim((string) ($transfer->getRawOriginal('status') ?? $transfer->status ?? 'pending')));
+
+        if ($status === 'cancelled') abort(422, 'Transfer already cancelled.');
+
+        if (!in_array($status, ['shipped', 'confirmed'], true)) {
             abort(422, 'Only shipped/confirmed transfer can be cancelled.');
         }
 
-        DB::transaction(function () use ($request, $transfer) {
+        DB::transaction(function () use ($request, $transfer, $status) {
 
-            // Anti dobel cancel mutation
             $alreadyCancelled = Mutation::withoutGlobalScopes()
                 ->where('reference', $transfer->reference)
                 ->where('note', 'like', 'Transfer CANCEL%')
@@ -679,13 +682,9 @@ class TransferController extends Controller
             $cancelNote = trim((string) $request->note);
 
             // ============ CASE 1: SHIPPED ============
-            // shipped artinya: sudah ada OUT dari gudang asal (saat print)
-            // cancel shipped: balikkan IN full qty ke gudang asal (balik ke kondisi sebelum transfer)
-            if ($transfer->status === 'shipped') {
-
+            if ($status === 'shipped') {
                 foreach ($transfer->items as $item) {
                     $qty = (int) $item->quantity;
-
                     if ($qty <= 0) continue;
 
                     $note = "Transfer CANCEL IN #{$transfer->reference} | Return to WH {$transfer->from_warehouse_id} | {$cancelNote}";
@@ -704,15 +703,10 @@ class TransferController extends Controller
             }
 
             // ============ CASE 2: CONFIRMED ============
-            // confirmed artinya: sudah ada IN ke gudang tujuan (good+defect),
-            // dan damaged dibuat IN+OUT (net 0).
-            // cancel confirmed: keluarkan dari gudang tujuan hanya sebesar (sent - damaged),
-            // lalu masukkan ke gudang asal sebesar (sent - damaged).
-            if ($transfer->status === 'confirmed') {
+            if ($status === 'confirmed') {
 
                 if (!$transfer->to_warehouse_id) abort(422, 'Invalid transfer data: destination warehouse is empty.');
 
-                // Hitung damaged per product (berdasarkan product_damaged_items ref transfer ini)
                 $damagedQtyByProduct = ProductDamagedItem::query()
                     ->where('reference_type', TransferRequest::class)
                     ->where('reference_id', (int) $transfer->id)
@@ -724,17 +718,14 @@ class TransferController extends Controller
                 foreach ($transfer->items as $item) {
                     $pid  = (int) $item->product_id;
                     $sent = (int) $item->quantity;
-
                     if ($sent <= 0) continue;
 
                     $damaged = (int) ($damagedQtyByProduct[$pid] ?? 0);
                     if ($damaged < 0) $damaged = 0;
                     if ($damaged > $sent) $damaged = $sent;
 
-                    // qty yang benar-benar ada di gudang tujuan (good+defect) = sent - damaged
                     $moveBackQty = $sent - $damaged;
 
-                    // 1) OUT dari gudang tujuan (hanya yang benar-benar masuk)
                     if ($moveBackQty > 0) {
                         $noteOut = "Transfer CANCEL OUT #{$transfer->reference} | Return from WH {$transfer->to_warehouse_id} | {$cancelNote}";
 
@@ -748,10 +739,7 @@ class TransferController extends Controller
                             $noteOut,
                             (string) now()->toDateString()
                         );
-                    }
 
-                    // 2) IN ke gudang asal (hanya yang benar-benar kembali)
-                    if ($moveBackQty > 0) {
                         $noteIn = "Transfer CANCEL IN #{$transfer->reference} | Return to WH {$transfer->from_warehouse_id} | {$cancelNote}";
 
                         $this->mutationController->applyInOut(
@@ -768,16 +756,20 @@ class TransferController extends Controller
                 }
             }
 
-            // Update status transfer
-            $transfer->update([
+            // ✅ 3) forceFill biar pasti kesave
+            $transfer->forceFill([
                 'status'       => 'cancelled',
                 'cancelled_by' => auth()->id(),
                 'cancelled_at' => now(),
                 'cancel_note'  => $cancelNote,
-            ]);
+            ])->save();
         });
 
         toast('Transfer cancelled successfully', 'warning');
+
+        $redirectTo = $request->input('redirect_to');
+        if ($redirectTo) return redirect($redirectTo);
+
         return redirect()->route('transfers.index');
     }
 

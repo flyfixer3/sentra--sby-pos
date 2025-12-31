@@ -11,6 +11,21 @@
 @endsection
 
 @section('content')
+@php
+    // ✅ Pakai RAW status biar gak ketipu accessor/cast
+    $status = strtolower(trim((string) ($transfer->getRawOriginal('status') ?? $transfer->status ?? 'pending')));
+
+    $statusLabel = strtoupper($status);
+
+    $statusClass = match ($status) {
+        'pending'   => 'bg-secondary',
+        'shipped'   => 'bg-primary',
+        'confirmed' => 'bg-success',
+        'cancelled' => 'bg-danger',
+        default     => 'bg-info text-dark',
+    };
+@endphp
+
 <div class="container-fluid">
 
     {{-- ================= HEADER CARD ================= --}}
@@ -22,7 +37,7 @@
             </div>
 
             <div class="d-flex flex-wrap gap-2 mt-2 mt-md-0">
-                @if ($transfer->status === 'pending')
+                @if ($status === 'pending')
                     <a href="{{ route('transfers.print.pdf', $transfer->id) }}"
                        class="btn btn-sm btn-dark" target="_blank">
                         <i class="bi bi-printer"></i> Cetak Surat Jalan
@@ -30,7 +45,7 @@
                 @endif
 
                 @if (
-                    $transfer->status === 'shipped'
+                    $status === 'shipped'
                     && session('active_branch') !== 'all'
                     && (int) session('active_branch') === (int) $transfer->to_branch_id
                 )
@@ -41,6 +56,7 @@
                 @endif
 
                 {{-- Cancel modal + button --}}
+                {{-- Modal kamu sendiri sudah handle canCancel shipped/confirmed, jadi aman --}}
                 @include('transfer::partials.cancel-transfer-modal', ['transfer' => $transfer])
             </div>
         </div>
@@ -76,10 +92,22 @@
                         <strong>{{ \Carbon\Carbon::parse($transfer->date)->format('d M Y') }}</strong>
                     </div>
 
+                    @php
+                        $status = strtolower(trim((string) ($transfer->getRawOriginal('status') ?? $transfer->status ?? 'pending')));
+
+                        $statusClass = match ($status) {
+                            'pending'   => 'bg-warning text-dark',
+                            'shipped'   => 'bg-info text-dark',
+                            'confirmed' => 'bg-success',
+                            'cancelled' => 'bg-danger',
+                            default     => 'bg-secondary',
+                        };
+                    @endphp
+
                     <div class="mb-1">
                         Status:
-                        <span class="badge bg-info text-dark text-uppercase">
-                            {{ $transfer->status }}
+                        <span class="badge {{ $statusClass }} text-uppercase">
+                            {{ strtoupper($status) }}
                         </span>
                     </div>
 
@@ -103,8 +131,8 @@
 
         <div class="card-body">
             @php
-                $createdByName = optional($transfer->creator)->name ?? optional($transfer->creator)->username ?? '-';
-                $printedByName = optional($transfer->printedBy)->name ?? optional($transfer->printedBy)->username ?? '-';
+                $createdByName   = optional($transfer->creator)->name ?? optional($transfer->creator)->username ?? '-';
+                $printedByName   = optional($transfer->printedBy)->name ?? optional($transfer->printedBy)->username ?? '-';
                 $confirmedByName = optional($transfer->confirmedBy)->name ?? optional($transfer->confirmedBy)->username ?? '-';
                 $cancelledByName = optional($transfer->cancelledBy)->name ?? optional($transfer->cancelledBy)->username ?? '-';
             @endphp
@@ -176,7 +204,7 @@
                             <th width="50">#</th>
                             <th>Produk</th>
                             <th class="text-center" width="120">Sent</th>
-                            @if($transfer->status === 'confirmed')
+                            @if($status === 'confirmed')
                                 <th class="text-center">Received</th>
                                 <th class="text-center">Defect</th>
                                 <th class="text-center">Damaged</th>
@@ -209,7 +237,7 @@
                                     <span class="badge bg-primary text-white fw-semibold">{{ $item->quantity }}</span>
                                 </td>
 
-                                @if($transfer->status === 'confirmed')
+                                @if($status === 'confirmed')
                                     <td class="text-center">
                                         <span class="badge bg-success">
                                             {{ $summary['received_good'] ?? 0 }}
@@ -243,7 +271,7 @@
     </div>
 
     {{-- ================= DEFECT ================= --}}
-    @if($transfer->status === 'confirmed' && $defects->isNotEmpty())
+    @if($status === 'confirmed' && $defects->isNotEmpty())
         <div class="card mb-4 shadow-sm border-warning">
             <div class="card-header bg-warning bg-opacity-25 fw-semibold">
                 Defect Details
@@ -302,7 +330,7 @@
     @endif
 
     {{-- ================= DAMAGED ================= --}}
-    @if($transfer->status === 'confirmed' && $damaged->isNotEmpty())
+    @if($status === 'confirmed' && $damaged->isNotEmpty())
         <div class="card mb-4 shadow-sm border-danger">
             <div class="card-header bg-danger bg-opacity-10 fw-semibold">
                 Damaged / Pecah Details
@@ -367,37 +395,37 @@
 
 @push('scripts')
 <script>
-document.addEventListener('DOMContentLoaded', function () {
+document.addEventListener('click', function (e) {
+    const btn = e.target.closest('[data-open-cancel-modal]');
+    if (!btn) return;
 
-    // Debug helper (boleh hapus kalau sudah beres)
-    // console.log('Cancel modal binder loaded');
+    const modalId = btn.getAttribute('data-open-cancel-modal');
+    const modalEl = document.getElementById(modalId);
 
-    document.querySelectorAll('[data-open-cancel-modal]').forEach(function (btn) {
-        btn.addEventListener('click', function () {
-            const modalId = btn.getAttribute('data-open-cancel-modal');
-            const modalEl = document.getElementById(modalId);
+    if (!modalEl) {
+        console.error('Modal element not found:', modalId);
+        return;
+    }
 
-            if (!modalEl) {
-                console.error('Modal element not found:', modalId);
-                return;
-            }
+    // Bootstrap 5
+    if (window.bootstrap?.Modal) {
+        window.bootstrap.Modal.getOrCreateInstance(modalEl).show();
+        return;
+    }
 
-            // Bootstrap 5
-            if (typeof window.bootstrap !== 'undefined' && window.bootstrap.Modal) {
-                window.bootstrap.Modal.getOrCreateInstance(modalEl).show();
-                return;
-            }
+    // CoreUI
+    if (window.coreui?.Modal) {
+        window.coreui.Modal.getOrCreateInstance(modalEl).show();
+        return;
+    }
 
-            // CoreUI
-            if (typeof window.coreui !== 'undefined' && window.coreui.Modal) {
-                window.coreui.Modal.getOrCreateInstance(modalEl).show();
-                return;
-            }
+    // Bootstrap 4 fallback (kalau ada jQuery)
+    if (window.jQuery && typeof window.jQuery(modalEl).modal === 'function') {
+        window.jQuery(modalEl).modal('show');
+        return;
+    }
 
-            console.error('Modal library not found. bootstrap/coreui JS is not loaded.');
-        });
-    });
-
+    console.error('Modal library not found.');
 });
 </script>
 @endpush

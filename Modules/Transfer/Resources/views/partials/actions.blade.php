@@ -10,7 +10,6 @@
         </a>
     @endif
 @endcan
-
 @can('cancel_transfers')
     @if(in_array($status, ['shipped','confirmed'], true))
         <button type="button"
@@ -22,7 +21,6 @@
         </button>
     @endif
 @endcan
-
 
 @can('show_transfers')
     <a href="{{ route('transfers.show', $data->id) }}" class="btn btn-sm btn-primary" title="Lihat Detail Transfer">
@@ -44,16 +42,20 @@
 @endif
 
 @can('delete_transfers')
-    <button id="delete" class="btn btn-danger btn-sm" onclick="
-        event.preventDefault();
-        if (confirm('Are you sure? It will delete the data permanently!')) {
-            document.getElementById('destroy{{ $data->id }}').submit()
-        }">
+    <button type="button"
+            class="btn btn-danger btn-sm js-delete-transfer"
+            data-id="{{ $data->id }}"
+            data-reference="{{ $data->reference ?? ('#'.$data->id) }}"
+            title="Delete Transfer">
         <i class="bi bi-trash"></i>
     </button>
 
-    <form id="destroy{{ $data->id }}" class="d-none" action="{{ route('transfers.destroy', $data->id) }}" method="POST">
+    <form id="destroy-transfer-{{ $data->id }}"
+          class="d-none"
+          action="{{ route('transfers.destroy', $data->id) }}"
+          method="POST">
         @csrf
-        @method('delete')
+        @method('DELETE')
     </form>
 @endcan
+
