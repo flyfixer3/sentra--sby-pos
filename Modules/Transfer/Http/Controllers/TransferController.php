@@ -364,266 +364,106 @@ class TransferController extends Controller
             ->with(['items.product', 'fromWarehouse', 'toBranch'])
             ->findOrFail($id);
 
-        $active = $this->activeBranch();
-        if ($active === 'all') abort(422, "Please choose a specific branch (not 'All Branch') to confirm incoming transfer.");
-        if ((int) $transfer->to_branch_id !== (int) $active) abort(403, 'Unauthorized.');
-        if ($transfer->status === 'cancelled') abort(422, 'Transfer already cancelled.');
+        $active = session('active_branch');
+        if ($active === 'all') abort(422, "Please choose a specific branch.");
+        if ((int)$transfer->to_branch_id !== (int)$active) abort(403, 'Unauthorized.');
         if ($transfer->status !== 'shipped') abort(422, 'Only shipped transfer can be confirmed.');
 
         $request->validate([
             'to_warehouse_id' => 'required|exists:warehouses,id',
             'delivery_code'   => 'required|string|size:6',
-
-            'items' => 'required|array|min:1',
-            'items.*.product_id' => 'required|integer|exists:products,id',
-            'items.*.qty_sent'   => 'required|integer|min:0',
+            'items'           => 'required|array|min:1',
+            'items.*.product_id'   => 'required|integer',
+            'items.*.qty_sent'     => 'required|integer|min:0',
             'items.*.qty_received' => 'required|integer|min:0',
             'items.*.qty_defect'   => 'required|integer|min:0',
             'items.*.qty_damaged'  => 'required|integer|min:0',
-
-            // Per-unit arrays (optional, but will be enforced manually based on qty_defect/qty_damaged)
-            'items.*.defects' => 'nullable|array',
-            'items.*.defects.*.defect_type' => 'nullable|string|max:255',
-            'items.*.defects.*.defect_description' => 'nullable|string|max:1000',
-            'items.*.defects.*.photo' => 'nullable|image|max:4096',
-
-            'items.*.damaged_items' => 'nullable|array',
-            'items.*.damaged_items.*.damaged_reason' => 'nullable|string|max:1000',
-            'items.*.damaged_items.*.photo' => 'nullable|image|max:4096',
-
         ]);
 
-        $inputCode = strtoupper(trim((string) $request->delivery_code));
-
-        if (!$transfer->delivery_code) {
-            abort(422, 'Delivery code is not generated yet. Please print the delivery note first.');
-        }
-        if ($inputCode !== strtoupper((string) $transfer->delivery_code)) {
-            abort(422, 'Invalid delivery code. Please check the code on the delivery note.');
+        if (strtoupper($request->delivery_code) !== strtoupper($transfer->delivery_code)) {
+            abort(422, 'Invalid delivery code.');
         }
 
-        $toWarehouse = Warehouse::findOrFail($request->to_warehouse_id);
-        if ((int) $toWarehouse->branch_id !== (int) $transfer->to_branch_id) {
-            abort(422, 'To Warehouse must belong to destination branch.');
-        }
+        DB::transaction(function () use ($request, $transfer) {
 
-        // Map item transfer asli: product_id => qty_sent (dari DB)
-        $sentMap = [];
-        foreach ($transfer->items as $it) {
-            $sentMap[(int) $it->product_id] = (int) $it->quantity;
-        }
-
-        $itemsInput = $request->input('items', []);
-
-        // Validasi server-side (anti manipulasi + enforce per-unit)
-        foreach ($itemsInput as $rowIdx => $row) {
-            $pid = (int) ($row['product_id'] ?? 0);
-            if (!$pid || !array_key_exists($pid, $sentMap)) {
-                abort(422, 'Invalid items payload: product not found in this transfer.');
-            }
-
-            $sentDb = (int) $sentMap[$pid];
-
-            $qtySentInput = (int) ($row['qty_sent'] ?? 0);
-            if ($qtySentInput !== $sentDb) {
-                abort(422, "Invalid qty_sent for product_id {$pid}. Please reload the page.");
-            }
-
-            $received = (int) ($row['qty_received'] ?? 0);
-            $defect   = (int) ($row['qty_defect'] ?? 0);
-            $damaged  = (int) ($row['qty_damaged'] ?? 0);
-
-            if ($received < 0 || $defect < 0 || $damaged < 0) {
-                abort(422, "Invalid negative qty for product_id {$pid}.");
-            }
-
-            $total = $received + $defect + $damaged;
-            if ($total !== $sentDb) {
-                abort(422, "Qty mismatch for product_id {$pid}. Total (received+defect+damaged) must equal sent ({$sentDb}).");
-            }
-
-            // Enforce per-unit defects array
-            if ($defect > 0) {
-                $defectsArr = $row['defects'] ?? null;
-                if (!is_array($defectsArr)) {
-                    abort(422, "Defect details are required for product_id {$pid} because qty_defect > 0.");
-                }
-                if (count($defectsArr) !== $defect) {
-                    abort(422, "Defect detail count mismatch for product_id {$pid}. Must be exactly {$defect} rows.");
-                }
-                foreach ($defectsArr as $k => $d) {
-                    $type = trim((string)($d['defect_type'] ?? ''));
-                    if ($type === '') {
-                        abort(422, "Defect type is required for product_id {$pid} on defect row #" . ($k + 1) . ".");
-                    }
-                    $desc = (string)($d['defect_description'] ?? '');
-                    if (mb_strlen($desc) > 1000) {
-                        abort(422, "Defect description too long for product_id {$pid} on defect row #" . ($k + 1) . ".");
-                    }
-                }
-            }
-
-            // Enforce per-unit damaged array
-            if ($damaged > 0) {
-                $damArr = $row['damaged_items'] ?? null;
-                if (!is_array($damArr)) {
-                    abort(422, "Damaged details are required for product_id {$pid} because qty_damaged > 0.");
-                }
-                if (count($damArr) !== $damaged) {
-                    abort(422, "Damaged detail count mismatch for product_id {$pid}. Must be exactly {$damaged} rows.");
-                }
-                foreach ($damArr as $k => $d) {
-                    $reason = trim((string)($d['damaged_reason'] ?? ''));
-                    if ($reason === '') {
-                        abort(422, "Damaged reason is required for product_id {$pid} on damaged row #" . ($k + 1) . ".");
-                    }
-                    if (mb_strlen($reason) > 1000) {
-                        abort(422, "Damaged reason too long for product_id {$pid} on damaged row #" . ($k + 1) . ".");
-                    }
-                }
-            }
-        }
-
-        DB::transaction(function () use ($request, $transfer, $itemsInput) {
-
-            // Update header transfer dulu
+            // Header confirm
             $transfer->update([
-                'to_warehouse_id' => (int) $request->to_warehouse_id,
+                'to_warehouse_id' => (int)$request->to_warehouse_id,
                 'status'          => 'confirmed',
                 'confirmed_by'    => auth()->id(),
                 'confirmed_at'    => now(),
             ]);
 
-            // anti dobel IN: kalau sudah pernah masuk, stop (biar aman)
+            // Anti double confirm
             $alreadyIn = Mutation::withoutGlobalScopes()
                 ->where('reference', $transfer->reference)
                 ->where('note', 'like', 'Transfer IN%')
                 ->exists();
 
-            if ($alreadyIn) {
-                return;
-            }
+            if ($alreadyIn) return;
 
-            foreach ($itemsInput as $rowIdx => $row) {
-                $productId = (int) $row['product_id'];
+            foreach ($request->items as $idx => $row) {
 
-                $qtyReceived = (int) $row['qty_received'];
-                $qtyDefect   = (int) $row['qty_defect'];
-                $qtyDamaged  = (int) $row['qty_damaged'];
+                $productId   = (int)$row['product_id'];
+                $qtyReceived = (int)$row['qty_received'];
+                $qtyDefect   = (int)$row['qty_defect'];
+                $qtyDamaged  = (int)$row['qty_damaged'];
 
-                // 1) IN untuk good + defect (defect tetap jadi qty_available)
-                $qtyInTotal = $qtyReceived + $qtyDefect;
+                // ==========================
+                // 1️⃣ TOTAL MASUK STOCK
+                // ==========================
+                $totalIn = $qtyReceived + $qtyDefect + $qtyDamaged;
 
-                if ($qtyInTotal > 0) {
-                    $noteIn = "Transfer IN #{$transfer->reference} | To WH {$request->to_warehouse_id}";
-
+                if ($totalIn > 0) {
                     $this->mutationController->applyInOut(
-                        (int) $transfer->to_branch_id,
-                        (int) $request->to_warehouse_id,
-                        (int) $productId,
+                        (int)$transfer->to_branch_id,
+                        (int)$request->to_warehouse_id,
+                        $productId,
                         'In',
-                        (int) $qtyInTotal,
-                        (string) $transfer->reference,
-                        $noteIn,
-                        (string) now()->toDateString()
+                        $totalIn,
+                        $transfer->reference,
+                        "Transfer IN #{$transfer->reference}",
+                        now()->toDateString()
                     );
                 }
 
-                // 2) DEFECT: create per-unit rows (quantity=1 each)
+                // ==========================
+                // 2️⃣ DEFECT (LABEL ONLY)
+                // ==========================
                 if ($qtyDefect > 0) {
-                    $defectsArr = is_array($row['defects'] ?? null) ? $row['defects'] : [];
-
-                    foreach ($defectsArr as $k => $defRow) {
-                        $defectType = trim((string) ($defRow['defect_type'] ?? ''));
-                        $defectDesc = trim((string) ($defRow['defect_description'] ?? ''));
-
-                        // ambil file upload (kalau ada)
-                        $photoPath = null;
-                        $photoFile = $request->file("items.$rowIdx.defects.$k.photo");
-                        if ($photoFile && $photoFile->isValid()) {
-                            // simpan ke storage public
-                            // contoh path: transfers/TRF0001/defects/xxx.jpg
-                            $photoPath = $photoFile->store(
-                                "transfers/{$transfer->reference}/defects",
-                                'public'
-                            );
-                        }
-
+                    foreach ($row['defects'] ?? [] as $k => $d) {
                         ProductDefectItem::create([
-                            'branch_id'      => (int) $transfer->to_branch_id,
-                            'warehouse_id'   => (int) $request->to_warehouse_id,
-                            'product_id'     => (int) $productId,
-                            'reference_id'   => (int) $transfer->id,
+                            'branch_id'      => (int)$transfer->to_branch_id,
+                            'warehouse_id'   => (int)$request->to_warehouse_id,
+                            'product_id'     => $productId,
+                            'reference_id'   => (int)$transfer->id,
                             'reference_type' => TransferRequest::class,
                             'quantity'       => 1,
-                            'defect_type'    => $defectType,
-                            'description'    => $defectDesc !== '' ? $defectDesc : null,
-                            'photo_path'     => $photoPath,
+                            'defect_type'    => $d['defect_type'] ?? null,
+                            'description'    => $d['defect_description'] ?? null,
                             'created_by'     => auth()->id(),
                         ]);
                     }
-
                 }
 
-                // 3) DAMAGED:
-                // - Mutasi tetap dibuat 1x IN dan 1x OUT untuk total qtyDamaged (lebih rapi & efisien)
-                // - Tapi ProductDamagedItem dibuat per unit (quantity=1 each) agar masing-masing punya reason sendiri.
+                // ==========================
+                // 3️⃣ DAMAGED (LABEL ONLY)
+                // ==========================
                 if ($qtyDamaged > 0) {
-                    $damArr = is_array($row['damaged_items'] ?? null) ? $row['damaged_items'] : [];
-
-                    $noteDamIn  = "Transfer DAMAGED IN #{$transfer->reference} | To WH {$request->to_warehouse_id}";
-                    $noteDamOut = "Transfer DAMAGED OUT #{$transfer->reference} | To WH {$request->to_warehouse_id}";
-
-                    $mutationInId = $this->mutationController->applyInOutAndGetMutationId(
-                        (int) $transfer->to_branch_id,
-                        (int) $request->to_warehouse_id,
-                        (int) $productId,
-                        'In',
-                        (int) $qtyDamaged,
-                        (string) $transfer->reference,
-                        $noteDamIn,
-                        (string) now()->toDateString()
-                    );
-
-                    $mutationOutId = $this->mutationController->applyInOutAndGetMutationId(
-                        (int) $transfer->to_branch_id,
-                        (int) $request->to_warehouse_id,
-                        (int) $productId,
-                        'Out',
-                        (int) $qtyDamaged,
-                        (string) $transfer->reference,
-                        $noteDamOut,
-                        (string) now()->toDateString()
-                    );
-
-                    foreach ($damArr as $k => $damRow) {
-                        $reason = trim((string) ($damRow['damaged_reason'] ?? ''));
-
-                        // ambil file upload (kalau ada)
-                        $photoPath = null;
-                        $photoFile = $request->file("items.$rowIdx.damaged_items.$k.photo");
-                        if ($photoFile && $photoFile->isValid()) {
-                            $photoPath = $photoFile->store(
-                                "transfers/{$transfer->reference}/damaged",
-                                'public'
-                            );
-                        }
-
+                    foreach ($row['damaged_items'] ?? [] as $k => $d) {
                         ProductDamagedItem::create([
-                            'branch_id'       => (int) $transfer->to_branch_id,
-                            'warehouse_id'    => (int) $request->to_warehouse_id,
-                            'product_id'      => (int) $productId,
-                            'reference_id'    => (int) $transfer->id,
-                            'reference_type'  => TransferRequest::class,
-                            'quantity'        => 1,
-                            'reason'          => $reason !== '' ? $reason : null,
-                            'photo_path'      => $photoPath,
-                            'mutation_in_id'  => (int) $mutationInId,
-                            'mutation_out_id' => (int) $mutationOutId,
-                            'created_by'      => auth()->id(),
+                            'branch_id'      => (int)$transfer->to_branch_id,
+                            'warehouse_id'   => (int)$request->to_warehouse_id,
+                            'product_id'     => $productId,
+                            'reference_id'   => (int)$transfer->id,
+                            'reference_type' => TransferRequest::class,
+                            'quantity'       => 1,
+                            'reason'         => $d['damaged_reason'] ?? null,
+                            'created_by'     => auth()->id(),
+                            'mutation_in_id' => null,
+                            'mutation_out_id'=> null,
                         ]);
                     }
-
                 }
             }
         });
@@ -631,7 +471,6 @@ class TransferController extends Controller
         toast('Transfer confirmed successfully', 'success');
         return redirect()->route('transfers.index', ['tab' => 'incoming']);
     }
-
 
     public function destroy($id)
     {

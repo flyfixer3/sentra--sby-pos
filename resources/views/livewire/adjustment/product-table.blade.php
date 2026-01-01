@@ -1,91 +1,103 @@
 <div>
-    @if (session()->has('message'))
-        <div class="alert alert-warning alert-dismissible fade show" role="alert">
-            <div class="alert-body">
-                <span>{{ session('message') }}</span>
-                <button type="button" class="close" data-dismiss="alert" aria-label="Close">
-                    <span aria-hidden="true">×</span>
-                </button>
-            </div>
-        </div>
+@if (session()->has('message'))
+    <div class="alert alert-warning">{{ session('message') }}</div>
+@endif
+
+<div class="table-responsive">
+<table class="table table-bordered">
+<thead>
+<tr>
+    <th style="width:60px">#</th>
+    <th>Product</th>
+    <th style="width:160px">Code</th>
+    <th style="width:140px" class="text-center">Stock</th>
+    <th style="width:140px">Qty</th>
+    <th style="width:160px">Type</th>
+    <th>Note</th>
+    <th style="width:90px" class="text-center">Action</th>
+</tr>
+</thead>
+
+<tbody>
+@if(!empty($products))
+@foreach($products as $key => $product)
+<tr>
+    <td>{{ $key + 1 }}</td>
+    <td>{{ $product['product_name'] }}</td>
+    <td>{{ $product['product_code'] }}</td>
+
+    <td class="text-center">
+        @if($mode === 'quality')
+            <span class="badge badge-success">
+                GOOD: {{ (int)($product['good_qty'] ?? 0) }}
+            </span>
+        @else
+            <span class="badge badge-info">
+                {{ $product['product_quantity'] }} {{ $product['product_unit'] }}
+            </span>
+        @endif
+    </td>
+
+    {{-- Stock mode: kirim array untuk controller store/update --}}
+    @if($mode !== 'quality')
+        <input type="hidden" name="product_ids[]" value="{{ $product['id'] }}">
     @endif
 
-    <div class="table-responsive position-relative">
-        <div wire:loading.flex class="col-12 position-absolute justify-content-center align-items-center"
-             style="top:0;right:0;left:0;bottom:0;background-color: rgba(255,255,255,0.5);z-index: 99;">
-            <div class="spinner-border text-primary" role="status">
-                <span class="sr-only">Loading...</span>
-            </div>
-        </div>
-
-        <table class="table table-bordered">
-            <thead>
-            <tr class="align-middle">
-                <th class="align-middle">#</th>
-                <th class="align-middle">Product Name</th>
-                <th class="align-middle">Code</th>
-                <th class="align-middle">Stock</th>
-                <th class="align-middle">Quantity</th>
-                <th class="align-middle">Type</th>
-                <th class="align-middle">Item Note</th>
-                <th class="align-middle">Action</th>
-            </tr>
-            </thead>
-
-            <tbody>
-            @if(!empty($products))
-                @foreach($products as $key => $product)
-                    <tr>
-                        <td class="align-middle">{{ $key + 1 }}</td>
-
-                        <td class="align-middle">{{ $product['product_name'] ?? '-' }}</td>
-
-                        <td class="align-middle">{{ $product['product_code'] ?? '-' }}</td>
-
-                        <td class="align-middle text-center">
-                            <span class="badge badge-info">
-                                {{ $product['product_quantity'] ?? 0 }} {{ $product['product_unit'] ?? '' }}
-                            </span>
-                        </td>
-
-                        <!-- ✅ PASTI ADA -->
-                        <input type="hidden" name="product_ids[]" value="{{ $product['id'] }}">
-
-                        <td class="align-middle">
-                            <input type="number" name="quantities[]" min="1" class="form-control"
-                                   value="{{ $product['quantity'] ?? 1 }}">
-                        </td>
-
-                        <td class="align-middle">
-                            <select name="types[]" class="form-control">
-                                <option value="add" {{ ($product['type'] ?? 'add') === 'add' ? 'selected' : '' }}>(+) Addition</option>
-                                <option value="sub" {{ ($product['type'] ?? 'add') === 'sub' ? 'selected' : '' }}>(-) Subtraction</option>
-                            </select>
-                        </td>
-
-                        <td class="align-middle">
-                            <input type="text" name="notes[]" class="form-control"
-                                   placeholder="Optional note..."
-                                   value="{{ $product['note'] ?? '' }}">
-                        </td>
-
-                        <td class="align-middle text-center">
-                            <button type="button" class="btn btn-danger" wire:click="removeProduct({{ $key }})">
-                                <i class="bi bi-trash"></i>
-                            </button>
-                        </td>
-                    </tr>
-                @endforeach
+    <td>
+        <input
+            type="number"
+            min="1"
+            class="form-control"
+            @if($mode === 'quality')
+                wire:model.lazy="products.{{ $key }}.quantity"
             @else
-                <tr>
-                    <td colspan="8" class="text-center">
-                        <span class="text-danger">
-                            Please search & select products!
-                        </span>
-                    </td>
-                </tr>
+                name="quantities[]"
+                value="{{ $product['quantity'] }}"
             @endif
-            </tbody>
-        </table>
-    </div>
+        >
+
+        @if($mode === 'quality')
+            <small class="text-muted">
+                Max GOOD: {{ (int)($product['good_qty'] ?? 0) }}
+            </small>
+        @endif
+    </td>
+
+    <td>
+        @if($mode === 'quality')
+            <input type="text" class="form-control" value="Quality Reclass" disabled>
+        @else
+            <select name="types[]" class="form-control">
+                <option value="add" {{ $product['type']==='add'?'selected':'' }}>Add</option>
+                <option value="sub" {{ $product['type']==='sub'?'selected':'' }}>Sub</option>
+            </select>
+        @endif
+    </td>
+
+    <td>
+        @if($mode === 'quality')
+            <input type="text" class="form-control" wire:model.lazy="products.{{ $key }}.note">
+        @else
+            <input type="text" name="notes[]" class="form-control" value="{{ $product['note'] }}">
+        @endif
+    </td>
+
+    <td class="text-center">
+        <button type="button" class="btn btn-danger"
+                wire:click="removeProduct({{ $key }})">
+            <i class="bi bi-trash"></i>
+        </button>
+    </td>
+</tr>
+@endforeach
+@else
+<tr>
+    <td colspan="8" class="text-center text-danger">
+        Please search & select products!
+    </td>
+</tr>
+@endif
+</tbody>
+</table>
+</div>
 </div>

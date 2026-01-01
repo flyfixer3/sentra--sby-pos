@@ -4,12 +4,16 @@ namespace Modules\Adjustment\Http\Controllers;
 
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
+use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
 use Modules\Adjustment\DataTables\AdjustmentsDataTable;
 use Modules\Adjustment\Entities\AdjustedProduct;
 use Modules\Adjustment\Entities\Adjustment;
 use Modules\Product\Entities\Product;
+use Modules\Product\Entities\Warehouse;
+use Modules\Product\Entities\ProductDefectItem;
+use Modules\Product\Entities\ProductDamagedItem;
 use Modules\Mutation\Http\Controllers\MutationController;
 
 class AdjustmentController extends Controller
@@ -31,69 +35,84 @@ class AdjustmentController extends Controller
     {
         abort_if(Gate::denies('create_adjustments'), 403);
 
-        $branchId = $this->getActiveBranchId();
-        $defaultWarehouseId = $this->resolveDefaultWarehouseId($branchId);
+        $active = session('active_branch');
+        if ($active === 'all' || $active === null || $active === '') {
+            abort(422, "Please choose a specific branch (not 'All Branch') to create adjustment.");
+        }
 
-        $warehouses = DB::table('warehouses')
-            ->where('branch_id', $branchId)
+        $activeBranchId = (int) $active;
+
+        $warehouses = Warehouse::query()
+            ->where('branch_id', $activeBranchId)
             ->orderByDesc('is_main')
             ->orderBy('warehouse_name')
             ->get();
 
-        return view('adjustment::create', [
-            'activeBranchId' => $branchId,
-            'defaultWarehouseId' => $defaultWarehouseId,
-            'warehouses' => $warehouses,
-        ]);
+        $defaultWarehouseId = (int) optional($warehouses->firstWhere('is_main', 1))->id;
+        if (!$defaultWarehouseId) {
+            $defaultWarehouseId = (int) optional($warehouses->first())->id;
+        }
+
+        return view('adjustment::create', compact('warehouses', 'activeBranchId', 'defaultWarehouseId'));
     }
 
     public function store(Request $request)
     {
         abort_if(Gate::denies('create_adjustments'), 403);
 
+        // IMPORTANT: reference TIDAK divalidasi, karena auto-generate di model Adjustment::boot()
         $request->validate([
             'date'          => 'required|date',
+            'warehouse_id'  => 'required|integer|exists:warehouses,id',
             'note'          => 'nullable|string|max:1000',
-            'warehouse_id'  => 'required|integer',
 
-            'product_ids'   => 'required|array',
-            'product_ids.*' => 'required|integer',
+            'product_ids'   => 'required|array|min:1',
+            'product_ids.*' => 'required|integer|exists:products,id',
 
-            'quantities'    => 'required|array',
+            'quantities'    => 'required|array|min:1',
             'quantities.*'  => 'required|integer|min:1',
 
-            'types'         => 'required|array',
+            'types'         => 'required|array|min:1',
             'types.*'       => 'required|in:add,sub',
 
             'notes'         => 'nullable|array',
         ]);
 
-        DB::transaction(function () use ($request) {
+        $active = session('active_branch');
+        if ($active === 'all' || $active === null || $active === '') {
+            abort(422, "Please choose a specific branch (not 'All Branch') to create adjustment.");
+        }
+        $branchId = (int) $active;
 
-            $branchId = $this->getActiveBranchId();
-            $warehouseId = (int) $request->warehouse_id;
+        $warehouseId = (int) $request->warehouse_id;
 
-            $this->assertWarehouseBelongsToBranch($warehouseId, $branchId);
+        $wh = Warehouse::findOrFail($warehouseId);
+        if ((int) $wh->branch_id !== $branchId) {
+            abort(403, 'Warehouse must belong to active branch.');
+        }
+
+        DB::transaction(function () use ($request, $branchId, $warehouseId) {
 
             $adjustment = Adjustment::create([
-                'date'         => $request->date,
+                'date'         => (string) $request->date,
                 'note'         => $request->note,
                 'branch_id'    => $branchId,
                 'warehouse_id' => $warehouseId,
-
-                // ✅ AUDIT TRAIL
-                'created_by'   => auth()->id(),
+                'created_by'   => Auth::id(),
             ]);
+
+            // setelah create, reference sudah ter-generate otomatis
+            $reference = (string) $adjustment->reference;
 
             foreach ($request->product_ids as $key => $productId) {
 
                 $productId = (int) $productId;
-                $qty = (int) ($request->quantities[$key] ?? 0);
-                $type = $request->types[$key] ?? null;
-                $itemNote = $request->notes[$key] ?? null;
+                $qty       = (int) ($request->quantities[$key] ?? 0);
+                $type      = (string) ($request->types[$key] ?? '');
+                $itemNote  = $request->notes[$key] ?? null;
 
-                if ($productId <= 0 || $qty <= 0 || !in_array($type, ['add', 'sub'], true)) {
-                    throw new \RuntimeException('Data item adjustment tidak valid (product/qty/type).');
+                if ($qty <= 0 || !in_array($type, ['add', 'sub'], true)) {
+                    abort(422, 'Invalid item data.');
                 }
 
                 Product::findOrFail($productId);
@@ -108,7 +127,7 @@ class AdjustmentController extends Controller
 
                 $mutationType = $type === 'add' ? 'In' : 'Out';
 
-                // IMPORTANT: note diawali "Adjustment" supaya rollbackByReference() bisa filter dengan aman
+                // note diawali "Adjustment" supaya rollbackByReference(..., 'Adjustment') aman
                 $mutationNote = trim(
                     'Adjustment #' . $adjustment->id
                     . ($adjustment->note ? ' | ' . $adjustment->note : '')
@@ -121,9 +140,9 @@ class AdjustmentController extends Controller
                     $productId,
                     $mutationType,
                     $qty,
-                    $adjustment->reference,
+                    $reference,
                     $mutationNote,
-                    $request->date
+                    (string) $request->date
                 );
             }
         });
@@ -136,7 +155,6 @@ class AdjustmentController extends Controller
     {
         abort_if(Gate::denies('show_adjustments'), 403);
 
-        // ✅ biar creator/warehouse/branch/produk kebaca dan gak N+1 query
         $adjustment->loadMissing([
             'creator',
             'branch',
@@ -151,77 +169,86 @@ class AdjustmentController extends Controller
     {
         abort_if(Gate::denies('edit_adjustments'), 403);
 
-        $branchId = $this->getActiveBranchId();
-        $defaultWarehouseId = $adjustment->warehouse_id
-            ? (int) $adjustment->warehouse_id
-            : $this->resolveDefaultWarehouseId($branchId);
+        $active = session('active_branch');
+        if ($active === 'all' || $active === null || $active === '') {
+            abort(422, "Please choose a specific branch (not 'All Branch') to edit adjustment.");
+        }
+        $activeBranchId = (int) $active;
 
-        $warehouses = DB::table('warehouses')
-            ->where('branch_id', $branchId)
+        $warehouses = Warehouse::query()
+            ->where('branch_id', $activeBranchId)
             ->orderByDesc('is_main')
             ->orderBy('warehouse_name')
             ->get();
 
-        return view('adjustment::edit', [
-            'adjustment' => $adjustment,
-            'activeBranchId' => $branchId,
-            'defaultWarehouseId' => $defaultWarehouseId,
-            'warehouses' => $warehouses,
-        ]);
+        $defaultWarehouseId = (int) ($adjustment->warehouse_id ?: optional($warehouses->firstWhere('is_main', 1))->id);
+
+        return view('adjustment::edit', compact('adjustment', 'warehouses', 'activeBranchId', 'defaultWarehouseId'));
     }
 
     public function update(Request $request, Adjustment $adjustment)
     {
         abort_if(Gate::denies('edit_adjustments'), 403);
 
+        // IMPORTANT: reference jangan divalidasi & jangan diupdate (biar rollback by reference aman)
         $request->validate([
             'date'          => 'required|date',
+            'warehouse_id'  => 'required|integer|exists:warehouses,id',
             'note'          => 'nullable|string|max:1000',
-            'warehouse_id'  => 'required|integer',
 
-            'product_ids'   => 'required|array',
-            'product_ids.*' => 'required|integer',
+            'product_ids'   => 'required|array|min:1',
+            'product_ids.*' => 'required|integer|exists:products,id',
 
-            'quantities'    => 'required|array',
+            'quantities'    => 'required|array|min:1',
             'quantities.*'  => 'required|integer|min:1',
 
-            'types'         => 'required|array',
+            'types'         => 'required|array|min:1',
             'types.*'       => 'required|in:add,sub',
 
             'notes'         => 'nullable|array',
         ]);
 
-        DB::transaction(function () use ($request, $adjustment) {
+        $active = session('active_branch');
+        if ($active === 'all' || $active === null || $active === '') {
+            abort(422, "Please choose a specific branch (not 'All Branch') to update adjustment.");
+        }
+        $branchId = (int) $active;
 
-            $branchId = $this->getActiveBranchId();
-            $newWarehouseId = (int) $request->warehouse_id;
+        $newWarehouseId = (int) $request->warehouse_id;
 
-            $this->assertWarehouseBelongsToBranch($newWarehouseId, $branchId);
+        $wh = Warehouse::findOrFail($newWarehouseId);
+        if ((int) $wh->branch_id !== $branchId) {
+            abort(403, 'Warehouse must belong to active branch.');
+        }
 
-            // 1) rollback mutation lama + balikin stock
-            $this->mutationController->rollbackByReference($adjustment->reference, 'Adjustment');
+        DB::transaction(function () use ($request, $adjustment, $branchId, $newWarehouseId) {
+
+            $reference = (string) $adjustment->reference;
+
+            // 1) rollback mutation lama
+            $this->mutationController->rollbackByReference($reference, 'Adjustment');
 
             // 2) hapus detail lama
             AdjustedProduct::where('adjustment_id', $adjustment->id)->delete();
 
-            // 3) update header (JANGAN update reference, JANGAN ubah created_by)
+            // 3) update header (reference tetap)
             $adjustment->update([
-                'date'         => $request->date,
+                'date'         => (string) $request->date,
                 'note'         => $request->note,
                 'branch_id'    => $branchId,
                 'warehouse_id' => $newWarehouseId,
             ]);
 
-            // 4) create detail baru + mutation baru
+            // 4) insert detail baru + mutation baru
             foreach ($request->product_ids as $key => $productId) {
 
                 $productId = (int) $productId;
-                $qty = (int) ($request->quantities[$key] ?? 0);
-                $type = $request->types[$key] ?? null;
-                $itemNote = $request->notes[$key] ?? null;
+                $qty       = (int) ($request->quantities[$key] ?? 0);
+                $type      = (string) ($request->types[$key] ?? '');
+                $itemNote  = $request->notes[$key] ?? null;
 
-                if ($productId <= 0 || $qty <= 0 || !in_array($type, ['add', 'sub'], true)) {
-                    throw new \RuntimeException('Data item adjustment tidak valid (product/qty/type).');
+                if ($qty <= 0 || !in_array($type, ['add', 'sub'], true)) {
+                    abort(422, 'Invalid item data.');
                 }
 
                 Product::findOrFail($productId);
@@ -248,9 +275,9 @@ class AdjustmentController extends Controller
                     $productId,
                     $mutationType,
                     $qty,
-                    $adjustment->reference,
+                    $reference,
                     $mutationNote,
-                    $request->date
+                    (string) $request->date
                 );
             }
         });
@@ -264,7 +291,7 @@ class AdjustmentController extends Controller
         abort_if(Gate::denies('delete_adjustments'), 403);
 
         DB::transaction(function () use ($adjustment) {
-            $this->mutationController->rollbackByReference($adjustment->reference, 'Adjustment');
+            $this->mutationController->rollbackByReference((string) $adjustment->reference, 'Adjustment');
             AdjustedProduct::where('adjustment_id', $adjustment->id)->delete();
             $adjustment->delete();
         });
@@ -273,43 +300,241 @@ class AdjustmentController extends Controller
         return redirect()->route('adjustments.index');
     }
 
-    private function getActiveBranchId(): int
+    /**
+     * ✅ QUALITY RECLASS + MUTATION LOG (NET ZERO)
+     * - bikin ProductDefectItem / ProductDamagedItem per unit (quantity=1)
+     * - upload image per unit
+     * - bikin mutation log NET-ZERO (IN lalu OUT qty sama)
+     * - damaged: simpan mutation_in_id & mutation_out_id
+     *
+     * NOTE: ini method yang dipakai UI kamu, jadi jangan ganti nama.
+     */
+    public function storeQuality(Request $request)
     {
+        // kalau kamu punya permission khusus quality, ganti ke adjust_quality
+        // abort_if(Gate::denies('adjust_quality'), 403);
+        abort_if(Gate::denies('create_adjustments'), 403);
+
         $active = session('active_branch');
+        if ($active === 'all' || $active === null || $active === '') {
+            abort(422, "Please choose a specific branch (not 'All Branch') to submit quality reclass.");
+        }
+        $branchId = (int) $active;
 
-        if ($active === 'all' || $active === null) {
-            if (auth()->check() && isset(auth()->user()->branch_id) && auth()->user()->branch_id) {
-                return (int) auth()->user()->branch_id;
+        $request->validate([
+            'date'         => 'required|date',
+            'warehouse_id' => 'required|integer|exists:warehouses,id',
+            'type'         => 'required|in:defect,damaged',
+            'qty'          => 'required|integer|min:1|max:500',
+            'product_id'   => 'required|integer|exists:products,id',
+            'units'        => 'required|array|min:1',
+        ]);
+
+        $warehouseId = (int) $request->warehouse_id;
+        $productId   = (int) $request->product_id;
+        $type        = (string) $request->type;
+        $qty         = (int) $request->qty;
+        $date        = (string) $request->date;
+
+        $warehouse = Warehouse::findOrFail($warehouseId);
+        if ((int) $warehouse->branch_id !== $branchId) {
+            abort(403, 'Warehouse must belong to active branch.');
+        }
+
+        if (!is_array($request->units) || count($request->units) !== $qty) {
+            abort(422, "Per-unit detail must match Qty. Qty={$qty}, Units=" . (is_array($request->units) ? count($request->units) : 0));
+        }
+
+        // validate per unit + image
+        for ($i = 0; $i < $qty; $i++) {
+            if ($type === 'defect') {
+                $defType = trim((string) data_get($request->units[$i], 'defect_type', ''));
+                if ($defType === '') abort(422, "Defect Type is required for each unit (row #" . ($i + 1) . ").");
+            } else {
+                $reason = trim((string) data_get($request->units[$i], 'reason', ''));
+                if ($reason === '') abort(422, "Damaged Reason is required for each unit (row #" . ($i + 1) . ").");
             }
-            return 1;
+
+            $file = $request->file("units.$i.photo");
+            if ($file) {
+                $mime = strtolower((string) $file->getClientMimeType());
+                if (!str_starts_with($mime, 'image/')) abort(422, "Photo must be an image (row #" . ($i + 1) . ").");
+                if ($file->getSize() > (5 * 1024 * 1024)) abort(422, "Photo max size is 5MB (row #" . ($i + 1) . ").");
+            }
         }
 
-        return (int) $active;
+        DB::transaction(function () use ($branchId, $warehouseId, $productId, $type, $qty, $date, $request) {
+
+            Product::findOrFail($productId);
+
+            $ref = $this->generateQualityReclassReference($type);
+
+            $noteBase = "Quality Reclass ({$type}) | PID {$productId} | WH {$warehouseId} | By UID " . (int) Auth::id();
+
+            // NET-ZERO mutation
+            $mutationInId = $this->mutationController->applyInOutAndGetMutationId(
+                $branchId,
+                $warehouseId,
+                $productId,
+                'In',
+                $qty,
+                $ref,
+                $noteBase . " | LOG-IN (virtual)",
+                $date
+            );
+
+            $mutationOutId = $this->mutationController->applyInOutAndGetMutationId(
+                $branchId,
+                $warehouseId,
+                $productId,
+                'Out',
+                $qty,
+                $ref,
+                $noteBase . " | LOG-OUT (virtual)",
+                $date
+            );
+
+            for ($i = 0; $i < $qty; $i++) {
+                $unit = (array) $request->units[$i];
+
+                $photoPath = null;
+                $photoFile = $request->file("units.$i.photo");
+                if ($photoFile) {
+                    $photoPath = $this->storeQualityImage($photoFile, $type);
+                }
+
+                if ($type === 'defect') {
+                    ProductDefectItem::create([
+                        'branch_id'      => $branchId,
+                        'warehouse_id'   => $warehouseId,
+                        'product_id'     => $productId,
+                        'reference_id'   => null,
+                        'reference_type' => Adjustment::class,
+                        'quantity'       => 1,
+                        'defect_type'    => trim((string) ($unit['defect_type'] ?? '')),
+                        'description'    => trim((string) ($unit['description'] ?? '')) ?: null,
+                        'photo_path'     => $photoPath,
+                        'created_by'     => (int) Auth::id(),
+                    ]);
+                } else {
+                    ProductDamagedItem::create([
+                        'branch_id'       => $branchId,
+                        'warehouse_id'    => $warehouseId,
+                        'product_id'      => $productId,
+                        'reference_id'    => null,
+                        'reference_type'  => Adjustment::class,
+                        'quantity'        => 1,
+                        'reason'          => trim((string) ($unit['reason'] ?? '')),
+                        'photo_path'      => $photoPath,
+                        'created_by'      => (int) Auth::id(),
+                        'mutation_in_id'  => (int) $mutationInId,
+                        'mutation_out_id' => (int) $mutationOutId,
+                    ]);
+                }
+            }
+        });
+
+        return response()->json([
+            'message' => 'Quality reclass saved successfully (with mutation log & photos if provided).'
+        ]);
     }
 
-    private function resolveDefaultWarehouseId(int $branchId): int
+    private function generateQualityReclassReference(string $type): string
     {
-        $mainId = DB::table('warehouses')
-            ->where('branch_id', $branchId)
-            ->where('is_main', 1)
-            ->value('id');
-
-        if (!$mainId) {
-            throw new \RuntimeException("Main warehouse untuk branch_id={$branchId} belum ada.");
-        }
-
-        return (int) $mainId;
+        $t = strtoupper(substr($type, 0, 3)); // DEF / DAM
+        $rand = strtoupper(substr(bin2hex(random_bytes(3)), 0, 4));
+        return 'QRC-' . $t . '-' . now()->format('Ymd-His') . '-' . $rand;
     }
 
-    private function assertWarehouseBelongsToBranch(int $warehouseId, int $branchId): void
+    private function storeQualityImage($file, string $type): string
     {
-        $exists = DB::table('warehouses')
-            ->where('id', $warehouseId)
-            ->where('branch_id', $branchId)
-            ->exists();
-
-        if (!$exists) {
-            throw new \RuntimeException("Warehouse (id={$warehouseId}) tidak belong ke branch (id={$branchId}).");
-        }
+        $folder = $type === 'defect' ? 'quality/defects' : 'quality/damaged';
+        return $file->store($folder, 'public');
     }
+
+    public function qualityProducts(Request $request)
+    {
+        abort_if(Gate::denies('create_adjustments'), 403);
+
+        $active = session('active_branch');
+        if ($active === 'all' || !$active) {
+            return response()->json([
+                'success' => false,
+                'message' => "Please select a specific branch (not All Branch)."
+            ], 422);
+        }
+
+        $branchId = (int) $active;
+        $warehouseId = (int) $request->query('warehouse_id');
+
+        if ($warehouseId <= 0) {
+            return response()->json([
+                'success' => false,
+                'message' => 'warehouse_id is required.'
+            ], 422);
+        }
+
+        $warehouse = Warehouse::findOrFail($warehouseId);
+        if ((int) $warehouse->branch_id !== $branchId) {
+            abort(403, 'Warehouse must belong to active branch.');
+        }
+
+        // defect sub
+        $defectSub = DB::table('product_defect_items')
+            ->selectRaw('product_id, SUM(quantity) as defect_qty')
+            ->where('branch_id', $branchId)
+            ->where('warehouse_id', $warehouseId)
+            ->groupBy('product_id');
+
+        // damaged sub
+        $damagedSub = DB::table('product_damaged_items')
+            ->selectRaw('product_id, SUM(quantity) as damaged_qty')
+            ->where('branch_id', $branchId)
+            ->where('warehouse_id', $warehouseId)
+            ->groupBy('product_id');
+
+        $rows = DB::table('stocks')
+            ->selectRaw('
+                stocks.product_id,
+                SUM(stocks.qty_available) as total_qty,
+                COALESCE(defect.defect_qty,0) as defect_qty,
+                COALESCE(damaged.damaged_qty,0) as damaged_qty,
+                GREATEST(
+                    SUM(stocks.qty_available)
+                    - COALESCE(defect.defect_qty,0)
+                    - COALESCE(damaged.damaged_qty,0),
+                0) as good_qty,
+                MAX(products.product_code) as product_code,
+                MAX(products.product_name) as product_name
+            ')
+            ->leftJoin('products', 'products.id', '=', 'stocks.product_id')
+            ->leftJoinSub($defectSub, 'defect', fn($j) => $j->on('defect.product_id','=','stocks.product_id'))
+            ->leftJoinSub($damagedSub,'damaged',fn($j)=> $j->on('damaged.product_id','=','stocks.product_id'))
+            ->where('stocks.branch_id', $branchId)
+            ->where('stocks.warehouse_id', $warehouseId)
+            ->groupBy('stocks.product_id')
+            ->orderByRaw('MAX(products.product_name)')
+            ->get();
+
+        $data = [];
+        foreach ($rows as $r) {
+            if ((int)$r->good_qty <= 0) continue;
+
+            $label =
+                trim(($r->product_code ?? '').' '.($r->product_name ?? '')) .
+                ' (GOOD: '.number_format($r->good_qty).')';
+
+            $data[] = [
+                'id'       => (int) $r->product_id,
+                'text'     => $label,
+                'good_qty' => (int) $r->good_qty,
+            ];
+        }
+
+        return response()->json([
+            'success' => true,
+            'data'    => $data,
+        ]);
+    }
+
 }

@@ -1,17 +1,18 @@
 <?php
 
-/*
-|--------------------------------------------------------------------------
-| Web Routes
-|--------------------------------------------------------------------------
-|
-| Here is where you can register web routes for your application. These
-| routes are loaded by the RouteServiceProvider within a group which
-| contains the "web" middleware group. Now create something great!
-|
-*/
+use Illuminate\Support\Facades\Route;
 
 Route::group(['middleware' => 'auth'], function () {
-    //Product Adjustment
+
+    // Default CRUD
     Route::resource('adjustments', 'AdjustmentController');
+
+    // Quality Reclass (store)
+    Route::post('adjustments/quality/store', 'AdjustmentController@storeQuality')
+        ->name('adjustments.quality.store');
+
+    // Quality - load products by selected warehouse (GOOD stock only)
+    Route::get('adjustments/quality/products', 'AdjustmentController@qualityProducts')
+        ->name('adjustments.quality.products');
+
 });

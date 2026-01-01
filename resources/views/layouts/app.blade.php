@@ -34,7 +34,7 @@
 
     @include('includes.snowfall')
     @include('includes.main-js')
-    @stack('scripts')
 
+    @stack('scripts')
 </body>
 </html>
