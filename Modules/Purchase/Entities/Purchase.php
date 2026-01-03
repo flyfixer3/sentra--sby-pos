@@ -6,10 +6,13 @@ use Illuminate\Database\Eloquent\Model;
 use App\Models\BaseModel;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Modules\PurchaseOrder\Entities\PurchaseOrder;
+use Illuminate\Database\Eloquent\SoftDeletes;
 
 class Purchase extends BaseModel
 {
-    use HasFactory;
+    use HasFactory, SoftDeletes;
+
+    protected $dates = ['deleted_at'];
 
     protected $guarded = [];
 
@@ -25,6 +28,12 @@ class Purchase extends BaseModel
     public function purchasePayments() {
         return $this->hasMany(PurchasePayment::class, 'purchase_id', 'id');
     }
+
+    public function purchaseDelivery()
+    {
+        return $this->belongsTo(\Modules\PurchaseDelivery\Entities\PurchaseDelivery::class, 'purchase_delivery_id');
+    }
+
 
     public static function boot() {
         parent::boot();

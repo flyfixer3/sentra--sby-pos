@@ -201,38 +201,35 @@ class PurchaseDeliveryController extends Controller
     {
         abort_if(Gate::denies('show_purchase_deliveries'), 403);
 
-        $purchaseDelivery->load([
-            'purchaseOrder',
-            'purchaseDeliveryDetails',
+        $purchaseDelivery->loadMissing([
+            'purchaseOrder.supplier',
+            'purchase', // walk-in
             'warehouse',
-            'creator',
             'branch',
+            'purchaseDeliveryDetails',
         ]);
 
-        $defects = ProductDefectItem::query()
-            ->where('reference_type', PurchaseDelivery::class)
-            ->where('reference_id', (int) $purchaseDelivery->id)
-            ->orderBy('id')
-            ->get();
+        // ✅ Vendor (PO dulu, kalau tidak ada => ambil dari Purchase walk-in)
+        $vendorName = optional(optional($purchaseDelivery->purchaseOrder)->supplier)->supplier_name
+            ?? optional($purchaseDelivery->purchase)->supplier_name
+            ?? '-';
 
-        $damaged = ProductDamagedItem::query()
-            ->where('reference_type', PurchaseDelivery::class)
-            ->where('reference_id', (int) $purchaseDelivery->id)
-            ->orderBy('id')
-            ->get();
-
-        // group by product_id biar mudah render per item
-        $defectsByProduct = $defects->groupBy('product_id');
-        $damagedByProduct = $damaged->groupBy('product_id');
+        // Kalau kamu punya vendor email di suppliers table dan mau tampil juga:
+        // - PO: supplier.email
+        // - walk-in: kalau purchase.supplier_id terisi, ambil dari suppliers
+        $vendorEmail = optional(optional($purchaseDelivery->purchaseOrder)->supplier)->supplier_email
+            ?? (optional($purchaseDelivery->purchase)->supplier_id
+                ? \Modules\People\Entities\Supplier::where('id', $purchaseDelivery->purchase->supplier_id)->value('supplier_email')
+                : null)
+            ?? '-';
 
         return view('purchase-deliveries::show', [
-            'purchaseDelivery'   => $purchaseDelivery,
-            'defectsByProduct'   => $defectsByProduct,
-            'damagedByProduct'   => $damagedByProduct,
-            'defects'            => $defects,
-            'damaged'            => $damaged,
+            'purchaseDelivery' => $purchaseDelivery,
+            'vendorName'       => $vendorName,
+            'vendorEmail'      => $vendorEmail,
         ]);
     }
+
 
 
     /**
@@ -277,21 +274,21 @@ class PurchaseDeliveryController extends Controller
                 'warehouse',
             ]);
 
-            // Guard active branch (harus sama dengan PD branch)
+            // Guard active branch
             $activeBranchId = $this->activeBranchIdOrFail('purchase-deliveries.index');
             if ((int) $purchaseDelivery->branch_id !== (int) $activeBranchId) {
                 abort(403, 'Active branch mismatch for this Purchase Delivery.');
             }
 
-            // Guard warehouse must belong to branch PD
+            // Guard warehouse belongs to PD branch
             $wh = Warehouse::findOrFail((int) $purchaseDelivery->warehouse_id);
             if ((int) $wh->branch_id !== (int) $purchaseDelivery->branch_id) {
                 abort(403, 'Warehouse must belong to the same branch as this Purchase Delivery.');
             }
 
-            // Anti double mutation
             $reference = 'PD-' . (int) $purchaseDelivery->id;
 
+            // Anti double mutation
             $alreadyIn = Mutation::withoutGlobalScopes()
                 ->where('reference', $reference)
                 ->where('note', 'like', 'Purchase Delivery IN%')
@@ -350,7 +347,6 @@ class PurchaseDeliveryController extends Controller
                     $poDetail->update(['fulfilled_quantity' => $newFulfilled]);
                 }
 
-                // kalau total 0, skip mutasi & rows
                 if ($totalConfirmed <= 0) continue;
 
                 // 3) MUTATION IN (total)
@@ -363,16 +359,13 @@ class PurchaseDeliveryController extends Controller
                     $totalConfirmed,
                     $reference,
                     $noteIn,
-                    (string) $purchaseDelivery->getRawOriginal('date')
+                    (string) $purchaseDelivery->getRawOriginal('date') // ✅ raw date
                 );
 
-                // 4) DEFECT rows (label only, tetap ada di stok)
+                // 4) DEFECT rows
                 if ($defect > 0) {
                     $defRows = $row['defects'] ?? [];
-
-                    if (count($defRows) === 0) {
-                        $defRows = array_fill(0, $defect, []);
-                    }
+                    if (count($defRows) === 0) $defRows = array_fill(0, $defect, []);
                     if (count($defRows) !== $defect) {
                         throw new \RuntimeException("Defect detail mismatch: expected {$defect} rows, got " . count($defRows));
                     }
@@ -400,15 +393,10 @@ class PurchaseDeliveryController extends Controller
                     }
                 }
 
-                // 5) DAMAGED rows (CATAT SAJA, TANPA MUTATION OUT)
-                // damaged tetap ikut stok masuk lewat MUTATION IN di atas.
+                // 5) DAMAGED rows
                 if ($damaged > 0) {
-
                     $damRows = $row['damaged_items'] ?? [];
-
-                    if (count($damRows) === 0) {
-                        $damRows = array_fill(0, $damaged, []);
-                    }
+                    if (count($damRows) === 0) $damRows = array_fill(0, $damaged, []);
                     if (count($damRows) !== $damaged) {
                         throw new \RuntimeException("Damaged detail mismatch: expected {$damaged} rows, got " . count($damRows));
                     }
@@ -431,16 +419,11 @@ class PurchaseDeliveryController extends Controller
                             'reason'          => $d['damaged_reason'] ?? null,
                             'photo_path'      => $photoPath,
                             'created_by'      => auth()->id(),
-
-                            // tetap catat IN id (karena barang masuk)
                             'mutation_in_id'  => (int) $inId,
-
-                            // OUT sengaja null karena damaged tetap masuk stok
                             'mutation_out_id' => null,
                         ]);
                     }
                 }
-
             }
 
             // ✅ Update PD status
@@ -448,18 +431,15 @@ class PurchaseDeliveryController extends Controller
                 'status' => $isPartialDelivery ? 'partial' : 'received',
             ]);
 
-            // ✅ INI INTI PERUBAHAN: update PO fulfilled_quantity total & status PO
+            // ✅ Update PO status sesuai rule model: Pending / Partial / Completed
             $po = PurchaseOrder::lockForUpdate()->findOrFail((int) $purchaseDelivery->purchase_order_id);
-
-            // hitung ulang fulfilled total dari detail
             $po->calculateFulfilledQuantity();
-
-            // tentukan status PO berdasar remaining
             $po->markAsCompleted();
         });
 
         toast('Purchase Delivery confirmed successfully', 'success');
         return redirect()->route('purchase-deliveries.show', $purchaseDelivery->id);
     }
+
 
 }

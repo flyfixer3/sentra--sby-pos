@@ -183,10 +183,16 @@
     if ($rawStatus === 'received') $badgeClass = 'pd-badge pd-badge--received';
     if ($rawStatus === 'partial')  $badgeClass = 'pd-badge pd-badge--partial';
 
-    $po       = $purchaseDelivery->purchaseOrder;
-    $branch   = $po?->branch;
-    $supplier = $po?->supplier;
+    $po        = $purchaseDelivery->purchaseOrder;
     $warehouse = $purchaseDelivery->warehouse;
+
+    // ✅ branch fallback: dari PD dulu, kalau null baru dari PO, kalau masih null fallback dari warehouse->branch
+    $branch = $purchaseDelivery->branch
+        ?? $po?->branch
+        ?? $warehouse?->branch;
+
+    // supplier tetap boleh, tapi vendor display sudah pakai $vendorName dari controller
+    $supplier = $po?->supplier;
 
     $details = $purchaseDelivery->purchaseDeliveryDetails ?? collect();
 
@@ -204,6 +210,11 @@
 
     // audit helper
     $createdByName = optional($purchaseDelivery->creator)->name ?? optional($purchaseDelivery->creator)->username ?? '-';
+    $shipToAddress =
+    $po?->branch?->getRawOriginal('address')
+    ?? $purchaseDelivery->branch?->getRawOriginal('address')
+    ?? $warehouse?->branch?->getRawOriginal('address')
+    ?? '-';
 @endphp
 
 <div class="container-fluid pd-wrap">
@@ -256,14 +267,14 @@
                 <div class="col-lg-4">
                     <div class="pd-box h-100">
                         <div class="pd-label">Vendor</div>
-                        <div class="pd-value">{{ $supplier?->supplier_name ?? '-' }}</div>
+                        <div class="pd-value">{{  $vendorName  ?? '-' }}</div>
 
                         <div class="mt-3 pd-label">Email</div>
-                        <div class="pd-value" style="font-weight:600;">{{ $supplier?->email ?? '-' }}</div>
+                        <div class="pd-value" style="font-weight:600;">{{ $vendorEmail ?? '-' }}</div>
 
                         <div class="mt-3 pd-label">Ship-to (Delivery Destination)</div>
                         <div class="pd-value" style="font-weight:600; white-space:pre-line;">
-                            {{ $branch?->address ?? '-' }}
+                            {{ $shipToAddress }}
                         </div>
                         <div class="pd-sub mt-1">Destination address (branch address).</div>
                     </div>

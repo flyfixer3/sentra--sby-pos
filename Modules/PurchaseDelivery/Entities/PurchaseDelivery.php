@@ -6,6 +6,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Modules\Branch\Entities\Branch;
 use Modules\Product\Entities\Warehouse;
+use Modules\Purchase\Entities\Purchase;
 
 class PurchaseDelivery extends Model
 {
@@ -32,6 +33,13 @@ class PurchaseDelivery extends Model
     {
         return $this->belongsTo(\Modules\PurchaseOrder\Entities\PurchaseOrder::class, 'purchase_order_id');
     }
+
+    public function purchase()
+    {
+        // karena purchases punya kolom purchase_delivery_id
+        return $this->hasOne(Purchase::class, 'purchase_delivery_id', 'id');
+    }
+
 
     public function purchaseDeliveryDetails()
     {

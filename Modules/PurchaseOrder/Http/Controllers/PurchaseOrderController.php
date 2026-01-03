@@ -129,7 +129,6 @@ class PurchaseOrderController extends Controller
         return redirect()->route('purchase-orders.index');
     }
 
-
     public function show($id)
     {
         abort_if(\Illuminate\Support\Facades\Gate::denies('show_purchase_orders'), 403);
@@ -145,8 +144,23 @@ class PurchaseOrderController extends Controller
 
         $supplier = $purchase_order->supplier;
 
-        return view('purchase-orders::show', compact('purchase_order', 'supplier'));
+        // ✅ SUMMARY: fulfilled/total/remaining (rule: remaining per item max(0, qty - fulfilled))
+        $totalOrderedQty = (int) $purchase_order->purchaseOrderDetails->sum('quantity');
+        $totalFulfilledQty = (int) $purchase_order->purchaseOrderDetails->sum('fulfilled_quantity');
+
+        $totalRemainingQty = (int) $purchase_order->purchaseOrderDetails->sum(function ($d) {
+            return max(0, (int) $d->quantity - (int) $d->fulfilled_quantity);
+        });
+
+        return view('purchase-orders::show', compact(
+            'purchase_order',
+            'supplier',
+            'totalOrderedQty',
+            'totalFulfilledQty',
+            'totalRemainingQty'
+        ));
     }
+
 
     public function edit(PurchaseOrder $purchase_order)
     {
@@ -179,7 +193,8 @@ class PurchaseOrderController extends Controller
         return view('purchase-orders::edit', compact('purchase_order'));
     }
 
-    public function update(UpdatePurchaseOrderRequest $request, PurchaseOrder $purchase_order) {
+    public function update(UpdatePurchaseOrderRequest $request, PurchaseOrder $purchase_order)
+    {
         abort_if(Gate::denies('edit_purchase_orders'), 403);
 
         $active = session('active_branch');
@@ -193,7 +208,7 @@ class PurchaseOrderController extends Controller
 
         DB::transaction(function () use ($request, $purchase_order, $branchId) {
 
-            // (optional tapi bagus) pastikan PO ini memang milik branch aktif
+            // pastikan PO ini milik branch aktif
             if ((int) $purchase_order->branch_id !== $branchId) {
                 abort(403, 'You can only edit Purchase Orders from the active branch.');
             }
@@ -201,13 +216,13 @@ class PurchaseOrderController extends Controller
             // ambil fulfilled lama per product supaya tidak hilang kalau item masih sama
             $oldFulfilledMap = $purchase_order->purchaseOrderDetails()
                 ->get()
-                ->mapWithKeys(fn($d) => [(int)$d->product_id => (int)$d->fulfilled_quantity])
+                ->mapWithKeys(fn ($d) => [(int) $d->product_id => (int) $d->fulfilled_quantity])
                 ->toArray();
 
             // hapus detail lama
             $purchase_order->purchaseOrderDetails()->delete();
 
-            // update header (branch_id & created_by tidak diubah)
+            // update header
             $purchase_order->update([
                 'date' => $request->date,
                 'reference' => $request->reference,
@@ -222,38 +237,40 @@ class PurchaseOrderController extends Controller
                 'discount_amount' => Cart::instance('purchase_order')->discount() * 1,
             ]);
 
+            // re-create details dari cart + preserve fulfilled
             foreach (Cart::instance('purchase_order')->content() as $cart_item) {
-                $fulfilled_qty = (int) ($oldFulfilledMap[(int)$cart_item->id] ?? 0);
+
+                $fulfilled_qty = (int) ($oldFulfilledMap[(int) $cart_item->id] ?? 0);
+
+                // clamp: jangan sampai fulfilled lebih besar dari qty baru
+                $newQty = (int) $cart_item->qty;
+                if ($fulfilled_qty > $newQty) {
+                    $fulfilled_qty = $newQty;
+                }
 
                 PurchaseOrderDetails::create([
                     'purchase_order_id' => $purchase_order->id,
-                    'product_id' => $cart_item->id,
-                    'product_name' => $cart_item->name,
-                    'product_code' => $cart_item->options->code,
-                    'quantity' => $cart_item->qty,
-                    'fulfilled_quantity' => $fulfilled_qty, // ✅ preserve
+                    'product_id' => (int) $cart_item->id,
+                    'product_name' => (string) $cart_item->name,
+                    'product_code' => (string) $cart_item->options->code,
+                    'quantity' => $newQty,
+                    'fulfilled_quantity' => $fulfilled_qty,
 
                     'price' => $cart_item->price * 1,
-                    'unit_price' => $cart_item->options->unit_price * 1,
-                    'sub_total' => $cart_item->options->sub_total * 1,
-                    'product_discount_amount' => $cart_item->options->product_discount * 1,
-                    'product_discount_type' => $cart_item->options->product_discount_type,
-                    'product_tax_amount' => $cart_item->options->product_tax * 1,
+                    'unit_price' => ($cart_item->options->unit_price ?? 0) * 1,
+                    'sub_total' => ($cart_item->options->sub_total ?? 0) * 1,
+                    'product_discount_amount' => ($cart_item->options->product_discount ?? 0) * 1,
+                    'product_discount_type' => $cart_item->options->product_discount_type ?? 'fixed',
+                    'product_tax_amount' => ($cart_item->options->product_tax ?? 0) * 1,
                 ]);
             }
 
             Cart::instance('purchase_order')->destroy();
 
-            // update status otomatis sesuai remaining qty (optional, tapi rapi)
-            $remainingQty = $purchase_order->purchaseOrderDetails()
-                ->get()
-                ->sum(fn($d) => (int)$d->quantity - (int)$d->fulfilled_quantity);
-
-            $purchase_order->update([
-                'status' => $remainingQty > 0
-                    ? ((int)$purchase_order->purchaseOrderDetails()->sum('fulfilled_quantity') > 0 ? 'Partially Sent' : 'Pending')
-                    : 'Completed'
-            ]);
+            // ✅ pakai rule dari model (Pending/Partial/Completed)
+            $purchase_order->refresh();
+            $purchase_order->calculateFulfilledQuantity(); // kalau header fulfilled_quantity ada kolomnya, ikut ke-update
+            $purchase_order->markAsCompleted();
         });
 
         toast('Purchase Order Updated!', 'info');

@@ -181,9 +181,15 @@
                                     <div class="col-lg-4">
                                         <div class="form-group">
                                             <label class="sa-form-label">Type <span class="text-danger">*</span></label>
-                                            <select name="type" id="quality_type" class="form-control" required>
-                                                <option value="defect">Defect (GOOD → DEFECT)</option>
-                                                <option value="damaged">Damaged (GOOD → DAMAGED)</option>
+                                           <select name="type" id="quality_type" class="form-control" required>
+                                                <optgroup label="GOOD → Quality Issue">
+                                                    <option value="defect">Defect (GOOD → DEFECT)</option>
+                                                    <option value="damaged">Damaged (GOOD → DAMAGED)</option>
+                                                </optgroup>
+                                                <optgroup label="Quality Issue → GOOD">
+                                                    <option value="defect_to_good">Defect → Good (DELETE defect rows)</option>
+                                                    <option value="damaged_to_good">Damaged → Good (DELETE damaged rows)</option>
+                                                </optgroup>
                                             </select>
                                         </div>
                                     </div>
@@ -312,15 +318,26 @@
         qty = parseInt(qty || 0, 10);
         if (isNaN(qty) || qty < 0) qty = 0;
 
-        title.textContent = type === 'defect' ? 'Defect Type *' : 'Damaged Reason *';
+        let key = 'defect_type';
+        let placeholder = 'bubble / scratch / distortion';
+        let colTitle = 'Defect Type *';
+
+        if (type === 'damaged') {
+            key = 'reason';
+            placeholder = 'pecah sudut kiri saat bongkar peti';
+            colTitle = 'Damaged Reason *';
+        }
+
+        if (type === 'defect_to_good' || type === 'damaged_to_good') {
+            key = 'resolution_reason';
+            placeholder = 'rework OK / polish / claim accepted';
+            colTitle = 'Resolution Reason *';
+        }
+
+        title.textContent = colTitle;
 
         tbody.innerHTML = '';
         for (let i=0;i<qty;i++) {
-            const key = type === 'defect' ? 'defect_type' : 'reason';
-            const placeholder = type === 'defect'
-                ? 'bubble / scratch / distortion'
-                : 'pecah sudut kiri saat bongkar peti';
-
             tbody.insertAdjacentHTML('beforeend', `
                 <tr>
                     <td class="text-center align-middle">${i+1}</td>
@@ -342,6 +359,8 @@
             `);
         }
     }
+
+
 
     window.addEventListener('quality-table-updated', function(e){
         const detail = (e && e.detail) ? e.detail : {};
@@ -379,9 +398,20 @@
     document.getElementById('warehouse_id_quality')?.addEventListener('change', syncQualityWarehouse);
 
     document.getElementById('quality_type')?.addEventListener('change', ()=>{
+        const typeVal = document.getElementById('quality_type').value;
+
+        // update unit table
         const qty = document.getElementById('quality_qty')?.value || 0;
-        buildUnits(qty, document.getElementById('quality_type').value);
+        buildUnits(qty, typeVal);
+
+        // NEW: kasih tahu Livewire agar tabel stok berubah sumbernya
+        try{
+            if (window.Livewire && typeof window.Livewire.emit === 'function') {
+                window.Livewire.emit('qualityTypeChanged', typeVal);
+            }
+        }catch(e){}
     });
+
 
     document.getElementById('qualityForm')?.addEventListener('submit', function(ev){
         const wh = document.getElementById('quality_warehouse_id').value;

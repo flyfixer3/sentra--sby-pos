@@ -10,6 +10,9 @@
 | contains the "web" middleware group. Now create something great!
 |
 */
+
+use Modules\Purchase\Http\Controllers\PurchaseController;
+
 Route::group(['middleware' => 'auth'], function () {
 
     //Generate PDF
@@ -36,4 +39,7 @@ Route::group(['middleware' => 'auth'], function () {
     Route::patch('/purchase-payments/update/{purchasePayment}', 'PurchasePaymentsController@update')->name('purchase-payments.update');
     Route::delete('/purchase-payments/destroy/{purchasePayment}', 'PurchasePaymentsController@destroy')->name('purchase-payments.destroy');
     Route::get('purchases/create-from-delivery/{purchase_delivery}', 'PurchaseController@createFromDelivery')->name('purchases.createFromDelivery');
+    Route::patch('purchases/{purchase}/restore', [PurchaseController::class, 'restore'])->name('purchases.restore');
+    Route::delete('purchases/{purchase}/force-destroy', [PurchaseController::class, 'forceDestroy'])->name('purchases.force-destroy');
+
 });

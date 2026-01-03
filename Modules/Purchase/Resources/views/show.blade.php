@@ -54,6 +54,17 @@
                                 <div>
                                     Payment Status: <strong>{{ $purchase->payment_status }}</strong>
                                 </div>
+                                <div>
+                                    Related Delivery:
+                                    @if($purchase->purchase_delivery_id)
+                                        <a href="{{ route('purchase-deliveries.show', $purchase->purchase_delivery_id) }}">
+                                            PD-{{ str_pad($purchase->purchase_delivery_id, 5, '0', STR_PAD_LEFT) }}
+                                        </a>
+                                    @else
+                                        <span class="text-muted">None</span>
+                                    @endif
+                                </div>
+
                             </div>
 
                         </div>

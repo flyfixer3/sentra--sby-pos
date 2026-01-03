@@ -21,13 +21,60 @@ use Carbon\Carbon;
 use Modules\Purchase\Http\Requests\StorePurchaseRequest;
 use Modules\Purchase\Http\Requests\UpdatePurchaseRequest;
 use Illuminate\Support\Facades\Schema;
+use Modules\PurchaseDelivery\Entities\PurchaseDeliveryDetails;
+use Modules\Mutation\Http\Controllers\MutationController;
 
 class PurchaseController extends Controller
 {
+    private MutationController $mutationController;
+
+    public function __construct(MutationController $mutationController)
+    {
+        $this->mutationController = $mutationController;
+    }
+
     public function index(PurchaseDataTable $dataTable) {
         abort_if(Gate::denies('access_purchases'), 403);
 
         return $dataTable->render('purchase::index');
+    }
+
+    private function createMutationsForWalkInPurchaseDelivery(PurchaseDelivery $pd, Purchase $purchase): void
+    {
+        // konsisten sama PurchaseDeliveryController::confirmStore
+        $reference = 'PD-' . (int) $pd->id;
+
+        // anti double (kalau somehow kepanggil 2x)
+        $alreadyIn = Mutation::withoutGlobalScopes()
+            ->where('reference', $reference)
+            ->where('note', 'like', 'Purchase Delivery IN%')
+            ->exists();
+
+        if ($alreadyIn) {
+            return;
+        }
+
+        // ambil detail PD (yang qty_received sudah terisi)
+        $pd->loadMissing(['purchaseDeliveryDetails']);
+
+        foreach ($pd->purchaseDeliveryDetails as $d) {
+            $qty = (int) $d->qty_received + (int) $d->qty_defect + (int) $d->qty_damaged;
+            if ($qty <= 0) continue;
+
+            $noteIn = "Purchase Delivery IN #{$reference} | WH {$pd->warehouse_id} (walk-in auto received)";
+
+            // pakai engine yang sama dengan confirm PD
+            $this->mutationController->applyInOutAndGetMutationId(
+                (int) $pd->branch_id,
+                (int) $pd->warehouse_id,
+                (int) $d->product_id,
+                'In',
+                (int) $qty,
+                (string) $reference,
+                (string) $noteIn,
+                (string) $pd->getRawOriginal('date')
+            );
+        }
     }
 
     public function createFromDelivery(PurchaseDelivery $purchaseDelivery)
@@ -144,7 +191,7 @@ class PurchaseController extends Controller
 
             // NOTE: kalau request->warehouse_id gak ada, pakai main warehouse branch aktif
             $warehouseId = $request->warehouse_id
-                ? (int)$request->warehouse_id
+                ? (int) $request->warehouse_id
                 : $this->resolveDefaultWarehouseId($branchId);
 
             $this->assertWarehouseBelongsToBranch($warehouseId, $branchId);
@@ -156,13 +203,13 @@ class PurchaseController extends Controller
                 : ($due_amount > 0 ? 'Partial' : 'Paid');
 
             // ✅ DETEKSI: invoice per delivery atau bukan
-            $purchaseDeliveryId = $request->purchase_delivery_id ? (int)$request->purchase_delivery_id : null;
+            $purchaseDeliveryId = $request->purchase_delivery_id ? (int) $request->purchase_delivery_id : null;
             $fromDelivery = !empty($purchaseDeliveryId) && $purchaseDeliveryId > 0;
 
             // PO optional (buat link saja)
             $purchase_order = null;
             if ($request->purchase_order_id) {
-                $purchase_order = PurchaseOrder::findOrFail((int)$request->purchase_order_id);
+                $purchase_order = PurchaseOrder::findOrFail((int) $request->purchase_order_id);
             }
 
             // kalau fromDelivery, validasi delivery & belum ada purchase
@@ -173,15 +220,17 @@ class PurchaseController extends Controller
                 }
             }
 
+            $supplier = Supplier::findOrFail($request->supplier_id);
+
             $purchase = Purchase::create([
                 'purchase_order_id'     => $request->purchase_order_id ?? null,
-                'purchase_delivery_id'  => $purchaseDeliveryId,
+                'purchase_delivery_id'  => $purchaseDeliveryId, // kalau fromDelivery, ini terisi
 
                 'date' => $request->date,
                 'due_date' => $request->due_date,
                 'reference_supplier' => $request->reference_supplier,
                 'supplier_id' => $request->supplier_id,
-                'supplier_name' => Supplier::findOrFail($request->supplier_id)->supplier_name,
+                'supplier_name' => $supplier->supplier_name,
                 'tax_percentage' => $request->tax_percentage,
                 'discount_percentage' => $request->discount_percentage,
                 'shipping_amount' => $request->shipping_amount * 1,
@@ -200,10 +249,13 @@ class PurchaseController extends Controller
                 'warehouse_id' => $warehouseId,
             ]);
 
+            // =========================
+            // 1) CREATE PURCHASE DETAILS
+            // =========================
             foreach (Cart::instance('purchase')->content() as $cart_item) {
 
                 $itemWarehouseId = isset($cart_item->options->warehouse_id)
-                    ? (int)$cart_item->options->warehouse_id
+                    ? (int) $cart_item->options->warehouse_id
                     : $warehouseId;
 
                 $this->assertWarehouseBelongsToBranch($itemWarehouseId, $branchId);
@@ -220,7 +272,7 @@ class PurchaseController extends Controller
                     'product_id' => $cart_item->id,
                     'product_name' => $cart_item->name,
                     'product_code' => $productCode,
-                    'quantity' => $cart_item->qty,
+                    'quantity' => (int) $cart_item->qty,
                     'price' => $cart_item->price * 1,
                     'unit_price' => ($cart_item->options->unit_price ?? 0) * 1,
                     'sub_total' => ($cart_item->options->sub_total ?? 0) * 1,
@@ -231,8 +283,8 @@ class PurchaseController extends Controller
                 ]);
 
                 /**
-                 * ✅ FIX:
-                 * - Invoice per Delivery => JANGAN update fulfilled PO & JANGAN stock mutation
+                 * ✅ RULE:
+                 * - Invoice per Delivery => JANGAN update fulfilled PO & JANGAN stock mutation di sini
                  * - Legacy/manual only => boleh update fulfilled + mutation saat Completed
                  */
                 if (!$fromDelivery) {
@@ -244,9 +296,9 @@ class PurchaseController extends Controller
                             ->first();
 
                         if ($purchase_order_detail) {
-                            $new_fulfilled_quantity = (int)$purchase_order_detail->fulfilled_quantity + (int)$cart_item->qty;
+                            $new_fulfilled_quantity = (int) $purchase_order_detail->fulfilled_quantity + (int) $cart_item->qty;
 
-                            if ($new_fulfilled_quantity > (int)$purchase_order_detail->quantity) {
+                            if ($new_fulfilled_quantity > (int) $purchase_order_detail->quantity) {
                                 throw new \Exception("Cannot fulfill more than ordered quantity!");
                             }
 
@@ -254,7 +306,7 @@ class PurchaseController extends Controller
                         }
                     }
 
-                    // stock mutation hanya legacy/manual
+                    // mutation hanya untuk legacy/manual ketika status Completed
                     if ($request->status == 'Completed') {
                         $mutation = Mutation::with('product')
                             ->where('product_id', $cart_item->id)
@@ -262,7 +314,7 @@ class PurchaseController extends Controller
                             ->latest()
                             ->first();
 
-                        $stockEarly = $mutation ? (int)$mutation->stock_last : 0;
+                        $stockEarly = $mutation ? (int) $mutation->stock_last : 0;
 
                         $mutationData = [
                             'reference' => $purchase->reference,
@@ -272,9 +324,9 @@ class PurchaseController extends Controller
                             'warehouse_id' => $itemWarehouseId,
                             'product_id' => $cart_item->id,
                             'stock_early' => $stockEarly,
-                            'stock_in' => (int)$cart_item->qty,
+                            'stock_in' => (int) $cart_item->qty,
                             'stock_out' => 0,
-                            'stock_last' => $stockEarly + (int)$cart_item->qty,
+                            'stock_last' => $stockEarly + (int) $cart_item->qty,
                         ];
 
                         if (Schema::hasColumn('mutations', 'branch_id')) {
@@ -284,6 +336,52 @@ class PurchaseController extends Controller
                         Mutation::create($mutationData);
                     }
                 }
+            }
+
+            // =========================================
+            // 2) AUTO CREATE PURCHASE DELIVERY (WALK-IN)
+            //    ✅ SET received + create mutation IN via PD engine
+            //    ✅ FIX LINK purchase_delivery_id (TANPA update([...]) supaya gak ke-block fillable)
+            // =========================================
+            if (!$fromDelivery && empty($purchase->purchase_delivery_id)) {
+
+                $autoPD = PurchaseDelivery::create([
+                    'purchase_order_id' => $purchase->purchase_order_id ?? null,
+                    'branch_id'         => (int) $purchase->branch_id,
+                    'warehouse_id'      => (int) $purchase->warehouse_id,
+                    'date'              => (string) $purchase->date,
+                    'note'              => 'Auto-created from Purchase (walk-in)',
+                    'ship_via'          => null,
+                    'tracking_number'   => null,
+                    'status'            => 'received',
+                    'created_by'        => auth()->id(),
+                ]);
+
+                foreach (Cart::instance('purchase')->content() as $cart_item) {
+                    PurchaseDeliveryDetails::create([
+                        'purchase_delivery_id' => (int) $autoPD->id,
+                        'product_id'           => (int) $cart_item->id,
+                        'product_name'         => (string) $cart_item->name,
+                        'product_code'         => (string) (($cart_item->options->code ?? null) ?: 'UNKNOWN'),
+                        'quantity'             => (int) $cart_item->qty,
+                        'qty_received'         => (int) $cart_item->qty,
+                        'qty_defect'           => 0,
+                        'qty_damaged'          => 0,
+                    ]);
+                }
+
+                // ✅ FIX PALING PENTING:
+                // pakai assign + save (tidak bergantung fillable)
+                $purchase->purchase_delivery_id = (int) $autoPD->id;
+                $purchase->save();
+
+                // (opsional super-aman) pakai query builder juga
+                DB::table('purchases')
+                    ->where('id', (int) $purchase->id)
+                    ->update(['purchase_delivery_id' => (int) $autoPD->id]);
+
+                // ✅ generate mutation stock masuk berdasarkan PD (selaras confirm PD)
+                $this->createMutationsForWalkInPurchaseDelivery($autoPD, $purchase);
             }
 
             // status PO hanya legacy/manual
@@ -300,8 +398,6 @@ class PurchaseController extends Controller
 
             /**
              * ✅ PAYMENT + JOURNAL
-             * ERROR kamu kemarin: subaccount_number = "Cash"
-             * Seharusnya subaccount_number = "1-xxxxx"
              */
             if ($purchase->paid_amount > 0) {
                 $created_payment = PurchasePayment::create([
@@ -312,7 +408,6 @@ class PurchaseController extends Controller
                     'payment_method' => $request->payment_method
                 ]);
 
-                // ✅ mapping payment_method => subaccount_number (ISI sesuai COA kamu)
                 $paymentSubaccountNumber = $this->resolvePaymentSubaccountNumber($created_payment->payment_method);
 
                 Helper::addNewTransaction([
@@ -329,13 +424,11 @@ class PurchaseController extends Controller
                     'sale_return_payment_id' => null,
                 ], [
                     [
-                        // ⚠️ Pastikan ini memang akun debit yang kamu mau (contoh: Kas/Bank/Inventory/AP sesuai sistemmu)
                         'subaccount_number' => '1-10200',
                         'amount' => $created_payment->amount,
                         'type' => 'debit'
                     ],
                     [
-                        // ✅ ini FIX utamanya (bukan "Cash" lagi)
                         'subaccount_number' => $paymentSubaccountNumber,
                         'amount' => $created_payment->amount,
                         'type' => 'credit'
@@ -612,15 +705,45 @@ class PurchaseController extends Controller
         return redirect()->route('purchases.index');
     }
 
-    public function destroy(Purchase $purchase) {
+    public function destroy(Purchase $purchase)
+    {
         abort_if(Gate::denies('delete_purchases'), 403);
 
+        // ✅ soft delete
         $purchase->delete();
 
-        toast('Purchase Deleted!', 'warning');
-
+        toast('Purchase Deleted (soft)!', 'warning');
         return redirect()->route('purchases.index');
     }
+
+    public function restore(int $id)
+    {
+        abort_if(Gate::denies('delete_purchases'), 403);
+
+        $purchase = Purchase::withTrashed()->findOrFail($id);
+
+        if ($purchase->trashed()) {
+            $purchase->restore();
+        }
+
+        toast('Purchase Restored!', 'success');
+        return redirect()->route('purchases.index');
+    }
+
+    public function forceDestroy(int $id)
+    {
+        abort_if(Gate::denies('delete_purchases'), 403);
+
+        $purchase = Purchase::withTrashed()->findOrFail($id);
+
+        // ✅ beneran hapus permanen
+        $purchase->forceDelete();
+
+        toast('Purchase Deleted Permanently!', 'warning');
+        return redirect()->route('purchases.index');
+    }
+
+
 
     /**
      * =========================

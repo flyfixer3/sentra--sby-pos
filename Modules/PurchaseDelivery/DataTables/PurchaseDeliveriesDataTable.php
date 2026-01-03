@@ -13,18 +13,28 @@ class PurchaseDeliveriesDataTable extends DataTable
     {
         return datatables()
             ->eloquent($query)
+
             ->addColumn('purchase_order', function ($data) {
-                return optional($data->purchaseOrder)->reference ?? '-';
+                // dari PO: ambil reference PO, kalau walk-in: WALK-IN
+                if (!empty($data->po_reference)) return $data->po_reference;
+                return 'WALK-IN';
             })
+
             ->addColumn('supplier', function ($data) {
-                return optional(optional($data->purchaseOrder)->supplier)->supplier_name ?? '-';
+                // prioritas: supplier PO, kalau null => supplier dari purchase (walk-in)
+                if (!empty($data->po_supplier_name)) return $data->po_supplier_name;
+                if (!empty($data->walkin_supplier_name)) return $data->walkin_supplier_name;
+                return '-';
             })
+
             ->addColumn('warehouse', function ($data) {
-                return optional($data->warehouse)->warehouse_name ?? '-';
+                return $data->warehouse_name ?? '-';
             })
+
             ->addColumn('status', function ($data) {
                 return view('purchase-deliveries::partials.status', compact('data'));
             })
+
             ->addColumn('action', function ($data) {
                 return view('purchase-deliveries::partials.actions', compact('data'));
             });
@@ -32,9 +42,19 @@ class PurchaseDeliveriesDataTable extends DataTable
 
     public function query(PurchaseDelivery $model)
     {
-        // kalau PurchaseDelivery punya HasBranchScope, biarin scope jalan.
-        // Eager load biar ga N+1
-        return $model->newQuery()->with(['purchaseOrder.supplier', 'warehouse']);
+        return $model->newQuery()
+            ->select([
+                'purchase_deliveries.*',
+                'purchase_orders.reference as po_reference',
+                'suppliers.supplier_name as po_supplier_name',
+                'purchases.supplier_name as walkin_supplier_name',
+                'warehouses.warehouse_name as warehouse_name',
+            ])
+            ->leftJoin('purchase_orders', 'purchase_orders.id', '=', 'purchase_deliveries.purchase_order_id')
+            ->leftJoin('suppliers', 'suppliers.id', '=', 'purchase_orders.supplier_id')
+            // ✅ ini kunci walk-in: purchases.purchase_delivery_id -> purchase_deliveries.id
+            ->leftJoin('purchases', 'purchases.purchase_delivery_id', '=', 'purchase_deliveries.id')
+            ->leftJoin('warehouses', 'warehouses.id', '=', 'purchase_deliveries.warehouse_id');
     }
 
     public function html()
@@ -44,8 +64,8 @@ class PurchaseDeliveriesDataTable extends DataTable
             ->columns($this->getColumns())
             ->minifiedAjax()
             ->dom("<'row'<'col-md-3'l><'col-md-5 mb-2'B><'col-md-4'f>>" .
-                  "tr" .
-                  "<'row'<'col-md-5'i><'col-md-7 mt-2'p>>")
+                "tr" .
+                "<'row'<'col-md-5'i><'col-md-7 mt-2'p>>")
             ->orderBy(1)
             ->buttons(
                 Button::make('excel')->text('<i class="bi bi-file-earmark-excel-fill"></i> Excel'),

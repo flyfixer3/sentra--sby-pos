@@ -1,13 +1,19 @@
 @if(!empty($data->deleted_at))
-    <span class="badge bg-secondary">Deleted</span>
+    <span class="badge badge-danger">
+        Deleted
+    </span>
 @else
-    @php $st = strtolower((string)($data->status ?? 'pending')); @endphp
+    @php
+        $s = strtolower((string) $data->status);
+    @endphp
 
-    @if($st === 'completed')
-        <span class="badge bg-success">Completed</span>
-    @elseif($st === 'shipped')
-        <span class="badge bg-primary">Shipped</span>
+    @if($s === 'completed')
+        <span class="badge badge-success">Completed</span>
+    @elseif($s === 'ordered')
+        <span class="badge badge-info">Ordered</span>
+    @elseif($s === 'pending')
+        <span class="badge badge-warning">Pending</span>
     @else
-        <span class="badge bg-warning text-dark">Pending</span>
+        <span class="badge badge-secondary">{{ $data->status ?? '-' }}</span>
     @endif
 @endif

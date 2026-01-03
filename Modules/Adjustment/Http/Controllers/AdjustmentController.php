@@ -345,7 +345,6 @@ class AdjustmentController extends Controller
 
         $active = session('active_branch');
         if ($active === 'all' || $active === null || $active === '') {
-            // kalau form normal -> redirect back
             if (!$request->ajax() && !$request->wantsJson() && !$request->expectsJson()) {
                 return redirect()
                     ->back()
@@ -353,7 +352,6 @@ class AdjustmentController extends Controller
                     ->with('error', "Please choose a specific branch first (not 'All Branch') to submit quality reclass.");
             }
 
-            // kalau ajax/json -> tetap json
             return response()->json([
                 'success' => false,
                 'message' => "Please choose a specific branch first (not 'All Branch') to submit quality reclass."
@@ -364,7 +362,7 @@ class AdjustmentController extends Controller
         $request->validate([
             'date'         => 'required|date',
             'warehouse_id' => 'required|integer|exists:warehouses,id',
-            'type'         => 'required|in:defect,damaged',
+            'type'         => 'required|in:defect,damaged,defect_to_good,damaged_to_good',
             'qty'          => 'required|integer|min:1|max:500',
             'product_id'   => 'required|integer|exists:products,id',
             'units'        => 'required|array|min:1',
@@ -388,17 +386,28 @@ class AdjustmentController extends Controller
                 ->with('error', "Per-unit detail must match Qty. Qty={$qty}, Units=" . (is_array($request->units) ? count($request->units) : 0));
         }
 
+        $isToGood = in_array($type, ['defect_to_good', 'damaged_to_good'], true);
+
         // validate per unit + image
         for ($i = 0; $i < $qty; $i++) {
-            if ($type === 'defect') {
-                $defType = trim((string) data_get($request->units[$i], 'defect_type', ''));
-                if ($defType === '') {
-                    return redirect()->back()->withInput()->with('error', "Defect Type is required for each unit (row #" . ($i + 1) . ").");
+            $unit = (array) $request->units[$i];
+
+            if (!$isToGood) {
+                if ($type === 'defect') {
+                    $defType = trim((string) ($unit['defect_type'] ?? ''));
+                    if ($defType === '') {
+                        return redirect()->back()->withInput()->with('error', "Defect Type is required for each unit (row #" . ($i + 1) . ").");
+                    }
+                } else {
+                    $reason = trim((string) ($unit['reason'] ?? ''));
+                    if ($reason === '') {
+                        return redirect()->back()->withInput()->with('error', "Damaged Reason is required for each unit (row #" . ($i + 1) . ").");
+                    }
                 }
             } else {
-                $reason = trim((string) data_get($request->units[$i], 'reason', ''));
-                if ($reason === '') {
-                    return redirect()->back()->withInput()->with('error', "Damaged Reason is required for each unit (row #" . ($i + 1) . ").");
+                $resReason = trim((string) ($unit['resolution_reason'] ?? ''));
+                if ($resReason === '') {
+                    return redirect()->back()->withInput()->with('error', "Resolution Reason is required for each unit (row #" . ($i + 1) . ").");
                 }
             }
 
@@ -418,26 +427,54 @@ class AdjustmentController extends Controller
 
             Product::findOrFail($productId);
 
+            $noteHuman = match ($type) {
+                'defect' => 'Quality Reclass (GOOD → DEFECT)',
+                'damaged' => 'Quality Reclass (GOOD → DAMAGED)',
+                'defect_to_good' => 'Quality Reclass (DEFECT → GOOD) [DELETE]',
+                'damaged_to_good' => 'Quality Reclass (DAMAGED → GOOD) [DELETE]',
+                default => "Quality Reclass ({$type})",
+            };
+
+            // simpan alasan per-unit ke note adjustment supaya histori tetap ada walau row defect/damaged dihapus
+            $reasons = [];
+            for ($i = 0; $i < $qty; $i++) {
+                $unit = (array) $request->units[$i];
+                if ($type === 'defect') {
+                    $reasons[] = ($i + 1) . '. ' . trim((string) ($unit['defect_type'] ?? ''));
+                } elseif ($type === 'damaged') {
+                    $reasons[] = ($i + 1) . '. ' . trim((string) ($unit['reason'] ?? ''));
+                } else {
+                    $reasons[] = ($i + 1) . '. ' . trim((string) ($unit['resolution_reason'] ?? ''));
+                }
+            }
+
+            $reasonText = trim(implode(' | ', $reasons));
+            if (strlen($reasonText) > 900) {
+                $reasonText = substr($reasonText, 0, 900) . '...';
+            }
+
             $ref = $this->generateQualityReclassReference($type);
 
             $adjustment = Adjustment::create([
                 'reference'    => $ref,
                 'date'         => $date,
-                'note'         => "Quality Reclass ({$type})",
+                'note'         => $noteHuman . ($reasonText ? " | {$reasonText}" : ''),
                 'branch_id'    => $branchId,
                 'warehouse_id' => $warehouseId,
                 'created_by'   => (int) Auth::id(),
             ]);
 
+            // row summary untuk tampilan di adjustment detail
             AdjustedProduct::create([
                 'adjustment_id' => $adjustment->id,
                 'product_id'    => $productId,
                 'quantity'      => $qty,
-                'type'          => 'sub',
-                'note'          => "Quality Reclass ({$type}) | NET-ZERO log",
+                'type'          => in_array($type, ['defect_to_good', 'damaged_to_good'], true) ? 'add' : 'sub',
+                'note'          => $noteHuman . ' | NET-ZERO log',
             ]);
 
-            $noteBase = "Quality Reclass ({$type}) | PID {$productId} | WH {$warehouseId} | By UID " . (int) Auth::id();
+            // NET-ZERO mutation (histori saja)
+            $noteBase = $noteHuman . " | PID {$productId} | WH {$warehouseId} | By UID " . (int) Auth::id();
 
             $mutationInId = $this->mutationController->applyInOutAndGetMutationId(
                 $branchId,
@@ -461,43 +498,104 @@ class AdjustmentController extends Controller
                 $date
             );
 
-            for ($i = 0; $i < $qty; $i++) {
-                $unit = (array) $request->units[$i];
+            // ==========================================================
+            // A) GOOD -> DEFECT / DAMAGED (tetap seperti sekarang)
+            // ==========================================================
+            if ($type === 'defect' || $type === 'damaged') {
 
-                $photoPath = null;
-                $photoFile = $request->file("units.$i.photo");
-                if ($photoFile) {
-                    $photoPath = $this->storeQualityImage($photoFile, $type);
+                for ($i = 0; $i < $qty; $i++) {
+                    $unit = (array) $request->units[$i];
+
+                    $photoPath = null;
+                    $photoFile = $request->file("units.$i.photo");
+                    if ($photoFile) {
+                        $photoPath = $this->storeQualityImage($photoFile, $type);
+                    }
+
+                    if ($type === 'defect') {
+                        ProductDefectItem::create([
+                            'branch_id'      => $branchId,
+                            'warehouse_id'   => $warehouseId,
+                            'product_id'     => $productId,
+                            'reference_id'   => $adjustment->id,
+                            'reference_type' => Adjustment::class,
+                            'quantity'       => 1,
+                            'defect_type'    => trim((string) ($unit['defect_type'] ?? '')),
+                            'description'    => trim((string) ($unit['description'] ?? '')) ?: null,
+                            'photo_path'     => $photoPath,
+                            'created_by'     => (int) Auth::id(),
+                        ]);
+                    } else {
+                        ProductDamagedItem::create([
+                            'branch_id'       => $branchId,
+                            'warehouse_id'    => $warehouseId,
+                            'product_id'      => $productId,
+                            'reference_id'    => $adjustment->id,
+                            'reference_type'  => Adjustment::class,
+                            'quantity'        => 1,
+                            'reason'          => trim((string) ($unit['reason'] ?? '')),
+                            'photo_path'      => $photoPath,
+                            'created_by'      => (int) Auth::id(),
+                            'mutation_in_id'  => (int) $mutationInId,
+                            'mutation_out_id' => (int) $mutationOutId,
+                        ]);
+                    }
                 }
 
-                if ($type === 'defect') {
-                    ProductDefectItem::create([
-                        'branch_id'      => $branchId,
-                        'warehouse_id'   => $warehouseId,
-                        'product_id'     => $productId,
-                        'reference_id'   => $adjustment->id,
-                        'reference_type' => Adjustment::class,
-                        'quantity'       => 1,
-                        'defect_type'    => trim((string) ($unit['defect_type'] ?? '')),
-                        'description'    => trim((string) ($unit['description'] ?? '')) ?: null,
-                        'photo_path'     => $photoPath,
-                        'created_by'     => (int) Auth::id(),
-                    ]);
-                } else {
-                    ProductDamagedItem::create([
-                        'branch_id'       => $branchId,
-                        'warehouse_id'    => $warehouseId,
-                        'product_id'      => $productId,
-                        'reference_id'    => $adjustment->id,
-                        'reference_type'  => Adjustment::class,
-                        'quantity'        => 1,
-                        'reason'          => trim((string) ($unit['reason'] ?? '')),
-                        'photo_path'      => $photoPath,
-                        'created_by'      => (int) Auth::id(),
-                        'mutation_in_id'  => (int) $mutationInId,
-                        'mutation_out_id' => (int) $mutationOutId,
-                    ]);
+                return;
+            }
+
+            // ==========================================================
+            // B) DEFECT/DAMAGED -> GOOD (DELETE FIFO)  ✅
+            // ==========================================================
+            if ($type === 'defect_to_good') {
+
+                $ids = ProductDefectItem::query()
+                    ->where('branch_id', $branchId)
+                    ->where('warehouse_id', $warehouseId)
+                    ->where('product_id', $productId)
+                    ->orderBy('id')
+                    ->limit($qty)
+                    ->lockForUpdate()
+                    ->pluck('id')
+                    ->toArray();
+
+                if (count($ids) < $qty) {
+                    throw new \Illuminate\Http\Exceptions\HttpResponseException(
+                        redirect()->back()->withInput()->with('error', "Not enough DEFECT units to reclass to GOOD. Available=" . count($ids) . ", Needed={$qty}.")
+                    );
                 }
+
+                ProductDefectItem::query()
+                    ->whereIn('id', $ids)
+                    ->delete();
+
+                return;
+            }
+
+            if ($type === 'damaged_to_good') {
+
+                $ids = ProductDamagedItem::query()
+                    ->where('branch_id', $branchId)
+                    ->where('warehouse_id', $warehouseId)
+                    ->where('product_id', $productId)
+                    ->orderBy('id')
+                    ->limit($qty)
+                    ->lockForUpdate()
+                    ->pluck('id')
+                    ->toArray();
+
+                if (count($ids) < $qty) {
+                    throw new \Illuminate\Http\Exceptions\HttpResponseException(
+                        redirect()->back()->withInput()->with('error', "Not enough DAMAGED units to reclass to GOOD. Available=" . count($ids) . ", Needed={$qty}.")
+                    );
+                }
+
+                ProductDamagedItem::query()
+                    ->whereIn('id', $ids)
+                    ->delete();
+
+                return;
             }
         });
 
@@ -513,7 +611,6 @@ class AdjustmentController extends Controller
         return redirect()->route('adjustments.index');
     }
 
-
     private function generateQualityReclassReference(string $type): string
     {
         $t = strtoupper(substr($type, 0, 3)); // DEF / DAM
@@ -523,7 +620,15 @@ class AdjustmentController extends Controller
 
     private function storeQualityImage($file, string $type): string
     {
-        $folder = $type === 'defect' ? 'quality/defects' : 'quality/damaged';
+        // mapping type -> folder
+        $folder = 'quality/misc';
+
+        if (in_array($type, ['defect', 'defect_to_good'], true)) {
+            $folder = 'quality/defects';
+        } elseif (in_array($type, ['damaged', 'damaged_to_good'], true)) {
+            $folder = 'quality/damaged';
+        }
+
         return $file->store($folder, 'public');
     }
 
@@ -542,6 +647,12 @@ class AdjustmentController extends Controller
         $branchId = (int) $active;
         $warehouseId = (int) $request->query('warehouse_id');
 
+        // purpose: good | defect | damaged
+        $purpose = strtolower((string) $request->query('purpose', 'good'));
+        if (!in_array($purpose, ['good', 'defect', 'damaged'], true)) {
+            $purpose = 'good';
+        }
+
         if ($warehouseId <= 0) {
             return response()->json([
                 'success' => false,
@@ -554,14 +665,14 @@ class AdjustmentController extends Controller
             abort(403, 'Warehouse must belong to active branch.');
         }
 
-        // defect sub
+        // defect qty (semua row defect)
         $defectSub = DB::table('product_defect_items')
             ->selectRaw('product_id, SUM(quantity) as defect_qty')
             ->where('branch_id', $branchId)
             ->where('warehouse_id', $warehouseId)
             ->groupBy('product_id');
 
-        // damaged sub
+        // damaged qty (semua row damaged)
         $damagedSub = DB::table('product_damaged_items')
             ->selectRaw('product_id, SUM(quantity) as damaged_qty')
             ->where('branch_id', $branchId)
@@ -593,22 +704,49 @@ class AdjustmentController extends Controller
 
         $data = [];
         foreach ($rows as $r) {
-            if ((int)$r->good_qty <= 0) continue;
+
+            $goodQty    = (int) $r->good_qty;
+            $defectQty  = (int) $r->defect_qty;
+            $damagedQty = (int) $r->damaged_qty;
+
+            // Tentukan available qty sesuai purpose
+            $availableQty = 0;
+            $badgeText = '';
+
+            if ($purpose === 'good') {
+                $availableQty = $goodQty;
+                $badgeText = 'GOOD';
+            } elseif ($purpose === 'defect') {
+                $availableQty = $defectQty;
+                $badgeText = 'DEFECT';
+            } else {
+                $availableQty = $damagedQty;
+                $badgeText = 'DAMAGED';
+            }
+
+            if ($availableQty <= 0) {
+                continue;
+            }
 
             $label =
                 trim(($r->product_code ?? '').' '.($r->product_name ?? '')) .
-                ' (GOOD: '.number_format($r->good_qty).')';
+                ' (' . $badgeText . ': ' . number_format($availableQty) . ')';
 
             $data[] = [
-                'id'       => (int) $r->product_id,
-                'text'     => $label,
-                'good_qty' => (int) $r->good_qty,
+                'id'            => (int) $r->product_id,
+                'text'          => $label,
+                'available_qty' => (int) $availableQty,
+                'good_qty'      => $goodQty,
+                'defect_qty'    => $defectQty,
+                'damaged_qty'   => $damagedQty,
             ];
         }
 
         return response()->json([
             'success' => true,
+            'purpose' => $purpose,
             'data'    => $data,
         ]);
     }
+
 }

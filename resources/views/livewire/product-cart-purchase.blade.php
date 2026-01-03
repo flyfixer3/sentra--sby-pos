@@ -10,15 +10,18 @@
                 </div>
             </div>
         @endif
+
         <div class="table-responsive position-relative">
             <div wire:loading.flex class="col-12 position-absolute justify-content-center align-items-center" style="top:0;right:0;left:0;bottom:0;background-color: rgba(255,255,255,0.5);z-index: 99;">
                 <div class="spinner-border text-primary" role="status">
                     <span class="sr-only">Loading...</span>
                 </div>
             </div>
+
             <div>
                 <h6>Total Quantity: {{ $global_qty }} Unit</h6>
             </div>
+
             <table class="table table-bordered">
                 <thead class="thead-dark">
                 <tr>
@@ -46,13 +49,15 @@
                                 </td>
 
                                 <td class="align-middle">{{ format_currency($cart_item->options->unit_price) }}</td>
-                                
+
                                 <td class="align-middle text-center">
-                                    {{ $loading_warehouse->warehouse_name }}
+                                    {{ $loading_warehouse ? $loading_warehouse->warehouse_name : '-' }}
                                 </td>
-                                
+
                                 <td class="align-middle text-center">
-                                    <span class="badge badge-info">{{ $cart_item->options->stock . ' ' . $cart_item->options->unit }}</span>
+                                    <span class="badge badge-info">
+                                        {{ (int)($cart_item->options->stock ?? 0) . ' ' . ($cart_item->options->unit ?? '') }}
+                                    </span>
                                 </td>
 
                                 <td class="align-middle">
@@ -70,6 +75,7 @@
                                 <td class="align-middle">
                                     {{ format_currency($cart_item->options->sub_total) }}
                                 </td>
+
                                 <td class="align-middle text-center">
                                     <a href="#" wire:click.prevent="removeItem('{{ $cart_item->rowId }}')">
                                         <i class="bi bi-x-circle font-2xl text-danger"></i>
@@ -80,9 +86,9 @@
                     @else
                         <tr>
                             <td colspan="9" class="text-center">
-                        <span class="text-danger">
-                            Please search & select products!
-                        </span>
+                                <span class="text-danger">
+                                    Please search & select products!
+                                </span>
                             </td>
                         </tr>
                     @endif

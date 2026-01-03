@@ -5,6 +5,7 @@ namespace Modules\PurchaseOrder\Entities;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\Schema;
 use Modules\Purchase\Entities\Purchase;
 use Modules\People\Entities\Supplier;
 use Modules\PurchaseDelivery\Entities\PurchaseDelivery;
@@ -50,7 +51,6 @@ class PurchaseOrder extends Model
      */
     public function totalOrderedQuantity(): int
     {
-        // pastikan relation loaded aman
         if ($this->relationLoaded('purchaseOrderDetails')) {
             return (int) $this->purchaseOrderDetails->sum('quantity');
         }
@@ -71,41 +71,73 @@ class PurchaseOrder extends Model
     }
 
     /**
-     * ✅ Remaining = ordered - fulfilled
+     * ✅ Remaining quantity (rule kamu):
+     * remaining dihitung per item: max(0, quantity - fulfilled_quantity)
+     * supaya gak minus dan sesuai konsep "remaining masih ada kalau ada item belum terpenuhi".
      */
     public function remainingQuantity(): int
     {
-        return $this->totalOrderedQuantity() - $this->totalFulfilledQuantity();
+        if ($this->relationLoaded('purchaseOrderDetails')) {
+            return (int) $this->purchaseOrderDetails->sum(function ($d) {
+                return max(0, (int) $d->quantity - (int) $d->fulfilled_quantity);
+            });
+        }
+
+        // query mode (lebih aman pakai get)
+        $details = $this->purchaseOrderDetails()->get(['quantity', 'fulfilled_quantity']);
+
+        return (int) $details->sum(function ($d) {
+            return max(0, (int) $d->quantity - (int) $d->fulfilled_quantity);
+        });
     }
 
     /**
-     * ✅ Persist header fulfilled_quantity (optional field di PO)
+     * ✅ Persist header fulfilled_quantity (kalau kolomnya ada)
+     * Return total fulfilled (selalu)
      */
-   public function calculateFulfilledQuantity(): int
+    public function calculateFulfilledQuantity(): int
     {
-        return (int) $this->purchaseOrderDetails()->sum('fulfilled_quantity');
-    }
+        $total = (int) $this->purchaseOrderDetails()->sum('fulfilled_quantity');
 
+        // Kalau kamu memang punya kolom fulfilled_quantity di header PO, update sekalian
+        if (Schema::hasColumn($this->getTable(), 'fulfilled_quantity')) {
+            $this->update(['fulfilled_quantity' => $total]);
+        }
+
+        return $total;
+    }
 
     public function isFullyFulfilled(): bool
     {
-        return $this->remainingQuantity() <= 0;
+        return $this->remainingQuantity() <= 0 && $this->totalOrderedQuantity() > 0;
     }
 
     /**
-     * ✅ Update status PO berdasar remaining
-     * - Completed kalau remaining <= 0
-     * - Partially Sent kalau fulfilled > 0 dan remaining > 0
-     * - Pending kalau fulfilled == 0
+     * ✅ Update status PO sesuai rule yang kamu mau:
+     * - Pending  : fulfilled == 0
+     * - Partial  : fulfilled > 0 dan remaining > 0
+     * - Completed: remaining == 0 (dan ordered > 0)
      */
     public function markAsCompleted(): void
     {
-        $remaining = $this->purchaseOrderDetails()
-            ->whereColumn('quantity', '>', 'fulfilled_quantity')
-            ->count();
+        // pastikan fulfilled header (kalau ada kolom) ikut ke-update
+        $fulfilled = $this->calculateFulfilledQuantity();
+        $remaining = $this->remainingQuantity();
+        $ordered   = $this->totalOrderedQuantity();
 
+        $status = 'Pending';
+
+        if ($ordered > 0 && $remaining <= 0) {
+            $status = 'Completed';
+        } elseif ($fulfilled > 0 && $remaining > 0) {
+            $status = 'Partial';
+        } else {
+            $status = 'Pending';
+        }
+
+        // update status saja (fulfilled_quantity sudah diupdate di calculateFulfilledQuantity bila ada kolom)
         $this->update([
-            'status' => ($remaining > 0) ? 'Pending' : 'Completed',
+            'status' => $status,
         ]);
     }
 

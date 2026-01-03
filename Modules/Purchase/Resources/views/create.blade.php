@@ -14,16 +14,14 @@
     @php
         $activeBranchId = session('active_branch_id') ?? session('active_branch') ?? null;
 
-        // Cari gudang utama (is_main = 1) di cabang aktif
         $defaultWarehouse = \Modules\Product\Entities\Warehouse::query()
-            ->when($activeBranchId, fn($q) => $q->where('branch_id', $activeBranchId))
+            ->when($activeBranchId && $activeBranchId !== 'all', fn($q) => $q->where('branch_id', (int)$activeBranchId))
             ->where('is_main', 1)
             ->orderBy('id')
             ->first();
 
-        // Ambil daftar gudang untuk dropdown (urut pakai warehouse_name, bukan name)
         $warehouses = \Modules\Product\Entities\Warehouse::query()
-            ->when($activeBranchId, fn($q) => $q->where('branch_id', $activeBranchId))
+            ->when($activeBranchId && $activeBranchId !== 'all', fn($q) => $q->where('branch_id', (int)$activeBranchId))
             ->orderBy('warehouse_name')
             ->get();
     @endphp
@@ -40,6 +38,7 @@
                 <div class="card">
                     <div class="card-body">
                         @include('utils.alerts')
+
                         <form id="purchase-form" action="{{ route('purchases.store') }}" method="POST">
                             @csrf
 
@@ -80,12 +79,20 @@
                                 </div>
                             </div>
 
-                            {{-- Dropdown gudang tujuan penerimaan (pakai warehouse_name) --}}
+                            {{-- Dropdown gudang tujuan penerimaan --}}
                             <div class="form-row">
                                 <div class="col-lg-4">
                                     <div class="form-group">
                                         <label>Receive To Warehouse <span class="text-danger">*</span></label>
-                                        <select class="form-control" name="receive_warehouse_id" id="receive_warehouse_id" required>
+
+                                        {{-- IMPORTANT: name harus konsisten dengan controller store --}}
+                                        {{-- Kita pakai name="warehouse_id" supaya store() baca dengan benar --}}
+                                        <select class="form-control"
+                                                name="warehouse_id"
+                                                id="warehouse_id"
+                                                required
+                                                wire:ignore
+                                                onchange="window.dispatchEvent(new CustomEvent('purchase-warehouse-changed', { detail: { warehouse_id: this.value } }));">
                                             <option value="">— Select Warehouse —</option>
                                             @foreach($warehouses as $wh)
                                                 <option value="{{ $wh->id }}"
@@ -94,29 +101,35 @@
                                                 </option>
                                             @endforeach
                                         </select>
+
                                         <small class="text-muted">Barang hasil pembelian akan masuk ke gudang ini.</small>
                                     </div>
                                 </div>
                             </div>
 
-                            {{-- Penting: kirim object/nullable ke Livewire TANPA findOrFail --}}
+                            {{-- Livewire Cart Purchase --}}
                             <livewire:product-cart-purchase
                                 :cartInstance="'purchase'"
                                 :data="null"
-                                :loading_warehouse="$defaultWarehouse"
+                                :loading_warehouse="$defaultWarehouse ? $defaultWarehouse->id : null"
                             />
 
                             <div class="form-row">
                                 <div class="col-lg-4">
                                     <div class="form-group">
                                         <label>Status <span class="text-danger">*</span></label>
-                                        <select class="form-control" name="status" id="status" required>
-                                            <option value="Pending">Pending</option>
-                                            <option value="Ordered">Ordered</option>
-                                            <option value="Completed">Completed</option>
+
+                                        {{-- TAMPILKAN readonly --}}
+                                        <select class="form-control" id="status_display" disabled>
+                                            <option value="Completed" selected>Completed</option>
                                         </select>
+
+                                        {{-- YANG TERKIRIM KE SERVER --}}
+                                        <input type="hidden" name="status" value="Completed">
+                                        <small class="text-muted">Walk-in purchase is automatically received and stock will be updated.</small>
                                     </div>
                                 </div>
+
 
                                 <div class="col-lg-4" hidden>
                                     <div class="form-group">
@@ -189,6 +202,15 @@
                 var paid_amount = $('#paid_amount').maskMoney('destroy')[0];
                 var new_number = parseInt((paid_amount.value || '').toString().replaceAll(/[Rp.]/g, "")) || 0;
                 $('#paid_amount').val(new_number);
+            });
+
+            // Bridge dari dropdown HTML ke Livewire component
+            window.addEventListener('purchase-warehouse-changed', function(e) {
+                if (!e || !e.detail) return;
+                const wid = e.detail.warehouse_id || '';
+                if (window.Livewire) {
+                    window.Livewire.emit('purchaseWarehouseChanged', wid);
+                }
             });
         });
     </script>

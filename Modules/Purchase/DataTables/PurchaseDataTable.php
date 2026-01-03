@@ -19,6 +19,11 @@ class PurchaseDataTable extends DataTable
             })
             ->editColumn('due_date', function ($data) {
 
+                // kalau sudah soft deleted → biar jelas
+                if (!empty($data->deleted_at)) {
+                    return '-';
+                }
+
                 // kalau due_date kosong / 0 → tampilkan "-"
                 $days = (int) ($data->due_date ?? 0);
                 if ($days <= 0) return '-';
@@ -51,22 +56,14 @@ class PurchaseDataTable extends DataTable
 
     public function query(Purchase $model)
     {
-        // NOTE:
-        // - supplier_name itu BUKAN kolom purchases → harus join/alias.
-        // - sesuaikan nama tabel supplier kamu (umumnya "suppliers").
-
         $q = $model->newQuery()
+            ->withTrashed() // ✅ include soft deleted
             ->select([
                 'purchases.*',
-                // sesuaikan field name supplier:
-                // kalau di tabel suppliers kolomnya "supplier_name" → OK
-                // kalau "name" → ganti ke suppliers.name as supplier_name
                 'suppliers.supplier_name as supplier_name',
             ])
             ->leftJoin('suppliers', 'suppliers.id', '=', 'purchases.supplier_id');
 
-        // ✅ include soft deleted biar bisa tampil juga
-        // (kalau model Purchase belum pakai SoftDeletes, lihat catatan di bawah)
         return $q;
     }
 
@@ -81,7 +78,7 @@ class PurchaseDataTable extends DataTable
                 "<'row'<'col-md-12'tr>>" .
                 "<'row'<'col-md-5'i><'col-md-7 mt-2'p>>"
             )
-            ->orderBy(9) // created_at hidden column index
+            ->orderBy(10) // created_at hidden column index (cek index kolom)
             ->buttons(
                 Button::make('excel')->text('<i class="bi bi-file-earmark-excel-fill"></i> Excel'),
                 Button::make('print')->text('<i class="bi bi-printer-fill"></i> Print'),
@@ -118,6 +115,9 @@ class PurchaseDataTable extends DataTable
 
             Column::make('payment_status')
                 ->className('text-center align-middle'),
+
+            // ✅ kolom deleted_at (hidden) buat sorting/logic kalau kamu mau
+            Column::make('deleted_at')->visible(false),
 
             Column::computed('action')
                 ->exportable(false)
