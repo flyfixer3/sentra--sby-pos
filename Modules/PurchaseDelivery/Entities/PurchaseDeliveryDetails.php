@@ -9,18 +9,34 @@ class PurchaseDeliveryDetails extends Model
 {
     use HasFactory;
 
+    protected $table = 'purchase_delivery_details';
+
     protected $fillable = [
         'purchase_delivery_id',
         'product_id',
         'product_name',
         'product_code',
         'quantity',
+        'qty_received',
+        'qty_defect',
+        'qty_damaged',
         'unit_price',
-        'sub_total'
+        'sub_total',
+    ];
+
+    protected $casts = [
+        'purchase_delivery_id' => 'integer',
+        'product_id'           => 'integer',
+        'quantity'             => 'integer',
+        'qty_received'         => 'integer',
+        'qty_defect'           => 'integer',
+        'qty_damaged'          => 'integer',
+        'unit_price'           => 'decimal:2',
+        'sub_total'            => 'decimal:2',
     ];
 
     public function purchaseDelivery()
     {
-        return $this->belongsTo(PurchaseDelivery::class);
+        return $this->belongsTo(PurchaseDelivery::class, 'purchase_delivery_id');
     }
 }

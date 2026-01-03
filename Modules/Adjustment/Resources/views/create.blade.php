@@ -147,6 +147,10 @@
                                 <div class="sa-help">Reclass ini <b>label only</b> + create detail per unit + foto opsional.</div>
                             </div>
 
+                            @php
+                                $defaultQualityWarehouseId = (int) ($defaultWarehouseId ?: optional($warehouses->first())->id);
+                            @endphp
+
                             <form id="qualityForm" method="POST" action="{{ route('adjustments.quality.store') }}" enctype="multipart/form-data">
                                 @csrf
 
@@ -156,17 +160,17 @@
                                     <div class="col-lg-4">
                                         <div class="form-group">
                                             <label class="sa-form-label">Warehouse <span class="text-danger">*</span></label>
+
                                             <select id="warehouse_id_quality" class="form-control" required>
-                                                <option value="">-- Select Warehouse --</option>
                                                 @foreach($warehouses as $wh)
-                                                    <option value="{{ $wh->id }}">
+                                                    <option value="{{ $wh->id }}" {{ (int)$defaultQualityWarehouseId === (int)$wh->id ? 'selected' : '' }}>
                                                         {{ $wh->warehouse_name }}{{ (int)$wh->is_main === 1 ? ' (Main)' : '' }}
                                                     </option>
                                                 @endforeach
                                             </select>
 
-                                            {{-- input yang dikirim ke backend --}}
-                                            <input type="hidden" name="warehouse_id" id="quality_warehouse_id" value="">
+                                            {{-- dikirim ke backend --}}
+                                            <input type="hidden" name="warehouse_id" id="quality_warehouse_id" value="{{ $defaultQualityWarehouseId }}">
 
                                             <small class="text-muted">
                                                 Warehouse untuk Quality tab <b>terpisah</b> dari Stock tab.
@@ -205,16 +209,13 @@
 
                                 <div class="sa-divider"></div>
 
-                                {{-- TABLE mirip Stock, tapi mode=quality --}}
                                 <livewire:adjustment.product-table mode="quality"/>
 
-                                {{-- hidden fields agar sesuai storeQuality() --}}
                                 <input type="hidden" name="product_id" id="quality_product_id" value="">
                                 <input type="hidden" name="qty" id="quality_qty" value="0">
 
                                 <div class="sa-divider"></div>
 
-                                {{-- Per unit --}}
                                 <div class="unit-card mt-3">
                                     <div class="unit-head d-flex align-items-center justify-content-between">
                                         <div>Per-Unit Details & Photo (Optional)</div>
@@ -267,11 +268,9 @@
 @endsection
 
 @push('page_scripts')
-@livewireScripts
 <script>
 (function(){
 
-    // ====== Helper ======
     function livewireEmit(eventName, payload){
         try{
             if (window.Livewire && typeof window.Livewire.emit === 'function') {
@@ -281,7 +280,6 @@
     }
 
     function toastWarn(msg){
-        // fallback: pakai alert kalau project kamu belum punya toast js global
         try{
             if (window.toastr && typeof window.toastr.warning === 'function') {
                 window.toastr.warning(msg);
@@ -291,22 +289,20 @@
         alert(msg);
     }
 
-    // ====== QUALITY: Warehouse independent ======
     function syncQualityWarehouse(){
         const wq = document.getElementById('warehouse_id_quality');
         const hidden = document.getElementById('quality_warehouse_id');
         if (!wq || !hidden) return;
 
-        hidden.value = wq.value || '';
+        const wid = wq.value ? parseInt(wq.value, 10) : null;
+        hidden.value = wid ?? '';
 
-        // Notify SearchProduct: kalau requireWarehouse aktif, dia disable search sampai warehouse dipilih.
-        livewireEmit('fromWarehouseSelected', { warehouseId: wq.value || null });
-
-        // Notify ProductTable quality: supaya dia tau warehouse untuk validasi GOOD qty
-        livewireEmit('qualityWarehouseChanged', { warehouseId: wq.value || null });
+        if (window.Livewire && typeof window.Livewire.emit === 'function') {
+            window.Livewire.emit('qualityWarehouseChanged', wid);
+        }
     }
 
-    // ====== BUILD PER-UNIT ROWS ======
+
     function buildUnits(qty, type){
         const tbody = document.getElementById('unit_tbody');
         const title = document.getElementById('unit_col_title');
@@ -347,8 +343,6 @@
         }
     }
 
-    // ====== Listen event dari Livewire ProductTable (quality) ======
-    // ProductTable akan dispatch browser event ini setiap ada perubahan list/qty.
     window.addEventListener('quality-table-updated', function(e){
         const detail = (e && e.detail) ? e.detail : {};
         const productId = detail.product_id || '';
@@ -361,61 +355,48 @@
         document.getElementById('quality_total_qty').textContent = qty;
         document.getElementById('quality_selected_product_text').textContent = productText;
 
-        // Build unit rows
         const type = document.getElementById('quality_type').value;
         buildUnits(qty, type);
     });
 
-    // ====== Tab Behavior ======
+    // saat tab quality benar-benar aktif
+    document.querySelector('button[data-target="#pane-quality"]')
+        ?.addEventListener('shown.bs.tab', function(){
+            syncQualityWarehouse();
+            const qty = document.getElementById('quality_qty')?.value || 0;
+            const type = document.getElementById('quality_type')?.value || 'defect';
+            buildUnits(qty, type);
+        });
+
+    // fallback click
     document.getElementById('tab-quality')?.addEventListener('click', ()=>{
-        // saat masuk Quality, aktifkan requirement warehouse di SearchProduct
-        livewireEmit('enableWarehouseRequirement', null);
-
-        // langsung sync warehouse & state
         syncQualityWarehouse();
-
-        // pastikan unit table kebangun sesuai state terakhir
         const qty = document.getElementById('quality_qty')?.value || 0;
         const type = document.getElementById('quality_type')?.value || 'defect';
         buildUnits(qty, type);
     });
 
-    // ====== Events ======
-    document.getElementById('warehouse_id_quality')?.addEventListener('change', ()=>{
-        syncQualityWarehouse();
-    });
+    document.getElementById('warehouse_id_quality')?.addEventListener('change', syncQualityWarehouse);
 
     document.getElementById('quality_type')?.addEventListener('change', ()=>{
         const qty = document.getElementById('quality_qty')?.value || 0;
         buildUnits(qty, document.getElementById('quality_type').value);
     });
 
-    // ====== Submit Guard ======
     document.getElementById('qualityForm')?.addEventListener('submit', function(ev){
         const wh = document.getElementById('quality_warehouse_id').value;
         const pid = document.getElementById('quality_product_id').value;
         const qty = parseInt(document.getElementById('quality_qty').value || '0', 10);
 
-        if (!wh) {
-            ev.preventDefault();
-            toastWarn('Please select Warehouse first (Quality tab).');
-            return;
-        }
-        if (!pid) {
-            ev.preventDefault();
-            toastWarn('Please select 1 product (via SearchProduct) for Quality Reclass.');
-            return;
-        }
-        if (!qty || qty < 1) {
-            ev.preventDefault();
-            toastWarn('Qty must be at least 1.');
-            return;
-        }
+        if (!wh) { ev.preventDefault(); toastWarn('Please select Warehouse first (Quality tab).'); return; }
+        if (!pid) { ev.preventDefault(); toastWarn('Please select 1 product (via SearchProduct) for Quality Reclass.'); return; }
+        if (!qty || qty < 1) { ev.preventDefault(); toastWarn('Qty must be at least 1.'); return; }
     });
 
-    // init
-    // Default: saat page load, jangan paksa enableWarehouseRequirement.
-    // Requirement akan aktif saat user klik tab Quality.
+    // INIT: sekali saat Livewire ready
+    document.addEventListener('livewire:load', function(){
+        syncQualityWarehouse();
+    });
 
 })();
 </script>

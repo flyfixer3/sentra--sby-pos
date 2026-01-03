@@ -115,7 +115,7 @@
         }
     }
 </script>
-@include('includes.snowfall')
+{{-- @include('includes.snowfall') --}}
 
 </body>
 </html>

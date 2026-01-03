@@ -4,6 +4,19 @@
 
 @push('page_css')
     @livewireStyles
+    <style>
+        .qc-badge{
+            display:inline-flex;align-items:center;gap:6px;
+            padding:6px 10px;border-radius:999px;font-size:12px;
+            background:rgba(13,110,253,.08);color:#0d6efd;border:1px solid rgba(13,110,253,.18);
+            white-space:nowrap;
+        }
+        .thumb{
+            width:70px;height:70px;object-fit:cover;border-radius:10px;border:1px solid rgba(0,0,0,.08);
+            background:#fff;
+        }
+        .muted{ color:#6c757d; font-size:12px; }
+    </style>
 @endpush
 
 @section('breadcrumb')
@@ -16,6 +29,50 @@
 
 @section('content')
 <div class="container-fluid">
+
+    @php
+        use Carbon\Carbon;
+        use Modules\Product\Entities\ProductDefectItem;
+        use Modules\Product\Entities\ProductDamagedItem;
+
+        $creatorName = optional($adjustment->creator)->name ?? optional($adjustment->creator)->username ?? '-';
+        $createdAt   = $adjustment->created_at ? Carbon::parse($adjustment->created_at)->format('d M Y H:i') : '-';
+
+        // Detect Quality Reclass by note / item note / reference pattern
+        $isQuality = false;
+        $noteText = (string) ($adjustment->note ?? '');
+        if (stripos($noteText, 'Quality Reclass') !== false) {
+            $isQuality = true;
+        } else {
+            foreach ($adjustment->adjustedProducts as $ap) {
+                if (stripos((string) ($ap->note ?? ''), 'Quality Reclass') !== false || stripos((string) ($ap->note ?? ''), 'NET-ZERO') !== false) {
+                    $isQuality = true;
+                    break;
+                }
+            }
+        }
+
+        // Pull per-unit QC items linked to this adjustment
+        $defectItems = ProductDefectItem::query()
+            ->where('reference_type', \Modules\Adjustment\Entities\Adjustment::class)
+            ->where('reference_id', $adjustment->id)
+            ->orderBy('id')
+            ->get();
+
+        $damagedItems = ProductDamagedItem::query()
+            ->where('reference_type', \Modules\Adjustment\Entities\Adjustment::class)
+            ->where('reference_id', $adjustment->id)
+            ->orderBy('id')
+            ->get();
+
+        $qualityType = null; // defect / damaged
+        if ($defectItems->count() > 0) $qualityType = 'defect';
+        if ($damagedItems->count() > 0) $qualityType = 'damaged';
+
+        // If both exist (harusnya nggak), anggap mixed
+        if ($defectItems->count() > 0 && $damagedItems->count() > 0) $qualityType = 'mixed';
+    @endphp
+
     <div class="row">
         <div class="col-12">
             <div class="card">
@@ -23,16 +80,23 @@
 
                     {{-- NOTE HEADER (general) --}}
                     @if(!empty($adjustment->note))
-                        <div class="alert alert-info mb-3">
-                            <strong>Adjustment Note:</strong><br>
-                            {{ $adjustment->note }}
+                        <div class="alert alert-info mb-3 d-flex align-items-center justify-content-between">
+                            <div>
+                                <strong>Adjustment Note:</strong><br>
+                                {{ $adjustment->note }}
+                            </div>
+
+                            @if($isQuality)
+                                <span class="qc-badge">
+                                    <i class="bi bi-shield-check"></i>
+                                    Quality Reclass
+                                    @if($qualityType && $qualityType !== 'mixed')
+                                        ({{ $qualityType }})
+                                    @endif
+                                </span>
+                            @endif
                         </div>
                     @endif
-
-                    @php
-                        $creatorName = optional($adjustment->creator)->name ?? optional($adjustment->creator)->username ?? '-';
-                        $createdAt = $adjustment->created_at ? \Carbon\Carbon::parse($adjustment->created_at)->format('d M Y H:i') : '-';
-                    @endphp
 
                     <div class="table-responsive">
                         <table class="table table-bordered">
@@ -54,7 +118,6 @@
                                 <td colspan="2">{{ optional($adjustment->branch)->name ?? '-' }}</td>
                             </tr>
 
-                            {{-- ✅ NEW: Audit --}}
                             <tr>
                                 <th colspan="2">Created By</th>
                                 <th colspan="2">Created At</th>
@@ -77,10 +140,21 @@
                                     <td>{{ $adjustedProduct->product->product_code ?? '-' }}</td>
                                     <td>{{ $adjustedProduct->quantity }}</td>
                                     <td>
-                                        @if($adjustedProduct->type === 'add')
-                                            (+) Addition
+                                        {{-- ✅ If quality: show Quality Reclass type instead of add/sub --}}
+                                        @if($isQuality)
+                                            <span class="qc-badge">
+                                                <i class="bi bi-shield-check"></i>
+                                                Quality Reclass
+                                                @if($qualityType && $qualityType !== 'mixed')
+                                                    ({{ $qualityType }})
+                                                @endif
+                                            </span>
                                         @else
-                                            (-) Subtraction
+                                            @if($adjustedProduct->type === 'add')
+                                                (+) Addition
+                                            @else
+                                                (-) Subtraction
+                                            @endif
                                         @endif
                                     </td>
                                 </tr>
@@ -97,9 +171,109 @@
                         </table>
                     </div>
 
+                    {{-- ✅ QUALITY DETAILS + PHOTO --}}
+                    @if($isQuality)
+                        <div class="mt-4">
+
+                            <div class="d-flex align-items-center justify-content-between mb-2">
+                                <h5 class="mb-0">Quality Reclass Details</h5>
+                                <div class="muted">
+                                    Showing per-unit records linked to this adjustment.
+                                </div>
+                            </div>
+
+                            @if($qualityType === 'defect')
+                                <div class="table-responsive">
+                                    <table class="table table-bordered table-sm">
+                                        <thead>
+                                            <tr>
+                                                <th style="width:60px" class="text-center">#</th>
+                                                <th>Defect Type</th>
+                                                <th>Description</th>
+                                                <th style="width:120px" class="text-center">Photo</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            @forelse($defectItems as $i => $it)
+                                                <tr>
+                                                    <td class="text-center">{{ $i+1 }}</td>
+                                                    <td>{{ $it->defect_type ?? '-' }}</td>
+                                                    <td>{{ $it->description ?? '-' }}</td>
+                                                    <td class="text-center">
+                                                        @if(!empty($it->photo_path))
+                                                            @php $url = asset('storage/'.$it->photo_path); @endphp
+                                                            <a href="{{ $url }}" target="_blank" rel="noopener">
+                                                                <img src="{{ $url }}" class="thumb" alt="photo">
+                                                            </a>
+                                                        @else
+                                                            <span class="muted">No photo</span>
+                                                        @endif
+                                                    </td>
+                                                </tr>
+                                            @empty
+                                                <tr>
+                                                    <td colspan="4" class="text-center muted">No defect items found.</td>
+                                                </tr>
+                                            @endforelse
+                                        </tbody>
+                                    </table>
+                                </div>
+
+                            @elseif($qualityType === 'damaged')
+                                <div class="table-responsive">
+                                    <table class="table table-bordered table-sm">
+                                        <thead>
+                                            <tr>
+                                                <th style="width:60px" class="text-center">#</th>
+                                                <th>Reason</th>
+                                                <th>Description</th>
+                                                <th style="width:120px" class="text-center">Photo</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            @forelse($damagedItems as $i => $it)
+                                                <tr>
+                                                    <td class="text-center">{{ $i+1 }}</td>
+                                                    <td>{{ $it->reason ?? '-' }}</td>
+                                                    <td>{{ $it->description ?? '-' }}</td>
+                                                    <td class="text-center">
+                                                        @if(!empty($it->photo_path))
+                                                            @php $url = asset('storage/'.$it->photo_path); @endphp
+                                                            <a href="{{ $url }}" target="_blank" rel="noopener">
+                                                                <img src="{{ $url }}" class="thumb" alt="photo">
+                                                            </a>
+                                                        @else
+                                                            <span class="muted">No photo</span>
+                                                        @endif
+                                                    </td>
+                                                </tr>
+                                            @empty
+                                                <tr>
+                                                    <td colspan="4" class="text-center muted">No damaged items found.</td>
+                                                </tr>
+                                            @endforelse
+                                        </tbody>
+                                    </table>
+                                </div>
+
+                            @elseif($qualityType === 'mixed')
+                                <div class="alert alert-warning">
+                                    QC items contain both <b>defect</b> and <b>damaged</b>. This is unusual; please check data.
+                                </div>
+
+                            @else
+                                <div class="alert alert-light border">
+                                    No per-unit QC records found for this adjustment.
+                                </div>
+                            @endif
+
+                        </div>
+                    @endif
+
                 </div>
             </div>
         </div>
     </div>
+
 </div>
 @endsection

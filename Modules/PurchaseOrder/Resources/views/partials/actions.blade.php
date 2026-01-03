@@ -4,14 +4,14 @@
     </button>
     <div class="dropdown-menu">
         @can('create_purchase_order_purchases')
-            <a href="{{ route('purchase-order-purchases.create', $data) }}" 
+            <a href="{{ route('purchase-order-purchases.create', $data) }}"
             class="dropdown-item {{ $data->status == 'Completed' ? 'disabled' : '' }}"
             onclick="{{ $data->status == 'Completed' ? 'return false;' : '' }}">
                 <i class="bi bi-check2-circle mr-2 text-success" style="line-height: 1;"></i> Make Invoice
             </a>
         @endcan
         @can('create_purchase_deliveries')
-            <a href="{{ route('purchase-deliveries.create', $data) }}" 
+            <a href="{{ route('purchase-orders.deliveries.create', $data) }}"
             class="dropdown-item {{ $data->status == 'Completed' ? 'disabled' : '' }}"
             onclick="{{ $data->status == 'Completed' ? 'return false;' : '' }}">
                 <i class="bi bi-truck mr-2 text-success" style="line-height: 1;"></i> Make Delivery

@@ -5,13 +5,14 @@ namespace Modules\Purchase\Entities;
 use Illuminate\Database\Eloquent\Model;
 use App\Models\BaseModel;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Modules\PurchaseOrder\Entities\PurchaseOrder;
 
 class Purchase extends BaseModel
 {
     use HasFactory;
 
     protected $guarded = [];
-    
+
     public function purchaseOrder()
     {
         return $this->belongsTo(PurchaseOrder::class, 'purchase_order_id');

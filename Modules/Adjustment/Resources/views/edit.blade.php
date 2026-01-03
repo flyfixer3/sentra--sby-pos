@@ -43,12 +43,14 @@
 
     <div class="row mt-4">
         <div class="col-12">
+
             <div class="card sa-card">
                 <div class="sa-header">
                     <div>
                         <h5 class="sa-title">Edit Adjustment</h5>
                         <p class="sa-sub">Mode 1: Stock add/sub (creates mutation). Mode 2: Quality reclass GOOD → defect/damaged (label only).</p>
                     </div>
+
                     <span class="sa-badge">
                         <i class="bi bi-diagram-3"></i>
                         Active Branch: {{ $activeBranchId }}
@@ -75,6 +77,7 @@
 
                         {{-- TAB 1: STOCK --}}
                         <div class="tab-pane fade show active" id="pane-stock" role="tabpanel" aria-labelledby="tab-stock">
+
                             <div class="alert alert-light border mb-3">
                                 <div class="sa-help">
                                     <b>Update Adjustment</b> akan <b>rollback mutation lama</b> lalu create mutation baru berdasarkan item terbaru.
@@ -132,6 +135,7 @@
                                     </button>
                                 </div>
                             </form>
+
                         </div>
 
                         {{-- TAB 2: QUALITY --}}
@@ -142,6 +146,11 @@
                                 <div class="sa-help">Reclass ini <b>label only</b> + create detail per unit + foto opsional.</div>
                             </div>
 
+                            @php
+                                // default quality = main warehouse (atau fallback first)
+                                $defaultQualityWarehouseId = (int) (optional($warehouses->firstWhere('is_main', 1))->id ?: optional($warehouses->first())->id);
+                            @endphp
+
                             <form id="qualityForm" method="POST" action="{{ route('adjustments.quality.store') }}" enctype="multipart/form-data">
                                 @csrf
 
@@ -151,16 +160,17 @@
                                     <div class="col-lg-4">
                                         <div class="form-group">
                                             <label class="sa-form-label">Warehouse <span class="text-danger">*</span></label>
+
                                             <select id="warehouse_id_quality" class="form-control" required>
-                                                <option value="">-- Select Warehouse --</option>
                                                 @foreach($warehouses as $wh)
-                                                    <option value="{{ $wh->id }}">
+                                                    <option value="{{ $wh->id }}" {{ (int)$defaultQualityWarehouseId === (int)$wh->id ? 'selected' : '' }}>
                                                         {{ $wh->warehouse_name }}{{ (int)$wh->is_main === 1 ? ' (Main)' : '' }}
                                                     </option>
                                                 @endforeach
                                             </select>
 
-                                            <input type="hidden" name="warehouse_id" id="quality_warehouse_id" value="">
+                                            <input type="hidden" name="warehouse_id" id="quality_warehouse_id" value="{{ $defaultQualityWarehouseId }}">
+
                                             <small class="text-muted">
                                                 Warehouse untuk Quality tab <b>terpisah</b> dari Stock tab.
                                             </small>
@@ -246,16 +256,17 @@
                             </form>
 
                         </div>
+
                     </div>{{-- tab content --}}
                 </div>
             </div>
+
         </div>
     </div>
 </div>
 @endsection
 
 @push('page_scripts')
-@livewireScripts
 <script>
 (function(){
 
@@ -282,10 +293,12 @@
         const hidden = document.getElementById('quality_warehouse_id');
         if (!wq || !hidden) return;
 
-        hidden.value = wq.value || '';
+        const wid = wq.value ? parseInt(wq.value, 10) : null;
+        hidden.value = wid ?? '';
 
-        livewireEmit('fromWarehouseSelected', { warehouseId: wq.value || null });
-        livewireEmit('qualityWarehouseChanged', { warehouseId: wq.value || null });
+        if (window.Livewire && typeof window.Livewire.emit === 'function') {
+            window.Livewire.emit('qualityWarehouseChanged', wid);
+        }
     }
 
     function buildUnits(qty, type){
@@ -343,8 +356,7 @@
         buildUnits(qty, type);
     });
 
-    document.getElementById('tab-quality')?.addEventListener('click', ()=>{
-        livewireEmit('enableWarehouseRequirement', null);
+    document.querySelector('button[data-target="#pane-quality"]')?.addEventListener('shown.bs.tab', function(){
         syncQualityWarehouse();
 
         const qty = document.getElementById('quality_qty')?.value || 0;
@@ -352,9 +364,15 @@
         buildUnits(qty, type);
     });
 
-    document.getElementById('warehouse_id_quality')?.addEventListener('change', ()=>{
+    document.getElementById('tab-quality')?.addEventListener('click', ()=>{
         syncQualityWarehouse();
+
+        const qty = document.getElementById('quality_qty')?.value || 0;
+        const type = document.getElementById('quality_type')?.value || 'defect';
+        buildUnits(qty, type);
     });
+
+    document.getElementById('warehouse_id_quality')?.addEventListener('change', syncQualityWarehouse);
 
     document.getElementById('quality_type')?.addEventListener('change', ()=>{
         const qty = document.getElementById('quality_qty')?.value || 0;
@@ -366,21 +384,13 @@
         const pid = document.getElementById('quality_product_id').value;
         const qty = parseInt(document.getElementById('quality_qty').value || '0', 10);
 
-        if (!wh) {
-            ev.preventDefault();
-            toastWarn('Please select Warehouse first (Quality tab).');
-            return;
-        }
-        if (!pid) {
-            ev.preventDefault();
-            toastWarn('Please select 1 product (via SearchProduct) for Quality Reclass.');
-            return;
-        }
-        if (!qty || qty < 1) {
-            ev.preventDefault();
-            toastWarn('Qty must be at least 1.');
-            return;
-        }
+        if (!wh) { ev.preventDefault(); toastWarn('Please select Warehouse first (Quality tab).'); return; }
+        if (!pid) { ev.preventDefault(); toastWarn('Please select 1 product (via SearchProduct) for Quality Reclass.'); return; }
+        if (!qty || qty < 1) { ev.preventDefault(); toastWarn('Qty must be at least 1.'); return; }
+    });
+
+    document.addEventListener('livewire:load', function(){
+        syncQualityWarehouse();
     });
 
 })();

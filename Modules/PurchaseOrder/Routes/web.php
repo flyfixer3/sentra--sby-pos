@@ -1,20 +1,13 @@
 <?php
 
-/*
-|--------------------------------------------------------------------------
-| Web Routes
-|--------------------------------------------------------------------------
-|
-| Here is where you can register web routes for your application. These
-| routes are loaded by the RouteServiceProvider within a group which
-| contains the "web" middleware group. Now create something great!
-|
-*/
+use Illuminate\Support\Facades\Route;
+use Modules\PurchaseOrder\Entities\PurchaseOrder;
 
-Route::group(['middleware' => 'auth'], function () {
-    //Generate PDF
-    Route::get('/purchase-orders/pdf/{id}', function ($id) {
-        $purchase_order = \Modules\PurchaseOrder\Entities\PurchaseOrder::findOrFail($id);
+Route::middleware(['auth'])->group(function () {
+
+    // PDF Purchase Order
+    Route::get('/purchase-orders/pdf/{purchase_order}', function ($purchase_order) {
+        $purchase_order = PurchaseOrder::findOrFail($purchase_order);
         $supplier = \Modules\People\Entities\Supplier::findOrFail($purchase_order->supplier_id);
 
         $pdf = \PDF::loadView('purchase-orders::print', [
@@ -22,16 +15,17 @@ Route::group(['middleware' => 'auth'], function () {
             'supplier' => $supplier,
         ])->setPaper('a4');
 
-        return $pdf->stream('purchase-order-'. $purchase_order->reference .'.pdf');
+        return $pdf->stream('purchase-order-' . $purchase_order->reference . '.pdf');
     })->name('purchase-orders.pdf');
 
-    //Send PurchaseOrder Mail
-    Route::get('/purchase-order/mail/{purchaseorder}', 'SendPurchaseOrderEmailController')->name('purchase-order.email');
-    
-    //Sales Form PurchaseOrder
-    Route::get('/purchase-order-purchases/{purchaseorder}', 'PurchaseOrderPurchasesController')->name('purchase-order-purchases.create');
-    //purchase orders
+    // Send email PO
+    Route::get('/purchase-order/mail/{purchaseorder}', 'SendPurchaseOrderEmailController')
+        ->name('purchase-order.email');
+
+    // Convert PO -> Purchase (existing)
+    Route::get('/purchase-order-purchases/{purchaseorder}', 'PurchaseOrderPurchasesController')
+        ->name('purchase-order-purchases.create');
+
+    // Resource PO
     Route::resource('purchase-orders', 'PurchaseOrderController');
-
 });
-

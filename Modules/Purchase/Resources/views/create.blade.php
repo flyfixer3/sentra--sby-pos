@@ -12,7 +12,6 @@
 
 @section('content')
     @php
-        // Ambil cabang aktif dari session (sesuaikan dengan proyekmu)
         $activeBranchId = session('active_branch_id') ?? session('active_branch') ?? null;
 
         // Cari gudang utama (is_main = 1) di cabang aktif
@@ -20,7 +19,7 @@
             ->when($activeBranchId, fn($q) => $q->where('branch_id', $activeBranchId))
             ->where('is_main', 1)
             ->orderBy('id')
-            ->first(); // <- tidak pakai findOrFail agar aman null
+            ->first();
 
         // Ambil daftar gudang untuk dropdown (urut pakai warehouse_name, bukan name)
         $warehouses = \Modules\Product\Entities\Warehouse::query()

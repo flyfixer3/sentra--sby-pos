@@ -37,7 +37,9 @@ class AdjustmentController extends Controller
 
         $active = session('active_branch');
         if ($active === 'all' || $active === null || $active === '') {
-            abort(422, "Please choose a specific branch (not 'All Branch') to create adjustment.");
+            return redirect()
+                ->route('adjustments.index')
+                ->with('error', "Please choose a specific branch first (not 'All Branch') to create an adjustment.");
         }
 
         $activeBranchId = (int) $active;
@@ -55,6 +57,7 @@ class AdjustmentController extends Controller
 
         return view('adjustment::create', compact('warehouses', 'activeBranchId', 'defaultWarehouseId'));
     }
+
 
     public function store(Request $request)
     {
@@ -80,7 +83,10 @@ class AdjustmentController extends Controller
 
         $active = session('active_branch');
         if ($active === 'all' || $active === null || $active === '') {
-            abort(422, "Please choose a specific branch (not 'All Branch') to create adjustment.");
+            return redirect()
+                ->back()
+                ->withInput()
+                ->with('error', "Please choose a specific branch first (not 'All Branch') to create an adjustment.");
         }
         $branchId = (int) $active;
 
@@ -112,7 +118,10 @@ class AdjustmentController extends Controller
                 $itemNote  = $request->notes[$key] ?? null;
 
                 if ($qty <= 0 || !in_array($type, ['add', 'sub'], true)) {
-                    abort(422, 'Invalid item data.');
+                    // validasi item buruk -> redirect back (biar konsisten)
+                    throw new \Illuminate\Http\Exceptions\HttpResponseException(
+                        redirect()->back()->withInput()->with('error', 'Invalid item data.')
+                    );
                 }
 
                 Product::findOrFail($productId);
@@ -151,6 +160,7 @@ class AdjustmentController extends Controller
         return redirect()->route('adjustments.index');
     }
 
+
     public function show(Adjustment $adjustment)
     {
         abort_if(Gate::denies('show_adjustments'), 403);
@@ -171,9 +181,16 @@ class AdjustmentController extends Controller
 
         $active = session('active_branch');
         if ($active === 'all' || $active === null || $active === '') {
-            abort(422, "Please choose a specific branch (not 'All Branch') to edit adjustment.");
+            return redirect()
+                ->route('adjustments.index')
+                ->with('error', "Please choose a specific branch first (not 'All Branch') to edit an adjustment.");
         }
         $activeBranchId = (int) $active;
+
+        // (optional tapi rapi) pastikan data memang milik branch aktif
+        if ((int) $adjustment->branch_id !== $activeBranchId) {
+            abort(403, 'You can only edit adjustments from the active branch.');
+        }
 
         $warehouses = Warehouse::query()
             ->where('branch_id', $activeBranchId)
@@ -186,7 +203,8 @@ class AdjustmentController extends Controller
         return view('adjustment::edit', compact('adjustment', 'warehouses', 'activeBranchId', 'defaultWarehouseId'));
     }
 
-    public function update(Request $request, Adjustment $adjustment)
+
+   public function update(Request $request, Adjustment $adjustment)
     {
         abort_if(Gate::denies('edit_adjustments'), 403);
 
@@ -210,9 +228,17 @@ class AdjustmentController extends Controller
 
         $active = session('active_branch');
         if ($active === 'all' || $active === null || $active === '') {
-            abort(422, "Please choose a specific branch (not 'All Branch') to update adjustment.");
+            return redirect()
+                ->back()
+                ->withInput()
+                ->with('error', "Please choose a specific branch first (not 'All Branch') to update an adjustment.");
         }
         $branchId = (int) $active;
+
+        // (optional tapi bagus) pastikan adjustment ini milik branch aktif
+        if ((int) $adjustment->branch_id !== $branchId) {
+            abort(403, 'You can only update adjustments from the active branch.');
+        }
 
         $newWarehouseId = (int) $request->warehouse_id;
 
@@ -248,7 +274,9 @@ class AdjustmentController extends Controller
                 $itemNote  = $request->notes[$key] ?? null;
 
                 if ($qty <= 0 || !in_array($type, ['add', 'sub'], true)) {
-                    abort(422, 'Invalid item data.');
+                    throw new \Illuminate\Http\Exceptions\HttpResponseException(
+                        redirect()->back()->withInput()->with('error', 'Invalid item data.')
+                    );
                 }
 
                 Product::findOrFail($productId);
@@ -286,6 +314,7 @@ class AdjustmentController extends Controller
         return redirect()->route('adjustments.index');
     }
 
+
     public function destroy(Adjustment $adjustment)
     {
         abort_if(Gate::denies('delete_adjustments'), 403);
@@ -301,23 +330,34 @@ class AdjustmentController extends Controller
     }
 
     /**
-     * ✅ QUALITY RECLASS + MUTATION LOG (NET ZERO)
-     * - bikin ProductDefectItem / ProductDamagedItem per unit (quantity=1)
+     * ✅ QUALITY RECLASS + MUTATION LOG (NET ZERO) + SAVE TO ADJUSTMENT INDEX
+     * - bikin Adjustment (reference = QRC-xxx) supaya muncul di list Adjustments
+     * - bikin AdjustedProduct 1 row (log tampilan)
+     * - bikin ProductDefectItem / ProductDamagedItem per unit
      * - upload image per unit
      * - bikin mutation log NET-ZERO (IN lalu OUT qty sama)
-     * - damaged: simpan mutation_in_id & mutation_out_id
      *
-     * NOTE: ini method yang dipakai UI kamu, jadi jangan ganti nama.
+     * NOTE: method name jangan diganti.
      */
     public function storeQuality(Request $request)
     {
-        // kalau kamu punya permission khusus quality, ganti ke adjust_quality
-        // abort_if(Gate::denies('adjust_quality'), 403);
         abort_if(Gate::denies('create_adjustments'), 403);
 
         $active = session('active_branch');
         if ($active === 'all' || $active === null || $active === '') {
-            abort(422, "Please choose a specific branch (not 'All Branch') to submit quality reclass.");
+            // kalau form normal -> redirect back
+            if (!$request->ajax() && !$request->wantsJson() && !$request->expectsJson()) {
+                return redirect()
+                    ->back()
+                    ->withInput()
+                    ->with('error', "Please choose a specific branch first (not 'All Branch') to submit quality reclass.");
+            }
+
+            // kalau ajax/json -> tetap json
+            return response()->json([
+                'success' => false,
+                'message' => "Please choose a specific branch first (not 'All Branch') to submit quality reclass."
+            ], 422);
         }
         $branchId = (int) $active;
 
@@ -342,24 +382,35 @@ class AdjustmentController extends Controller
         }
 
         if (!is_array($request->units) || count($request->units) !== $qty) {
-            abort(422, "Per-unit detail must match Qty. Qty={$qty}, Units=" . (is_array($request->units) ? count($request->units) : 0));
+            return redirect()
+                ->back()
+                ->withInput()
+                ->with('error', "Per-unit detail must match Qty. Qty={$qty}, Units=" . (is_array($request->units) ? count($request->units) : 0));
         }
 
         // validate per unit + image
         for ($i = 0; $i < $qty; $i++) {
             if ($type === 'defect') {
                 $defType = trim((string) data_get($request->units[$i], 'defect_type', ''));
-                if ($defType === '') abort(422, "Defect Type is required for each unit (row #" . ($i + 1) . ").");
+                if ($defType === '') {
+                    return redirect()->back()->withInput()->with('error', "Defect Type is required for each unit (row #" . ($i + 1) . ").");
+                }
             } else {
                 $reason = trim((string) data_get($request->units[$i], 'reason', ''));
-                if ($reason === '') abort(422, "Damaged Reason is required for each unit (row #" . ($i + 1) . ").");
+                if ($reason === '') {
+                    return redirect()->back()->withInput()->with('error', "Damaged Reason is required for each unit (row #" . ($i + 1) . ").");
+                }
             }
 
             $file = $request->file("units.$i.photo");
             if ($file) {
                 $mime = strtolower((string) $file->getClientMimeType());
-                if (!str_starts_with($mime, 'image/')) abort(422, "Photo must be an image (row #" . ($i + 1) . ").");
-                if ($file->getSize() > (5 * 1024 * 1024)) abort(422, "Photo max size is 5MB (row #" . ($i + 1) . ").");
+                if (!str_starts_with($mime, 'image/')) {
+                    return redirect()->back()->withInput()->with('error', "Photo must be an image (row #" . ($i + 1) . ").");
+                }
+                if ($file->getSize() > (5 * 1024 * 1024)) {
+                    return redirect()->back()->withInput()->with('error', "Photo max size is 5MB (row #" . ($i + 1) . ").");
+                }
             }
         }
 
@@ -369,9 +420,25 @@ class AdjustmentController extends Controller
 
             $ref = $this->generateQualityReclassReference($type);
 
+            $adjustment = Adjustment::create([
+                'reference'    => $ref,
+                'date'         => $date,
+                'note'         => "Quality Reclass ({$type})",
+                'branch_id'    => $branchId,
+                'warehouse_id' => $warehouseId,
+                'created_by'   => (int) Auth::id(),
+            ]);
+
+            AdjustedProduct::create([
+                'adjustment_id' => $adjustment->id,
+                'product_id'    => $productId,
+                'quantity'      => $qty,
+                'type'          => 'sub',
+                'note'          => "Quality Reclass ({$type}) | NET-ZERO log",
+            ]);
+
             $noteBase = "Quality Reclass ({$type}) | PID {$productId} | WH {$warehouseId} | By UID " . (int) Auth::id();
 
-            // NET-ZERO mutation
             $mutationInId = $this->mutationController->applyInOutAndGetMutationId(
                 $branchId,
                 $warehouseId,
@@ -408,7 +475,7 @@ class AdjustmentController extends Controller
                         'branch_id'      => $branchId,
                         'warehouse_id'   => $warehouseId,
                         'product_id'     => $productId,
-                        'reference_id'   => null,
+                        'reference_id'   => $adjustment->id,
                         'reference_type' => Adjustment::class,
                         'quantity'       => 1,
                         'defect_type'    => trim((string) ($unit['defect_type'] ?? '')),
@@ -421,7 +488,7 @@ class AdjustmentController extends Controller
                         'branch_id'       => $branchId,
                         'warehouse_id'    => $warehouseId,
                         'product_id'      => $productId,
-                        'reference_id'    => null,
+                        'reference_id'    => $adjustment->id,
                         'reference_type'  => Adjustment::class,
                         'quantity'        => 1,
                         'reason'          => trim((string) ($unit['reason'] ?? '')),
@@ -434,10 +501,18 @@ class AdjustmentController extends Controller
             }
         });
 
-        return response()->json([
-            'message' => 'Quality reclass saved successfully (with mutation log & photos if provided).'
-        ]);
+        toast('Quality reclass saved successfully.', 'success');
+
+        if ($request->ajax() || $request->wantsJson() || $request->expectsJson()) {
+            return response()->json([
+                'success' => true,
+                'message' => 'Quality reclass saved successfully.',
+            ]);
+        }
+
+        return redirect()->route('adjustments.index');
     }
+
 
     private function generateQualityReclassReference(string $type): string
     {
@@ -536,5 +611,4 @@ class AdjustmentController extends Controller
             'data'    => $data,
         ]);
     }
-
 }

@@ -38,7 +38,11 @@ class TransferController extends Controller
         $active = $this->activeBranch();
 
         if ($active === 'all' || $active === null || $active === '') {
-            abort(422, "Please choose a specific branch (not 'All Branch') to create a transfer.");
+            throw new \Illuminate\Http\Exceptions\HttpResponseException(
+                redirect()
+                    ->route('transfers.index')
+                    ->with('error', "Please choose a specific branch first (not 'All Branch') to create a transfer.")
+            );
         }
 
         return (int) $active;
@@ -48,10 +52,17 @@ class TransferController extends Controller
     {
         abort_if(Gate::denies('access_transfers'), 403);
 
+        $active = session('active_branch');
+        if ($active === 'all' || $active === null || $active === '') {
+            return redirect()
+                ->route('transfers.index')
+                ->with('error', "Please choose a specific branch first (not 'All Branch') to create a transfer.");
+        }
+
+        $branchId = (int) $active;
+
         $warehouses = Warehouse::query()
-            ->when(session('active_branch') !== 'all', function ($q) {
-                $q->where('branch_id', session('active_branch'));
-            })
+            ->where('branch_id', $branchId)
             ->orderBy('warehouse_name')
             ->get();
 
@@ -67,23 +78,27 @@ class TransferController extends Controller
     {
         abort_if(Gate::denies('create_transfers'), 403);
 
+        // ini akan redirect ke index bila All Branch (via HttpResponseException)
         $branchId = $this->activeBranchIdOrFail();
 
         $request->validate([
-            'reference' => 'nullable|string|max:50',
-            'date'              => 'required|date',
+            'reference'          => 'nullable|string|max:50',
+            'date'               => 'required|date',
             'from_warehouse_id'  => 'required|exists:warehouses,id',
             'to_branch_id'       => 'required|exists:branches,id|different:' . $branchId,
-            'note'              => 'nullable|string|max:1000',
+            'note'               => 'nullable|string|max:1000',
 
-            'product_ids'       => 'required|array|min:1',
-            'product_ids.*'     => 'required|integer|exists:products,id',
-            'quantities'        => 'required|array|min:1',
-            'quantities.*'      => 'required|integer|min:1',
+            'product_ids'        => 'required|array|min:1',
+            'product_ids.*'      => 'required|integer|exists:products,id',
+            'quantities'         => 'required|array|min:1',
+            'quantities.*'       => 'required|integer|min:1',
         ]);
 
         if (count($request->product_ids) !== count($request->quantities)) {
-            abort(422, 'Product and quantity counts do not match.');
+            return redirect()
+                ->back()
+                ->withInput()
+                ->with('error', 'Product and quantity counts do not match.');
         }
 
         $fromWarehouse = Warehouse::findOrFail($request->from_warehouse_id);
@@ -97,9 +112,9 @@ class TransferController extends Controller
             $qty = (int) $request->quantities[$i];
 
             $stockIn = (int) Mutation::withoutGlobalScopes()
-            ->where('warehouse_id', (int) $request->from_warehouse_id)
-            ->where('product_id', $pid)
-            ->sum('stock_in');
+                ->where('warehouse_id', (int) $request->from_warehouse_id)
+                ->where('product_id', $pid)
+                ->sum('stock_in');
 
             $stockOut = (int) Mutation::withoutGlobalScopes()
                 ->where('warehouse_id', (int) $request->from_warehouse_id)
@@ -113,7 +128,10 @@ class TransferController extends Controller
                 $p = Product::find($pid);
                 $name = $p ? ($p->product_name . ' | ' . $p->product_code) : ('Product ID ' . $pid);
 
-                abort(422, "Stock not enough for: {$name}. Requested: {$qty}, Available in selected warehouse: {$available}.");
+                return redirect()
+                    ->back()
+                    ->withInput()
+                    ->with('error', "Stock not enough for: {$name}. Requested: {$qty}, Available in selected warehouse: {$available}.");
             }
         }
 
@@ -150,7 +168,6 @@ class TransferController extends Controller
         toast('Transfer created successfully', 'success');
         return redirect()->route('transfers.index');
     }
-
 
     public function show($id)
     {

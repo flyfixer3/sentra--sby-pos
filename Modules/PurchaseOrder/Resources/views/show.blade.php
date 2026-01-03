@@ -39,9 +39,10 @@
                     @endif
                     @if($purchase_order->status != 'Completed')
                         <div class="mb-3">
-                            <a href="{{ route('purchase-deliveries.create', $purchase_order) }}" class="btn btn-success">
+                            <a href="{{ route('purchase-orders.deliveries.create', $purchase_order) }}" class="btn btn-success">
                                 Create Purchase Delivery <i class="bi bi-truck"></i>
                             </a>
+
                         </div>
                     @endif
 
@@ -49,10 +50,10 @@
                     <div class="row">
                         <div class="col-sm-4">
                             <h5 class="border-bottom pb-2">Company Info:</h5>
-                            <p><strong>{{ settings()->company_name }}</strong></p>
-                            <p>{{ settings()->company_address }}</p>
-                            <p>Email: {{ settings()->company_email }}</p>
-                            <p>Phone: {{ settings()->company_phone }}</p>
+
+                            <p><strong>{{ $purchase_order->branch?->name ?? '-' }}</strong></p>
+                            <p>{{ $purchase_order->branch?->address ?? '-' }}</p>
+                            <p>Phone: {{ $purchase_order->branch?->phone ?? '-' }}</p>
                         </div>
 
                         <div class="col-sm-4">
@@ -69,7 +70,11 @@
                             <p><strong>Date:</strong> {{ \Carbon\Carbon::parse($purchase_order->date)->format('d M, Y') }}</p>
                             <p><strong>Status:</strong> <span class="badge badge-primary">{{ $purchase_order->status }}</span></p>
                             <p><strong>Payment Status:</strong> <span class="badge badge-warning">{{ $purchase_order->payment_status }}</span></p>
+
+                            {{-- ✅ NEW --}}
+                            <p><strong>Created By:</strong> {{ optional($purchase_order->creator)->name ?? '-' }}</p>
                         </div>
+
                     </div>
 
                     <!-- 📌 Purchase Order Items Table -->

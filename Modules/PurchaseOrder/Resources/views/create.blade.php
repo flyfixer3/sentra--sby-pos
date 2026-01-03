@@ -60,14 +60,15 @@
                             <div class="form-row">
                                 <div class="col-lg-4">
                                     <div class="form-group">
-                                        <label for="status">Status <span class="text-danger">*</span></label>
-                                        <select class="form-control" name="status" id="status" required>
-                                            <option value="Pending">Pending</option>
-                                            <option value="Sent">Sent</option>
-                                        </select>
+                                        <label>Status</label>
+                                        <input type="text" class="form-control" value="Pending" readonly>
+                                        <small class="text-muted">
+                                            Status will be updated automatically after Delivery confirmation.
+                                        </small>
                                     </div>
                                 </div>
                             </div>
+
 
                             <div class="form-group">
                                 <label for="note">Note (If Needed)</label>

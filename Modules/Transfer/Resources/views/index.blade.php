@@ -13,6 +13,7 @@
 <div class="container-fluid">
     <div class="card card-modern">
         <div class="card-body">
+            @include('utils.alerts')
             {{-- Header --}}
             <div class="d-flex flex-wrap align-items-center gap-2 mb-3">
                 <div>

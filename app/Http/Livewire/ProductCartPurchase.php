@@ -3,14 +3,12 @@
 namespace App\Http\Livewire;
 
 use Gloudemans\Shoppingcart\Facades\Cart;
-use Illuminate\Support\Facades\Request;
 use Livewire\Component;
 use Modules\Mutation\Entities\Mutation;
 use Modules\Product\Entities\Warehouse;
 
 class ProductCartPurchase extends Component
 {
-
     public $listeners = ['productSelected', 'discountModalRefresh'];
 
     public $cart_instance;
@@ -19,18 +17,45 @@ class ProductCartPurchase extends Component
     public $global_qty;
     public $shipping;
     public $platform_fee;
+
     public $quantity;
     public $warehouse_id;
     public $loading_warehouse;
+
     public $check_quantity;
     public $discount_type;
     public $item_discount;
     public $item_cost_konsyinasi;
     public $data;
 
-    public function mount($cartInstance, $data = null, $loading_warehouse) {
+    public function mount($cartInstance, $data = null, $loading_warehouse = null)
+    {
         $this->cart_instance = $cartInstance;
-        $this->loading_warehouse = $loading_warehouse;
+
+        // loading_warehouse bisa object Warehouse atau id, kita normalkan
+        if (is_numeric($loading_warehouse)) {
+            $this->loading_warehouse = Warehouse::find($loading_warehouse);
+        } else {
+            $this->loading_warehouse = $loading_warehouse;
+        }
+
+        if (!$this->loading_warehouse) {
+            // fallback aman: ambil main warehouse branch aktif kalau ada, atau warehouse pertama
+            $branchId = session('active_branch');
+            $warehouse = null;
+
+            if (!empty($branchId) && $branchId !== 'all') {
+                $warehouse = Warehouse::where('branch_id', (int)$branchId)->where('is_main', 1)->first();
+                if (!$warehouse) $warehouse = Warehouse::where('branch_id', (int)$branchId)->first();
+            }
+
+            if (!$warehouse) {
+                $warehouse = Warehouse::where('is_main', 1)->first() ?? Warehouse::first();
+            }
+
+            $this->loading_warehouse = $warehouse;
+        }
+
         if ($data) {
             $this->data = $data;
 
@@ -39,25 +64,26 @@ class ProductCartPurchase extends Component
             $this->global_qty = Cart::instance($this->cart_instance)->count();
             $this->shipping = $data->shipping_amount;
             $this->platform_fee = $data->fee_amount;
-            
+
             $this->updatedGlobalTax();
             $this->updatedGlobalDiscount();
-            // $this->updatedGlobalQuantity();
-            
-            $cart_items = Cart::instance($this->cart_instance)->content();
-            
-            foreach ($cart_items as $cart_item) {
 
-                // dd($cart_item->options);
-                $this->check_quantity[$cart_item->id] = [$cart_item->options->stock];
+            $cart_items = Cart::instance($this->cart_instance)->content();
+
+            foreach ($cart_items as $cart_item) {
+                $this->check_quantity[$cart_item->id] = [$cart_item->options->stock ?? 0];
                 $this->quantity[$cart_item->id] = $cart_item->qty;
-                $this->warehouse_id[$cart_item->id] = $cart_item->options->warehouse_id;
-                $this->discount_type[$cart_item->id] = $cart_item->options->product_discount_type;
-                $this->item_cost_konsyinasi[$cart_item->id] = $cart_item->options->product_cost;
-                if ($cart_item->options->product_discount_type == 'fixed') {
-                    $this->item_discount[$cart_item->id] = $cart_item->options->product_discount;
-                } elseif ($cart_item->options->product_discount_type == 'percentage') {
-                    $this->item_discount[$cart_item->id] = round(100 * ($cart_item->options->product_discount / $cart_item->price));
+
+                $this->warehouse_id[$cart_item->id] = $cart_item->options->warehouse_id ?? $this->loading_warehouse->id;
+
+                $this->discount_type[$cart_item->id] = $cart_item->options->product_discount_type ?? 'fixed';
+                $this->item_cost_konsyinasi[$cart_item->id] = $cart_item->options->product_cost ?? 0;
+
+                if (($cart_item->options->product_discount_type ?? 'fixed') === 'fixed') {
+                    $this->item_discount[$cart_item->id] = $cart_item->options->product_discount ?? 0;
+                } else {
+                    $priceBase = ($cart_item->price > 0) ? $cart_item->price : 1;
+                    $this->item_discount[$cart_item->id] = round(100 * (($cart_item->options->product_discount ?? 0) / $priceBase));
                 }
             }
         } else {
@@ -66,17 +92,18 @@ class ProductCartPurchase extends Component
             $this->global_qty = 0;
             $this->shipping = 0.00;
             $this->platform_fee = 0.00;
+
             $this->check_quantity = [];
             $this->quantity = [];
             $this->warehouse_id = [];
             $this->discount_type = [];
             $this->item_discount = [];
             $this->item_cost_konsyinasi = [];
-
         }
     }
 
-    public function render() {
+    public function render()
+    {
         $cart_items = Cart::instance($this->cart_instance)->content();
 
         return view('livewire.product-cart-purchase', [
@@ -84,130 +111,81 @@ class ProductCartPurchase extends Component
         ]);
     }
 
-    public function productSelected($result) {
+    public function productSelected($product)
+    {
         $cart = Cart::instance($this->cart_instance);
-        $product = $result;
-        // if($this->cart_instance == 'sale'){
-        //     // dd($product['product']);
-        //     $product = $result['product'];
-        // }
 
-        $total_stock = Mutation::with('warehouse')->where('product_id', $product['id'])
-        ->latest()
-        ->get()
-        ->unique('warehouse_id')
-        ->sortByDesc('stock_last')
-        ->sum('stock_last');
+        $warehouseId = (int) ($this->loading_warehouse ? $this->loading_warehouse->id : 0);
 
-        // $exists = $cart->search(function ($cartItem, $rowId) use ($product) {
-        //     return $cartItem->id == $product['id'];
-        // });
+        // stok per warehouse (yang sedang dipakai di halaman)
+        $stockLast = 0;
+        if ($warehouseId > 0) {
+            $mutation = Mutation::where('product_id', $product['id'])
+                ->where('warehouse_id', $warehouseId)
+                ->latest()
+                ->first();
 
-        // if ($exists->isNotEmpty()) {
-        //     session()->flash('message', 'Product exists in the cart!');
+            $stockLast = $mutation ? (int)$mutation->stock_last : 0;
+        }
 
-        //     return;
-        // }
+        $calc = $this->calculate($product);
+
         $cart->add([
             'id'      => $product['id'],
             'name'    => $product['product_name'],
             'qty'     => 1,
-            'price'   => $this->calculate($product)['price'],
+            'price'   => $calc['price'],
             'weight'  => 1,
             'options' => [
                 'product_discount'      => 0.00,
                 'product_discount_type' => 'fixed',
-                'sub_total'             => $this->calculate($product)['sub_total'],
+                'sub_total'             => $calc['sub_total'],
                 'code'                  => $product['product_code'],
-                'stock'                 => $total_stock,
+                'stock'                 => $stockLast,
                 'unit'                  => $product['product_unit'],
-                'warehouse_id'          => 99,
-                'product_tax'           => $this->calculate($product)['product_tax'],
-                'product_cost'           => $this->calculate($product)['product_cost'],
-                'unit_price'            => $this->calculate($product)['unit_price']
+
+                // ✅ FIX: jangan 99, pakai warehouse page ini
+                'warehouse_id'          => $warehouseId,
+
+                'product_tax'           => $calc['product_tax'],
+                'product_cost'          => $calc['product_cost'],
+                'unit_price'            => $calc['unit_price'],
             ]
         ]);
-        // dd($cart);
-        $this->global_qty = $cart->count();
-        $this->check_quantity[$product['id']] = $total_stock;
-        $this->quantity[$product['id']] = 1;
-        $this->warehouse_id[$product['id']] = 99;
-        $this->discount_type[$product['id']] = 'fixed';
-        $this->item_discount[$product['id']] = null;
-        $this->item_cost_konsyinasi[$product['id']] = 0;
 
-        // $this->updatedGlobalQuantity();
+        $this->global_qty = $cart->count();
+        $this->check_quantity[$product['id']] = $stockLast;
+        $this->quantity[$product['id']] = 1;
+        $this->warehouse_id[$product['id']] = $warehouseId;
+        $this->discount_type[$product['id']] = 'fixed';
+        $this->item_discount[$product['id']] = 0;
+        $this->item_cost_konsyinasi[$product['id']] = 0;
     }
 
-    public function removeItem($row_id) {
+    public function removeItem($row_id)
+    {
         Cart::instance($this->cart_instance)->remove($row_id);
     }
 
-    public function updatedGlobalQuantity() {
-        Cart::instance($this->cart_instance)->setGlobalQuantity((integer)$this->global_qty);
-    }
-    public function updatedGlobalTax() {
-        Cart::instance($this->cart_instance)->setGlobalTax((integer)$this->global_tax);
-    }
- 
-    public function updatedGlobalDiscount() {
-        Cart::instance($this->cart_instance)->setGlobalDiscount((integer)$this->global_discount);
+    public function updatedGlobalQuantity()
+    {
+        Cart::instance($this->cart_instance)->setGlobalQuantity((int)$this->global_qty);
     }
 
-    // public function updateWarehouse($row_id, $product_id, $value_id) {
+    public function updatedGlobalTax()
+    {
+        Cart::instance($this->cart_instance)->setGlobalTax((int)$this->global_tax);
+    }
 
-    //     $warehouse = Mutation::with('warehouse')
-    //     ->where('warehouse_id', $value_id)
-    //     ->where('product_id', $product_id)
-    //     ->latest()
-    //     ->get()
-    //     ->first();
-    //     $stock_last = 0;
-    //     $warehouse_id = $value_id;
-    //     if(!$warehouse){
-    //         if  ($this->cart_instance == 'sale' || $this->cart_instance == 'purchase_return') {
-    //             session()->flash('message', 'The requested quantity is not available in stock.');
-    //         }
-    //     }elseif($warehouse->stock_last < $this->quantity[$product_id]){
-    //         if  ($this->cart_instance == 'sale' || $this->cart_instance == 'purchase_return') {
-    //             session()->flash('message', 'The requested quantity is not available in stock.');
-    //         }
-    //         $stock_last = $warehouse->stock_last;
-    //     }else{
-    //         $stock_last = $warehouse->stock_last;
-    //     }
+    public function updatedGlobalDiscount()
+    {
+        Cart::instance($this->cart_instance)->setGlobalDiscount((int)$this->global_discount);
+    }
 
-    //     $this->check_quantity[$product_id] = $stock_last;
-    //     $this->warehouse_id[$product_id] = $warehouse_id;
-    //     $cart_item = Cart::instance($this->cart_instance)->get($row_id);
-    //     Cart::instance($this->cart_instance)->update($row_id, [
-    //         'options' => [
-    //             'sub_total'             => $cart_item->price * $cart_item->qty,
-    //             'code'                  => $cart_item->options->code,
-    //             'stock'                 => $stock_last,
-    //             'unit'                  => $cart_item->options->unit,
-    //             'warehouse_id'          => $warehouse_id,
-    //             'product_tax'           => $cart_item->options->product_tax,
-    //             'product_cost'          => $cart_item->options->product_cost,
-    //             'unit_price'            => $cart_item->options->unit_price,
-    //             'product_discount'      => $cart_item->options->product_discount,
-    //             'product_discount_type' => $cart_item->options->product_discount_type,
-    //         ]
-    //     ]);
-    //     // if  ($this->cart_instance == 'sale' || $this->cart_instance == 'purchase_return') {
-    //     //     if ($this->check_quantity[$product_id] < $this->quantity[$product_id]) {
-    //     //         session()->flash('message', 'The requested quantity is not available in stock.');
-    //     //         return;
-    //     //     }
-    //     // }
-
-    
-        
-    // }
-
-    public function updateQuantity($row_id, $product_id) {
-        if  ($this->cart_instance == 'sale' || $this->cart_instance == 'purchase_return') {
-            if ($this->check_quantity[$product_id] < $this->quantity[$product_id]) {
+    public function updateQuantity($row_id, $product_id)
+    {
+        if ($this->cart_instance == 'sale' || $this->cart_instance == 'purchase_return') {
+            if (($this->check_quantity[$product_id] ?? 0) < ($this->quantity[$product_id] ?? 0)) {
                 session()->flash('message', 'The requested quantity is not available in stock.');
                 return;
             }
@@ -217,6 +195,7 @@ class ProductCartPurchase extends Component
 
         $cart_item = Cart::instance($this->cart_instance)->get($row_id);
         $this->global_qty = Cart::instance($this->cart_instance)->count();
+
         Cart::instance($this->cart_instance)->update($row_id, [
             'options' => [
                 'sub_total'             => $cart_item->price * $cart_item->qty,
@@ -233,47 +212,45 @@ class ProductCartPurchase extends Component
         ]);
     }
 
-    public function updatedDiscountType($value, $name) {
+    public function updatedDiscountType($value, $name)
+    {
         $this->item_discount[$name] = 0;
     }
 
-    public function discountModalRefresh($product_id, $row_id) {
+    public function discountModalRefresh($product_id, $row_id)
+    {
         $this->updateQuantity($row_id, $product_id);
     }
 
-    public function setProductDiscount($row_id, $product_id) {
+    public function setProductDiscount($row_id, $product_id)
+    {
         $cart_item = Cart::instance($this->cart_instance)->get($row_id);
-        if ($this->discount_type[$product_id] == 'fixed') {
-            if($this->item_discount[$product_id]){
-                $discount_amount = ($cart_item->price + $cart_item->options->product_discount) -
-                $this->item_discount[$product_id];
-                Cart::instance($this->cart_instance)
-                    ->update($row_id, [
-                        'price' => $this->item_discount[$product_id],
-                    ]);
-            }else{
-                $discount_amount = 0;
+
+        if (($this->discount_type[$product_id] ?? 'fixed') === 'fixed') {
+            $discount_amount = 0;
+            if (!empty($this->item_discount[$product_id])) {
+                $discount_amount = ($cart_item->price + ($cart_item->options->product_discount ?? 0)) - ($this->item_discount[$product_id] ?? 0);
+                Cart::instance($this->cart_instance)->update($row_id, [
+                    'price' => ($this->item_discount[$product_id] ?? 0),
+                ]);
             }
 
-            $this->updateCartOptions($row_id, $product_id, $cart_item, $discount_amount,
-                $this->item_cost_konsyinasi[$product_id],$this->warehouse_id[$product_id]);
-        } elseif ($this->discount_type[$product_id] == 'percentage') {
-            $discount_amount = ($cart_item->price + $cart_item->options->product_discount) *
-            ($this->item_discount[$product_id] / 100);
+            $this->updateCartOptions($row_id, $product_id, $cart_item, $discount_amount, $this->item_cost_konsyinasi[$product_id] ?? 0, $this->warehouse_id[$product_id] ?? $cart_item->options->warehouse_id);
+        } else {
+            $discount_amount = ($cart_item->price + ($cart_item->options->product_discount ?? 0)) * (($this->item_discount[$product_id] ?? 0) / 100);
 
-            Cart::instance($this->cart_instance)
-                ->update($row_id, [
-                    'price' => ($cart_item->price + $cart_item->options->product_discount) - $discount_amount,
-                ]);
+            Cart::instance($this->cart_instance)->update($row_id, [
+                'price' => ($cart_item->price + ($cart_item->options->product_discount ?? 0)) - $discount_amount,
+            ]);
 
-            $this->updateCartOptions($row_id, $product_id, $cart_item, $discount_amount,
-                $this->item_cost_konsyinasi[$product_id],$this->warehouse_id[$product_id]);
+            $this->updateCartOptions($row_id, $product_id, $cart_item, $discount_amount, $this->item_cost_konsyinasi[$product_id] ?? 0, $this->warehouse_id[$product_id] ?? $cart_item->options->warehouse_id);
         }
 
         session()->flash('discount_message' . $product_id, 'Discount added to the product!');
     }
 
-    public function calculate($product) {
+    public function calculate($product)
+    {
         $price = 0;
         $unit_price = 0;
         $product_tax = 0;
@@ -285,7 +262,7 @@ class ProductCartPurchase extends Component
             $unit_price = $product['product_price'];
             $product_cost = $product['product_cost'];
             $product_tax = $product['product_price'] * ($product['product_order_tax'] / 1);
-            $sub_total = $product['product_price'] + ($product['product_price'] * ($product['product_order_tax'] / 1));
+            $sub_total = $price;
         } elseif ($product['product_tax_type'] == 2) {
             $price = $product['product_price'];
             $unit_price = $product['product_price'] - ($product['product_price'] * ($product['product_order_tax'] / 1));
@@ -300,21 +277,30 @@ class ProductCartPurchase extends Component
             $product_cost = $product['product_cost'];
         }
 
-        return ['price' => $price, 'unit_price' => $unit_price, 'product_tax' => $product_tax,'product_cost' => $product_cost, 'sub_total' => $sub_total];
+        return [
+            'price' => $price,
+            'unit_price' => $unit_price,
+            'product_tax' => $product_tax,
+            'product_cost' => $product_cost,
+            'sub_total' => $sub_total
+        ];
     }
 
-    public function updateCartOptions($row_id, $product_id, $cart_item, $discount_amount, $item_cost_konsyinasi, $warehouse_id) {
-        Cart::instance($this->cart_instance)->update($row_id, ['options' => [
-            'sub_total'             => $cart_item->price * $cart_item->qty,
-            'code'                  => $cart_item->options->code,
-            'stock'                 => $cart_item->options->stock,
-            'unit'                  => $cart_item->options->unit,
-            'product_tax'           => $cart_item->options->product_tax,
-            'warehouse_id'          => $warehouse_id,
-            'product_cost'          => $item_cost_konsyinasi,
-            'unit_price'            => $cart_item->options->unit_price,
-            'product_discount'      => $discount_amount,
-            'product_discount_type' => $this->discount_type[$product_id],
-        ]]);
+    public function updateCartOptions($row_id, $product_id, $cart_item, $discount_amount, $item_cost_konsyinasi, $warehouse_id)
+    {
+        Cart::instance($this->cart_instance)->update($row_id, [
+            'options' => [
+                'sub_total'             => $cart_item->price * $cart_item->qty,
+                'code'                  => $cart_item->options->code,
+                'stock'                 => $cart_item->options->stock,
+                'unit'                  => $cart_item->options->unit,
+                'product_tax'           => $cart_item->options->product_tax,
+                'warehouse_id'          => $warehouse_id,
+                'product_cost'          => $item_cost_konsyinasi,
+                'unit_price'            => $cart_item->options->unit_price,
+                'product_discount'      => $discount_amount,
+                'product_discount_type' => $this->discount_type[$product_id] ?? 'fixed',
+            ]
+        ]);
     }
 }

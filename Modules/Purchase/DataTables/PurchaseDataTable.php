@@ -2,26 +2,38 @@
 
 namespace Modules\Purchase\DataTables;
 
+use Carbon\Carbon;
 use Modules\Purchase\Entities\Purchase;
 use Yajra\DataTables\Html\Button;
 use Yajra\DataTables\Html\Column;
-use Yajra\DataTables\Html\Editor\Editor;
-use Yajra\DataTables\Html\Editor\Fields;
 use Yajra\DataTables\Services\DataTable;
-use Carbon\Carbon;
 
 class PurchaseDataTable extends DataTable
 {
-
-    public function dataTable($query) {
+    public function dataTable($query)
+    {
         return datatables()
             ->eloquent($query)
             ->addColumn('total_amount', function ($data) {
                 return format_currency($data->total_amount);
             })
             ->editColumn('due_date', function ($data) {
-                if(Carbon::now()->diffInDays(Carbon::parse($data->date)->addDays($data->due_date), false) < 0 && $data->payment_status == "Paid") return 'Paid';
-                return Carbon::now()->diffInDays(Carbon::parse($data->date)->addDays($data->due_date), false) . " Days";
+
+                // kalau due_date kosong / 0 → tampilkan "-"
+                $days = (int) ($data->due_date ?? 0);
+                if ($days <= 0) return '-';
+
+                $baseDate = $data->date ? Carbon::parse($data->date) : Carbon::now();
+                $target = $baseDate->copy()->addDays($days);
+
+                $diff = Carbon::now()->diffInDays($target, false); // bisa minus
+
+                // Kalau sudah Paid, tampil "Paid"
+                if (($data->payment_status ?? null) === 'Paid') {
+                    return 'Paid';
+                }
+
+                return $diff . ' Days';
             })
             ->addColumn('due_amount', function ($data) {
                 return format_currency($data->due_amount);
@@ -37,35 +49,53 @@ class PurchaseDataTable extends DataTable
             });
     }
 
-    public function query(Purchase $model) {
-        return $model->newQuery();
+    public function query(Purchase $model)
+    {
+        // NOTE:
+        // - supplier_name itu BUKAN kolom purchases → harus join/alias.
+        // - sesuaikan nama tabel supplier kamu (umumnya "suppliers").
+
+        $q = $model->newQuery()
+            ->select([
+                'purchases.*',
+                // sesuaikan field name supplier:
+                // kalau di tabel suppliers kolomnya "supplier_name" → OK
+                // kalau "name" → ganti ke suppliers.name as supplier_name
+                'suppliers.supplier_name as supplier_name',
+            ])
+            ->leftJoin('suppliers', 'suppliers.id', '=', 'purchases.supplier_id');
+
+        // ✅ include soft deleted biar bisa tampil juga
+        // (kalau model Purchase belum pakai SoftDeletes, lihat catatan di bawah)
+        return $q;
     }
 
-    public function html() {
+    public function html()
+    {
         return $this->builder()
             ->setTableId('purchases-table')
             ->columns($this->getColumns())
             ->minifiedAjax()
-            ->dom("<'row'<'col-md-3'l><'col-md-5 mb-2'B><'col-md-4'f>> .
-                                'tr' .
-                                <'row'<'col-md-5'i><'col-md-7 mt-2'p>>")
-            ->orderBy(8)
+            ->dom(
+                "<'row'<'col-md-3'l><'col-md-5 mb-2'B><'col-md-4'f>>" .
+                "<'row'<'col-md-12'tr>>" .
+                "<'row'<'col-md-5'i><'col-md-7 mt-2'p>>"
+            )
+            ->orderBy(9) // created_at hidden column index
             ->buttons(
-                Button::make('excel')
-                    ->text('<i class="bi bi-file-earmark-excel-fill"></i> Excel'),
-                Button::make('print')
-                    ->text('<i class="bi bi-printer-fill"></i> Print'),
-                Button::make('reset')
-                    ->text('<i class="bi bi-x-circle"></i> Reset'),
-                Button::make('reload')
-                    ->text('<i class="bi bi-arrow-repeat"></i> Reload')
+                Button::make('excel')->text('<i class="bi bi-file-earmark-excel-fill"></i> Excel'),
+                Button::make('print')->text('<i class="bi bi-printer-fill"></i> Print'),
+                Button::make('reset')->text('<i class="bi bi-x-circle"></i> Reset'),
+                Button::make('reload')->text('<i class="bi bi-arrow-repeat"></i> Reload')
             );
     }
 
-    protected function getColumns() {
+    protected function getColumns()
+    {
         return [
             Column::make('reference')
                 ->className('text-center align-middle'),
+
             Column::make('reference_supplier')
                 ->title('Invoice')
                 ->className('text-center align-middle'),
@@ -94,12 +124,12 @@ class PurchaseDataTable extends DataTable
                 ->printable(false)
                 ->className('text-center align-middle'),
 
-            Column::make('created_at')
-                ->visible(false)
+            Column::make('created_at')->visible(false),
         ];
     }
 
-    protected function filename() {
+    protected function filename()
+    {
         return 'Purchase_' . date('YmdHis');
     }
 }

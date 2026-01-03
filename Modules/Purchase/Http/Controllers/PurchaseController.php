@@ -30,57 +30,97 @@ class PurchaseController extends Controller
         return $dataTable->render('purchase::index');
     }
 
-    public function createFromDelivery(PurchaseDelivery $purchaseDelivery) {
+    public function createFromDelivery(PurchaseDelivery $purchaseDelivery)
+    {
         abort_if(Gate::denies('create_purchases'), 403);
+
+        if ($purchaseDelivery->purchase) {
+            return redirect()->back()
+                ->with('error', 'This Purchase Delivery already has an invoice.');
+        }
+
+        $purchaseDelivery->loadMissing([
+            'purchaseOrder.purchaseOrderDetails',
+            'purchaseDeliveryDetails'
+        ]);
 
         Cart::instance('purchase')->destroy();
         $cart = Cart::instance('purchase');
 
-        $purchase_order = $purchaseDelivery->purchaseOrder;
+        $purchaseOrder = $purchaseDelivery->purchaseOrder;
 
-        /**
-         * Resolve branch + default warehouse (main)
-         * Note: kalau nanti di UI kamu mau selectable warehouse, bisa override.
-         */
-        $activeBranchId = $this->getActiveBranchId();
-        $defaultWarehouseId = $this->resolveDefaultWarehouseId($activeBranchId);
+        $branchId = $this->getActiveBranchId();
+        $warehouseId = $this->resolveDefaultWarehouseId($branchId);
 
         foreach ($purchaseDelivery->purchaseDeliveryDetails as $item) {
-            $po_detail = $purchase_order->purchaseOrderDetails()
+
+            $confirmedQty =
+                (int)$item->qty_received +
+                (int)$item->qty_defect +
+                (int)$item->qty_damaged;
+
+            if ($confirmedQty <= 0) continue;
+
+            $poDetail = $purchaseOrder->purchaseOrderDetails()
                 ->where('product_id', $item->product_id)
                 ->first();
 
+            $price = $poDetail ? (int)$poDetail->price : 0;
+
+            $product = Product::select('id', 'product_code', 'product_name', 'product_unit')
+                ->where('id', $item->product_id)
+                ->first();
+
+            // ✅ pastikan product_code tidak null (kolom DB purchase_details NOT NULL)
+            $productCode = null;
+            if ($product && !empty($product->product_code)) {
+                $productCode = $product->product_code;
+            } elseif (!empty($item->product_code)) {
+                $productCode = $item->product_code;
+            } else {
+                $productCode = 'UNKNOWN';
+            }
+
+            $productName = $item->product_name;
+            if (empty($productName) && $product) {
+                $productName = $product->product_name;
+            }
+
+            // optional stock display
+            $stockLast = 0;
+            $mutation = Mutation::where('product_id', $item->product_id)
+                ->where('warehouse_id', $warehouseId)
+                ->latest()
+                ->first();
+            if ($mutation) $stockLast = (int)$mutation->stock_last;
+
             $cart->add([
-                'id'      => $item->product_id,
-                'name'    => $item->product_name,
-                'qty'     => $item->quantity,
-                'price'   => $po_detail ? $po_detail->price : $item->unit_price,
-                'weight'  => 1,
+                'id'    => $item->product_id,
+                'name'  => $productName,
+                'qty'   => $confirmedQty,
+                'price' => $price,
+                'weight'=> 1,
                 'options' => [
-                    'product_discount' => $po_detail ? $po_detail->product_discount_amount : 0,
+                    'sub_total'   => $confirmedQty * $price,
+                    'code'        => $productCode,     // ✅ FIX product_code
+                    'unit_price'  => $price,
+                    'warehouse_id'=> $warehouseId,
+                    'branch_id'   => $branchId,
+                    'stock'       => $stockLast,
+                    'unit'        => $product ? $product->product_unit : null,
+                    'product_discount' => 0,
                     'product_discount_type' => 'fixed',
-                    'sub_total'   => $po_detail ? ($item->quantity * $po_detail->price) : ($item->quantity * $item->unit_price),
-                    'code'        => $item->product_code,
-                    'stock'       => Product::findOrFail($item->product_id)->product_quantity,
-                    'product_tax' => $po_detail ? $po_detail->product_tax_amount : 0,
-                    'unit_price'  => $po_detail ? $po_detail->unit_price : $item->unit_price,
-                    // ✅ penting: set warehouse_id ke cart item
-                    'warehouse_id' => $defaultWarehouseId,
-                    // optional simpan branch juga biar gampang debug
-                    'branch_id' => $activeBranchId,
+                    'product_tax' => 0,
                 ]
             ]);
         }
 
         return view('purchase-orders::purchase-order-purchases.create', [
-            'purchase_delivery_id' => $purchaseDelivery->id,
-            'purchaseDelivery' => $purchaseDelivery,
-            'purchase_order_id' => $purchase_order->id,
-            // untuk UI kalau mau ditampilkan
-            'activeBranchId' => $activeBranchId,
-            'defaultWarehouseId' => $defaultWarehouseId,
+            'purchaseOrder'        => $purchaseOrder,
+            'purchaseDelivery'     => $purchaseDelivery,
         ]);
     }
+
 
     public function create() {
         abort_if(Gate::denies('create_purchases'), 403);
@@ -96,35 +136,47 @@ class PurchaseController extends Controller
         ]);
     }
 
-    public function store(StorePurchaseRequest $request) {
+    public function store(StorePurchaseRequest $request)
+    {
         DB::transaction(function () use ($request) {
 
-            /**
-             * ✅ KUNCI BRANCH + WAREHOUSE
-             * - branch_id: ambil dari active branch (session)
-             * - warehouse_id: dari request kalau ada, kalau tidak -> main warehouse cabang tersebut
-             */
             $branchId = $this->getActiveBranchId();
-            $warehouseId = $request->warehouse_id ? (int)$request->warehouse_id : $this->resolveDefaultWarehouseId($branchId);
 
-            // Validasi: warehouse harus belong ke branch aktif
+            // NOTE: kalau request->warehouse_id gak ada, pakai main warehouse branch aktif
+            $warehouseId = $request->warehouse_id
+                ? (int)$request->warehouse_id
+                : $this->resolveDefaultWarehouseId($branchId);
+
             $this->assertWarehouseBelongsToBranch($warehouseId, $branchId);
-
-            // Pastikan semua item cart punya warehouse_id
             $this->ensureCartItemsHaveWarehouse($warehouseId);
 
-            $due_amount = $request->total_amount - $request->paid_amount;
-            $payment_status = $due_amount == $request->total_amount ? 'Unpaid' : ($due_amount > 0 ? 'Partial' : 'Paid');
+            $due_amount = ($request->total_amount * 1) - ($request->paid_amount * 1);
+            $payment_status = $due_amount == ($request->total_amount * 1)
+                ? 'Unpaid'
+                : ($due_amount > 0 ? 'Partial' : 'Paid');
 
+            // ✅ DETEKSI: invoice per delivery atau bukan
+            $purchaseDeliveryId = $request->purchase_delivery_id ? (int)$request->purchase_delivery_id : null;
+            $fromDelivery = !empty($purchaseDeliveryId) && $purchaseDeliveryId > 0;
+
+            // PO optional (buat link saja)
             $purchase_order = null;
-            if ($request->has('purchase_order_id')) {
-                $purchase_order = PurchaseOrder::findOrFail($request->purchase_order_id);
-                $purchase_order->update(['status' => 'Partially Sent']);
+            if ($request->purchase_order_id) {
+                $purchase_order = PurchaseOrder::findOrFail((int)$request->purchase_order_id);
             }
 
-            // ✅ Simpan branch_id dan warehouse_id ke purchases
+            // kalau fromDelivery, validasi delivery & belum ada purchase
+            if ($fromDelivery) {
+                $delivery = PurchaseDelivery::findOrFail($purchaseDeliveryId);
+                if ($delivery->purchase) {
+                    throw new \Exception("This Purchase Delivery already has an invoice.");
+                }
+            }
+
             $purchase = Purchase::create([
-                'purchase_order_id' => $request->purchase_order_id ?? null,
+                'purchase_order_id'     => $request->purchase_order_id ?? null,
+                'purchase_delivery_id'  => $purchaseDeliveryId,
+
                 'date' => $request->date,
                 'due_date' => $request->due_date,
                 'reference_supplier' => $request->reference_supplier,
@@ -136,7 +188,7 @@ class PurchaseController extends Controller
                 'paid_amount' => $request->paid_amount * 1,
                 'total_amount' => $request->total_amount * 1,
                 'due_amount' => $due_amount * 1,
-                'status' => $request->status,
+                'status' => $fromDelivery ? 'Completed' : $request->status,
                 'total_quantity' => $request->total_quantity,
                 'payment_status' => $payment_status,
                 'payment_method' => $request->payment_method,
@@ -144,104 +196,113 @@ class PurchaseController extends Controller
                 'tax_amount' => Cart::instance('purchase')->tax() * 1,
                 'discount_amount' => Cart::instance('purchase')->discount() * 1,
 
-                // ✅ tambahin ini
                 'branch_id' => $branchId,
                 'warehouse_id' => $warehouseId,
             ]);
 
             foreach (Cart::instance('purchase')->content() as $cart_item) {
 
-                $itemWarehouseId = isset($cart_item->options->warehouse_id) ? (int)$cart_item->options->warehouse_id : $warehouseId;
+                $itemWarehouseId = isset($cart_item->options->warehouse_id)
+                    ? (int)$cart_item->options->warehouse_id
+                    : $warehouseId;
+
                 $this->assertWarehouseBelongsToBranch($itemWarehouseId, $branchId);
 
-                // ✅ PurchaseDetail wajib simpan warehouse_id
+                // ✅ product_code jangan null
+                $productCode = $cart_item->options->code ?? null;
+                if (empty($productCode)) {
+                    $p = Product::select('product_code')->find($cart_item->id);
+                    $productCode = ($p && $p->product_code) ? $p->product_code : 'UNKNOWN';
+                }
+
                 PurchaseDetail::create([
                     'purchase_id' => $purchase->id,
                     'product_id' => $cart_item->id,
                     'product_name' => $cart_item->name,
-                    'product_code' => $cart_item->options->code,
+                    'product_code' => $productCode,
                     'quantity' => $cart_item->qty,
                     'price' => $cart_item->price * 1,
-                    'unit_price' => $cart_item->options->unit_price * 1,
-                    'sub_total' => $cart_item->options->sub_total * 1,
-                    'product_discount_amount' => $cart_item->options->product_discount * 1,
-                    'product_discount_type' => $cart_item->options->product_discount_type,
-                    'product_tax_amount' => $cart_item->options->product_tax * 1,
-
-                    // ✅ ini penting
+                    'unit_price' => ($cart_item->options->unit_price ?? 0) * 1,
+                    'sub_total' => ($cart_item->options->sub_total ?? 0) * 1,
+                    'product_discount_amount' => ($cart_item->options->product_discount ?? 0) * 1,
+                    'product_discount_type' => $cart_item->options->product_discount_type ?? 'fixed',
+                    'product_tax_amount' => ($cart_item->options->product_tax ?? 0) * 1,
                     'warehouse_id' => $itemWarehouseId,
                 ]);
 
-                if ($purchase_order) {
-                    $purchase_order_detail = $purchase_order->purchaseOrderDetails()->where('product_id', $cart_item->id)->first();
+                /**
+                 * ✅ FIX:
+                 * - Invoice per Delivery => JANGAN update fulfilled PO & JANGAN stock mutation
+                 * - Legacy/manual only => boleh update fulfilled + mutation saat Completed
+                 */
+                if (!$fromDelivery) {
 
-                    if ($purchase_order_detail) {
-                        $new_fulfilled_quantity = $purchase_order_detail->fulfilled_quantity + $cart_item->qty;
-                        if ($new_fulfilled_quantity > $purchase_order_detail->quantity) {
-                            throw new \Exception("Cannot fulfill more than ordered quantity!");
-                        }
-                        $purchase_order_detail->update(['fulfilled_quantity' => $new_fulfilled_quantity]);
-                    }
-                }
+                    // update fulfilled PO (legacy/manual)
+                    if ($purchase_order) {
+                        $purchase_order_detail = $purchase_order->purchaseOrderDetails()
+                            ->where('product_id', $cart_item->id)
+                            ->first();
 
-                // Update stock if purchase is "Completed"
-                if ($request->status == 'Completed') {
+                        if ($purchase_order_detail) {
+                            $new_fulfilled_quantity = (int)$purchase_order_detail->fulfilled_quantity + (int)$cart_item->qty;
 
-                    $mutation = Mutation::with('product')
-                        ->where('product_id', $cart_item->id)
-                        ->where('warehouse_id', $itemWarehouseId)
-                        ->latest()
-                        ->first();
+                            if ($new_fulfilled_quantity > (int)$purchase_order_detail->quantity) {
+                                throw new \Exception("Cannot fulfill more than ordered quantity!");
+                            }
 
-                    $product = Product::findOrFail($cart_item->id);
-
-                    if ($mutation) {
-                        if ($mutation->stock_last == 0) {
-                            $product->update([
-                                'product_cost' => (($cart_item->options->sub_total - ($cart_item->options->sub_total * $request->discount_percentage)) /
-                                    ($cart_item->qty) + ($request->shipping_amount / $request->total_quantity)),
-                                'product_quantity' => $product->product_quantity + $cart_item->qty
-                            ]);
-                        } else {
-                            $product->update([
-                                'product_cost' => ((($mutation['product']->product_cost * $mutation->stock_last)  +
-                                    (($cart_item->options->sub_total - ($cart_item->options->sub_total * $request->discount_percentage)) +
-                                    (($request->shipping_amount / $request->total_quantity) * $cart_item->qty)))
-                                    / ($mutation->stock_last + $cart_item->qty)),
-                                'product_quantity' => $product->product_quantity + $cart_item->qty
-                            ]);
+                            $purchase_order_detail->update(['fulfilled_quantity' => $new_fulfilled_quantity]);
                         }
                     }
 
-                    $mutationData = [
-                        'reference' => $purchase->reference,
-                        'date' => $request->date,
-                        'mutation_type' => "In",
-                        'note' => "Mutation for Purchase: " . $purchase->reference,
-                        'warehouse_id' => $itemWarehouseId,
-                        'product_id' => $cart_item->id,
-                        'stock_early' => $mutation ? $mutation->stock_last : 0,
-                        'stock_in' => $cart_item->qty,
-                        'stock_out' => 0,
-                        'stock_last' => ($mutation ? $mutation->stock_last : 0) + $cart_item->qty,
-                    ];
+                    // stock mutation hanya legacy/manual
+                    if ($request->status == 'Completed') {
+                        $mutation = Mutation::with('product')
+                            ->where('product_id', $cart_item->id)
+                            ->where('warehouse_id', $itemWarehouseId)
+                            ->latest()
+                            ->first();
 
-                    // ✅ kalau mutations table punya branch_id, isi
-                    if (Schema::hasColumn('mutations', 'branch_id')) {
-                        $mutationData['branch_id'] = $branchId;
+                        $stockEarly = $mutation ? (int)$mutation->stock_last : 0;
+
+                        $mutationData = [
+                            'reference' => $purchase->reference,
+                            'date' => $request->date,
+                            'mutation_type' => "In",
+                            'note' => "Mutation for Purchase: " . $purchase->reference,
+                            'warehouse_id' => $itemWarehouseId,
+                            'product_id' => $cart_item->id,
+                            'stock_early' => $stockEarly,
+                            'stock_in' => (int)$cart_item->qty,
+                            'stock_out' => 0,
+                            'stock_last' => $stockEarly + (int)$cart_item->qty,
+                        ];
+
+                        if (Schema::hasColumn('mutations', 'branch_id')) {
+                            $mutationData['branch_id'] = $branchId;
+                        }
+
+                        Mutation::create($mutationData);
                     }
-
-                    Mutation::create($mutationData);
                 }
             }
 
-            if ($purchase_order) {
-                $total_remaining = $purchase_order->purchaseOrderDetails()->sum('quantity') - $purchase_order->purchaseOrderDetails()->sum('fulfilled_quantity');
-                $purchase_order->update(['status' => $total_remaining > 0 ? 'Partially Sent' : 'Completed']);
+            // status PO hanya legacy/manual
+            if ($purchase_order && !$fromDelivery) {
+                $total_remaining = $purchase_order->purchaseOrderDetails()->sum('quantity')
+                    - $purchase_order->purchaseOrderDetails()->sum('fulfilled_quantity');
+
+                $purchase_order->update([
+                    'status' => $total_remaining > 0 ? 'Partially Sent' : 'Completed'
+                ]);
             }
 
             Cart::instance('purchase')->destroy();
 
+            /**
+             * ✅ PAYMENT + JOURNAL
+             * ERROR kamu kemarin: subaccount_number = "Cash"
+             * Seharusnya subaccount_number = "1-xxxxx"
+             */
             if ($purchase->paid_amount > 0) {
                 $created_payment = PurchasePayment::create([
                     'date' => $request->date,
@@ -250,6 +311,9 @@ class PurchaseController extends Controller
                     'purchase_id' => $purchase->id,
                     'payment_method' => $request->payment_method
                 ]);
+
+                // ✅ mapping payment_method => subaccount_number (ISI sesuai COA kamu)
+                $paymentSubaccountNumber = $this->resolvePaymentSubaccountNumber($created_payment->payment_method);
 
                 Helper::addNewTransaction([
                     'date' => Carbon::now(),
@@ -265,12 +329,14 @@ class PurchaseController extends Controller
                     'sale_return_payment_id' => null,
                 ], [
                     [
+                        // ⚠️ Pastikan ini memang akun debit yang kamu mau (contoh: Kas/Bank/Inventory/AP sesuai sistemmu)
                         'subaccount_number' => '1-10200',
                         'amount' => $created_payment->amount,
                         'type' => 'debit'
                     ],
                     [
-                        'subaccount_number' => $created_payment->payment_method,
+                        // ✅ ini FIX utamanya (bukan "Cash" lagi)
+                        'subaccount_number' => $paymentSubaccountNumber,
                         'amount' => $created_payment->amount,
                         'type' => 'credit'
                     ]
@@ -281,6 +347,26 @@ class PurchaseController extends Controller
         toast('Purchase Created!', 'success');
         return redirect()->route('purchases.index');
     }
+
+    /**
+     * ✅ helper mapping Payment Method => Subaccount Number
+     * Isi nomor COA sesuai data kamu di table accounting_subaccounts.
+     */
+    private function resolvePaymentSubaccountNumber(string $paymentMethod): string
+    {
+        $pm = strtolower(trim($paymentMethod));
+
+        // ✅ GANTI nomor ini sesuai COA kamu
+        // Contoh umum:
+        // - Cash / Kas => 1-10100
+        // - Bank Transfer / Bank => 1-10200
+        return match ($pm) {
+            'cash' => '1-10100',
+            'transfer', 'bank', 'bank transfer' => '1-10200',
+            default => '1-10100',
+        };
+    }
+
 
     public function show(Purchase $purchase) {
         abort_if(Gate::denies('show_purchases'), 403);

@@ -19,6 +19,7 @@
             <div class="col-12">
                 <div class="card">
                     <div class="card-body">
+                        @include('utils.alerts')
                         <a href="{{ route('purchase-orders.create') }}" class="btn btn-primary">
                             Add Purchase Order <i class="bi bi-plus"></i>
                         </a>

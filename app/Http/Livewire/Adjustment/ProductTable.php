@@ -63,16 +63,24 @@ class ProductTable extends Component
 
     public function qualityWarehouseChanged($payload)
     {
+        // payload bisa:
+        // - array: ['warehouseId' => '3']
+        // - array: ['warehouse_id' => '3']
+        // - string/int langsung: '3'
         $warehouseId = null;
 
         if (is_array($payload)) {
-            $warehouseId = $payload['warehouseId'] ?? null;
+            $warehouseId =
+                $payload['warehouseId'] ??
+                $payload['warehouse_id'] ??
+                $payload['id'] ??
+                null;
         } else {
             $warehouseId = $payload;
         }
 
         $warehouseId = is_numeric($warehouseId) ? (int) $warehouseId : null;
-        $this->qualityWarehouseId = $warehouseId && $warehouseId > 0 ? $warehouseId : null;
+        $this->qualityWarehouseId = ($warehouseId && $warehouseId > 0) ? $warehouseId : null;
 
         // Saat warehouse berubah, kosongkan list quality biar gak salah stok.
         if ($this->mode === 'quality') {
@@ -181,7 +189,6 @@ class ProductTable extends Component
 
     public function updatedProducts()
     {
-        // kalau user edit qty manual, re-dispatch summary
         $this->dispatchQualitySummary();
     }
 
