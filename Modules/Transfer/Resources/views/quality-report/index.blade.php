@@ -75,7 +75,7 @@
                 <div class="col-md-8">
                     <label class="form-label">Search</label>
                     <input type="text" name="q" class="form-control" value="{{ request('q') }}"
-                           placeholder="Cari product / defect type / reason / transfer reference...">
+                           placeholder="Cari product / defect type / reason / reference (TRF / PO / PUR / PD / ADJ)...">
                 </div>
 
                 <div class="col-md-4 d-flex align-items-end gap-2">
@@ -139,23 +139,45 @@
                                     <th style="width: 100px;" class="text-center">Qty</th>
                                     <th style="width: 180px;">Defect Type</th>
                                     <th>Description</th>
-                                    <th style="width: 200px;" class="text-center">Reference</th>
-                                    {{-- <th style="width: 120px;" class="text-center">Detail</th> --}}
+                                    <th style="width: 220px;" class="text-center">Reference</th>
                                 </tr>
                             </thead>
                             <tbody>
                                 @foreach($defects as $i => $d)
                                     @php
-                                        $isTransfer = !empty($d->reference_type)
-                                            && $d->reference_type === $transferClass
-                                            && !empty($d->reference_id);
+                                        $refType  = $d->reference_type ?? null;
+                                        $refId    = !empty($d->reference_id) ? (int) $d->reference_id : null;
 
-                                        $transferId  = $isTransfer ? (int) $d->reference_id : null;
-                                        $transferRef = $isTransfer ? ($d->transfer_reference ?? null) : null;
+                                        // label sudah disiapkan oleh controller (CASE)
+                                        $refLabel = $d->reference_label ?? null;
 
-                                        // fallback kalau transfer lama belum punya reference string
-                                        $referenceLabel = $transferRef ?: ($transferId ? ('ID #' . $transferId) : null);
+                                        // kalau tetap null tapi reference_type ada, minimal jangan jadi "-"
+                                        if (empty($refLabel) && !empty($refType)) {
+                                            $refLabel = 'REF';
+                                        }
+
+                                        $refUrl = null;
+
+                                        if ($refId && $refType === $transferClass) {
+                                            $refUrl = route('transfers.show', $refId);
+                                        } elseif ($refId && $refType === $purchaseOrderClass) {
+                                            $refUrl = route('purchase-orders.show', $refId);
+                                        } elseif ($refId && $refType === $purchaseClass) {
+                                            $refUrl = route('purchases.show', $refId);
+                                        } elseif ($refId && $refType === $purchaseDeliveryClass) {
+                                            $refUrl = route('purchase-deliveries.show', $refId);
+                                        } elseif ($refId && $refType === $adjustmentClass) {
+                                            $refUrl = route('adjustments.show', $refId);
+                                        }
+
+                                        $sourceBadge = null;
+                                        if ($refType === $transferClass) $sourceBadge = 'TRF';
+                                        elseif ($refType === $purchaseOrderClass) $sourceBadge = 'PO';
+                                        elseif ($refType === $purchaseClass) $sourceBadge = 'PUR';
+                                        elseif ($refType === $purchaseDeliveryClass) $sourceBadge = 'PD';
+                                        elseif ($refType === $adjustmentClass) $sourceBadge = 'ADJ';
                                     @endphp
+
                                     <tr>
                                         <td>{{ $i + 1 }}</td>
                                         <td>{{ \Carbon\Carbon::parse($d->created_at)->format('d M Y H:i') }}</td>
@@ -168,31 +190,25 @@
                                         <td>{{ $d->defect_type ?? '-' }}</td>
                                         <td>{{ $d->description ?? '-' }}</td>
 
-                                        {{-- ✅ Reference jadi link --}}
                                         <td class="text-center">
-                                            @if($transferId)
-                                                <a href="{{ route('transfers.show', $transferId) }}"
-                                                target="_blank"
-                                                class="badge bg-primary text-white fw-semibold text-decoration-none">
-                                                    {{ $referenceLabel }}
-                                                </a>
+                                            @if($sourceBadge && $refLabel)
+                                                @if($refUrl)
+                                                    <a href="{{ $refUrl }}"
+                                                       target="_blank"
+                                                       class="badge bg-primary text-white fw-semibold text-decoration-none">
+                                                        {{ $refLabel }}
+                                                    </a>
+                                                @else
+                                                    {{-- ✅ reference_id null / route tidak tersedia: tampilkan badge tapi tidak link --}}
+                                                    <span class="badge bg-secondary text-white fw-semibold">
+                                                       {{ $refLabel }}
+                                                    </span>
+                                                @endif
                                             @else
                                                 <span class="text-muted">-</span>
                                             @endif
                                         </td>
 
-                                        {{-- ✅ Tombol Detail --}}
-                                        {{-- <td class="text-center">
-                                            @if($transferId)
-                                                <a class="btn btn-sm btn-outline-primary"
-                                                href="{{ route('transfers.show', $transferId) }}"
-                                                target="_blank">
-                                                    Detail
-                                                </a>
-                                            @else
-                                                <span class="text-muted">-</span>
-                                            @endif
-                                        </td> --}}
                                     </tr>
                                 @endforeach
                             </tbody>
@@ -227,22 +243,42 @@
                                     <th>Reason</th>
                                     <th style="width: 130px;" class="text-center">Mut IN</th>
                                     <th style="width: 130px;" class="text-center">Mut OUT</th>
-                                    <th style="width: 200px;" class="text-center">Reference</th>
-                                    {{-- <th style="width: 120px;" class="text-center">Detail</th> --}}
+                                    <th style="width: 220px;" class="text-center">Reference</th>
                                 </tr>
                             </thead>
                             <tbody>
                                 @foreach($damaged as $i => $dm)
                                     @php
-                                        $isTransfer = !empty($dm->reference_type)
-                                            && $dm->reference_type === $transferClass
-                                            && !empty($dm->reference_id);
+                                        $refType  = $dm->reference_type ?? null;
+                                        $refId    = !empty($dm->reference_id) ? (int) $dm->reference_id : null;
 
-                                        $transferId  = $isTransfer ? (int) $dm->reference_id : null;
-                                        $transferRef = $isTransfer ? ($dm->transfer_reference ?? null) : null;
+                                        $refLabel = $dm->reference_label ?? null;
+                                        if (empty($refLabel) && !empty($refType)) {
+                                            $refLabel = 'REF';
+                                        }
 
-                                        $referenceLabel = $transferRef ?: ($transferId ? ('ID #' . $transferId) : null);
+                                        $refUrl = null;
+
+                                        if ($refId && $refType === $transferClass) {
+                                            $refUrl = route('transfers.show', $refId);
+                                        } elseif ($refId && $refType === $purchaseOrderClass) {
+                                            $refUrl = route('purchase-orders.show', $refId);
+                                        } elseif ($refId && $refType === $purchaseClass) {
+                                            $refUrl = route('purchases.show', $refId);
+                                        } elseif ($refId && $refType === $purchaseDeliveryClass) {
+                                            $refUrl = route('purchase-deliveries.show', $refId);
+                                        } elseif ($refId && $refType === $adjustmentClass) {
+                                            $refUrl = route('adjustments.show', $refId);
+                                        }
+
+                                        $sourceBadge = null;
+                                        if ($refType === $transferClass) $sourceBadge = 'TRF';
+                                        elseif ($refType === $purchaseOrderClass) $sourceBadge = 'PO';
+                                        elseif ($refType === $purchaseClass) $sourceBadge = 'PUR';
+                                        elseif ($refType === $purchaseDeliveryClass) $sourceBadge = 'PD';
+                                        elseif ($refType === $adjustmentClass) $sourceBadge = 'ADJ';
                                     @endphp
+
                                     <tr>
                                         <td>{{ $i + 1 }}</td>
                                         <td>{{ \Carbon\Carbon::parse($dm->created_at)->format('d M Y H:i') }}</td>
@@ -256,31 +292,24 @@
                                         <td class="text-center"><span class="badge bg-info text-dark">#{{ (int) $dm->mutation_in_id }}</span></td>
                                         <td class="text-center"><span class="badge bg-secondary text-white">#{{ (int) $dm->mutation_out_id }}</span></td>
 
-                                        {{-- ✅ Reference jadi link --}}
                                         <td class="text-center">
-                                            @if($transferId)
-                                                <a href="{{ route('transfers.show', $transferId) }}"
-                                                target="_blank"
-                                                class="badge bg-primary text-white fw-semibold text-decoration-none">
-                                                    {{ $referenceLabel }}
-                                                </a>
+                                            @if($sourceBadge && $refLabel)
+                                                @if($refUrl)
+                                                    <a href="{{ $refUrl }}"
+                                                       target="_blank"
+                                                       class="badge bg-primary text-white fw-semibold text-decoration-none">
+                                                             {{ $refLabel }}
+                                                    </a>
+                                                @else
+                                                    <span class="badge bg-secondary text-white fw-semibold">
+                                                          {{ $refLabel }}
+                                                    </span>
+                                                @endif
                                             @else
                                                 <span class="text-muted">-</span>
                                             @endif
                                         </td>
 
-                                        {{-- ✅ Tombol Detail --}}
-                                        {{-- <td class="text-center">
-                                            @if($transferId)
-                                                <a class="btn btn-sm btn-outline-primary"
-                                                href="{{ route('transfers.show', $transferId) }}"
-                                                target="_blank">
-                                                    Detail
-                                                </a>
-                                            @else
-                                                <span class="text-muted">-</span>
-                                            @endif
-                                        </td> --}}
                                     </tr>
                                 @endforeach
                             </tbody>
@@ -290,7 +319,6 @@
             </div>
         </div>
     @endif
-
 
 </div>
 @endsection

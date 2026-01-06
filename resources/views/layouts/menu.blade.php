@@ -113,13 +113,8 @@
             </a>
         </li>
 
-        <li class="c-sidebar-nav-item">
-            <a class="c-sidebar-nav-link {{ request()->routeIs('transfers.quality-report.*') ? 'c-active' : '' }}"
-            href="{{ route('transfers.quality-report.index') }}">
-                <i class="c-sidebar-nav-icon bi bi-clipboard-data" style="line-height: 1;"></i> Quality Report
-            </a>
-        </li>
-
+        {{-- ✅ Quality Report DIPINDAH ke menu Reports --}}
+        {{-- (sengaja dihapus dari sini) --}}
     </ul>
 </li>
 @endcan
@@ -425,7 +420,11 @@
     REPORTS
 ========================= --}}
 @can('access_reports')
-<li class="c-sidebar-nav-item c-sidebar-nav-dropdown {{ request()->routeIs('*-report.index') ? 'c-show' : '' }}">
+@php
+    // ✅ Biar dropdown Reports kebuka juga saat Quality Report aktif
+    $isReportMenuOpen = request()->routeIs('*-report.index') || request()->routeIs('transfers.quality-report.*');
+@endphp
+<li class="c-sidebar-nav-item c-sidebar-nav-dropdown {{ $isReportMenuOpen ? 'c-show' : '' }}">
     <a class="c-sidebar-nav-link c-sidebar-nav-dropdown-toggle" href="#">
         <i class="c-sidebar-nav-icon bi bi-graph-up" style="line-height: 1;"></i> Reports
     </a>
@@ -460,6 +459,17 @@
                 <i class="c-sidebar-nav-icon bi bi-clipboard-data" style="line-height: 1;"></i> Purchases Return Report
             </a>
         </li>
+
+        {{-- ✅ Quality Report dipindahkan ke Reports --}}
+        @can('access_transfers')
+        <li class="c-sidebar-nav-item">
+            <a class="c-sidebar-nav-link {{ request()->routeIs('transfers.quality-report.*') ? 'c-active' : '' }}"
+               href="{{ route('transfers.quality-report.index') }}">
+                <i class="c-sidebar-nav-icon bi bi-clipboard-data" style="line-height: 1;"></i> Quality Report
+            </a>
+        </li>
+        @endcan
+
     </ul>
 </li>
 @endcan
