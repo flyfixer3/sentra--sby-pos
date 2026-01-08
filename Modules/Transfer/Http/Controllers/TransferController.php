@@ -382,7 +382,7 @@ class TransferController extends Controller
 
         $active = session('active_branch');
         if ($active === 'all') abort(422, "Please choose a specific branch.");
-        if ((int)$transfer->to_branch_id !== (int)$active) abort(403, 'Unauthorized.');
+        if ((int) $transfer->to_branch_id !== (int) $active) abort(403, 'Unauthorized.');
         if ($transfer->status !== 'shipped') abort(422, 'Only shipped transfer can be confirmed.');
 
         $request->validate([
@@ -390,15 +390,19 @@ class TransferController extends Controller
             'delivery_code'   => 'required|string|size:6',
             'confirm_issue'   => 'nullable|in:0,1',
 
-            'items'               => 'required|array|min:1',
-            'items.*.product_id'   => 'required|integer',
-            'items.*.qty_sent'     => 'required|integer|min:0',
-            'items.*.qty_received' => 'required|integer|min:0',
-            'items.*.qty_defect'   => 'required|integer|min:0',
-            'items.*.qty_damaged'  => 'required|integer|min:0',
+            'items'                 => 'required|array|min:1',
+            'items.*.product_id'    => 'required|integer',
+            'items.*.qty_sent'      => 'required|integer|min:0',
+            'items.*.qty_received'  => 'required|integer|min:0',
+            'items.*.qty_defect'    => 'required|integer|min:0',
+            'items.*.qty_damaged'   => 'required|integer|min:0',
+
+            // optional: kalau nanti kamu bikin UI missing detail per unit
+            // 'items.*.missing_items' => 'nullable|array',
+            // 'items.*.missing_items.*.missing_reason' => 'nullable|string|max:255',
         ]);
 
-        if (strtoupper($request->delivery_code) !== strtoupper($transfer->delivery_code)) {
+        if (strtoupper($request->delivery_code) !== strtoupper((string) $transfer->delivery_code)) {
             abort(422, 'Invalid delivery code.');
         }
 
@@ -414,16 +418,17 @@ class TransferController extends Controller
                 abort(422, 'Transfer already confirmed (stock movement exists).');
             }
 
+            // ✅ define issue flag (missing)
             $hasIssue = false;
 
             // pre-check missing agar bisa enforce confirm_issue
             foreach ($request->items as $row) {
-                $sent = (int) $row['qty_sent'];
-                $received = (int) $row['qty_received'];
-                $defect = (int) $row['qty_defect'];
+                $sent    = (int) $row['qty_sent'];
+                $good    = (int) $row['qty_received'];
+                $defect  = (int) $row['qty_defect'];
                 $damaged = (int) $row['qty_damaged'];
 
-                $total = $received + $defect + $damaged;
+                $total = $good + $defect + $damaged;
 
                 if ($total > $sent) {
                     abort(422, "Invalid input: Good + Defect + Damaged cannot be greater than Sent.");
@@ -437,29 +442,29 @@ class TransferController extends Controller
                 abort(422, "There is a remaining/missing quantity. Please confirm 'Complete with issue' to proceed.");
             }
 
-            // Header confirm (status tergantung issue)
+            // ✅ status aman: confirmed (ISSUE badge dihitung dari tabel issue)
             $transfer->update([
-                'to_warehouse_id' => (int)$request->to_warehouse_id,
-                'status'          => $hasIssue ? 'confirmed_issue' : 'confirmed',
+                'to_warehouse_id' => (int) $request->to_warehouse_id,
+                'status' => $hasIssue ? 'issue' : 'confirmed',
                 'confirmed_by'    => auth()->id(),
                 'confirmed_at'    => now(),
             ]);
 
-            foreach ($request->items as $idx => $row) {
+            foreach ($request->items as $row) {
 
-                $productId   = (int)$row['product_id'];
-                $qtySent     = (int)$row['qty_sent'];
-                $qtyReceived = (int)$row['qty_received'];
-                $qtyDefect   = (int)$row['qty_defect'];
-                $qtyDamaged  = (int)$row['qty_damaged'];
+                $productId   = (int) $row['product_id'];
+                $qtySent     = (int) $row['qty_sent'];
+                $qtyReceived = (int) $row['qty_received'];
+                $qtyDefect   = (int) $row['qty_defect'];
+                $qtyDamaged  = (int) $row['qty_damaged'];
 
                 $totalIn = $qtyReceived + $qtyDefect + $qtyDamaged;
 
-                // 1) IN stock (Good + Defect + Damaged) -> sama seperti logic kamu sekarang
+                // 1) IN stock (Good + Defect + Damaged)
                 if ($totalIn > 0) {
                     $this->mutationController->applyInOut(
-                        (int)$transfer->to_branch_id,
-                        (int)$request->to_warehouse_id,
+                        (int) $transfer->to_branch_id,
+                        (int) $request->to_warehouse_id,
                         $productId,
                         'In',
                         $totalIn,
@@ -469,14 +474,14 @@ class TransferController extends Controller
                     );
                 }
 
-                // 2) DEFECT per unit (existing logic)
+                // 2) DEFECT per unit
                 if ($qtyDefect > 0) {
-                    foreach ($row['defects'] ?? [] as $k => $d) {
+                    foreach (($row['defects'] ?? []) as $d) {
                         ProductDefectItem::create([
-                            'branch_id'      => (int)$transfer->to_branch_id,
-                            'warehouse_id'   => (int)$request->to_warehouse_id,
+                            'branch_id'      => (int) $transfer->to_branch_id,
+                            'warehouse_id'   => (int) $request->to_warehouse_id,
                             'product_id'     => $productId,
-                            'reference_id'   => (int)$transfer->id,
+                            'reference_id'   => (int) $transfer->id,
                             'reference_type' => TransferRequest::class,
                             'quantity'       => 1,
                             'defect_type'    => $d['defect_type'] ?? null,
@@ -486,49 +491,55 @@ class TransferController extends Controller
                     }
                 }
 
-                // 3) DAMAGED per unit (existing logic, plus set type)
+                // 3) DAMAGED per unit (mutation id boleh null)
                 if ($qtyDamaged > 0) {
-                    foreach ($row['damaged_items'] ?? [] as $k => $d) {
+                    foreach (($row['damaged_items'] ?? []) as $d) {
                         ProductDamagedItem::create([
-                            'branch_id'      => (int)$transfer->to_branch_id,
-                            'warehouse_id'   => (int)$request->to_warehouse_id,
-                            'product_id'     => $productId,
-                            'reference_id'   => (int)$transfer->id,
-                            'reference_type' => TransferRequest::class,
-                            'quantity'       => 1,
-
-                            'damage_type'    => 'damaged',
-                            'cause'          => 'transfer',
+                            'branch_id'         => (int) $transfer->to_branch_id,
+                            'warehouse_id'      => (int) $request->to_warehouse_id,
+                            'product_id'        => $productId,
+                            'reference_id'      => (int) $transfer->id,
+                            'reference_type'    => TransferRequest::class,
+                            'quantity'          => 1,
+                            'damage_type'       => 'damaged',
+                            'cause'             => 'transfer',
                             'resolution_status' => 'pending',
-
-                            'reason'         => $d['damaged_reason'] ?? null,
-                            'created_by'     => auth()->id(),
-                            'mutation_in_id' => null,
-                            'mutation_out_id'=> null,
+                            'reason'            => $d['damaged_reason'] ?? null,
+                            'created_by'        => auth()->id(),
+                            'mutation_in_id'    => null,
+                            'mutation_out_id'   => null,
                         ]);
                     }
                 }
 
-                // 4) MISSING (remaining) -> 1 row saja per product (qty = missing)
+                // 4) MISSING per unit (BUKAN 1 row qty=missingQty)
                 $missingQty = $qtySent - $totalIn;
                 if ($missingQty > 0) {
-                    ProductDamagedItem::create([
-                        'branch_id'      => (int)$transfer->to_branch_id,
-                        'warehouse_id'   => (int)$request->to_warehouse_id,
-                        'product_id'     => $productId,
-                        'reference_id'   => (int)$transfer->id,
-                        'reference_type' => TransferRequest::class,
-                        'quantity'       => $missingQty,
 
-                        'damage_type'       => 'missing',
-                        'cause'             => 'transfer',
-                        'resolution_status' => 'pending',
-                        'reason'            => 'Missing on confirmation',
+                    // kalau nanti kamu bikin input detail missing per unit:
+                    $missingDetails = $row['missing_items'] ?? [];
 
-                        'created_by'     => auth()->id(),
-                        'mutation_in_id' => null,
-                        'mutation_out_id'=> null,
-                    ]);
+                    for ($i = 0; $i < $missingQty; $i++) {
+                        $detail = $missingDetails[$i] ?? [];
+
+                        ProductDamagedItem::create([
+                            'branch_id'         => (int) $transfer->to_branch_id,
+                            'warehouse_id'      => (int) $request->to_warehouse_id,
+                            'product_id'        => $productId,
+                            'reference_id'      => (int) $transfer->id,
+                            'reference_type'    => TransferRequest::class,
+                            'quantity'          => 1,
+
+                            'damage_type'       => 'missing',
+                            'cause'             => 'transfer',
+                            'resolution_status' => 'pending',
+                            'reason'            => $detail['missing_reason'] ?? 'Missing on confirmation',
+
+                            'created_by'        => auth()->id(),
+                            'mutation_in_id'    => null,
+                            'mutation_out_id'   => null,
+                        ]);
+                    }
                 }
             }
         });

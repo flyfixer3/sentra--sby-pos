@@ -22,7 +22,7 @@
         'pending'         => 'bg-secondary',
         'shipped'         => 'bg-primary',
         'confirmed'       => 'bg-success',
-        'confirmed_issue' => 'bg-warning text-dark',
+        'issue' => 'bg-warning text-dark',
         'cancelled'       => 'bg-danger',
         default           => 'bg-info text-dark',
     };
@@ -101,7 +101,7 @@
                             'pending'         => 'bg-warning text-dark',
                             'shipped'         => 'bg-info text-dark',
                             'confirmed'       => 'bg-success',
-                            'confirmed_issue' => 'bg-warning text-dark',
+                            'issue' => 'bg-warning text-dark',
                             'cancelled'       => 'bg-danger',
                             default           => 'bg-secondary',
                         };
@@ -209,7 +209,7 @@
                             <th class="text-center" width="120">Sent</th>
 
                             {{-- ✅ confirmed OR confirmed_issue --}}
-                            @if(in_array($status, ['confirmed','confirmed_issue']))
+                            @if(in_array($status, ['confirmed','issue']))
                                 <th class="text-center">Received</th>
                                 <th class="text-center">Defect</th>
                                 <th class="text-center">Damaged</th>
@@ -243,7 +243,7 @@
                                     <span class="badge bg-primary text-white fw-semibold">{{ $item->quantity }}</span>
                                 </td>
 
-                                @if(in_array($status, ['confirmed','confirmed_issue']))
+                                @if(in_array($status, ['confirmed','issue']))
                                     <td class="text-center">
                                         <span class="badge bg-success">
                                             {{ $summary['received_good'] ?? 0 }}
@@ -282,7 +282,7 @@
     </div>
 
     {{-- ================= DEFECT ================= --}}
-    @if(in_array($status, ['confirmed','confirmed_issue']) && $defects->isNotEmpty())
+    @if(in_array($status, ['confirmed','issue']) && $defects->isNotEmpty())
         <div class="card mb-4 shadow-sm border-warning">
             <div class="card-header bg-warning bg-opacity-25 fw-semibold">
                 Defect Details
@@ -341,7 +341,7 @@
     @endif
 
     {{-- ================= DAMAGED (legacy detail) ================= --}}
-    @if(in_array($status, ['confirmed','confirmed_issue']) && isset($damaged) && $damaged->isNotEmpty())
+    @if(in_array($status, ['confirmed','issue']) && isset($damaged) && $damaged->isNotEmpty())
         <div class="card mb-4 shadow-sm border-danger">
             <div class="card-header bg-danger bg-opacity-10 fw-semibold">
                 Damaged / Pecah Details
@@ -400,6 +400,53 @@
             </div>
         </div>
     @endif
+
+    {{-- ================= MISSING DETAILS ================= --}}
+    @if(in_array($status, ['confirmed','issue','confirmed']) && isset($missing) && $missing->isNotEmpty())
+        <div class="card mb-4 shadow-sm border-warning">
+            <div class="card-header bg-warning bg-opacity-10 fw-semibold">
+                Missing Details
+            </div>
+
+            <div class="card-body p-0">
+                <table class="table table-sm table-bordered mb-0">
+                    <thead class="table-light">
+                        <tr>
+                            <th style="width: 55px;">#</th>
+                            <th>Produk</th>
+                            <th class="text-center" style="width: 70px;">Qty</th>
+                            <th>Reason</th>
+                            <th style="width: 140px;">Resolution</th>
+                            <th style="width: 140px;">Responsible</th>
+                        </tr>
+                    </thead>
+
+                    <tbody>
+                        @foreach($missing as $i => $ms)
+                            @php
+                                $item = $transfer->items->firstWhere('product_id', $ms->product_id);
+                                $product = optional($item)->product;
+                            @endphp
+                            <tr>
+                                <td>{{ $i + 1 }}</td>
+                                <td>
+                                    {{ $product
+                                        ? $product->product_name . ' (' . $product->product_code . ')'
+                                        : 'Product ID ' . $ms->product_id }}
+                                </td>
+                                <td class="text-center">{{ (int) $ms->quantity }}</td>
+                                <td>{{ $ms->reason ?? '-' }}</td>
+                                <td>{{ $ms->resolution_status ?? '-' }}</td>
+                                <td>{{ optional($ms->responsibleUser)->name ?? '-' }}</td>
+                            </tr>
+                        @endforeach
+                    </tbody>
+
+                </table>
+            </div>
+        </div>
+    @endif
+
 
 </div>
 @endsection
