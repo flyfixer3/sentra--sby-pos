@@ -84,7 +84,9 @@ class StocksDataTable extends DataTable
                 ->selectRaw('product_id, SUM(quantity) AS defect_qty')
                 ->groupBy('product_id');
 
+            // ✅ Damaged: PENDING ONLY
             $damagedSub = DB::table('product_damaged_items')
+                ->where('resolution_status', 'pending')
                 ->selectRaw('product_id, SUM(quantity) AS damaged_qty')
                 ->groupBy('product_id');
         } else {
@@ -92,10 +94,13 @@ class StocksDataTable extends DataTable
                 ->selectRaw('product_id, branch_id, warehouse_id, SUM(quantity) AS defect_qty')
                 ->groupBy('product_id', 'branch_id', 'warehouse_id');
 
+            // ✅ Damaged: PENDING ONLY
             $damagedSub = DB::table('product_damaged_items')
+                ->where('resolution_status', 'pending')
                 ->selectRaw('product_id, branch_id, warehouse_id, SUM(quantity) AS damaged_qty')
                 ->groupBy('product_id', 'branch_id', 'warehouse_id');
         }
+
 
         $q = $model->newQuery()->from('stocks');
 

@@ -17,12 +17,14 @@
 
     $statusLabel = strtoupper($status);
 
+    // ✅ NEW: tambahin confirmed_issue
     $statusClass = match ($status) {
-        'pending'   => 'bg-secondary',
-        'shipped'   => 'bg-primary',
-        'confirmed' => 'bg-success',
-        'cancelled' => 'bg-danger',
-        default     => 'bg-info text-dark',
+        'pending'         => 'bg-secondary',
+        'shipped'         => 'bg-primary',
+        'confirmed'       => 'bg-success',
+        'confirmed_issue' => 'bg-warning text-dark',
+        'cancelled'       => 'bg-danger',
+        default           => 'bg-info text-dark',
     };
 @endphp
 
@@ -56,7 +58,6 @@
                 @endif
 
                 {{-- Cancel modal + button --}}
-                {{-- Modal kamu sendiri sudah handle canCancel shipped/confirmed, jadi aman --}}
                 @include('transfer::partials.cancel-transfer-modal', ['transfer' => $transfer])
             </div>
         </div>
@@ -95,12 +96,14 @@
                     @php
                         $status = strtolower(trim((string) ($transfer->getRawOriginal('status') ?? $transfer->status ?? 'pending')));
 
+                        // ✅ NEW: confirmed_issue
                         $statusClass = match ($status) {
-                            'pending'   => 'bg-warning text-dark',
-                            'shipped'   => 'bg-info text-dark',
-                            'confirmed' => 'bg-success',
-                            'cancelled' => 'bg-danger',
-                            default     => 'bg-secondary',
+                            'pending'         => 'bg-warning text-dark',
+                            'shipped'         => 'bg-info text-dark',
+                            'confirmed'       => 'bg-success',
+                            'confirmed_issue' => 'bg-warning text-dark',
+                            'cancelled'       => 'bg-danger',
+                            default           => 'bg-secondary',
                         };
                     @endphp
 
@@ -204,10 +207,13 @@
                             <th width="50">#</th>
                             <th>Produk</th>
                             <th class="text-center" width="120">Sent</th>
-                            @if($status === 'confirmed')
+
+                            {{-- ✅ confirmed OR confirmed_issue --}}
+                            @if(in_array($status, ['confirmed','confirmed_issue']))
                                 <th class="text-center">Received</th>
                                 <th class="text-center">Defect</th>
                                 <th class="text-center">Damaged</th>
+                                <th class="text-center">Missing</th>
                             @else
                                 <th class="text-center">Jumlah</th>
                             @endif
@@ -237,7 +243,7 @@
                                     <span class="badge bg-primary text-white fw-semibold">{{ $item->quantity }}</span>
                                 </td>
 
-                                @if($status === 'confirmed')
+                                @if(in_array($status, ['confirmed','confirmed_issue']))
                                     <td class="text-center">
                                         <span class="badge bg-success">
                                             {{ $summary['received_good'] ?? 0 }}
@@ -253,13 +259,18 @@
                                             {{ $summary['damaged'] ?? 0 }}
                                         </span>
                                     </td>
+                                    <td class="text-center">
+                                        <span class="badge bg-warning text-dark">
+                                            {{ $summary['missing'] ?? 0 }}
+                                        </span>
+                                    </td>
                                 @else
                                     <td class="text-center">{{ $item->quantity }}</td>
                                 @endif
                             </tr>
                         @empty
                             <tr>
-                                <td colspan="6" class="text-center text-muted py-4">
+                                <td colspan="7" class="text-center text-muted py-4">
                                     Tidak ada item dalam transfer ini.
                                 </td>
                             </tr>
@@ -271,7 +282,7 @@
     </div>
 
     {{-- ================= DEFECT ================= --}}
-    @if($status === 'confirmed' && $defects->isNotEmpty())
+    @if(in_array($status, ['confirmed','confirmed_issue']) && $defects->isNotEmpty())
         <div class="card mb-4 shadow-sm border-warning">
             <div class="card-header bg-warning bg-opacity-25 fw-semibold">
                 Defect Details
@@ -329,8 +340,8 @@
         </div>
     @endif
 
-    {{-- ================= DAMAGED ================= --}}
-    @if($status === 'confirmed' && $damaged->isNotEmpty())
+    {{-- ================= DAMAGED (legacy detail) ================= --}}
+    @if(in_array($status, ['confirmed','confirmed_issue']) && isset($damaged) && $damaged->isNotEmpty())
         <div class="card mb-4 shadow-sm border-danger">
             <div class="card-header bg-danger bg-opacity-10 fw-semibold">
                 Damaged / Pecah Details
@@ -396,36 +407,32 @@
 @push('scripts')
 <script>
 document.addEventListener('click', function (e) {
-    const btn = e.target.closest('[data-open-cancel-modal]');
-    if (!btn) return;
+    // Cancel modal
+    const cancelBtn = e.target.closest('[data-open-cancel-modal]');
+    if (cancelBtn) {
+        const modalId = cancelBtn.getAttribute('data-open-cancel-modal');
+        const modalEl = document.getElementById(modalId);
+        if (!modalEl) return;
 
-    const modalId = btn.getAttribute('data-open-cancel-modal');
-    const modalEl = document.getElementById(modalId);
+        // Bootstrap 5
+        if (window.bootstrap?.Modal) {
+            window.bootstrap.Modal.getOrCreateInstance(modalEl).show();
+            return;
+        }
 
-    if (!modalEl) {
-        console.error('Modal element not found:', modalId);
+        // CoreUI
+        if (window.coreui?.Modal) {
+            window.coreui.Modal.getOrCreateInstance(modalEl).show();
+            return;
+        }
+
+        // Bootstrap 4 fallback (jQuery)
+        if (window.jQuery && typeof window.jQuery(modalEl).modal === 'function') {
+            window.jQuery(modalEl).modal('show');
+            return;
+        }
         return;
     }
-
-    // Bootstrap 5
-    if (window.bootstrap?.Modal) {
-        window.bootstrap.Modal.getOrCreateInstance(modalEl).show();
-        return;
-    }
-
-    // CoreUI
-    if (window.coreui?.Modal) {
-        window.coreui.Modal.getOrCreateInstance(modalEl).show();
-        return;
-    }
-
-    // Bootstrap 4 fallback (kalau ada jQuery)
-    if (window.jQuery && typeof window.jQuery(modalEl).modal === 'function') {
-        window.jQuery(modalEl).modal('show');
-        return;
-    }
-
-    console.error('Modal library not found.');
 });
 </script>
 @endpush

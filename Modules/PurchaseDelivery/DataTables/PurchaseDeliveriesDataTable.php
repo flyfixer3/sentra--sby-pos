@@ -2,6 +2,7 @@
 
 namespace Modules\PurchaseDelivery\DataTables;
 
+use Carbon\Carbon;
 use Modules\PurchaseDelivery\Entities\PurchaseDelivery;
 use Yajra\DataTables\Html\Button;
 use Yajra\DataTables\Html\Column;
@@ -9,10 +10,38 @@ use Yajra\DataTables\Services\DataTable;
 
 class PurchaseDeliveriesDataTable extends DataTable
 {
+    private function formatDateWithCreatedTime($row, string $field = 'date'): string
+    {
+        $date = $row->{$field} ?? null;
+        $createdAt = $row->created_at ?? null;
+
+        if (empty($date) && empty($createdAt)) {
+            return '-';
+        }
+
+        // Kalau date kosong, fallback ke created_at full
+        if (empty($date) && !empty($createdAt)) {
+            return Carbon::parse($createdAt)->format('d-m-Y H:i');
+        }
+
+        // date ada, tapi tidak ada jam -> ambil jam dari created_at
+        $datePart = Carbon::parse($date)->format('Y-m-d');
+        $timePart = !empty($createdAt)
+            ? Carbon::parse($createdAt)->format('H:i')
+            : '00:00';
+
+        return Carbon::parse($datePart . ' ' . $timePart)->format('d-m-Y H:i');
+    }
+
     public function dataTable($query)
     {
         return datatables()
             ->eloquent($query)
+
+            // ✅ date tampil dengan jam dari created_at
+            ->editColumn('date', function ($row) {
+                return $this->formatDateWithCreatedTime($row, 'date');
+            })
 
             ->addColumn('purchase_order', function ($data) {
                 // dari PO: ambil reference PO, kalau walk-in: WALK-IN
@@ -63,9 +92,11 @@ class PurchaseDeliveriesDataTable extends DataTable
             ->setTableId('purchase-deliveries-table')
             ->columns($this->getColumns())
             ->minifiedAjax()
-            ->dom("<'row'<'col-md-3'l><'col-md-5 mb-2'B><'col-md-4'f>>" .
+            ->dom(
+                "<'row'<'col-md-3'l><'col-md-5 mb-2'B><'col-md-4'f>>" .
                 "tr" .
-                "<'row'<'col-md-5'i><'col-md-7 mt-2'p>>")
+                "<'row'<'col-md-5'i><'col-md-7 mt-2'p>>"
+            )
             ->orderBy(1)
             ->buttons(
                 Button::make('excel')->text('<i class="bi bi-file-earmark-excel-fill"></i> Excel'),
@@ -83,6 +114,7 @@ class PurchaseDeliveriesDataTable extends DataTable
                 ->className('text-center align-middle'),
 
             Column::make('date')
+                ->title('Date Time')
                 ->className('text-center align-middle'),
 
             Column::computed('supplier')

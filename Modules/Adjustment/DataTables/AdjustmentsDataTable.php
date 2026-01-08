@@ -2,6 +2,7 @@
 
 namespace Modules\Adjustment\DataTables;
 
+use Carbon\Carbon;
 use Modules\Adjustment\Entities\Adjustment;
 use Yajra\DataTables\Html\Button;
 use Yajra\DataTables\Html\Column;
@@ -9,10 +10,37 @@ use Yajra\DataTables\Services\DataTable;
 
 class AdjustmentsDataTable extends DataTable
 {
+    private function formatDateWithCreatedTime($row, string $field = 'date'): string
+    {
+        $date = $row->{$field} ?? null;
+        $createdAt = $row->created_at ?? null;
+
+        if (empty($date) && empty($createdAt)) {
+            return '-';
+        }
+
+        if (empty($date) && !empty($createdAt)) {
+            return Carbon::parse($createdAt)->format('d-m-Y H:i');
+        }
+
+        $datePart = Carbon::parse($date)->format('Y-m-d');
+        $timePart = !empty($createdAt)
+            ? Carbon::parse($createdAt)->format('H:i')
+            : '00:00';
+
+        return Carbon::parse($datePart . ' ' . $timePart)->format('d-m-Y H:i');
+    }
+
     public function dataTable($query)
     {
         return datatables()
             ->eloquent($query)
+
+            // ✅ date tampil dengan jam dari created_at
+            ->editColumn('date', function ($row) {
+                return $this->formatDateWithCreatedTime($row, 'date');
+            })
+
             ->addColumn('action', function ($data) {
                 return view('adjustment::partials.actions', compact('data'));
             });
@@ -20,7 +48,6 @@ class AdjustmentsDataTable extends DataTable
 
     public function query(Adjustment $model)
     {
-        // ✅ Gunakan query() agar global scope (HasBranchScope) aktif
         return $model->query()->withCount('adjustedProducts');
     }
 
@@ -30,9 +57,11 @@ class AdjustmentsDataTable extends DataTable
             ->setTableId('adjustments-table')
             ->columns($this->getColumns())
             ->minifiedAjax()
-            ->dom("<'row'<'col-md-3'l><'col-md-5 mb-2'B><'col-md-4'f>>" .
-                  "tr" .
-                  "<'row'<'col-md-5'i><'col-md-7 mt-2'p>>")
+            ->dom(
+                "<'row'<'col-md-3'l><'col-md-5 mb-2'B><'col-md-4'f>>" .
+                "tr" .
+                "<'row'<'col-md-5'i><'col-md-7 mt-2'p>>"
+            )
             ->orderBy(4)
             ->buttons(
                 Button::make('excel')->text('<i class="bi bi-file-earmark-excel-fill"></i> Excel'),
@@ -46,6 +75,7 @@ class AdjustmentsDataTable extends DataTable
     {
         return [
             Column::make('date')
+                ->title('Date Time')
                 ->className('text-center align-middle'),
 
             Column::make('reference')
@@ -60,8 +90,7 @@ class AdjustmentsDataTable extends DataTable
                 ->printable(false)
                 ->className('text-center align-middle'),
 
-            Column::make('created_at')
-                ->visible(false)
+            Column::make('created_at')->visible(false),
         ];
     }
 

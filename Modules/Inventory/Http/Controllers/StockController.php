@@ -106,6 +106,7 @@ class StockController extends Controller
             ->leftJoin('branches as b', 'b.id', '=', 'i.branch_id')
             ->leftJoin('warehouses as w', 'w.id', '=', 'i.warehouse_id')
             ->where('i.product_id', $productId)
+            ->where('i.resolution_status', 'pending')
             ->select([
                 'i.id',
                 'i.branch_id',

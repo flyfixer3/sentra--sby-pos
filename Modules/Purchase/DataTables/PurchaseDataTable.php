@@ -14,9 +14,17 @@ class PurchaseDataTable extends DataTable
     {
         return datatables()
             ->eloquent($query)
+
+            // ✅ tampilkan Transaction Date (purchases.date) format d-m-Y
+            ->editColumn('date', function ($data) {
+                if (empty($data->date)) return '-';
+                return Carbon::parse($data->date)->format('d-m-Y');
+            })
+
             ->addColumn('total_amount', function ($data) {
                 return format_currency($data->total_amount);
             })
+
             ->editColumn('due_date', function ($data) {
 
                 // kalau sudah soft deleted → biar jelas
@@ -40,15 +48,35 @@ class PurchaseDataTable extends DataTable
 
                 return $diff . ' Days';
             })
+
             ->addColumn('due_amount', function ($data) {
                 return format_currency($data->due_amount);
             })
+
             ->editColumn('status', function ($data) {
                 return view('purchase::partials.status', compact('data'));
             })
+
             ->editColumn('payment_status', function ($data) {
                 return view('purchase::partials.payment-status', compact('data'));
             })
+
+            // ✅ NEW: Created At (DateTime) -> ambil dari created_at (timestamp)
+            ->addColumn('created_datetime', function ($data) {
+                if (empty($data->created_at)) return '-';
+                return Carbon::parse($data->created_at)->format('d-m-Y H:i');
+            })
+
+            // ✅ Tambahan: Created By (nama user)
+            ->addColumn('created_by_name', function ($data) {
+                return $data->created_by_name ?? '-';
+            })
+
+            // ✅ Tambahan: Last Updated By (nama user)
+            ->addColumn('updated_by_name', function ($data) {
+                return $data->updated_by_name ?? '-';
+            })
+
             ->addColumn('action', function ($data) {
                 return view('purchase::partials.actions', compact('data'));
             });
@@ -56,15 +84,19 @@ class PurchaseDataTable extends DataTable
 
     public function query(Purchase $model)
     {
-        $q = $model->newQuery()
-            ->withTrashed() // ✅ include soft deleted
+        // ✅ Query lama kamu tetap, cuma ditambah join users buat created_by & updated_by
+        return $model->newQuery()
+            ->withTrashed()
             ->select([
                 'purchases.*',
                 'suppliers.supplier_name as supplier_name',
-            ])
-            ->leftJoin('suppliers', 'suppliers.id', '=', 'purchases.supplier_id');
 
-        return $q;
+                'u_created.name as created_by_name',
+                'u_updated.name as updated_by_name',
+            ])
+            ->leftJoin('suppliers', 'suppliers.id', '=', 'purchases.supplier_id')
+            ->leftJoin('users as u_created', 'u_created.id', '=', 'purchases.created_by')
+            ->leftJoin('users as u_updated', 'u_updated.id', '=', 'purchases.updated_by');
     }
 
     public function html()
@@ -78,7 +110,30 @@ class PurchaseDataTable extends DataTable
                 "<'row'<'col-md-12'tr>>" .
                 "<'row'<'col-md-5'i><'col-md-7 mt-2'p>>"
             )
-            ->orderBy(10) // created_at hidden column index (cek index kolom)
+
+            /**
+             * ✅ PENTING BANGET:
+             * Karena kita nambah kolom, index created_at (hidden) bergeser.
+             *
+             * URUTAN KOLOM di getColumns() sekarang:
+             * 0 reference
+             * 1 date
+             * 2 reference_supplier
+             * 3 supplier_name
+             * 4 status
+             * 5 total_amount
+             * 6 due_amount
+             * 7 due_date
+             * 8 payment_status
+             * 9 deleted_at (hidden)
+             * 10 created_datetime
+             * 11 created_by_name
+             * 12 updated_by_name
+             * 13 action
+             * 14 created_at (hidden)  <-- ini yang dipakai sorting
+             */
+            ->orderBy(14, 'desc')
+
             ->buttons(
                 Button::make('excel')->text('<i class="bi bi-file-earmark-excel-fill"></i> Excel'),
                 Button::make('print')->text('<i class="bi bi-printer-fill"></i> Print'),
@@ -91,6 +146,11 @@ class PurchaseDataTable extends DataTable
     {
         return [
             Column::make('reference')
+                ->className('text-center align-middle'),
+
+            // ✅ tampilkan date (tanpa jam) dari kolom purchases.date
+            Column::make('date')
+                ->title('Date')
                 ->className('text-center align-middle'),
 
             Column::make('reference_supplier')
@@ -116,14 +176,34 @@ class PurchaseDataTable extends DataTable
             Column::make('payment_status')
                 ->className('text-center align-middle'),
 
-            // ✅ kolom deleted_at (hidden) buat sorting/logic kalau kamu mau
+            // hidden - tetap ada kalau kamu butuh logic soft delete
             Column::make('deleted_at')->visible(false),
+
+            // ✅ NEW: Created At (datetime)
+            Column::computed('created_datetime')
+                ->title('Created At')
+                ->className('text-center align-middle')
+                ->orderable(false)
+                ->searchable(false),
+
+            Column::computed('created_by_name')
+                ->title('Created By')
+                ->className('text-center align-middle')
+                ->orderable(false)
+                ->searchable(false),
+
+            Column::computed('updated_by_name')
+                ->title('Last Updated By')
+                ->className('text-center align-middle')
+                ->orderable(false)
+                ->searchable(false),
 
             Column::computed('action')
                 ->exportable(false)
                 ->printable(false)
                 ->className('text-center align-middle'),
 
+            // ✅ hidden created_at untuk sorting (jangan dihapus)
             Column::make('created_at')->visible(false),
         ];
     }

@@ -19,6 +19,15 @@ class ProductDamagedItem extends Model
         'reference_id',
         'reference_type',
         'quantity',
+
+        // new
+        'damage_type',          // damaged | missing
+        'cause',                // transfer | employee | supplier | unknown
+        'responsible_user_id',
+        'resolution_status',    // pending | resolved | compensated | waived
+        'resolution_note',
+
+        // existing
         'reason',
         'photo_path',
         'mutation_in_id',
@@ -27,14 +36,15 @@ class ProductDamagedItem extends Model
     ];
 
     protected $casts = [
-        'branch_id'       => 'integer',
-        'warehouse_id'    => 'integer',
-        'product_id'      => 'integer',
-        'reference_id'    => 'integer',
-        'quantity'        => 'integer',
-        'mutation_in_id'  => 'integer',
-        'mutation_out_id' => 'integer',
-        'created_by'      => 'integer',
+        'branch_id'            => 'integer',
+        'warehouse_id'         => 'integer',
+        'product_id'           => 'integer',
+        'reference_id'         => 'integer',
+        'quantity'             => 'integer',
+        'mutation_in_id'       => 'integer',
+        'mutation_out_id'      => 'integer',
+        'created_by'           => 'integer',
+        'responsible_user_id'  => 'integer',
     ];
 
     public function product()
@@ -61,5 +71,11 @@ class ProductDamagedItem extends Model
     {
         $userModel = config('auth.providers.users.model');
         return $this->belongsTo($userModel, 'created_by');
+    }
+
+    public function responsibleUser()
+    {
+        $userModel = config('auth.providers.users.model');
+        return $this->belongsTo($userModel, 'responsible_user_id');
     }
 }

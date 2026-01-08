@@ -174,41 +174,31 @@ class TransferController extends Controller
         abort_if(Gate::denies('show_transfers'), 403);
 
         $transfer = TransferRequest::withoutGlobalScopes()
-        ->with([
-            'fromWarehouse', 'toWarehouse', 'toBranch',
-            'creator', 'confirmedBy',
-            'items.product',
-            'printLogs.user',
-        ])
-        ->findOrFail($id);
-        $ids = $transfer->items->pluck('product_id')->unique()->values();
+            ->with([
+                'fromWarehouse', 'toWarehouse', 'toBranch',
+                'creator', 'confirmedBy',
+                'items.product',
+                'printLogs.user',
+            ])
+            ->findOrFail($id);
 
-        // dd([
-        //     'transfer_id' => $transfer->id,
-        //     'item_product_ids' => $ids,
-        //     'products_found' => \Modules\Product\Entities\Product::withoutGlobalScopes()
-        //         ->whereIn('id', $ids)
-        //         ->pluck('id'),
-        //     'missing_ids' => $ids->diff(
-        //         \Modules\Product\Entities\Product::withoutGlobalScopes()
-        //             ->whereIn('id', $ids)
-        //             ->pluck('id')
-        //     )->values(),
-        // ]);
-
-
-        // Ambil defect & damaged untuk transfer ini (reference_id + reference_type)
+        // Ambil defect utk transfer ini
         $defects = ProductDefectItem::query()
             ->where('reference_type', TransferRequest::class)
             ->where('reference_id', (int) $transfer->id)
             ->orderBy('id', 'asc')
             ->get();
 
-        $damaged = ProductDamagedItem::query()
+        // Ambil semua issue (damaged + missing) utk transfer ini
+        $issues = ProductDamagedItem::query()
             ->where('reference_type', TransferRequest::class)
             ->where('reference_id', (int) $transfer->id)
             ->orderBy('id', 'asc')
             ->get();
+
+        // split issue
+        $damaged = $issues->where('damage_type', 'damaged')->values();
+        $missing = $issues->where('damage_type', 'missing')->values();
 
         // Grouping per product_id
         $defectQtyByProduct = $defects->groupBy('product_id')->map(function ($rows) {
@@ -219,46 +209,55 @@ class TransferController extends Controller
             return (int) $rows->sum('quantity');
         })->toArray();
 
-        // Summary per item: sent, received_good, defect, damaged
+        $missingQtyByProduct = $missing->groupBy('product_id')->map(function ($rows) {
+            return (int) $rows->sum('quantity');
+        })->toArray();
+
+        // Summary per item: sent, received_good, defect, damaged, missing
         $itemSummaries = [];
         $totalDefect = 0;
         $totalDamaged = 0;
+        $totalMissing = 0;
 
         foreach ($transfer->items as $item) {
-            $pid = (int) $item->product_id;
+            $pid  = (int) $item->product_id;
             $sent = (int) $item->quantity;
 
-            $defectQty = (int) ($defectQtyByProduct[$pid] ?? 0);
+            $defectQty  = (int) ($defectQtyByProduct[$pid] ?? 0);
             $damagedQty = (int) ($damagedQtyByProduct[$pid] ?? 0);
+            $missingQty = (int) ($missingQtyByProduct[$pid] ?? 0);
 
-            $receivedGood = $sent - $defectQty - $damagedQty;
+            $receivedGood = $sent - $defectQty - $damagedQty - $missingQty;
             if ($receivedGood < 0) {
-                // kalau ini kejadian, berarti data input mismatch atau ada data manual di DB.
-                // kita clamp biar UI tidak aneh, tapi tetap kelihatan mismatchnya.
+                // clamp biar UI tidak negatif (tapi tetap keliatan mismatch kalau kamu tampilkan detail)
                 $receivedGood = 0;
             }
 
-            $totalDefect += $defectQty;
+            $totalDefect  += $defectQty;
             $totalDamaged += $damagedQty;
+            $totalMissing += $missingQty;
 
             $itemSummaries[$pid] = [
                 'sent'          => $sent,
                 'received_good' => $receivedGood,
                 'defect'        => $defectQty,
                 'damaged'       => $damagedQty,
+                'missing'       => $missingQty,
             ];
         }
 
         return view('transfer::show', compact(
             'transfer',
             'defects',
+            'issues',
             'damaged',
+            'missing',
             'itemSummaries',
             'totalDefect',
-            'totalDamaged'
+            'totalDamaged',
+            'totalMissing'
         ));
     }
-
 
     /**
      * PRINT SURAT JALAN:
@@ -389,7 +388,9 @@ class TransferController extends Controller
         $request->validate([
             'to_warehouse_id' => 'required|exists:warehouses,id',
             'delivery_code'   => 'required|string|size:6',
-            'items'           => 'required|array|min:1',
+            'confirm_issue'   => 'nullable|in:0,1',
+
+            'items'               => 'required|array|min:1',
             'items.*.product_id'   => 'required|integer',
             'items.*.qty_sent'     => 'required|integer|min:0',
             'items.*.qty_received' => 'required|integer|min:0',
@@ -403,34 +404,58 @@ class TransferController extends Controller
 
         DB::transaction(function () use ($request, $transfer) {
 
-            // Header confirm
-            $transfer->update([
-                'to_warehouse_id' => (int)$request->to_warehouse_id,
-                'status'          => 'confirmed',
-                'confirmed_by'    => auth()->id(),
-                'confirmed_at'    => now(),
-            ]);
-
-            // Anti double confirm
+            // Anti double confirm (stock)
             $alreadyIn = Mutation::withoutGlobalScopes()
                 ->where('reference', $transfer->reference)
                 ->where('note', 'like', 'Transfer IN%')
                 ->exists();
 
-            if ($alreadyIn) return;
+            if ($alreadyIn) {
+                abort(422, 'Transfer already confirmed (stock movement exists).');
+            }
+
+            $hasIssue = false;
+
+            // pre-check missing agar bisa enforce confirm_issue
+            foreach ($request->items as $row) {
+                $sent = (int) $row['qty_sent'];
+                $received = (int) $row['qty_received'];
+                $defect = (int) $row['qty_defect'];
+                $damaged = (int) $row['qty_damaged'];
+
+                $total = $received + $defect + $damaged;
+
+                if ($total > $sent) {
+                    abort(422, "Invalid input: Good + Defect + Damaged cannot be greater than Sent.");
+                }
+
+                $missing = $sent - $total;
+                if ($missing > 0) $hasIssue = true;
+            }
+
+            if ($hasIssue && (string) $request->get('confirm_issue', '0') !== '1') {
+                abort(422, "There is a remaining/missing quantity. Please confirm 'Complete with issue' to proceed.");
+            }
+
+            // Header confirm (status tergantung issue)
+            $transfer->update([
+                'to_warehouse_id' => (int)$request->to_warehouse_id,
+                'status'          => $hasIssue ? 'confirmed_issue' : 'confirmed',
+                'confirmed_by'    => auth()->id(),
+                'confirmed_at'    => now(),
+            ]);
 
             foreach ($request->items as $idx => $row) {
 
                 $productId   = (int)$row['product_id'];
+                $qtySent     = (int)$row['qty_sent'];
                 $qtyReceived = (int)$row['qty_received'];
                 $qtyDefect   = (int)$row['qty_defect'];
                 $qtyDamaged  = (int)$row['qty_damaged'];
 
-                // ==========================
-                // 1️⃣ TOTAL MASUK STOCK
-                // ==========================
                 $totalIn = $qtyReceived + $qtyDefect + $qtyDamaged;
 
+                // 1) IN stock (Good + Defect + Damaged) -> sama seperti logic kamu sekarang
                 if ($totalIn > 0) {
                     $this->mutationController->applyInOut(
                         (int)$transfer->to_branch_id,
@@ -444,9 +469,7 @@ class TransferController extends Controller
                     );
                 }
 
-                // ==========================
-                // 2️⃣ DEFECT (LABEL ONLY)
-                // ==========================
+                // 2) DEFECT per unit (existing logic)
                 if ($qtyDefect > 0) {
                     foreach ($row['defects'] ?? [] as $k => $d) {
                         ProductDefectItem::create([
@@ -463,9 +486,7 @@ class TransferController extends Controller
                     }
                 }
 
-                // ==========================
-                // 3️⃣ DAMAGED (LABEL ONLY)
-                // ==========================
+                // 3) DAMAGED per unit (existing logic, plus set type)
                 if ($qtyDamaged > 0) {
                     foreach ($row['damaged_items'] ?? [] as $k => $d) {
                         ProductDamagedItem::create([
@@ -475,6 +496,11 @@ class TransferController extends Controller
                             'reference_id'   => (int)$transfer->id,
                             'reference_type' => TransferRequest::class,
                             'quantity'       => 1,
+
+                            'damage_type'    => 'damaged',
+                            'cause'          => 'transfer',
+                            'resolution_status' => 'pending',
+
                             'reason'         => $d['damaged_reason'] ?? null,
                             'created_by'     => auth()->id(),
                             'mutation_in_id' => null,
@@ -482,12 +508,35 @@ class TransferController extends Controller
                         ]);
                     }
                 }
+
+                // 4) MISSING (remaining) -> 1 row saja per product (qty = missing)
+                $missingQty = $qtySent - $totalIn;
+                if ($missingQty > 0) {
+                    ProductDamagedItem::create([
+                        'branch_id'      => (int)$transfer->to_branch_id,
+                        'warehouse_id'   => (int)$request->to_warehouse_id,
+                        'product_id'     => $productId,
+                        'reference_id'   => (int)$transfer->id,
+                        'reference_type' => TransferRequest::class,
+                        'quantity'       => $missingQty,
+
+                        'damage_type'       => 'missing',
+                        'cause'             => 'transfer',
+                        'resolution_status' => 'pending',
+                        'reason'            => 'Missing on confirmation',
+
+                        'created_by'     => auth()->id(),
+                        'mutation_in_id' => null,
+                        'mutation_out_id'=> null,
+                    ]);
+                }
             }
         });
 
         toast('Transfer confirmed successfully', 'success');
-        return redirect()->route('transfers.index', ['tab' => 'incoming']);
+        return redirect()->route('transfers.show', $transfer->id);
     }
+
 
     public function destroy($id)
     {
@@ -517,12 +566,13 @@ class TransferController extends Controller
             'note' => 'required|string|max:1000',
         ]);
 
-        // ✅ 1) RAW status sekali aja
+        // RAW status sekali aja
         $status = strtolower(trim((string) ($transfer->getRawOriginal('status') ?? $transfer->status ?? 'pending')));
 
         if ($status === 'cancelled') abort(422, 'Transfer already cancelled.');
 
-        if (!in_array($status, ['shipped', 'confirmed'], true)) {
+        // ✅ allow confirmed_issue juga
+        if (!in_array($status, ['shipped', 'confirmed', 'confirmed_issue'], true)) {
             abort(422, 'Only shipped/confirmed transfer can be cancelled.');
         }
 
@@ -558,14 +608,26 @@ class TransferController extends Controller
                 }
             }
 
-            // ============ CASE 2: CONFIRMED ============
-            if ($status === 'confirmed') {
+            // ============ CASE 2: CONFIRMED / CONFIRMED_ISSUE ============
+            if (in_array($status, ['confirmed', 'confirmed_issue'], true)) {
 
                 if (!$transfer->to_warehouse_id) abort(422, 'Invalid transfer data: destination warehouse is empty.');
 
+                // ✅ Ambil qty DAMAGED per product (hanya damage_type=damaged)
                 $damagedQtyByProduct = ProductDamagedItem::query()
                     ->where('reference_type', TransferRequest::class)
                     ->where('reference_id', (int) $transfer->id)
+                    ->where('damage_type', 'damaged')
+                    ->selectRaw('product_id, COALESCE(SUM(quantity),0) as qty')
+                    ->groupBy('product_id')
+                    ->pluck('qty', 'product_id')
+                    ->toArray();
+
+                // ✅ Ambil qty MISSING per product (hanya damage_type=missing)
+                $missingQtyByProduct = ProductDamagedItem::query()
+                    ->where('reference_type', TransferRequest::class)
+                    ->where('reference_id', (int) $transfer->id)
+                    ->where('damage_type', 'missing')
                     ->selectRaw('product_id, COALESCE(SUM(quantity),0) as qty')
                     ->groupBy('product_id')
                     ->pluck('qty', 'product_id')
@@ -577,10 +639,21 @@ class TransferController extends Controller
                     if ($sent <= 0) continue;
 
                     $damaged = (int) ($damagedQtyByProduct[$pid] ?? 0);
-                    if ($damaged < 0) $damaged = 0;
-                    if ($damaged > $sent) $damaged = $sent;
+                    $missing = (int) ($missingQtyByProduct[$pid] ?? 0);
 
-                    $moveBackQty = $sent - $damaged;
+                    if ($damaged < 0) $damaged = 0;
+                    if ($missing < 0) $missing = 0;
+
+                    if ($damaged > $sent) $damaged = $sent;
+                    if ($missing > $sent) $missing = $sent;
+
+                    // ✅ qty yang benar-benar bisa dibalikkan:
+                    // yang "masuk ke WH tujuan" = sent - missing
+                    // yang tidak dibalikkan = damaged (karena policy kamu damaged stay counted)
+                    $moveBackQty = $sent - $missing - $damaged;
+
+                    if ($moveBackQty < 0) $moveBackQty = 0;
+                    if ($moveBackQty > $sent) $moveBackQty = $sent;
 
                     if ($moveBackQty > 0) {
                         $noteOut = "Transfer CANCEL OUT #{$transfer->reference} | Return from WH {$transfer->to_warehouse_id} | {$cancelNote}";
@@ -612,7 +685,7 @@ class TransferController extends Controller
                 }
             }
 
-            // ✅ 3) forceFill biar pasti kesave
+            // forceFill biar pasti kesave
             $transfer->forceFill([
                 'status'       => 'cancelled',
                 'cancelled_by' => auth()->id(),
@@ -657,4 +730,5 @@ class TransferController extends Controller
             ])
             ->findOrFail($id);
     }
+
 }

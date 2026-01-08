@@ -44,7 +44,7 @@
                 <div class="p-3 border-bottom bg-light">
                     <div class="font-weight-bold mb-1">Rule Validasi</div>
                     <div class="text-muted">
-                        Untuk Purchase Delivery: <strong>Received + Defect + Damaged</strong> boleh <strong>kurang dari</strong> Expected (partial),
+                        Untuk Purchase Delivery: <strong>Good + Defect + Damaged</strong> boleh <strong>kurang dari</strong> Expected (partial),
                         tapi <strong>tidak boleh melebihi</strong> Expected.
                     </div>
                     <div class="text-muted mt-2">
@@ -62,7 +62,7 @@
                             <tr>
                                 <th style="min-width: 320px;">Product</th>
                                 <th class="text-center" style="width: 90px;">Expected</th>
-                                <th class="text-center" style="width: 110px;">Received</th>
+                                <th class="text-center" style="width: 110px;">Good</th>
                                 <th class="text-center" style="width: 110px;">Defect</th>
                                 <th class="text-center" style="width: 110px;">Damaged</th>
                                 <th class="text-center" style="width: 110px;">Remaining</th>

@@ -57,6 +57,9 @@
                             @csrf
                             @method('PUT')
 
+                            {{-- ✅ NEW: hidden flag untuk “complete with issue” --}}
+                            <input type="hidden" name="confirm_issue" id="confirm_issue" value="0">
+
                             <div class="form-group mt-4">
                                 <label for="to_warehouse_id">Destination Warehouse <span class="text-danger">*</span></label>
                                 <select name="to_warehouse_id" class="form-control" required>
@@ -95,12 +98,13 @@
                                         <div class="font-weight-bold mb-1">Rule Validasi</div>
                                         <div class="text-muted">
                                             Isi qty yang diterima per produk. Sistem akan validasi:
-                                            <strong>Received + Defect + Damaged = Sent</strong>.
+                                            <strong>Good + Defect + Damaged ≤ Sent</strong>.
                                         </div>
                                         <div class="text-muted mt-2">
                                             <small>
+                                                - Jika <strong>total &lt; sent</strong>, maka sisanya dianggap <strong>Remaining/Missing</strong> dan butuh konfirmasi “Complete with issue”.<br>
                                                 - <strong>Defect</strong> tetap masuk stok, tapi dicatat sebagai defect (per unit).<br>
-                                                - <strong>Damaged/Pecah</strong> dibuat mutasi IN lalu OUT (stok tidak bertambah bersih), dicatat sebagai damaged (per unit).<br>
+                                                - <strong>Damaged/Pecah</strong> dicatat sebagai damaged (per unit).<br>
                                                 - Foto opsional, tapi sangat disarankan untuk audit.
                                             </small>
                                         </div>
@@ -114,7 +118,7 @@
                                         <tr>
                                             <th style="min-width: 320px;">Product</th>
                                             <th class="text-center" style="width: 90px;">Sent</th>
-                                            <th class="text-center" style="width: 110px;">Received</th>
+                                            <th class="text-center" style="width: 110px;">Good</th>
                                             <th class="text-center" style="width: 110px;">Defect</th>
                                             <th class="text-center" style="width: 110px;">Damaged</th>
                                             <th class="text-center" style="width: 170px;">Per-Unit Notes</th>
@@ -300,7 +304,7 @@
                             <div class="d-flex justify-content-between align-items-center mt-3">
                                 <div class="text-muted">
                                     <small>
-                                        Tips: Kalau tidak ada defect/damaged, cukup biarkan Defect = 0, Damaged = 0, dan Received = Sent.
+                                        Tips: Kalau tidak ada defect/damaged, cukup biarkan Defect = 0, Damaged = 0, dan Good = Sent.
                                     </small>
                                 </div>
                                 <button type="button" class="btn btn-success" onclick="confirmSubmit()">
@@ -460,16 +464,18 @@
 
         const total = received + defect + damaged;
 
-        if (total !== sent) {
+        // ✅ NEW RULE: total tidak boleh > sent
+        if (total > sent) {
             statusBadge.className = 'badge badge-danger row-status';
             statusBadge.textContent = 'MISMATCH';
-            hint.textContent = `Total (${total}) harus sama dengan Sent (${sent}).`;
+            hint.textContent = `Total (${total}) tidak boleh lebih dari Sent (${sent}).`;
             return false;
         }
 
         const idx = row.dataset.index;
         const perWrap = document.getElementById('perUnitWrap-' + idx);
 
+        // Validasi defect per-unit hanya jika defect > 0
         if (defect > 0) {
             if (!perWrap) {
                 statusBadge.className = 'badge badge-warning row-status';
@@ -497,6 +503,7 @@
             }
         }
 
+        // Validasi damaged per-unit hanya jika damaged > 0
         if (damaged > 0) {
             if (!perWrap) {
                 statusBadge.className = 'badge badge-warning row-status';
@@ -524,9 +531,17 @@
             }
         }
 
-        statusBadge.className = 'badge badge-success row-status';
-        statusBadge.textContent = 'OK';
-        hint.textContent = `Total = ${total}`;
+        // ✅ Status OK vs REMAINING
+        if (total === sent) {
+            statusBadge.className = 'badge badge-success row-status';
+            statusBadge.textContent = 'OK';
+            hint.textContent = `Total = ${total}`;
+            return true;
+        }
+
+        statusBadge.className = 'badge badge-warning row-status';
+        statusBadge.textContent = 'REMAINING';
+        hint.textContent = `Remaining/Missing: ${sent - total}`;
         return true;
     }
 
@@ -709,30 +724,71 @@
         });
     });
 
+    // ✅ NEW: hitung total missing (Remaining/Missing)
+    function getTotalMissing() {
+        const rows = document.querySelectorAll('.receive-row');
+        let missing = 0;
+
+        rows.forEach(row => {
+            const sent = asInt(row.dataset.sent);
+            const received = asInt(row.querySelector('.qty-received').value);
+            const defect = asInt(row.querySelector('.qty-defect').value);
+            const damaged = asInt(row.querySelector('.qty-damaged').value);
+            const total = received + defect + damaged;
+            if (total < sent) missing += (sent - total);
+        });
+
+        return missing;
+    }
+
     function confirmSubmit() {
         const isValid = validateAllRows();
 
         if (!isValid) {
             Swal.fire({
                 title: 'Ada data yang belum valid',
-                text: 'Periksa kembali input qty dan per-unit notes. Pastikan total sama dengan qty sent.',
+                text: 'Periksa kembali input qty dan per-unit notes. Total tidak boleh lebih dari qty sent.',
                 icon: 'error',
             });
             return;
         }
 
-        Swal.fire({
-            title: 'Yakin ingin konfirmasi transfer ini?',
-            text: "Setelah dikonfirmasi, data tidak dapat diubah!",
-            icon: 'warning',
-            showCancelButton: true,
-            confirmButtonText: 'Ya, konfirmasi',
-            cancelButtonText: 'Batal'
-        }).then((result) => {
-            if (result.isConfirmed) {
-                document.getElementById('confirm-form').submit();
-            }
-        });
+        const totalMissing = getTotalMissing();
+
+        const proceedMainConfirm = () => {
+            Swal.fire({
+                title: 'Yakin ingin konfirmasi transfer ini?',
+                text: "Setelah dikonfirmasi, data tidak dapat diubah!",
+                icon: 'warning',
+                showCancelButton: true,
+                confirmButtonText: 'Ya, konfirmasi',
+                cancelButtonText: 'Batal'
+            }).then((result) => {
+                if (result.isConfirmed) {
+                    document.getElementById('confirm-form').submit();
+                }
+            });
+        };
+
+        if (totalMissing > 0) {
+            Swal.fire({
+                title: 'Ada Remaining / Missing Qty',
+                html: `Terdapat <b>${totalMissing}</b> item yang tidak diterima.<br>Apakah mau <b>complete</b> dengan status <b>bermasalah</b>?`,
+                icon: 'warning',
+                showCancelButton: true,
+                confirmButtonText: 'Ya, complete with issue',
+                cancelButtonText: 'Batal'
+            }).then((result) => {
+                if (result.isConfirmed) {
+                    document.getElementById('confirm_issue').value = '1';
+                    proceedMainConfirm();
+                }
+            });
+            return;
+        }
+
+        document.getElementById('confirm_issue').value = '0';
+        proceedMainConfirm();
     }
 </script>
 @endpush

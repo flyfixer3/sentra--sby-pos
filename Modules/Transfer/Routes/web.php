@@ -32,7 +32,13 @@ Route::middleware(['auth'])
             ->name('cancel')
             ->middleware('can:cancel_transfers');
 
-        // ✅ INI ROUTE REPORT (BENAR)
+        // ✅ Quality Report (index)
         Route::get('/quality-report', [TransferQualityReportController::class, 'index'])
             ->name('quality-report.index');
+
+        // ✅ Resolve issue dari Quality Report (PUT)
+        Route::put('/quality-report/issues/{id}/resolve', [TransferQualityReportController::class, 'resolve'])
+            ->name('quality-report.issues.resolve')
+            ->middleware('can:confirm_transfers');
+
     });

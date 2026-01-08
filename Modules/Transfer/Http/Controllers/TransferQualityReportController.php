@@ -13,6 +13,9 @@ use Modules\PurchaseOrder\Entities\PurchaseOrder;
 use Modules\Purchase\Entities\Purchase;
 use Modules\PurchaseDelivery\Entities\PurchaseDelivery;
 use Modules\Adjustment\Entities\Adjustment;
+use App\Models\User;
+use Modules\Product\Entities\ProductDamagedItem;
+
 
 class TransferQualityReportController extends Controller
 {
@@ -67,6 +70,12 @@ class TransferQualityReportController extends Controller
             ->orderBy('warehouse_name')
             ->get();
 
+        // dropdown users (buat resolve)
+        $users = User::query()
+            ->select('id', 'name')
+            ->orderBy('name')
+            ->get();
+
         // Reference Types (Polymorphic)
         $transferClass          = TransferRequest::class;
         $purchaseOrderClass     = PurchaseOrder::class;
@@ -106,7 +115,7 @@ class TransferQualityReportController extends Controller
                     ->where('d.reference_type', '=', $purchaseDeliveryClass);
             })
 
-            // Adjustment (optional join; kita pakai label ADJ-xxxxx dari id)
+            // Adjustment
             ->leftJoin('adjustments as adj', function ($join) use ($adjustmentClass) {
                 $join->on('adj.id', '=', 'd.reference_id')
                     ->where('d.reference_type', '=', $adjustmentClass);
@@ -124,6 +133,10 @@ class TransferQualityReportController extends Controller
                 'd.quantity',
                 'd.defect_type',
                 'd.description',
+
+                // ✅ IMPORTANT: biar bisa tampil foto defect
+                'd.photo_path',
+
                 'd.reference_id',
                 'd.reference_type',
 
@@ -131,7 +144,6 @@ class TransferQualityReportController extends Controller
                 'po.reference as po_reference',
                 'pur.reference as purchase_reference',
 
-                // ✅ reference label final (yang tampil di UI)
                 DB::raw("
                     CASE
                         WHEN d.reference_type = " . DB::getPdo()->quote($transferClass) . " THEN tr.reference
@@ -147,7 +159,6 @@ class TransferQualityReportController extends Controller
                     END as reference_label
                 "),
 
-                // ✅ reference source (buat badge dan debug)
                 DB::raw("
                     CASE
                         WHEN d.reference_type = " . DB::getPdo()->quote($transferClass) . " THEN 'TRANSFER'
@@ -225,7 +236,18 @@ class TransferQualityReportController extends Controller
                 'dm.product_id',
                 'p.product_name as product_name',
                 'dm.quantity',
+
+                'dm.damage_type',
+                'dm.cause',
+                'dm.responsible_user_id',
+                'dm.resolution_status',
+                'dm.resolution_note',
+
                 'dm.reason',
+
+                // ✅ IMPORTANT: biar bisa tampil foto issue
+                'dm.photo_path',
+
                 'dm.mutation_in_id',
                 'dm.mutation_out_id',
                 'dm.reference_id',
@@ -261,6 +283,9 @@ class TransferQualityReportController extends Controller
                     END as reference_source
                 "),
             ])
+
+            ->where('dm.resolution_status', 'pending')
+
             ->when($branchId !== null, fn($qr) => $qr->where('dm.branch_id', $branchId))
             ->when($warehouseId !== null, fn($qr) => $qr->where('dm.warehouse_id', $warehouseId))
             ->when($dateFrom, fn($qr) => $qr->whereDate('dm.created_at', '>=', $dateFrom))
@@ -287,6 +312,7 @@ class TransferQualityReportController extends Controller
         if ($type === 'all' || $type === 'defect') {
             $defects = collect($defectsQuery->orderByDesc('d.id')->limit(500)->get());
         }
+
         if ($type === 'all' || $type === 'damaged') {
             $damaged = collect($damagedQuery->orderByDesc('dm.id')->limit(500)->get());
         }
@@ -298,6 +324,7 @@ class TransferQualityReportController extends Controller
             'active'                 => $active,
             'branches'               => $branches,
             'warehouses'             => $warehouses,
+            'users'                  => $users,
             'selectedBranchId'       => $branchId,
             'selectedWarehouseId'    => $warehouseId,
             'dateFrom'               => $dateFrom,
@@ -309,7 +336,6 @@ class TransferQualityReportController extends Controller
             'totalDefectQty'         => $totalDefectQty,
             'totalDamagedQty'        => $totalDamagedQty,
 
-            // pass reference class names to view (biar blade bisa bikin link yang benar)
             'transferClass'          => $transferClass,
             'purchaseOrderClass'     => $purchaseOrderClass,
             'purchaseClass'          => $purchaseClass,
@@ -317,4 +343,33 @@ class TransferQualityReportController extends Controller
             'adjustmentClass'        => $adjustmentClass,
         ]);
     }
+
+    public function resolve(Request $request, int $id)
+    {
+        abort_if(Gate::denies('confirm_transfers'), 403);
+
+        $item = ProductDamagedItem::withoutGlobalScopes()->findOrFail($id);
+
+        $request->validate([
+            'cause'               => 'nullable|in:transfer,employee,supplier,unknown',
+            'responsible_user_id' => 'nullable|integer|exists:users,id',
+            'resolution_status'   => 'required|in:pending,resolved,compensated,waived',
+            'resolution_note'     => 'nullable|string|max:1000',
+        ]);
+
+        if ($request->cause === 'employee' && !$request->filled('responsible_user_id')) {
+            return back()->with('error', 'Responsible user is required when cause is employee.');
+        }
+
+        $item->update([
+            'cause'               => $request->cause,
+            'responsible_user_id' => $request->responsible_user_id,
+            'resolution_status'   => $request->resolution_status,
+            'resolution_note'     => $request->resolution_note,
+        ]);
+
+        toast('Issue updated successfully', 'success');
+        return back();
+    }
+
 }
