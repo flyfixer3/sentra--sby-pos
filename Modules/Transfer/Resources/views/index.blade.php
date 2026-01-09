@@ -57,6 +57,7 @@
                             <option value="pending">PENDING</option>
                             <option value="shipped">SHIPPED</option>
                             <option value="confirmed">CONFIRMED</option>
+                            <option value="issue">ISSUE</option>
                             <option value="cancelled">CANCELLED</option>
                         </select>
                     </div>
@@ -81,6 +82,7 @@
                             <option value="pending">PENDING</option>
                             <option value="shipped">SHIPPED</option>
                             <option value="confirmed">CONFIRMED</option>
+                            <option value="issue">ISSUE</option>
                             <option value="cancelled">CANCELLED</option>
                         </select>
                     </div>
@@ -144,6 +146,43 @@
         </form>
     </div>
 </div>
+
+{{-- ✅ Global Print Modal --}}
+<div class="modal fade" id="printTransferModal" tabindex="-1" role="dialog" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered" role="document">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Print Delivery Note</h5>
+
+                <button type="button" class="close" data-dismiss="modal" aria-label="Close" style="font-size:24px;">
+                    <span aria-hidden="true">&times;</span>
+                </button>
+
+                <button type="button" class="btn-close d-none" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+
+            <div class="modal-body">
+                <div class="alert alert-warning mb-2">
+                    <strong>Konfirmasi:</strong> Aksi ini akan menambah hitungan <strong>COPY</strong>.
+                    Jika ini print pertama, status otomatis menjadi <strong>SHIPPED</strong>.
+                </div>
+
+                <div class="small text-muted">Reference</div>
+                <div class="fw-bold" id="printTransferRef">-</div>
+
+                <div class="mt-3 small text-muted" id="printTransferHint">Klik "Yes, Print" untuk lanjut.</div>
+            </div>
+
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-dismiss="modal" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-dark" id="btnConfirmPrint">
+                    <i class="bi bi-printer"></i> Yes, Print
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
 @endsection
 
 @push('page_css')
@@ -188,7 +227,6 @@
 function openModal(modalId) {
     const modalEl = document.getElementById(modalId);
 
-    // 1) Bootstrap 5
     try {
         if (typeof bootstrap !== 'undefined' && bootstrap.Modal) {
             bootstrap.Modal.getOrCreateInstance(modalEl).show();
@@ -196,7 +234,6 @@ function openModal(modalId) {
         }
     } catch(e) {}
 
-    // 2) CoreUI
     try {
         if (typeof coreui !== 'undefined' && coreui.Modal) {
             coreui.Modal.getOrCreateInstance(modalEl).show();
@@ -204,10 +241,36 @@ function openModal(modalId) {
         }
     } catch(e) {}
 
-    // 3) Bootstrap 4 / CoreUI jQuery
     try {
         if (window.jQuery && typeof jQuery(modalEl).modal === 'function') {
             jQuery(modalEl).modal('show');
+            return true;
+        }
+    } catch(e) {}
+
+    return false;
+}
+
+function closeModal(modalId) {
+    const modalEl = document.getElementById(modalId);
+
+    try {
+        if (typeof bootstrap !== 'undefined' && bootstrap.Modal) {
+            bootstrap.Modal.getOrCreateInstance(modalEl).hide();
+            return true;
+        }
+    } catch(e) {}
+
+    try {
+        if (typeof coreui !== 'undefined' && coreui.Modal) {
+            coreui.Modal.getOrCreateInstance(modalEl).hide();
+            return true;
+        }
+    } catch(e) {}
+
+    try {
+        if (window.jQuery && typeof jQuery(modalEl).modal === 'function') {
+            jQuery(modalEl).modal('hide');
             return true;
         }
     } catch(e) {}
@@ -233,6 +296,79 @@ document.addEventListener("DOMContentLoaded", function () {
         if (!opened) {
             alert('Cancel modal: library modal tidak terdeteksi. Cek includes.main-js / bootstrap/coreui.');
         }
+    });
+
+    // ✅ Print Transfer (delegated)
+    window.__printTransferId = null;
+    window.__printTransferRef = null;
+
+    $(document).on('click', '.js-open-print-transfer', function () {
+        const id  = $(this).data('transfer-id');
+        const ref = $(this).data('transfer-ref') || ('#' + id);
+
+        window.__printTransferId = id;
+        window.__printTransferRef = ref;
+
+        $('#printTransferRef').text(ref);
+        $('#printTransferHint').text('Klik "Yes, Print" untuk lanjut.');
+
+        const opened = openModal('printTransferModal');
+        if (!opened) {
+            alert('Print modal: library modal tidak terdeteksi. Cek includes.main-js / bootstrap/coreui.');
+        }
+    });
+
+    // ✅ Confirm print
+    $('#btnConfirmPrint').on('click', function () {
+        const id = window.__printTransferId;
+        if (!id) return;
+
+        $('#btnConfirmPrint').prop('disabled', true);
+        $('#printTransferHint').text('Processing...');
+
+        const url = "{{ route('transfers.print.prepare', ':id') }}".replace(':id', id);
+
+        fetch(url, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRF-TOKEN': "{{ csrf_token() }}",
+                'Accept': 'application/json'
+            },
+            body: JSON.stringify({})
+        })
+        .then(async (res) => {
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) {
+                throw new Error(data.message || 'Failed to print.');
+            }
+            return data;
+        })
+        .then((data) => {
+            closeModal('printTransferModal');
+
+            if (data.pdf_url) {
+                window.open(data.pdf_url, '_blank');
+            }
+
+            // ✅ reload both tables (status update tanpa refresh manual)
+            try {
+                if (window.LaravelDataTables && window.LaravelDataTables['outgoing-transfers-table']) {
+                    window.LaravelDataTables['outgoing-transfers-table'].ajax.reload(null, false);
+                }
+                if (window.LaravelDataTables && window.LaravelDataTables['incoming-transfers-table']) {
+                    window.LaravelDataTables['incoming-transfers-table'].ajax.reload(null, false);
+                }
+            } catch(e) {}
+
+        })
+        .catch((err) => {
+            alert(err.message || 'Print failed.');
+        })
+        .finally(() => {
+            $('#btnConfirmPrint').prop('disabled', false);
+            $('#printTransferHint').text('Klik "Yes, Print" untuk lanjut.');
+        });
     });
 
     // Filter status DT

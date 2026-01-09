@@ -8,16 +8,21 @@ use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
 use Barryvdh\DomPDF\Facade\Pdf;
+
 use Modules\Product\Entities\ProductDefectItem;
 use Modules\Product\Entities\ProductDamagedItem;
+
 use Modules\Transfer\Entities\TransferRequest;
 use Modules\Transfer\Entities\TransferRequestItem;
 use Modules\Transfer\Entities\PrintLog;
+
 use Modules\Setting\Entities\Setting;
 use Modules\Product\Entities\Warehouse;
 use Modules\Product\Entities\Product;
 use Modules\Mutation\Entities\Mutation;
 use Modules\Mutation\Http\Controllers\MutationController;
+
+use Modules\Branch\Entities\Branch;
 
 class TransferController extends Controller
 {
@@ -46,6 +51,24 @@ class TransferController extends Controller
         }
 
         return (int) $active;
+    }
+
+    /**
+     * ✅ Helper: pastikan user sedang ada di branch pengirim (outgoing owner)
+     * - incoming branch tidak boleh print
+     * - all branch tidak boleh print
+     */
+    private function assertSenderBranchOrAbort(TransferRequest $transfer): void
+    {
+        $active = $this->activeBranch();
+
+        if ($active === 'all' || $active === null || $active === '') {
+            abort(422, "Please choose a specific branch (not 'All Branch').");
+        }
+
+        if ((int) $active !== (int) $transfer->branch_id) {
+            abort(403, 'Unauthorized. Only sender branch can print delivery note.');
+        }
     }
 
     public function create()
@@ -229,7 +252,6 @@ class TransferController extends Controller
 
             $receivedGood = $sent - $defectQty - $damagedQty - $missingQty;
             if ($receivedGood < 0) {
-                // clamp biar UI tidak negatif (tapi tetap keliatan mismatch kalau kamu tampilkan detail)
                 $receivedGood = 0;
             }
 
@@ -260,36 +282,35 @@ class TransferController extends Controller
     }
 
     /**
-     * PRINT SURAT JALAN:
-     * - print pertama: generate delivery_code + set shipped + mutation OUT
-     * - reprint: hanya admin/supervisor (delivery_code tetap sama)
-     * - semua print dicatat di PrintLog
+     * ✅ NEW: Prepare Print (AJAX)
+     * - HANYA pengirim bisa print
+     * - Print pertama: set shipped + generate delivery_code + mutation OUT (sekali saja)
+     * - Setiap print: create PrintLog
+     * - Return JSON: pdf_url + copy_number + status
      */
-    public function printPdf($id)
+    public function preparePrint(int $id)
     {
         abort_if(Gate::denies('print_transfers'), 403);
 
-        $transfer = TransferRequest::with(['items.product', 'fromWarehouse', 'toBranch'])->findOrFail($id);
-        $setting  = Setting::first();
-        $user     = Auth::user();
+        $transfer = TransferRequest::withoutGlobalScopes()
+            ->with(['items.product', 'fromWarehouse', 'toBranch'])
+            ->findOrFail($id);
 
-        $transfer->loadMissing('items');
+        $this->assertSenderBranchOrAbort($transfer);
 
-        // penting: tentukan reprint SEBELUM update printed_at
-        $isReprint = (bool) $transfer->printed_at;
-
-        if ($isReprint) {
-            if (!$user->hasAnyRole(['Super Admin', 'Administrator', 'Supervisor'])) {
-                abort(403, 'Only admin/supervisor can reprint.');
-            }
+        // kalau sudah cancelled, jangan bisa print
+        $rawStatus = strtolower(trim((string) ($transfer->getRawOriginal('status') ?? $transfer->status ?? 'pending')));
+        if ($rawStatus === 'cancelled') {
+            abort(422, 'Transfer is cancelled.');
         }
+
+        $user = Auth::user();
 
         DB::transaction(function () use ($transfer, $user) {
 
-            // FIRST PRINT
+            // FIRST PRINT: set shipped + delivery_code + printed_at/by + mutation OUT
             if (!$transfer->printed_at) {
 
-                // generate code kalau belum ada
                 $code = $transfer->delivery_code ?: $this->generateUniqueDeliveryCode();
 
                 $transfer->update([
@@ -332,21 +353,146 @@ class TransferController extends Controller
             ]);
         });
 
-        // reload relasi supaya code kebaca di view
+        // hitung copy ke berapa (setelah log masuk)
+        $copyNumber = (int) PrintLog::withoutGlobalScopes()
+            ->where('transfer_request_id', (int) $transfer->id)
+            ->count();
+
+        // refresh transfer supaya status & delivery_code updated
         $transfer->refresh();
-        $transfer->loadMissing(['items.product', 'fromWarehouse', 'toBranch']);
 
-        // PASS $isReprint ke view untuk watermark COPY
-        $pdf = Pdf::loadView('transfer::print', [
-                'transfer'  => $transfer,
-                'setting'   => $setting,
-                'isReprint' => $isReprint,
-            ])
-            ->setPaper('A4', 'portrait');
-
-        return $pdf->download("Surat_Jalan_{$transfer->reference}.pdf");
+        return response()->json([
+            'ok'          => true,
+            'status'      => strtolower(trim((string) ($transfer->getRawOriginal('status') ?? $transfer->status ?? 'pending'))),
+            'copy_number' => $copyNumber,
+            'pdf_url'     => route('transfers.print.pdf', ['transfer' => $transfer->id, 'copy' => $copyNumber]),
+        ]);
     }
 
+    /**
+     * ✅ Render PDF only (NO DB UPDATE)
+     * - COPY number diambil dari query ?copy= (hasil preparePrint)
+     * - address pakai branches.address & phone
+     * - keterangan item: defect/damaged singkat dari DB
+     */
+    public function printPdf(Request $request, int $id)
+    {
+        abort_if(Gate::denies('print_transfers'), 403);
+
+        $transfer = TransferRequest::withoutGlobalScopes()
+            ->with(['items.product', 'fromWarehouse', 'toBranch'])
+            ->findOrFail($id);
+
+        $this->assertSenderBranchOrAbort($transfer);
+
+        $rawStatus = strtolower(trim((string) ($transfer->getRawOriginal('status') ?? $transfer->status ?? 'pending')));
+        if ($rawStatus === 'cancelled') {
+            abort(422, 'Transfer is cancelled.');
+        }
+
+        $setting = Setting::first();
+
+        $copyNumber = (int) ($request->query('copy') ?? 0);
+        if ($copyNumber <= 0) {
+            // fallback: count print logs (kalau user buka langsung GET)
+            $copyNumber = (int) PrintLog::withoutGlobalScopes()
+                ->where('transfer_request_id', (int) $transfer->id)
+                ->count();
+
+            if ($copyNumber <= 0) {
+                $copyNumber = 1;
+            }
+        }
+
+        $isReprint = $copyNumber > 1;
+
+        // Branch data untuk address
+        $senderBranch = Branch::withoutGlobalScopes()->find((int) $transfer->branch_id);
+        $receiverBranch = Branch::withoutGlobalScopes()->find((int) $transfer->to_branch_id);
+
+        // Ambil defect utk transfer ini (buat notes per product)
+        $defects = ProductDefectItem::query()
+            ->where('reference_type', TransferRequest::class)
+            ->where('reference_id', (int) $transfer->id)
+            ->orderBy('id', 'asc')
+            ->get();
+
+        // Ambil damaged utk transfer ini (damage_type=damaged saja, exclude missing)
+        $damaged = ProductDamagedItem::query()
+            ->where('reference_type', TransferRequest::class)
+            ->where('reference_id', (int) $transfer->id)
+            ->where('damage_type', 'damaged')
+            ->orderBy('id', 'asc')
+            ->get();
+
+        // Build short note per product_id
+        $notesByProduct = [];
+
+        $defectsByProduct = $defects->groupBy('product_id');
+        $damagedByProduct = $damaged->groupBy('product_id');
+
+        $allProductIds = collect(array_merge(
+            array_keys($defectsByProduct->toArray()),
+            array_keys($damagedByProduct->toArray())
+        ))->unique()->values();
+
+        foreach ($allProductIds as $pid) {
+            $pid = (int) $pid;
+
+            $parts = [];
+
+            if (isset($defectsByProduct[$pid])) {
+                $rows = $defectsByProduct[$pid];
+
+                $types = $rows->pluck('defect_type')->filter()->unique()->values()->take(3)->toArray();
+                $desc  = $rows->pluck('description')->filter()->first();
+
+                $qtyDef = (int) $rows->sum('quantity');
+                $t = !empty($types) ? implode(', ', $types) : 'Defect';
+                $text = "DEFECT {$qtyDef} ({$t})";
+
+                if (!empty($desc)) {
+                    $desc = trim((string) $desc);
+                    if (mb_strlen($desc) > 40) $desc = mb_substr($desc, 0, 40) . '...';
+                    $text .= " - {$desc}";
+                }
+
+                $parts[] = $text;
+            }
+
+            if (isset($damagedByProduct[$pid])) {
+                $rows = $damagedByProduct[$pid];
+
+                $qtyDmg = (int) $rows->sum('quantity');
+                $reason = $rows->pluck('reason')->filter()->first();
+
+                $text = "DAMAGED {$qtyDmg}";
+                if (!empty($reason)) {
+                    $reason = trim((string) $reason);
+                    if (mb_strlen($reason) > 40) $reason = mb_substr($reason, 0, 40) . '...';
+                    $text .= " - {$reason}";
+                }
+
+                $parts[] = $text;
+            }
+
+            if (!empty($parts)) {
+                $notesByProduct[$pid] = implode(' | ', $parts);
+            }
+        }
+
+        $pdf = Pdf::loadView('transfer::print', [
+            'transfer'        => $transfer,
+            'setting'         => $setting,
+            'isReprint'       => $isReprint,
+            'copyNumber'      => $copyNumber,
+            'senderBranch'    => $senderBranch,
+            'receiverBranch'  => $receiverBranch,
+            'notesByProduct'  => $notesByProduct,
+        ])->setPaper('A4', 'portrait');
+
+        return $pdf->download("Surat_Jalan_{$transfer->reference}_COPY_{$copyNumber}.pdf");
+    }
 
     public function showConfirmationForm(int $id)
     {
@@ -367,10 +513,7 @@ class TransferController extends Controller
     }
 
     /**
-         * Confirm pakai delivery_code (tanpa upload file lagi)
-         * NEW: penerima input qty_received/qty_defect/qty_damaged per item.
-         * - Defect tetap masuk stok, tapi dicatat ke product_defect_items.
-         * - Damaged dibuat mutation IN lalu OUT, lalu dicatat ke product_damaged_items.
+     * ✅ Jangan ubah logika missing/damaged/issue kamu (sesuai request)
      */
     public function storeConfirmation(Request $request, int $id)
     {
@@ -396,10 +539,6 @@ class TransferController extends Controller
             'items.*.qty_received'  => 'required|integer|min:0',
             'items.*.qty_defect'    => 'required|integer|min:0',
             'items.*.qty_damaged'   => 'required|integer|min:0',
-
-            // optional: kalau nanti kamu bikin UI missing detail per unit
-            // 'items.*.missing_items' => 'nullable|array',
-            // 'items.*.missing_items.*.missing_reason' => 'nullable|string|max:255',
         ]);
 
         if (strtoupper($request->delivery_code) !== strtoupper((string) $transfer->delivery_code)) {
@@ -408,7 +547,6 @@ class TransferController extends Controller
 
         DB::transaction(function () use ($request, $transfer) {
 
-            // Anti double confirm (stock)
             $alreadyIn = Mutation::withoutGlobalScopes()
                 ->where('reference', $transfer->reference)
                 ->where('note', 'like', 'Transfer IN%')
@@ -418,10 +556,8 @@ class TransferController extends Controller
                 abort(422, 'Transfer already confirmed (stock movement exists).');
             }
 
-            // ✅ define issue flag (missing)
             $hasIssue = false;
 
-            // pre-check missing agar bisa enforce confirm_issue
             foreach ($request->items as $row) {
                 $sent    = (int) $row['qty_sent'];
                 $good    = (int) $row['qty_received'];
@@ -442,7 +578,6 @@ class TransferController extends Controller
                 abort(422, "There is a remaining/missing quantity. Please confirm 'Complete with issue' to proceed.");
             }
 
-            // ✅ status aman: confirmed (ISSUE badge dihitung dari tabel issue)
             $transfer->update([
                 'to_warehouse_id' => (int) $request->to_warehouse_id,
                 'status' => $hasIssue ? 'issue' : 'confirmed',
@@ -460,7 +595,6 @@ class TransferController extends Controller
 
                 $totalIn = $qtyReceived + $qtyDefect + $qtyDamaged;
 
-                // 1) IN stock (Good + Defect + Damaged)
                 if ($totalIn > 0) {
                     $this->mutationController->applyInOut(
                         (int) $transfer->to_branch_id,
@@ -474,7 +608,6 @@ class TransferController extends Controller
                     );
                 }
 
-                // 2) DEFECT per unit
                 if ($qtyDefect > 0) {
                     foreach (($row['defects'] ?? []) as $d) {
                         ProductDefectItem::create([
@@ -491,7 +624,6 @@ class TransferController extends Controller
                     }
                 }
 
-                // 3) DAMAGED per unit (mutation id boleh null)
                 if ($qtyDamaged > 0) {
                     foreach (($row['damaged_items'] ?? []) as $d) {
                         ProductDamagedItem::create([
@@ -512,11 +644,9 @@ class TransferController extends Controller
                     }
                 }
 
-                // 4) MISSING per unit (BUKAN 1 row qty=missingQty)
                 $missingQty = $qtySent - $totalIn;
                 if ($missingQty > 0) {
 
-                    // kalau nanti kamu bikin input detail missing per unit:
                     $missingDetails = $row['missing_items'] ?? [];
 
                     for ($i = 0; $i < $missingQty; $i++) {
@@ -548,7 +678,6 @@ class TransferController extends Controller
         return redirect()->route('transfers.show', $transfer->id);
     }
 
-
     public function destroy($id)
     {
         abort_if(Gate::denies('delete_transfers'), 403);
@@ -577,12 +706,10 @@ class TransferController extends Controller
             'note' => 'required|string|max:1000',
         ]);
 
-        // RAW status sekali aja
         $status = strtolower(trim((string) ($transfer->getRawOriginal('status') ?? $transfer->status ?? 'pending')));
 
         if ($status === 'cancelled') abort(422, 'Transfer already cancelled.');
 
-        // ✅ allow confirmed_issue juga
         if (!in_array($status, ['shipped', 'confirmed', 'confirmed_issue'], true)) {
             abort(422, 'Only shipped/confirmed transfer can be cancelled.');
         }
@@ -598,7 +725,6 @@ class TransferController extends Controller
 
             $cancelNote = trim((string) $request->note);
 
-            // ============ CASE 1: SHIPPED ============
             if ($status === 'shipped') {
                 foreach ($transfer->items as $item) {
                     $qty = (int) $item->quantity;
@@ -619,12 +745,10 @@ class TransferController extends Controller
                 }
             }
 
-            // ============ CASE 2: CONFIRMED / CONFIRMED_ISSUE ============
             if (in_array($status, ['confirmed', 'confirmed_issue'], true)) {
 
                 if (!$transfer->to_warehouse_id) abort(422, 'Invalid transfer data: destination warehouse is empty.');
 
-                // ✅ Ambil qty DAMAGED per product (hanya damage_type=damaged)
                 $damagedQtyByProduct = ProductDamagedItem::query()
                     ->where('reference_type', TransferRequest::class)
                     ->where('reference_id', (int) $transfer->id)
@@ -634,7 +758,6 @@ class TransferController extends Controller
                     ->pluck('qty', 'product_id')
                     ->toArray();
 
-                // ✅ Ambil qty MISSING per product (hanya damage_type=missing)
                 $missingQtyByProduct = ProductDamagedItem::query()
                     ->where('reference_type', TransferRequest::class)
                     ->where('reference_id', (int) $transfer->id)
@@ -658,9 +781,6 @@ class TransferController extends Controller
                     if ($damaged > $sent) $damaged = $sent;
                     if ($missing > $sent) $missing = $sent;
 
-                    // ✅ qty yang benar-benar bisa dibalikkan:
-                    // yang "masuk ke WH tujuan" = sent - missing
-                    // yang tidak dibalikkan = damaged (karena policy kamu damaged stay counted)
                     $moveBackQty = $sent - $missing - $damaged;
 
                     if ($moveBackQty < 0) $moveBackQty = 0;
@@ -696,7 +816,6 @@ class TransferController extends Controller
                 }
             }
 
-            // forceFill biar pasti kesave
             $transfer->forceFill([
                 'status'       => 'cancelled',
                 'cancelled_by' => auth()->id(),
@@ -713,14 +832,10 @@ class TransferController extends Controller
         return redirect()->route('transfers.index');
     }
 
-
-    /**
-     * Generate code 6 char huruf+angka, dan pastikan unique di tabel.
-     */
     private function generateUniqueDeliveryCode(): string
     {
         do {
-            $code = strtoupper(substr(bin2hex(random_bytes(4)), 0, 6)); // 6 hex chars
+            $code = strtoupper(substr(bin2hex(random_bytes(4)), 0, 6));
         } while (
             TransferRequest::withoutGlobalScopes()
                 ->where('delivery_code', $code)
@@ -741,5 +856,4 @@ class TransferController extends Controller
             ])
             ->findOrFail($id);
     }
-
 }

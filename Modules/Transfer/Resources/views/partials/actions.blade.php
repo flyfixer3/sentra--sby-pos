@@ -1,7 +1,23 @@
 @php
     $status = strtolower(trim((string) ($data->status ?? 'pending')));
     $active = session('active_branch');
+
+    $isAll = ($active === 'all' || $active === null || $active === '');
+    $isSender = (!$isAll && (int)$data->branch_id === (int)$active);
+    $canPrint = $isSender && $status !== 'cancelled';
 @endphp
+
+@can('print_transfers')
+    @if($canPrint)
+        <button type="button"
+                class="btn btn-sm btn-dark js-open-print-transfer"
+                data-transfer-id="{{ $data->id }}"
+                data-transfer-ref="{{ $data->reference ?? ('#'.$data->id) }}"
+                title="Print Delivery Note">
+            <i class="bi bi-printer"></i>
+        </button>
+    @endif
+@endcan
 
 @can('confirm_transfers')
     @if($status === 'shipped' && $active !== 'all' && (int)$data->to_branch_id === (int)$active)
@@ -10,8 +26,9 @@
         </a>
     @endif
 @endcan
+
 @can('cancel_transfers')
-    @if(in_array($status, ['shipped','confirmed'], true))
+    @if(in_array($status, ['shipped','confirmed','issue'], true))
         <button type="button"
                 class="btn btn-sm btn-danger js-open-cancel-transfer"
                 data-transfer-id="{{ $data->id }}"
@@ -27,19 +44,6 @@
         <i class="bi bi-eye"></i> Detail
     </a>
 @endcan
-
-@if ($data->printed_at)
-    <button type="button"
-            class="btn btn-sm btn-outline-secondary"
-            data-bs-toggle="modal"
-            data-bs-target="#modalGlobalReprint"
-            data-id="{{ $data->id }}"
-            data-reference="{{ $data->reference }}"
-            data-count="{{ $data->printLogs->count() }}"
-            title="Sudah dicetak {{ $data->printLogs->count() }}x">
-        <i class="bi bi-printer"></i>
-    </button>
-@endif
 
 @can('delete_transfers')
     <button type="button"
@@ -58,4 +62,3 @@
         @method('DELETE')
     </form>
 @endcan
-

@@ -25,7 +25,24 @@ Route::middleware(['auth'])
         Route::get('/{transfer}/confirm', [TransferController::class, 'showConfirmationForm'])->name('confirm');
         Route::put('/{transfer}/confirm', [TransferController::class, 'storeConfirmation'])->name('confirm.store');
 
-        Route::get('/{transfer}/print-pdf', [TransferController::class, 'printPdf'])->name('print.pdf');
+        /**
+         * ✅ NEW: prepare print via AJAX
+         * - update status shipped (first print)
+         * - generate delivery_code (first print)
+         * - create print log (every print)
+         * - apply mutation out (first print only)
+         * - return pdf_url + copy_number
+         */
+        Route::post('/{transfer}/print-prepare', [TransferController::class, 'preparePrint'])
+            ->name('print.prepare');
+
+        /**
+         * ✅ Render PDF only (NO DB UPDATE)
+         * DB update already done in print.prepare
+         */
+        Route::get('/{transfer}/print-pdf', [TransferController::class, 'printPdf'])
+            ->name('print.pdf');
+
         Route::delete('/{id}', [TransferController::class, 'destroy'])->name('destroy');
 
         Route::post('/{transfer}/cancel', [TransferController::class, 'cancel'])

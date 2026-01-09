@@ -28,8 +28,8 @@
         }
 
         .company-name {
-            font-size: 24px;
-            font-weight: 700;
+            font-size: 22px;
+            font-weight: 800;
             margin: 0 0 4px 0;
         }
 
@@ -49,10 +49,17 @@
             font-size: 20px;
             font-weight: 800;
             letter-spacing: 1px;
-            margin: 0 0 10px 0;
+            margin: 0 0 6px 0;
         }
 
-        /* Info block (No referensi, tanggal, gudang, cabang) */
+        .copy-label {
+            text-align:center;
+            font-size: 12px;
+            font-weight: 800;
+            margin: 0 0 10px 0;
+            letter-spacing: .5px;
+        }
+
         .info-table {
             width: 100%;
             border-collapse: collapse;
@@ -72,7 +79,18 @@
             white-space: nowrap;
         }
 
-        /* Items table */
+        .addr-box {
+            border: 1px solid #000;
+            padding: 8px 10px;
+            margin-top: 6px;
+            font-size: 12px;
+        }
+
+        .addr-title {
+            font-weight: 800;
+            margin-bottom: 4px;
+        }
+
         .items-table {
             width: 100%;
             border-collapse: collapse;
@@ -82,24 +100,23 @@
 
         .items-table th, .items-table td {
             border: 1px solid #000;
-            padding: 10px 8px;
+            padding: 8px 8px;
             vertical-align: top;
             word-wrap: break-word;
         }
 
         .items-table thead th {
             background: #f1f1f1;
-            font-size: 14px;
+            font-size: 13px;
             font-weight: 800;
         }
 
         .col-no { width: 7%; text-align: center; }
-        .col-name { width: 58%; }
-        .col-qty { width: 13%; text-align: center; }
+        .col-name { width: 50%; }
+        .col-qty { width: 10%; text-align: center; }
         .col-unit { width: 10%; text-align: center; }
-        .col-note { width: 12%; }
+        .col-note { width: 23%; }
 
-        /* Footer info block (Reference + Delivery Code) */
         .footer-info {
             width: 100%;
             border-collapse: collapse;
@@ -119,7 +136,6 @@
             min-width: 115px;
         }
 
-        /* Signature */
         .signature-table {
             width: 100%;
             border-collapse: collapse;
@@ -145,15 +161,14 @@
             height: 1px;
         }
 
-        /* Watermark */
         .watermark {
             position: fixed;
             top: 42%;
-            left: 18%;
+            left: 12%;
             transform: rotate(-28deg);
-            font-size: 84px;
+            font-size: 74px;
             font-weight: 800;
-            color: rgba(120,120,120,0.18);
+            color: rgba(120,120,120,0.16);
             z-index: 999;
             letter-spacing: 2px;
         }
@@ -161,20 +176,32 @@
 </head>
 <body>
 
-    @if (!empty($isReprint) && $isReprint === true)
-        <div class="watermark">COPY</div>
-    @endif
+    @php
+        $copyNo = (int) ($copyNumber ?? 1);
+        if ($copyNo <= 0) $copyNo = 1;
+
+        $senderName = $senderBranch->name ?? ($setting->company_name ?? 'Sentra Autoglass');
+        $senderAddr = $senderBranch->address ?? ($setting->company_address ?? '-');
+        $senderPhone = $senderBranch->phone ?? ($setting->company_phone ?? null);
+
+        $receiverName = $receiverBranch->name ?? ($transfer->toBranch->name ?? '-');
+        $receiverAddr = $receiverBranch->address ?? '-';
+        $receiverPhone = $receiverBranch->phone ?? null;
+    @endphp
+
+    <div class="watermark">COPY #{{ $copyNo }}</div>
 
     <div class="header">
-        <div class="company-name">{{ $setting->company_name ?? 'Sentra Autoglass' }}</div>
+        <div class="company-name">{{ $senderName }}</div>
         <p class="company-meta small">
-            {{ $setting->company_address ?? '-' }}
-            @if(!empty($setting->company_phone))
-                | Telp: {{ $setting->company_phone }}
+            {{ $senderAddr }}
+            @if(!empty($senderPhone))
+                | Telp: {{ $senderPhone }}
             @endif
         </p>
         <hr class="divider">
         <div class="title">SURAT JALAN</div>
+        <div class="copy-label">COPY #{{ $copyNo }}</div>
     </div>
 
     <table class="info-table">
@@ -195,10 +222,28 @@
             </td>
             <td class="text-right">
                 <span class="info-label">Ke Cabang</span>:
-                <strong>{{ $transfer->toBranch->name ?? '-' }}</strong>
+                <strong>{{ $receiverName }}</strong>
             </td>
         </tr>
     </table>
+
+    <div class="addr-box">
+        <div class="addr-title">PENGIRIM</div>
+        <div><strong>{{ $senderName }}</strong></div>
+        <div>{{ $senderAddr }}</div>
+        @if(!empty($senderPhone))
+            <div>Telp: {{ $senderPhone }}</div>
+        @endif
+    </div>
+
+    <div class="addr-box" style="margin-top:8px;">
+        <div class="addr-title">PENERIMA</div>
+        <div><strong>{{ $receiverName }}</strong></div>
+        <div>{{ $receiverAddr }}</div>
+        @if(!empty($receiverPhone))
+            <div>Telp: {{ $receiverPhone }}</div>
+        @endif
+    </div>
 
     <table class="items-table">
         <thead>
@@ -217,20 +262,21 @@
                     $productCode = $item->product->product_code ?? null;
                     $displayName = $productCode ? ($productName . ' | ' . $productCode) : $productName;
                     $unit = 'PCS';
+
+                    $pid = (int) $item->product_id;
+                    $note = $notesByProduct[$pid] ?? '';
                 @endphp
                 <tr>
                     <td class="col-no">{{ $index + 1 }}</td>
                     <td class="col-name">{{ $displayName }}</td>
                     <td class="col-qty">{{ (int) $item->quantity }}</td>
                     <td class="col-unit">{{ $unit }}</td>
-                    <td class="col-note"></td>
+                    <td class="col-note">{{ $note }}</td>
                 </tr>
             @endforeach
         </tbody>
     </table>
 
-    <!-- IMPORTANT: Jangan taruh delivery code di tabel items (bikin garis berantakan).
-         Kita buat box sendiri biar rapi dan tidak ada garis "kosong". -->
     <table class="footer-info">
         <tr>
             <td style="width: 40%;">

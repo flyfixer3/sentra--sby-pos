@@ -12,20 +12,21 @@
 
 @section('content')
 @php
-    // ✅ Pakai RAW status biar gak ketipu accessor/cast
     $status = strtolower(trim((string) ($transfer->getRawOriginal('status') ?? $transfer->status ?? 'pending')));
 
-    $statusLabel = strtoupper($status);
-
-    // ✅ NEW: tambahin confirmed_issue
     $statusClass = match ($status) {
-        'pending'         => 'bg-secondary',
-        'shipped'         => 'bg-primary',
-        'confirmed'       => 'bg-success',
-        'issue' => 'bg-warning text-dark',
-        'cancelled'       => 'bg-danger',
-        default           => 'bg-info text-dark',
+        'pending'   => 'bg-secondary text-white',
+        'shipped'   => 'bg-primary text-white',
+        'confirmed' => 'bg-success text-white',
+        'issue'     => 'bg-warning text-dark',
+        'cancelled' => 'bg-danger text-white',
+        default     => 'bg-info text-white',
     };
+
+    $activeBranch = session('active_branch');
+    $isAll = ($activeBranch === 'all' || $activeBranch === null || $activeBranch === '');
+    $isSender = (!$isAll && (int)$activeBranch === (int)$transfer->branch_id);
+    $canPrintSender = $isSender && $status !== 'cancelled';
 @endphp
 
 <div class="container-fluid">
@@ -39,12 +40,18 @@
             </div>
 
             <div class="d-flex flex-wrap gap-2 mt-2 mt-md-0">
-                @if ($status === 'pending')
-                    <a href="{{ route('transfers.print.pdf', $transfer->id) }}"
-                       class="btn btn-sm btn-dark" target="_blank">
-                        <i class="bi bi-printer"></i> Cetak Surat Jalan
-                    </a>
-                @endif
+
+                @can('print_transfers')
+                    @if($canPrintSender)
+                        <button type="button"
+                                class="btn btn-sm btn-dark js-open-print-transfer"
+                                data-transfer-id="{{ $transfer->id }}"
+                                data-transfer-ref="{{ $transfer->reference }}"
+                                title="Print Delivery Note">
+                            <i class="bi bi-printer"></i> Cetak Surat Jalan
+                        </button>
+                    @endif
+                @endcan
 
                 @if (
                     $status === 'shipped'
@@ -93,31 +100,22 @@
                         <strong>{{ \Carbon\Carbon::parse($transfer->date)->format('d M Y') }}</strong>
                     </div>
 
-                    @php
-                        $status = strtolower(trim((string) ($transfer->getRawOriginal('status') ?? $transfer->status ?? 'pending')));
-
-                        // ✅ NEW: confirmed_issue
-                        $statusClass = match ($status) {
-                            'pending'         => 'bg-warning text-dark',
-                            'shipped'         => 'bg-info text-dark',
-                            'confirmed'       => 'bg-success',
-                            'issue' => 'bg-warning text-dark',
-                            'cancelled'       => 'bg-danger',
-                            default           => 'bg-secondary',
-                        };
-                    @endphp
-
                     <div class="mb-1">
                         Status:
-                        <span class="badge {{ $statusClass }} text-uppercase">
+                        <span class="badge {{ $statusClass }} text-uppercase" id="js-transfer-status-badge">
                             {{ strtoupper($status) }}
                         </span>
                     </div>
 
                     @if($transfer->delivery_code)
-                        <div class="small text-muted">
+                        <div class="small text-muted" id="js-delivery-code-wrap">
                             Delivery Code:
-                            <strong>{{ $transfer->delivery_code }}</strong>
+                            <strong id="js-delivery-code">{{ $transfer->delivery_code }}</strong>
+                        </div>
+                    @else
+                        <div class="small text-muted d-none" id="js-delivery-code-wrap">
+                            Delivery Code:
+                            <strong id="js-delivery-code"></strong>
                         </div>
                     @endif
                 </div>
@@ -154,8 +152,8 @@
                 <div class="col-md-3">
                     <div class="border rounded p-3 h-100">
                         <div class="text-muted small">Printed By</div>
-                        <div class="fw-semibold">{{ $transfer->printed_at ? $printedByName : '-' }}</div>
-                        <div class="text-muted small">
+                        <div class="fw-semibold" id="js-printed-by-name">{{ $transfer->printed_at ? $printedByName : '-' }}</div>
+                        <div class="text-muted small" id="js-printed-at">
                             {{ $transfer->printed_at ? \Carbon\Carbon::parse($transfer->printed_at)->format('d M Y H:i') : '-' }}
                         </div>
                     </div>
@@ -208,7 +206,6 @@
                             <th>Produk</th>
                             <th class="text-center" width="120">Sent</th>
 
-                            {{-- ✅ confirmed OR confirmed_issue --}}
                             @if(in_array($status, ['confirmed','issue']))
                                 <th class="text-center">Received</th>
                                 <th class="text-center">Defect</th>
@@ -340,7 +337,7 @@
         </div>
     @endif
 
-    {{-- ================= DAMAGED (legacy detail) ================= --}}
+    {{-- ================= DAMAGED ================= --}}
     @if(in_array($status, ['confirmed','issue']) && isset($damaged) && $damaged->isNotEmpty())
         <div class="card mb-4 shadow-sm border-danger">
             <div class="card-header bg-danger bg-opacity-10 fw-semibold">
@@ -447,39 +444,178 @@
         </div>
     @endif
 
-
 </div>
+
+{{-- ✅ Print Confirm Modal --}}
+<div class="modal fade" id="printTransferModal" tabindex="-1" role="dialog" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered" role="document">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Print Delivery Note</h5>
+                <button type="button" class="close" data-dismiss="modal" aria-label="Close" style="font-size:24px;">
+                    <span aria-hidden="true">&times;</span>
+                </button>
+                <button type="button" class="btn-close d-none" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+
+            <div class="modal-body">
+                <div class="alert alert-warning mb-2">
+                    <strong>Konfirmasi:</strong> Aksi ini akan melakukan <strong>print log</strong> dan menambah hitungan <strong>COPY</strong>.
+                    Jika ini print pertama, status otomatis menjadi <strong>SHIPPED</strong>.
+                </div>
+
+                <div class="small text-muted">Reference</div>
+                <div class="fw-bold" id="jsPrintRef">{{ $transfer->reference }}</div>
+
+                <div class="mt-3 small text-muted" id="jsPrintHint">Klik "Yes, Print" untuk lanjut.</div>
+            </div>
+
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-dismiss="modal" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-dark" id="jsConfirmPrintBtn">
+                    <i class="bi bi-printer"></i> Yes, Print
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
 @endsection
 
 @push('scripts')
 <script>
+function openModal(modalId) {
+    const modalEl = document.getElementById(modalId);
+
+    try {
+        if (typeof bootstrap !== 'undefined' && bootstrap.Modal) {
+            bootstrap.Modal.getOrCreateInstance(modalEl).show();
+            return true;
+        }
+    } catch(e) {}
+
+    try {
+        if (typeof coreui !== 'undefined' && coreui.Modal) {
+            coreui.Modal.getOrCreateInstance(modalEl).show();
+            return true;
+        }
+    } catch(e) {}
+
+    try {
+        if (window.jQuery && typeof jQuery(modalEl).modal === 'function') {
+            jQuery(modalEl).modal('show');
+            return true;
+        }
+    } catch(e) {}
+
+    return false;
+}
+
+function closeModal(modalId) {
+    const modalEl = document.getElementById(modalId);
+
+    try {
+        if (typeof bootstrap !== 'undefined' && bootstrap.Modal) {
+            bootstrap.Modal.getOrCreateInstance(modalEl).hide();
+            return true;
+        }
+    } catch(e) {}
+
+    try {
+        if (typeof coreui !== 'undefined' && coreui.Modal) {
+            coreui.Modal.getOrCreateInstance(modalEl).hide();
+            return true;
+        }
+    } catch(e) {}
+
+    try {
+        if (window.jQuery && typeof jQuery(modalEl).modal === 'function') {
+            jQuery(modalEl).modal('hide');
+            return true;
+        }
+    } catch(e) {}
+
+    return false;
+}
+
 document.addEventListener('click', function (e) {
-    // Cancel modal
+
     const cancelBtn = e.target.closest('[data-open-cancel-modal]');
     if (cancelBtn) {
         const modalId = cancelBtn.getAttribute('data-open-cancel-modal');
-        const modalEl = document.getElementById(modalId);
-        if (!modalEl) return;
-
-        // Bootstrap 5
-        if (window.bootstrap?.Modal) {
-            window.bootstrap.Modal.getOrCreateInstance(modalEl).show();
-            return;
-        }
-
-        // CoreUI
-        if (window.coreui?.Modal) {
-            window.coreui.Modal.getOrCreateInstance(modalEl).show();
-            return;
-        }
-
-        // Bootstrap 4 fallback (jQuery)
-        if (window.jQuery && typeof window.jQuery(modalEl).modal === 'function') {
-            window.jQuery(modalEl).modal('show');
-            return;
-        }
+        if (!modalId) return;
+        openModal(modalId);
         return;
     }
+
+    const printBtn = e.target.closest('.js-open-print-transfer');
+    if (printBtn) {
+        window.__printTransferId = printBtn.getAttribute('data-transfer-id');
+        window.__printTransferRef = printBtn.getAttribute('data-transfer-ref') || '';
+        document.getElementById('jsPrintRef').innerText = window.__printTransferRef;
+        openModal('printTransferModal');
+        return;
+    }
+});
+
+document.addEventListener('DOMContentLoaded', function () {
+
+    const confirmBtn = document.getElementById('jsConfirmPrintBtn');
+    if (!confirmBtn) return;
+
+    confirmBtn.addEventListener('click', function () {
+        const id = window.__printTransferId;
+        if (!id) return;
+
+        confirmBtn.disabled = true;
+        document.getElementById('jsPrintHint').innerText = 'Processing...';
+
+        fetch("{{ route('transfers.print.prepare', ['transfer' => $transfer->id]) }}".replace("{{ $transfer->id }}", id), {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                "X-CSRF-TOKEN": "{{ csrf_token() }}",
+                "Accept": "application/json"
+            },
+            body: JSON.stringify({})
+        })
+        .then(async (res) => {
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) {
+                const msg = data.message || 'Failed to print.';
+                throw new Error(msg);
+            }
+            return data;
+        })
+        .then((data) => {
+            closeModal('printTransferModal');
+
+            if (data.pdf_url) {
+                window.open(data.pdf_url, '_blank');
+            }
+
+            // update badge status quickly (best effort)
+            if (data.status) {
+                const badge = document.getElementById('js-transfer-status-badge');
+                if (badge) {
+                    badge.innerText = String(data.status).toUpperCase();
+                    badge.className = 'badge bg-primary text-uppercase';
+                }
+            }
+
+            // info delivery code on UI: optional - cannot fetch code from response right now
+            // If you want, we can return delivery_code too from controller.
+
+        })
+        .catch((err) => {
+            alert(err.message || 'Print failed.');
+        })
+        .finally(() => {
+            confirmBtn.disabled = false;
+            document.getElementById('jsPrintHint').innerText = 'Klik "Yes, Print" untuk lanjut.';
+        });
+    });
+
 });
 </script>
 @endpush
