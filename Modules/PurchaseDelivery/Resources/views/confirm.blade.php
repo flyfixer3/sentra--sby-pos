@@ -234,6 +234,19 @@
                     </table>
                 </div>
 
+                {{-- ✅ NEW: Confirmation Note (General) --}}
+                <div class="p-3 border-top">
+                    <label class="font-weight-bold mb-1">Confirmation Note (General)</label>
+                    <textarea class="form-control"
+                              name="confirm_note"
+                              rows="3"
+                              maxlength="1000"
+                              placeholder="Isi alasan / catatan konfirmasi (contoh: supplier kirim partial dulu karena stok kosong, sisanya menyusul minggu depan)">{{ old('confirm_note') }}</textarea>
+                    <div class="text-muted mt-2">
+                        <small>Catatan ini terpisah dari note saat create PD, dan akan tampil di halaman detail PD (Show).</small>
+                    </div>
+                </div>
+
             </div>
 
             <div class="card-footer d-flex justify-content-between align-items-center">

@@ -81,90 +81,168 @@ class PurchaseController extends Controller
     {
         abort_if(Gate::denies('create_purchases'), 403);
 
+        $purchaseDelivery->loadMissing([
+            'purchaseOrder',
+            'purchaseOrder.purchases',
+            'purchaseOrder.purchaseOrderDetails',
+            'purchaseDeliveryDetails',
+        ]);
+
+        /**
+         * ======================================================
+         * 🚫 HARD GUARD: 1 PO = 1 INVOICE (PURCHASE)
+         * ======================================================
+         */
+        if ($purchaseDelivery->purchase_order_id) {
+
+            $existingPurchase = Purchase::where('purchase_order_id', $purchaseDelivery->purchase_order_id)
+                ->whereNull('deleted_at')
+                ->first();
+
+            if ($existingPurchase) {
+                return redirect()
+                    ->route('purchase-deliveries.show', $purchaseDelivery->id)
+                    ->with('error', 'Invoice for this Purchase Order has already been created. Only one invoice is allowed per Purchase Order.');
+            }
+        }
+
+        // guard lama
         if ($purchaseDelivery->purchase) {
             return redirect()->back()
                 ->with('error', 'This Purchase Delivery already has an invoice.');
         }
 
-        $purchaseDelivery->loadMissing([
-            'purchaseOrder.purchaseOrderDetails',
-            'purchaseDeliveryDetails'
-        ]);
-
+        /**
+         * ======================================================
+         * PREPARE CART (FOLLOW PO TOTAL)
+         * ======================================================
+         */
         Cart::instance('purchase')->destroy();
         $cart = Cart::instance('purchase');
 
         $purchaseOrder = $purchaseDelivery->purchaseOrder;
 
-        $branchId = $this->getActiveBranchId();
+        $branchId    = $this->getActiveBranchId();
         $warehouseId = $this->resolveDefaultWarehouseId($branchId);
 
-        foreach ($purchaseDelivery->purchaseDeliveryDetails as $item) {
+        // ✅ kalau PD punya warehouse dan masih satu branch, kamu bisa prefer ini
+        // (biar stockLast nyari warehouse yang sesuai delivery)
+        if (!empty($purchaseDelivery->warehouse_id)) {
+            $warehouseId = (int) $purchaseDelivery->warehouse_id;
+        }
 
-            $confirmedQty =
-                (int)$item->qty_received +
-                (int)$item->qty_defect +
-                (int)$item->qty_damaged;
+        // ✅ INVOICE SOURCE:
+        // - kalau ada PO: ambil PO details (TOTAL PO)
+        // - kalau tidak ada PO: fallback pakai PD confirmed qty (legacy edge case)
+        if ($purchaseOrder) {
 
-            if ($confirmedQty <= 0) continue;
+            $poDetails = $purchaseOrder->purchaseOrderDetails;
 
-            $poDetail = $purchaseOrder->purchaseOrderDetails()
-                ->where('product_id', $item->product_id)
-                ->first();
+            foreach ($poDetails as $d) {
+                $qty = (int) $d->quantity; // ✅ TOTAL PO
+                if ($qty <= 0) continue;
 
-            $price = $poDetail ? (int)$poDetail->price : 0;
+                $product = Product::select('id', 'product_code', 'product_name', 'product_unit')
+                    ->find($d->product_id);
 
-            $product = Product::select('id', 'product_code', 'product_name', 'product_unit')
-                ->where('id', $item->product_id)
-                ->first();
+                $productCode = $d->product_code ?: ($product?->product_code ?? 'UNKNOWN');
+                $productName = $d->product_name ?: ($product?->product_name ?? '-');
 
-            // ✅ pastikan product_code tidak null (kolom DB purchase_details NOT NULL)
-            $productCode = null;
-            if ($product && !empty($product->product_code)) {
-                $productCode = $product->product_code;
-            } elseif (!empty($item->product_code)) {
-                $productCode = $item->product_code;
-            } else {
-                $productCode = 'UNKNOWN';
+                $price = (int) ($d->price ?? 0);
+
+                $stockLast = 0;
+                $mutation = Mutation::where('product_id', (int) $d->product_id)
+                    ->where('warehouse_id', $warehouseId)
+                    ->latest()
+                    ->first();
+
+                if ($mutation) {
+                    $stockLast = (int) $mutation->stock_last;
+                }
+
+                $cart->add([
+                    'id'    => (int) $d->product_id,
+                    'name'  => (string) $productName,
+                    'qty'   => $qty,
+                    'price' => $price,
+                    'weight'=> 1,
+                    'options' => [
+                        'sub_total'   => $qty * $price,
+                        'code'        => (string) $productCode,
+                        'unit_price'  => (int) ($d->unit_price ?? 0),
+                        'warehouse_id'=> $warehouseId,
+                        'branch_id'   => $branchId,
+                        'stock'       => $stockLast,
+                        'unit'        => $product?->product_unit,
+                        'product_discount' => (float) ($d->product_discount_amount ?? 0),
+                        'product_discount_type' => (string) ($d->product_discount_type ?? 'fixed'),
+                        'product_tax' => (float) ($d->product_tax_amount ?? 0),
+                    ]
+                ]);
             }
 
-            $productName = $item->product_name;
-            if (empty($productName) && $product) {
-                $productName = $product->product_name;
+        } else {
+
+            // fallback: tidak ada PO (harusnya jarang)
+            foreach ($purchaseDelivery->purchaseDeliveryDetails as $item) {
+
+                $confirmedQty =
+                    (int) $item->qty_received +
+                    (int) $item->qty_defect +
+                    (int) $item->qty_damaged;
+
+                if ($confirmedQty <= 0) continue;
+
+                $price = 0;
+
+                $product = Product::select('id', 'product_code', 'product_name', 'product_unit')
+                    ->find($item->product_id);
+
+                $productCode =
+                    $product?->product_code
+                    ?? $item->product_code
+                    ?? 'UNKNOWN';
+
+                $productName =
+                    $item->product_name
+                    ?: $product?->product_name
+                    ?: '-';
+
+                $stockLast = 0;
+                $mutation = Mutation::where('product_id', $item->product_id)
+                    ->where('warehouse_id', $warehouseId)
+                    ->latest()
+                    ->first();
+
+                if ($mutation) {
+                    $stockLast = (int) $mutation->stock_last;
+                }
+
+                $cart->add([
+                    'id'    => $item->product_id,
+                    'name'  => $productName,
+                    'qty'   => $confirmedQty,
+                    'price' => $price,
+                    'weight'=> 1,
+                    'options' => [
+                        'sub_total'   => $confirmedQty * $price,
+                        'code'        => $productCode,
+                        'unit_price'  => $price,
+                        'warehouse_id'=> $warehouseId,
+                        'branch_id'   => $branchId,
+                        'stock'       => $stockLast,
+                        'unit'        => $product?->product_unit,
+                        'product_discount' => 0,
+                        'product_discount_type' => 'fixed',
+                        'product_tax' => 0,
+                    ]
+                ]);
             }
-
-            // optional stock display
-            $stockLast = 0;
-            $mutation = Mutation::where('product_id', $item->product_id)
-                ->where('warehouse_id', $warehouseId)
-                ->latest()
-                ->first();
-            if ($mutation) $stockLast = (int)$mutation->stock_last;
-
-            $cart->add([
-                'id'    => $item->product_id,
-                'name'  => $productName,
-                'qty'   => $confirmedQty,
-                'price' => $price,
-                'weight'=> 1,
-                'options' => [
-                    'sub_total'   => $confirmedQty * $price,
-                    'code'        => $productCode,     // ✅ FIX product_code
-                    'unit_price'  => $price,
-                    'warehouse_id'=> $warehouseId,
-                    'branch_id'   => $branchId,
-                    'stock'       => $stockLast,
-                    'unit'        => $product ? $product->product_unit : null,
-                    'product_discount' => 0,
-                    'product_discount_type' => 'fixed',
-                    'product_tax' => 0,
-                ]
-            ]);
         }
 
         return view('purchase-orders::purchase-order-purchases.create', [
-            'purchaseOrder'        => $purchaseOrder,
-            'purchaseDelivery'     => $purchaseDelivery,
+            'purchaseOrder'    => $purchaseOrder,
+            'purchaseDelivery' => $purchaseDelivery,
         ]);
     }
 
@@ -221,6 +299,17 @@ class PurchaseController extends Controller
             }
 
             $supplier = Supplier::findOrFail($request->supplier_id);
+
+            // ✅ HARD GUARD DI STORE: 1 PO = 1 INVOICE
+            if ($request->purchase_order_id) {
+                $exists = Purchase::where('purchase_order_id', (int) $request->purchase_order_id)
+                    ->whereNull('deleted_at')
+                    ->exists();
+
+                if ($exists) {
+                    throw new \Exception("Invoice for this Purchase Order has already been created. Only one invoice is allowed per Purchase Order.");
+                }
+            }
 
             $purchase = Purchase::create([
                 'purchase_order_id'     => $request->purchase_order_id ?? null,
@@ -338,40 +427,16 @@ class PurchaseController extends Controller
                 }
             }
 
-            // =========================================
             // 2) AUTO CREATE PURCHASE DELIVERY (WALK-IN)
-            //    ✅ SET received + create mutation IN via PD engine
-            //    ✅ FIX LINK purchase_delivery_id (TANPA update([...]) supaya gak ke-block fillable)
+            //    ✅ PD dibuat PENDING (wajib confirm manual)
+            //    ✅ TIDAK create mutation di sini
+            //    ✅ Link purchase_delivery_id aman (assign+save + query builder)
             // =========================================
             if (!$fromDelivery && empty($purchase->purchase_delivery_id)) {
 
-                $autoPD = PurchaseDelivery::create([
-                    'purchase_order_id' => $purchase->purchase_order_id ?? null,
-                    'branch_id'         => (int) $purchase->branch_id,
-                    'warehouse_id'      => (int) $purchase->warehouse_id,
-                    'date'              => (string) $purchase->date,
-                    'note'              => 'Auto-created from Purchase (walk-in)',
-                    'ship_via'          => null,
-                    'tracking_number'   => null,
-                    'status'            => 'received',
-                    'created_by'        => auth()->id(),
-                ]);
+                $autoPD = $this->createPendingPurchaseDeliveryForWalkIn($purchase);
 
-                foreach (Cart::instance('purchase')->content() as $cart_item) {
-                    PurchaseDeliveryDetails::create([
-                        'purchase_delivery_id' => (int) $autoPD->id,
-                        'product_id'           => (int) $cart_item->id,
-                        'product_name'         => (string) $cart_item->name,
-                        'product_code'         => (string) (($cart_item->options->code ?? null) ?: 'UNKNOWN'),
-                        'quantity'             => (int) $cart_item->qty,
-                        'qty_received'         => (int) $cart_item->qty,
-                        'qty_defect'           => 0,
-                        'qty_damaged'          => 0,
-                    ]);
-                }
-
-                // ✅ FIX PALING PENTING:
-                // pakai assign + save (tidak bergantung fillable)
+                // ✅ FIX PALING PENTING: link purchase_delivery_id aman
                 $purchase->purchase_delivery_id = (int) $autoPD->id;
                 $purchase->save();
 
@@ -380,8 +445,8 @@ class PurchaseController extends Controller
                     ->where('id', (int) $purchase->id)
                     ->update(['purchase_delivery_id' => (int) $autoPD->id]);
 
-                // ✅ generate mutation stock masuk berdasarkan PD (selaras confirm PD)
-                $this->createMutationsForWalkInPurchaseDelivery($autoPD, $purchase);
+                // ❌ Jangan panggil createMutationsForWalkInPurchaseDelivery()
+                // Stock masuk terjadi saat confirm PD.
             }
 
             // status PO hanya legacy/manual
@@ -813,4 +878,57 @@ class PurchaseController extends Controller
             }
         }
     }
+
+    private function createPendingPurchaseDeliveryForWalkIn(Purchase $purchase): PurchaseDelivery
+    {
+        // NOTE: PD dibuat PENDING, tidak auto received, tidak create mutation.
+        // Confirm PD yang akan melakukan mutation + update fulfilled PO.
+
+        $roleString = '-';
+        if (auth()->user() && method_exists(auth()->user(), 'getRoleNames')) {
+            $roles = auth()->user()->getRoleNames()->toArray();
+            $roles = array_values(array_filter(array_map(fn ($r) => trim((string) $r), $roles)));
+            $roleString = count($roles) ? implode(', ', $roles) : '-';
+        }
+
+        $autoNote = 'Auto-created from Purchase (invoice). Please confirm receipt manually.';
+
+        $autoPD = PurchaseDelivery::create([
+            'purchase_order_id' => $purchase->purchase_order_id ?? null,
+            'branch_id'         => (int) $purchase->branch_id,
+            'warehouse_id'      => (int) $purchase->warehouse_id,
+            'date'              => (string) $purchase->date,
+            'note'              => $autoNote,
+            'ship_via'          => null,
+            'tracking_number'   => null,
+
+            // ✅ PENDING (wajib confirm manual)
+            'status'            => 'Pending',
+
+            'created_by'        => auth()->id(),
+
+            // ✅ note meta (create/edit PD note)
+            'note_updated_by'   => auth()->id(),
+            'note_updated_role' => $roleString,
+            'note_updated_at'   => now(),
+        ]);
+
+        foreach (Cart::instance('purchase')->content() as $cart_item) {
+            PurchaseDeliveryDetails::create([
+                'purchase_delivery_id' => (int) $autoPD->id,
+                'product_id'           => (int) $cart_item->id,
+                'product_name'         => (string) $cart_item->name,
+                'product_code'         => (string) (($cart_item->options->code ?? null) ?: 'UNKNOWN'),
+                'quantity'             => (int) $cart_item->qty,
+
+                // ✅ belum diterima sebelum confirm
+                'qty_received'         => 0,
+                'qty_defect'           => 0,
+                'qty_damaged'          => 0,
+            ]);
+        }
+
+        return $autoPD;
+    }
+
 }

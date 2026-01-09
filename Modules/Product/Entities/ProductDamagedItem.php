@@ -78,4 +78,11 @@ class ProductDamagedItem extends Model
         $userModel = config('auth.providers.users.model');
         return $this->belongsTo($userModel, 'responsible_user_id');
     }
+
+    public function scopeAvailable($q)
+    {
+        return $q->whereNull('moved_out_at')
+                ->where('resolution_status', 'pending');
+    }
+
 }

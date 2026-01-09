@@ -32,7 +32,9 @@ class ProductCart extends Component
 
             $this->global_discount = $data->discount_percentage;
             $this->global_tax = $data->tax_percentage;
-            $this->global_qty = Cart::instance($this->cart_instance)->count();
+            $this->global_qty = (int) Cart::instance($this->cart_instance)
+            ->content()
+            ->sum('qty');
             $this->shipping = $data->shipping_amount;
             $this->platform_fee = $data->fee_amount;
 
@@ -130,7 +132,7 @@ class ProductCart extends Component
     public function updatedGlobalTax() {
         Cart::instance($this->cart_instance)->setGlobalTax((integer)$this->global_tax);
     }
- 
+
     public function updatedGlobalDiscount() {
         Cart::instance($this->cart_instance)->setGlobalDiscount((integer)$this->global_discount);
     }

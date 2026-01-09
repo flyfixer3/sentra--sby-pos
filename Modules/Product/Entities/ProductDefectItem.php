@@ -52,4 +52,10 @@ class ProductDefectItem extends Model
         $userModel = config('auth.providers.users.model');
         return $this->belongsTo($userModel, 'created_by');
     }
+
+    public function scopeAvailable($q)
+    {
+        return $q->whereNull('moved_out_at');
+    }
+
 }

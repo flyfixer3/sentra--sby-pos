@@ -263,8 +263,7 @@
                     $displayName = $productCode ? ($productName . ' | ' . $productCode) : $productName;
                     $unit = 'PCS';
 
-                    $pid = (int) $item->product_id;
-                    $note = $notesByProduct[$pid] ?? '';
+                    $note = $notesByItemId[(int) $item->id] ?? '';
                 @endphp
                 <tr>
                     <td class="col-no">{{ $index + 1 }}</td>

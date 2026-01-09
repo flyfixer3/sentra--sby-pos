@@ -231,28 +231,35 @@
 
     </div>
 @endsection
-
 @push('page_scripts')
-    <script src="{{ asset('js/jquery-mask-money.js') }}"></script>
-    <script>
-        $(document).ready(function () {
-            $('#paid_amount').maskMoney({
-                prefix:'{{ settings()->currency->symbol }}',
-                thousands:'{{ settings()->currency->thousand_separator }}',
-                decimal:'{{ settings()->currency->decimal_separator }}',
-                allowZero: true,
-                precision: 0
-            });
+<script>
+  $(function () {
+    $('#paid_amount').maskMoney({
+      prefix:'{{ settings()->currency->symbol }}',
+      thousands:'{{ settings()->currency->thousand_separator }}',
+      decimal:'{{ settings()->currency->decimal_separator }}',
+      allowZero: true,
+      precision: 0,
+    });
 
-            $('#getTotalAmount').click(function () {
-                $('#paid_amount').maskMoney('mask', {{ Cart::instance('purchase')->total() }});
-            });
+    // ✅ QUICK FILL = GRAND TOTAL
+    $('#getTotalAmount').on('click', function () {
+      const total = parseFloat(
+        ($('input[name="total_amount"]').val() || '0')
+          .toString()
+          .replace(',', '.')
+      ) || 0;
 
-            $('#purchase-form').submit(function () {
-                var paid_amount = $('#paid_amount').maskMoney('destroy')[0];
-                var new_number = parseInt(paid_amount.value.toString().replaceAll(/[Rp.]/g, ""));
-                $('#paid_amount').val(new_number);
-            });
-        });
-    </script>
+      $('#paid_amount').maskMoney('mask', total);
+    });
+
+    // sebelum submit, convert ke integer
+    $('#purchase-form').on('submit', function () {
+      const el = $('#paid_amount').maskMoney('destroy')[0];
+      const clean = parseInt((el.value || '').replaceAll(/[^\d]/g, '')) || 0;
+      $('#paid_amount').val(clean);
+    });
+  });
+</script>
 @endpush
+

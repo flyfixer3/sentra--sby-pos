@@ -14,19 +14,46 @@ class PurchaseDelivery extends Model
 
     protected $fillable = [
         'purchase_order_id',
-        'branch_id',       // ✅ kalau kolomnya ada
-        'warehouse_id',    // ✅ wajib
+        'branch_id',
+        'warehouse_id',
         'date',
         'tracking_number',
         'ship_via',
         'status',
+
+        // note create/edit
         'note',
-        'created_by',      // ✅ kalau kolomnya ada
+        'note_updated_by',
+        'note_updated_role',
+        'note_updated_at',
+
+        // note confirm
+        'confirm_note',
+        'confirm_note_updated_by',
+        'confirm_note_updated_role',
+        'confirm_note_updated_at',
+
+        'created_by',
+    ];
+
+    protected $casts = [
+        'note_updated_at' => 'datetime',
+        'confirm_note_updated_at' => 'datetime',
     ];
 
     public function creator()
     {
         return $this->belongsTo(\App\Models\User::class, 'created_by');
+    }
+
+    public function noteUpdater()
+    {
+        return $this->belongsTo(\App\Models\User::class, 'note_updated_by');
+    }
+
+    public function confirmNoteUpdater()
+    {
+        return $this->belongsTo(\App\Models\User::class, 'confirm_note_updated_by');
     }
 
     public function purchaseOrder()
@@ -36,10 +63,9 @@ class PurchaseDelivery extends Model
 
     public function purchase()
     {
-        // karena purchases punya kolom purchase_delivery_id
+        // purchases punya kolom purchase_delivery_id
         return $this->hasOne(Purchase::class, 'purchase_delivery_id', 'id');
     }
-
 
     public function purchaseDeliveryDetails()
     {

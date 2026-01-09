@@ -535,12 +535,39 @@
             {{-- NOTE --}}
             <div class="mt-3">
                 <div class="pd-box">
-                    <div class="pd-label">Note</div>
+                    <div class="pd-label">Note (Create / Edit Delivery)</div>
                     <div class="pd-value" style="font-weight:600; white-space:pre-line;">
                         {{ $purchaseDelivery->note ?: '-' }}
                     </div>
+
+                    @if(!empty($purchaseDelivery->note_updated_at))
+                        <div class="pd-sub mt-2">
+                            Last updated:
+                            <strong>{{ \Carbon\Carbon::parse($purchaseDelivery->note_updated_at)->format('d M Y, H:i') }}</strong>
+                            • Role: <strong>{{ $purchaseDelivery->note_updated_role ?? '-' }}</strong>
+                        </div>
+                    @endif
                 </div>
             </div>
+
+            {{-- CONFIRM NOTE --}}
+            <div class="mt-3">
+                <div class="pd-box">
+                    <div class="pd-label">Confirmation Note (General)</div>
+                    <div class="pd-value" style="font-weight:600; white-space:pre-line;">
+                        {{ $purchaseDelivery->confirm_note ?: '-' }}
+                    </div>
+
+                    @if(!empty($purchaseDelivery->confirm_note_updated_at))
+                        <div class="pd-sub mt-2">
+                            Confirmed note updated:
+                            <strong>{{ \Carbon\Carbon::parse($purchaseDelivery->confirm_note_updated_at)->format('d M Y, H:i') }}</strong>
+                            • Role: <strong>{{ $purchaseDelivery->confirm_note_updated_role ?? '-' }}</strong>
+                        </div>
+                    @endif
+                </div>
+            </div>
+
 
             {{-- ACTIONS --}}
             <div class="pd-footer">
@@ -565,10 +592,24 @@
                             Confirm Delivery
                         </a>
                     @else
-                        <a href="{{ route('purchases.createFromDelivery', ['purchase_delivery' => $purchaseDelivery]) }}"
-                           class="btn btn-primary btn-sm">
-                            Create Purchase (Invoice)
-                        </a>
+                        @php
+                            $hasInvoice = false;
+
+                            if ($purchaseDelivery->purchase_order_id) {
+                                $hasInvoice = \Modules\Purchase\Entities\Purchase::where('purchase_order_id', $purchaseDelivery->purchase_order_id)
+                                    ->whereNull('deleted_at')
+                                    ->exists();
+                            }
+                        @endphp
+
+                        @if(!$hasInvoice)
+                            <a href="{{ route('purchases.createFromDelivery', ['purchase_delivery' => $purchaseDelivery]) }}"
+                            class="btn btn-primary btn-sm">
+                                Create Purchase (Invoice)
+                            </a>
+                        @else
+                            <span class="pd-muted">Invoice already created</span>
+                        @endif
                     @endif
                 </div>
             </div>

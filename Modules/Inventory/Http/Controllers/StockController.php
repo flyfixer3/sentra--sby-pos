@@ -5,6 +5,7 @@ namespace Modules\Inventory\Http\Controllers;
 use Illuminate\Routing\Controller;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 use Modules\Inventory\DataTables\StocksDataTable;
 use Modules\Inventory\Entities\StockRack;
 use Modules\Product\Entities\Warehouse;
@@ -41,6 +42,10 @@ class StockController extends Controller
      * - kalau session active_branch = all => tampilkan semua branch
      * - kalau bukan all => otomatis terfilter branch itu (by HasBranchScope biasanya),
      *   tapi di sini kita explicit filter juga supaya jelas.
+     *
+     * ✅ FIX penting:
+     * - modal harus exclude data yang sudah moved_out_at (biar match dengan badge qty di StocksDataTable)
+     * - damaged tetap hanya pending + exclude moved_out_at
      */
     public function qualityDetails($type, $productId, Request $request)
     {
@@ -80,6 +85,11 @@ class StockController extends Controller
                     DB::raw('COALESCE(w.warehouse_name, "-") as warehouse_name'),
                 ])
                 ->orderByDesc('i.id');
+
+            // ✅ exclude moved out (kalau kolomnya ada)
+            if (Schema::hasColumn('product_defect_items', 'moved_out_at')) {
+                $q->whereNull('i.moved_out_at');
+            }
 
             if (!$isAllBranchMode && is_numeric($activeBranch)) {
                 $q->where('i.branch_id', (int) $activeBranch);
@@ -123,6 +133,11 @@ class StockController extends Controller
                 DB::raw('COALESCE(w.warehouse_name, "-") as warehouse_name'),
             ])
             ->orderByDesc('i.id');
+
+        // ✅ exclude moved out (kalau kolomnya ada)
+        if (Schema::hasColumn('product_damaged_items', 'moved_out_at')) {
+            $q->whereNull('i.moved_out_at');
+        }
 
         if (!$isAllBranchMode && is_numeric($activeBranch)) {
             $q->where('i.branch_id', (int) $activeBranch);

@@ -55,6 +55,20 @@ class PurchaseDeliveryController extends Controller
         return (int) $active;
     }
 
+    protected function roleString(): string
+    {
+        $user = auth()->user();
+        if (!$user) return '-';
+
+        $roles = method_exists($user, 'getRoleNames')
+            ? $user->getRoleNames()->toArray()
+            : [];
+
+        $roles = array_values(array_filter(array_map(fn ($r) => trim((string) $r), $roles)));
+
+        return count($roles) ? implode(', ', $roles) : '-';
+    }
+
     /**
      * =====================
      * CREATE (FORM)
@@ -118,7 +132,6 @@ class PurchaseDeliveryController extends Controller
             'note'              => 'nullable|string|max:1000',
             'quantity'          => 'required|array|min:1',
             'quantity.*'        => 'nullable|integer|min:0',
-            // ❌ JANGAN validasi description kalau kolomnya gak ada
         ]);
 
         DB::transaction(function () use ($request) {
@@ -131,16 +144,23 @@ class PurchaseDeliveryController extends Controller
                 abort(403, 'Warehouse must belong to the same branch as the PO.');
             }
 
+            $note = $request->note ? (string) $request->note : null;
+
             $delivery = PurchaseDelivery::create([
                 'purchase_order_id' => (int) $purchaseOrder->id,
                 'branch_id'         => (int) $purchaseOrder->branch_id,
                 'warehouse_id'      => (int) $request->warehouse_id,
                 'date'              => (string) $request->date,
-                'note'              => $request->note,
+                'note'              => $note,
                 'ship_via'          => $request->ship_via,
                 'tracking_number'   => $request->tracking_number,
                 'status'            => 'Pending',
                 'created_by'        => auth()->id(),
+
+                // meta note create
+                'note_updated_by'   => $note ? auth()->id() : null,
+                'note_updated_role' => $note ? $this->roleString() : null,
+                'note_updated_at'   => $note ? now() : null,
             ]);
 
             $hasItem = false;
@@ -162,7 +182,6 @@ class PurchaseDeliveryController extends Controller
                     'qty_received'         => 0,
                     'qty_defect'           => 0,
                     'qty_damaged'          => 0,
-                    // ❌ JANGAN isi purchase_order_id, description (kolomnya gak ada)
                 ]);
 
                 $hasItem = true;
@@ -178,6 +197,99 @@ class PurchaseDeliveryController extends Controller
             ->with('success', 'Purchase Delivery created. Please confirm received items.');
     }
 
+    /**
+     * =====================
+     * EDIT (PENDING ONLY)
+     * =====================
+     */
+    public function edit(PurchaseDelivery $purchaseDelivery)
+    {
+        abort_if(Gate::denies('edit_purchase_deliveries'), 403);
+
+        $purchaseDelivery->loadMissing(['warehouse', 'purchaseOrder', 'branch']);
+
+        if (strtolower((string) $purchaseDelivery->status) !== 'pending') {
+            return redirect()
+                ->route('purchase-deliveries.show', $purchaseDelivery->id)
+                ->with('error', 'Only Pending Purchase Delivery can be edited.');
+        }
+
+        $branchId = $this->activeBranchIdOrFail('purchase-deliveries.index');
+
+        if ((int) $purchaseDelivery->branch_id !== (int) $branchId) {
+            abort(403, 'Active branch mismatch for this Purchase Delivery.');
+        }
+
+        $warehouses = Warehouse::query()
+            ->where('branch_id', $branchId)
+            ->orderByDesc('is_main')
+            ->orderBy('warehouse_name')
+            ->get();
+
+        return view('purchase-deliveries::edit', [
+            'purchaseDelivery' => $purchaseDelivery,
+            'warehouses'       => $warehouses,
+        ]);
+    }
+
+    public function update(Request $request, PurchaseDelivery $purchaseDelivery)
+    {
+        abort_if(Gate::denies('edit_purchase_deliveries'), 403);
+
+        $purchaseDelivery->loadMissing(['purchaseOrder', 'warehouse']);
+
+        if (strtolower((string) $purchaseDelivery->status) !== 'pending') {
+            return redirect()
+                ->route('purchase-deliveries.show', $purchaseDelivery->id)
+                ->with('error', 'Only Pending Purchase Delivery can be edited.');
+        }
+
+        $branchId = $this->activeBranchIdOrFail('purchase-deliveries.index');
+
+        if ((int) $purchaseDelivery->branch_id !== (int) $branchId) {
+            abort(403, 'Active branch mismatch for this Purchase Delivery.');
+        }
+
+        $request->validate([
+            'warehouse_id'    => 'required|exists:warehouses,id',
+            'date'            => 'required|date',
+            'ship_via'        => 'nullable|string|max:100',
+            'tracking_number' => 'nullable|string|max:100',
+            'note'            => 'nullable|string|max:1000',
+        ]);
+
+        DB::transaction(function () use ($request, $purchaseDelivery) {
+
+            $purchaseDelivery = PurchaseDelivery::withoutGlobalScopes()
+                ->lockForUpdate()
+                ->findOrFail($purchaseDelivery->id);
+
+            // guard warehouse must be same branch
+            $wh = Warehouse::findOrFail((int) $request->warehouse_id);
+            if ((int) $wh->branch_id !== (int) $purchaseDelivery->branch_id) {
+                abort(403, 'Warehouse must belong to the same branch as this Purchase Delivery.');
+            }
+
+            $note = $request->note ? (string) $request->note : null;
+
+            $purchaseDelivery->update([
+                'warehouse_id'    => (int) $request->warehouse_id,
+                'date'            => (string) $request->date,
+                'ship_via'        => $request->ship_via,
+                'tracking_number' => $request->tracking_number,
+                'note'            => $note,
+
+                // meta note update
+                'note_updated_by'   => $note ? auth()->id() : null,
+                'note_updated_role' => $note ? $this->roleString() : null,
+                'note_updated_at'   => $note ? now() : null,
+            ]);
+        });
+
+        return redirect()
+            ->route('purchase-deliveries.show', $purchaseDelivery->id)
+            ->with('success', 'Purchase Delivery updated successfully.');
+    }
 
     /**
      * =====================
@@ -192,7 +304,7 @@ class PurchaseDeliveryController extends Controller
             return redirect()->back()->with('error', 'This delivery has already been confirmed.');
         }
 
-        $purchaseDelivery->load(['purchaseOrder', 'purchaseDeliveryDetails', 'warehouse']);
+        $purchaseDelivery->load(['purchaseOrder', 'purchase', 'purchaseDeliveryDetails', 'warehouse']);
 
         return view('purchase-deliveries::confirm', compact('purchaseDelivery'));
     }
@@ -203,20 +315,19 @@ class PurchaseDeliveryController extends Controller
 
         $purchaseDelivery->loadMissing([
             'purchaseOrder.supplier',
-            'purchase', // walk-in
+            'purchase',
             'warehouse',
             'branch',
+            'creator',
+            'noteUpdater',
+            'confirmNoteUpdater',
             'purchaseDeliveryDetails',
         ]);
 
-        // ✅ Vendor (PO dulu, kalau tidak ada => ambil dari Purchase walk-in)
         $vendorName = optional(optional($purchaseDelivery->purchaseOrder)->supplier)->supplier_name
             ?? optional($purchaseDelivery->purchase)->supplier_name
             ?? '-';
 
-        // Kalau kamu punya vendor email di suppliers table dan mau tampil juga:
-        // - PO: supplier.email
-        // - walk-in: kalau purchase.supplier_id terisi, ambil dari suppliers
         $vendorEmail = optional(optional($purchaseDelivery->purchaseOrder)->supplier)->supplier_email
             ?? (optional($purchaseDelivery->purchase)->supplier_id
                 ? \Modules\People\Entities\Supplier::where('id', $purchaseDelivery->purchase->supplier_id)->value('supplier_email')
@@ -230,23 +341,19 @@ class PurchaseDeliveryController extends Controller
         ]);
     }
 
-
-
     /**
      * =====================
      * CONFIRM STORE
      * =====================
-     * Flow:
-     * - Update qty_received/qty_defect/qty_damaged per PD detail
-     * - Update PO detail fulfilled_quantity (+ total)
-     * - Mutation IN: received + defect + damaged
-     * - Create rows ProductDefectItem / ProductDamagedItem (per unit, qty=1)
+     * NOTE: partial allowed (NOT missing)
      */
     public function confirmStore(Request $request, PurchaseDelivery $purchaseDelivery)
     {
         abort_if(Gate::denies('confirm_purchase_deliveries'), 403);
 
         $request->validate([
+            'confirm_note' => 'nullable|string|max:1000',
+
             'items' => 'required|array|min:1',
             'items.*.detail_id'     => 'required|integer',
             'items.*.product_id'    => 'required|integer',
@@ -316,6 +423,7 @@ class PurchaseDeliveryController extends Controller
                     throw new \RuntimeException("Invalid qty: total > expected (detail_id={$detailId})");
                 }
 
+                // ✅ PD boleh partial, jadi ini hanya flag status (Bukan missing)
                 if ($totalConfirmed < $expected) {
                     $isPartialDelivery = true;
                 }
@@ -332,19 +440,21 @@ class PurchaseDeliveryController extends Controller
                     'qty_damaged'  => $damaged,
                 ]);
 
-                // 2) update fulfilled qty di PO detail (+ total confirmed)
-                $po = $purchaseDelivery->purchaseOrder;
-                $poDetail = $po->purchaseOrderDetails->firstWhere('product_id', $productId);
+                // 2) update fulfilled qty di PO detail (+ total confirmed) hanya kalau PD berasal dari PO
+                if (!empty($purchaseDelivery->purchase_order_id) && $purchaseDelivery->purchaseOrder) {
+                    $po = $purchaseDelivery->purchaseOrder;
+                    $poDetail = $po->purchaseOrderDetails->firstWhere('product_id', $productId);
 
-                if ($poDetail) {
-                    $newFulfilled = (int) $poDetail->fulfilled_quantity + $totalConfirmed;
+                    if ($poDetail) {
+                        $newFulfilled = (int) $poDetail->fulfilled_quantity + $totalConfirmed;
 
-                    // clamp biar gak lewat ordered qty
-                    if ($newFulfilled > (int) $poDetail->quantity) {
-                        $newFulfilled = (int) $poDetail->quantity;
+                        // clamp biar gak lewat ordered qty
+                        if ($newFulfilled > (int) $poDetail->quantity) {
+                            $newFulfilled = (int) $poDetail->quantity;
+                        }
+
+                        $poDetail->update(['fulfilled_quantity' => $newFulfilled]);
                     }
-
-                    $poDetail->update(['fulfilled_quantity' => $newFulfilled]);
                 }
 
                 if ($totalConfirmed <= 0) continue;
@@ -359,7 +469,7 @@ class PurchaseDeliveryController extends Controller
                     $totalConfirmed,
                     $reference,
                     $noteIn,
-                    (string) $purchaseDelivery->getRawOriginal('date') // ✅ raw date
+                    (string) $purchaseDelivery->getRawOriginal('date')
                 );
 
                 // 4) DEFECT rows
@@ -426,20 +536,27 @@ class PurchaseDeliveryController extends Controller
                 }
             }
 
-            // ✅ Update PD status
+            // ✅ simpan confirm note + meta
+            $confirmNote = $request->confirm_note ? (string) $request->confirm_note : null;
+
             $purchaseDelivery->update([
                 'status' => $isPartialDelivery ? 'partial' : 'received',
+
+                'confirm_note'            => $confirmNote,
+                'confirm_note_updated_by' => $confirmNote ? auth()->id() : null,
+                'confirm_note_updated_role' => $confirmNote ? $this->roleString() : null,
+                'confirm_note_updated_at' => $confirmNote ? now() : null,
             ]);
 
-            // ✅ Update PO status sesuai rule model: Pending / Partial / Completed
-            $po = PurchaseOrder::lockForUpdate()->findOrFail((int) $purchaseDelivery->purchase_order_id);
-            $po->calculateFulfilledQuantity();
-            $po->markAsCompleted();
+            // ✅ Update PO status hanya kalau PD berasal dari PO
+            if (!empty($purchaseDelivery->purchase_order_id)) {
+                $po = PurchaseOrder::lockForUpdate()->findOrFail((int) $purchaseDelivery->purchase_order_id);
+                $po->calculateFulfilledQuantity();
+                $po->markAsCompleted();
+            }
         });
 
         toast('Purchase Delivery confirmed successfully', 'success');
         return redirect()->route('purchase-deliveries.show', $purchaseDelivery->id);
     }
-
-
 }

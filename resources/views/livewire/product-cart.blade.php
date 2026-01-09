@@ -114,8 +114,10 @@
                     <tr>
                         <th>Grand Total</th>
                         @php
-                            $total_with_shipping = Cart::instance($cart_instance)->total() + (float) $shipping - (float) $platform_fee
+                            $cartTotal = (float) str_replace(',', '', Cart::instance($cart_instance)->total());
+                            $total_with_shipping = $cartTotal + (float) $shipping + (float) $platform_fee;
                         @endphp
+
                         <th>
                             (=) {{ format_currency($total_with_shipping) }}
                         </th>

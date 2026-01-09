@@ -16,8 +16,8 @@ class StocksDataTable extends DataTable
             ->addIndexColumn()
 
             // number formatting
-            ->editColumn('total_qty', fn($row) => number_format((int) ($row->total_qty ?? 0)))
-            ->editColumn('good_qty', fn($row) => number_format((int) ($row->good_qty ?? 0)))
+            ->editColumn('total_qty', fn ($row) => number_format((int) ($row->total_qty ?? 0)))
+            ->editColumn('good_qty', fn ($row) => number_format((int) ($row->good_qty ?? 0)))
 
             // clickable defect badge -> modal
             ->addColumn('defect_qty', function ($row) {
@@ -27,8 +27,8 @@ class StocksDataTable extends DataTable
                 $isAll = (int) ($row->is_all_branch_mode ?? 0);
 
                 return '<a href="javascript:void(0)" class="text-decoration-none"
-                            onclick="openQualityModal(\'defect\','.$productId.','.$warehouseId.','.$isAll.')">
-                            <span class="badge bg-warning text-dark rounded-pill px-2">'.$qty.'</span>
+                            onclick="openQualityModal(\'defect\',' . $productId . ',' . $warehouseId . ',' . $isAll . ')">
+                            <span class="badge bg-warning text-dark rounded-pill px-2">' . $qty . '</span>
                         </a>';
             })
 
@@ -40,8 +40,8 @@ class StocksDataTable extends DataTable
                 $isAll = (int) ($row->is_all_branch_mode ?? 0);
 
                 return '<a href="javascript:void(0)" class="text-decoration-none"
-                            onclick="openQualityModal(\'damaged\','.$productId.','.$warehouseId.','.$isAll.')">
-                            <span class="badge bg-danger rounded-pill px-2">'.$qty.'</span>
+                            onclick="openQualityModal(\'damaged\',' . $productId . ',' . $warehouseId . ',' . $isAll . ')">
+                            <span class="badge bg-danger rounded-pill px-2">' . $qty . '</span>
                         </a>';
             })
 
@@ -62,7 +62,7 @@ class StocksDataTable extends DataTable
                 return '
                     <button type="button"
                             class="btn btn-sm btn-outline-info rounded-pill px-3"
-                            onclick="showRackDetails('.$productId.','.$branchId.','.$warehouseId.')">
+                            onclick="showRackDetails(' . $productId . ',' . $branchId . ',' . $warehouseId . ')">
                         <i class="bi bi-eye"></i> Rack
                     </button>
                 ';
@@ -78,29 +78,27 @@ class StocksDataTable extends DataTable
         $warehouseId = request()->filled('warehouse_id') ? (int) request()->warehouse_id : null;
         $productTerm = request()->filled('product') ? trim((string) request()->product) : null;
 
-        // subquery defect/damaged
-        if ($isAllBranchMode) {
-            $defectSub = DB::table('product_defect_items')
-                ->selectRaw('product_id, SUM(quantity) AS defect_qty')
-                ->groupBy('product_id');
+        /**
+         * Subquery defect/damaged:
+         * - defect: exclude moved_out_at
+         * - damaged: pending only + exclude moved_out_at
+         */
+        $defectSub = DB::table('product_defect_items')
+            ->whereNull('moved_out_at')
+            ->selectRaw($isAllBranchMode
+                ? 'product_id, SUM(quantity) AS defect_qty'
+                : 'product_id, branch_id, warehouse_id, SUM(quantity) AS defect_qty'
+            )
+            ->groupBy($isAllBranchMode ? ['product_id'] : ['product_id', 'branch_id', 'warehouse_id']);
 
-            // ✅ Damaged: PENDING ONLY
-            $damagedSub = DB::table('product_damaged_items')
-                ->where('resolution_status', 'pending')
-                ->selectRaw('product_id, SUM(quantity) AS damaged_qty')
-                ->groupBy('product_id');
-        } else {
-            $defectSub = DB::table('product_defect_items')
-                ->selectRaw('product_id, branch_id, warehouse_id, SUM(quantity) AS defect_qty')
-                ->groupBy('product_id', 'branch_id', 'warehouse_id');
-
-            // ✅ Damaged: PENDING ONLY
-            $damagedSub = DB::table('product_damaged_items')
-                ->where('resolution_status', 'pending')
-                ->selectRaw('product_id, branch_id, warehouse_id, SUM(quantity) AS damaged_qty')
-                ->groupBy('product_id', 'branch_id', 'warehouse_id');
-        }
-
+        $damagedSub = DB::table('product_damaged_items')
+            ->where('resolution_status', 'pending')
+            ->whereNull('moved_out_at')
+            ->selectRaw($isAllBranchMode
+                ? 'product_id, SUM(quantity) AS damaged_qty'
+                : 'product_id, branch_id, warehouse_id, SUM(quantity) AS damaged_qty'
+            )
+            ->groupBy($isAllBranchMode ? ['product_id'] : ['product_id', 'branch_id', 'warehouse_id']);
 
         $q = $model->newQuery()->from('stocks');
 
@@ -120,29 +118,31 @@ class StocksDataTable extends DataTable
                 DB::raw('COALESCE(defects.defect_qty, 0) as defect_qty'),
                 DB::raw('COALESCE(damaged.damaged_qty, 0) as damaged_qty'),
 
+                // ✅ FIX: GREATEST syntax (no trailing comma)
                 DB::raw('
                     GREATEST(
                         SUM(stocks.qty_available)
                         - COALESCE(defects.defect_qty,0)
                         - COALESCE(damaged.damaged_qty,0),
-                    0) as good_qty
+                        0
+                    ) as good_qty
                 '),
             ])
-            ->leftJoin('products', 'products.id', '=', 'stocks.product_id')
-            ->leftJoinSub($defectSub, 'defects', fn($join) => $join->on('defects.product_id', '=', 'stocks.product_id'))
-            ->leftJoinSub($damagedSub, 'damaged', fn($join) => $join->on('damaged.product_id', '=', 'stocks.product_id'))
-            ->groupBy('stocks.product_id');
+                ->leftJoin('products', 'products.id', '=', 'stocks.product_id')
+                ->leftJoinSub($defectSub, 'defects', fn ($join) => $join->on('defects.product_id', '=', 'stocks.product_id'))
+                ->leftJoinSub($damagedSub, 'damaged', fn ($join) => $join->on('damaged.product_id', '=', 'stocks.product_id'))
+                ->groupBy('stocks.product_id');
 
-            // NOTE: filter gudang di all-branch tetap boleh, tapi tidak tampil nama gudang
+            // filter gudang tetap boleh (meski tidak tampil nama gudang)
             if (!empty($warehouseId)) {
                 $q->where('stocks.warehouse_id', $warehouseId);
             }
 
             if (!empty($productTerm)) {
-                $term = '%'.$productTerm.'%';
+                $term = '%' . $productTerm . '%';
                 $q->where(function ($w) use ($term) {
                     $w->where('products.product_name', 'like', $term)
-                      ->orWhere('products.product_code', 'like', $term);
+                        ->orWhere('products.product_code', 'like', $term);
                 });
             }
 
@@ -164,37 +164,39 @@ class StocksDataTable extends DataTable
             DB::raw('COALESCE(defects.defect_qty, 0) as defect_qty'),
             DB::raw('COALESCE(damaged.damaged_qty, 0) as damaged_qty'),
 
+            // ✅ FIX: GREATEST syntax (no trailing comma)
             DB::raw('
                 GREATEST(
                     SUM(stocks.qty_available)
                     - COALESCE(defects.defect_qty,0)
                     - COALESCE(damaged.damaged_qty,0),
-                0) as good_qty
+                    0
+                ) as good_qty
             '),
         ])
-        ->leftJoin('products', 'products.id', '=', 'stocks.product_id')
-        ->leftJoin('warehouses', 'warehouses.id', '=', 'stocks.warehouse_id')
-        ->leftJoinSub($defectSub, 'defects', function ($join) {
-            $join->on('defects.product_id', '=', 'stocks.product_id')
-                 ->on('defects.branch_id', '=', 'stocks.branch_id')
-                 ->on('defects.warehouse_id', '=', 'stocks.warehouse_id');
-        })
-        ->leftJoinSub($damagedSub, 'damaged', function ($join) {
-            $join->on('damaged.product_id', '=', 'stocks.product_id')
-                 ->on('damaged.branch_id', '=', 'stocks.branch_id')
-                 ->on('damaged.warehouse_id', '=', 'stocks.warehouse_id');
-        })
-        ->groupBy('stocks.product_id', 'stocks.branch_id', 'stocks.warehouse_id');
+            ->leftJoin('products', 'products.id', '=', 'stocks.product_id')
+            ->leftJoin('warehouses', 'warehouses.id', '=', 'stocks.warehouse_id')
+            ->leftJoinSub($defectSub, 'defects', function ($join) {
+                $join->on('defects.product_id', '=', 'stocks.product_id')
+                    ->on('defects.branch_id', '=', 'stocks.branch_id')
+                    ->on('defects.warehouse_id', '=', 'stocks.warehouse_id');
+            })
+            ->leftJoinSub($damagedSub, 'damaged', function ($join) {
+                $join->on('damaged.product_id', '=', 'stocks.product_id')
+                    ->on('damaged.branch_id', '=', 'stocks.branch_id')
+                    ->on('damaged.warehouse_id', '=', 'stocks.warehouse_id');
+            })
+            ->groupBy('stocks.product_id', 'stocks.branch_id', 'stocks.warehouse_id');
 
         if (!empty($warehouseId)) {
             $q->where('stocks.warehouse_id', $warehouseId);
         }
 
         if (!empty($productTerm)) {
-            $term = '%'.$productTerm.'%';
+            $term = '%' . $productTerm . '%';
             $q->where(function ($w) use ($term) {
                 $w->where('products.product_name', 'like', $term)
-                  ->orWhere('products.product_code', 'like', $term);
+                    ->orWhere('products.product_code', 'like', $term);
             });
         }
 
@@ -250,7 +252,7 @@ class StocksDataTable extends DataTable
                 'title' => 'Detail',
                 'orderable' => false,
                 'searchable' => false,
-                'class' => 'text-center'
+                'class' => 'text-center',
             ];
         }
 

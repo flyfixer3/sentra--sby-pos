@@ -3,55 +3,56 @@
 namespace Modules\PurchaseOrder\Http\Controllers;
 
 use Gloudemans\Shoppingcart\Facades\Cart;
-use Illuminate\Support\Facades\Log;
 use Illuminate\Routing\Controller;
 use Illuminate\Support\Facades\Gate;
 use Modules\Product\Entities\Product;
 use Modules\PurchaseOrder\Entities\PurchaseOrder;
-use Modules\PurchaseOrder\Http\Requests\StorePurchaseOrderPurchaseRequest;
 
 class PurchaseOrderPurchasesController extends Controller
 {
-
-    public function __invoke(PurchaseOrder $purchaseorder) {
+    public function __invoke(PurchaseOrder $purchaseorder)
+    {
         abort_if(Gate::denies('create_purchase_order_purchases'), 403);
-    
+
         $purchase_order_details = $purchaseorder->purchaseOrderDetails;
-    
+
         Cart::instance('purchase')->destroy();
         $cart = Cart::instance('purchase');
-    
-        foreach ($purchase_order_details as $purchase_order_detail) {
-            // ✅ Calculate remaining quantity (Subtract fulfilled_quantity from original quantity)
-            $remaining_quantity = $purchase_order_detail->quantity - $purchase_order_detail->fulfilled_quantity;
-    
-            if ($remaining_quantity > 0) { // ✅ Ensure only unfulfilled quantities are processed
-                $unit_price = $purchase_order_detail->unit_price;
-                $updated_sub_total = $remaining_quantity * $unit_price;
-    
-                $cart->add([
-                    'id'      => $purchase_order_detail->product_id,
-                    'name'    => $purchase_order_detail->product_name,
-                    'qty'     => $remaining_quantity, // ✅ Use remaining quantity instead of original
-                    'price'   => $purchase_order_detail->price,
-                    'weight'  => 1,
-                    'options' => [
-                        'product_discount' => $purchase_order_detail->product_discount_amount,
-                        'product_discount_type' => $purchase_order_detail->product_discount_type,
-                        'sub_total'   => $updated_sub_total, // ✅ Update sub total correctly
-                        'code'        => $purchase_order_detail->product_code,
-                        'stock'       => Product::findOrFail($purchase_order_detail->product_id)->product_quantity,
-                        'product_tax' => $purchase_order_detail->product_tax_amount,
-                        'unit_price'  => $unit_price
-                    ]
-                ]);
-            }
+
+        foreach ($purchase_order_details as $d) {
+
+            // ✅ QTY INVOICE = TOTAL PO
+            $qty = (int) ($d->quantity ?? 0);
+            if ($qty <= 0) continue;
+
+            $unit_price = (float) ($d->unit_price ?? 0);
+            $updated_sub_total = $qty * $unit_price;
+
+            // stock (legacy kamu: ambil dari product_quantity)
+            $stock = (int) (Product::find($d->product_id)->product_quantity ?? 0);
+
+            $cart->add([
+                'id'      => (int) $d->product_id,
+                'name'    => (string) ($d->product_name ?? '-'),
+                'qty'     => $qty,
+                'price'   => (float) ($d->price ?? 0),
+                'weight'  => 1,
+                'options' => [
+                    'product_discount'      => (float) ($d->product_discount_amount ?? 0),
+                    'product_discount_type' => (string) ($d->product_discount_type ?? 'fixed'),
+                    'sub_total'             => (float) $updated_sub_total,
+                    'code'                  => (string) ($d->product_code ?? 'UNKNOWN'),
+                    'stock'                 => $stock,
+                    'product_tax'           => (float) ($d->product_tax_amount ?? 0),
+                    'unit_price'            => (float) $unit_price,
+                ]
+            ]);
         }
-    
+
         return view('purchase-orders::purchase-order-purchases.create', [
+            'purchaseOrder'     => $purchaseorder,
             'purchase_order_id' => $purchaseorder->id,
-            'purchase' => $purchaseorder
+            'purchaseDelivery'  => null,
         ]);
     }
-    
 }

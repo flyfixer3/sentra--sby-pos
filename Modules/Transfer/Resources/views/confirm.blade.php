@@ -39,8 +39,27 @@
                                 </thead>
                                 <tbody>
                                     @foreach ($transfer->items as $item)
+                                        @php
+                                            $cond = strtolower((string) ($item->condition ?? 'good'));
+                                            $condLabel = match ($cond) {
+                                                'good' => 'GOOD',
+                                                'defect' => 'DEFECT',
+                                                'damaged' => 'DAMAGED',
+                                                default => strtoupper($cond),
+                                            };
+                                            $condClass = match ($cond) {
+                                                'good' => 'badge-success',
+                                                'defect' => 'badge-warning',
+                                                'damaged' => 'badge-danger',
+                                                default => 'badge-secondary',
+                                            };
+                                        @endphp
                                         <tr>
-                                            <td>{{ $item->product->product_name ?? '-' }}</td>
+                                            <td>
+                                                {{ $item->product->product_name ?? '-' }}
+                                                <span class="badge {{ $condClass }} ml-2">{{ $condLabel }}</span>
+                                                <div class="text-muted small">{{ $item->product->product_code ?? '' }}</div>
+                                            </td>
                                             <td class="text-center">
                                                 <span class="badge badge-primary">{{ (int) $item->quantity }}</span>
                                             </td>
@@ -127,19 +146,28 @@
                                     </thead>
                                     <tbody>
                                         @foreach ($transfer->items as $idx => $item)
-                                            @php
+                                           @php
                                                 $sent = (int) $item->quantity;
-                                                $oldReceived = old("items.$idx.qty_received", $sent);
-                                                $oldDefect   = old("items.$idx.qty_defect", 0);
-                                                $oldDamaged  = old("items.$idx.qty_damaged", 0);
+                                                $cond = strtolower((string) ($item->condition ?? 'good'));
 
-                                                $oldDefects  = old("items.$idx.defects", []);
-                                                $oldDamages  = old("items.$idx.damaged_items", []);
+                                                $defaultGood = $cond === 'good' ? $sent : 0;
+                                                $defaultDef  = $cond === 'defect' ? $sent : 0;
+                                                $defaultDam  = $cond === 'damaged' ? $sent : 0;
+
+                                                $oldReceived = old("items.$idx.qty_received", $defaultGood);
+                                                $oldDefect   = old("items.$idx.qty_defect", $defaultDef);
+                                                $oldDamaged  = old("items.$idx.qty_damaged", $defaultDam);
+                                            @endphp
+
+
+                                            @php
+                                                $cond = strtolower((string) ($item->condition ?? 'good'));
                                             @endphp
 
                                             <tr class="receive-row"
                                                 data-index="{{ $idx }}"
-                                                data-sent="{{ $sent }}">
+                                                data-sent="{{ $sent }}"
+                                                data-condition="{{ $cond }}">
                                                 <td class="align-middle">
                                                     <div class="d-flex align-items-start justify-content-between">
                                                         <div>
@@ -152,6 +180,7 @@
                                                     </div>
 
                                                     <input type="hidden" name="items[{{ $idx }}][product_id]" value="{{ (int) $item->product_id }}">
+                                                    <input type="hidden" name="items[{{ $idx }}][condition]" value="{{ $cond }}">
                                                     <input type="hidden" name="items[{{ $idx }}][qty_sent]" value="{{ $sent }}">
                                                 </td>
 
@@ -285,9 +314,14 @@
                                                                 </small>
                                                             </div>
 
-                                                            {{-- OLD VALUES for hydrate --}}
+                                                            @php
+                                                                $oldDefects = old("items.$idx.defects", []);
+                                                                $oldDamages = old("items.$idx.damaged_items", []);
+                                                            @endphp
+
                                                             <textarea class="d-none old-defects-json" data-idx="{{ $idx }}">{{ json_encode($oldDefects) }}</textarea>
                                                             <textarea class="d-none old-damages-json" data-idx="{{ $idx }}">{{ json_encode($oldDamages) }}</textarea>
+
                                                         </div>
                                                     </div>
                                                 </td>
@@ -443,6 +477,10 @@
 
     function updateRowStatus(row) {
         const sent = asInt(row.dataset.sent);
+        const cond = (row.dataset.condition || 'good').toLowerCase();
+
+        const statusBadge = row.querySelector('.row-status');
+        const hint = row.querySelector('.row-hint');
 
         const receivedInput = row.querySelector('.qty-received');
         const defectInput   = row.querySelector('.qty-defect');
@@ -452,9 +490,7 @@
         const defect   = asInt(defectInput.value);
         const damaged  = asInt(damagedInput.value);
 
-        const statusBadge = row.querySelector('.row-status');
-        const hint = row.querySelector('.row-hint');
-
+        // basic negative guard
         if (received < 0 || defect < 0 || damaged < 0) {
             statusBadge.className = 'badge badge-danger row-status';
             statusBadge.textContent = 'INVALID';
@@ -462,9 +498,24 @@
             return false;
         }
 
+        // RULE: kalau item dikirim defect/damaged dari awal, penerimaan good/defect harus sesuai
+        if (cond === 'defect' && received > 0) {
+            statusBadge.className = 'badge badge-danger row-status';
+            statusBadge.textContent = 'INVALID';
+            hint.textContent = 'Item ini dikirim dalam kondisi DEFECT, jadi tidak boleh diterima sebagai GOOD.';
+            return false;
+        }
+
+        if (cond === 'damaged' && (received > 0 || defect > 0)) {
+            statusBadge.className = 'badge badge-danger row-status';
+            statusBadge.textContent = 'INVALID';
+            hint.textContent = 'Item ini dikirim dalam kondisi DAMAGED, jadi tidak boleh diterima sebagai GOOD/DEFECT.';
+            return false;
+        }
+
         const total = received + defect + damaged;
 
-        // ✅ NEW RULE: total tidak boleh > sent
+        // RULE: total tidak boleh > sent
         if (total > sent) {
             statusBadge.className = 'badge badge-danger row-status';
             statusBadge.textContent = 'MISMATCH';
@@ -475,7 +526,7 @@
         const idx = row.dataset.index;
         const perWrap = document.getElementById('perUnitWrap-' + idx);
 
-        // Validasi defect per-unit hanya jika defect > 0
+        // VALIDASI per-unit defect (kalau defect > 0)
         if (defect > 0) {
             if (!perWrap) {
                 statusBadge.className = 'badge badge-warning row-status';
@@ -503,7 +554,7 @@
             }
         }
 
-        // Validasi damaged per-unit hanya jika damaged > 0
+        // VALIDASI per-unit damaged (kalau damaged > 0)
         if (damaged > 0) {
             if (!perWrap) {
                 statusBadge.className = 'badge badge-warning row-status';
@@ -531,7 +582,7 @@
             }
         }
 
-        // ✅ Status OK vs REMAINING
+        // STATUS OK vs REMAINING
         if (total === sent) {
             statusBadge.className = 'badge badge-success row-status';
             statusBadge.textContent = 'OK';

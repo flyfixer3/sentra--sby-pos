@@ -30,7 +30,7 @@
 @endphp
 
 <div class="container-fluid">
-
+    @include('utils.alerts')
     {{-- ================= HEADER CARD ================= --}}
     <div class="card mb-3 shadow-sm">
         <div class="card-body d-flex flex-wrap justify-content-between align-items-center">
@@ -225,11 +225,30 @@
                                 $summary = $itemSummaries[$pid] ?? [];
                             @endphp
 
+                            @php
+                                $cond = strtolower((string) ($item->condition ?? 'good'));
+
+                                $condLabel = match ($cond) {
+                                    'good' => 'GOOD',
+                                    'defect' => 'DEFECT',
+                                    'damaged' => 'DAMAGED',
+                                    default => strtoupper($cond),
+                                };
+
+                                $condClass = match ($cond) {
+                                    'good' => 'bg-success text-white',
+                                    'defect' => 'bg-warning text-dark',
+                                    'damaged' => 'bg-danger text-white',
+                                    default => 'bg-secondary text-white',
+                                };
+                            @endphp
+
                             <tr>
                                 <td>{{ $i + 1 }}</td>
                                 <td>
                                     @if($product)
-                                        <div class="fw-semibold">{{ $product->product_name }}</div>
+                                        <span>{{ $product->product_name }}</span>
+                                        <span class="badge {{ $condClass }}">{{ $condLabel }}</span>
                                         <div class="text-muted small">{{ $product->product_code }}</div>
                                     @else
                                         <span class="text-danger">Product ID {{ $pid }} not found</span>
@@ -399,7 +418,7 @@
     @endif
 
     {{-- ================= MISSING DETAILS ================= --}}
-    @if(in_array($status, ['confirmed','issue','confirmed']) && isset($missing) && $missing->isNotEmpty())
+    @if(in_array($status, ['confirmed','issue']) && isset($missing) && $missing->isNotEmpty())
         <div class="card mb-4 shadow-sm border-warning">
             <div class="card-header bg-warning bg-opacity-10 fw-semibold">
                 Missing Details

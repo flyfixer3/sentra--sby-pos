@@ -10,7 +10,7 @@ class TransferRequestItem extends BaseModel
 {
     use HasFactory;
 
-    protected $fillable = ['transfer_request_id', 'product_id', 'quantity'];
+    protected $fillable = ['transfer_request_id', 'product_id', 'condition', 'quantity'];
 
     // ✅ relasi ke header TransferRequest
     public function transferRequest()
