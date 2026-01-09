@@ -30,30 +30,38 @@
                         <div class="row mb-4">
                             <div class="col-sm-4 mb-3 mb-md-0">
                                 <h5 class="mb-2 border-bottom pb-2">Company Info:</h5>
-                                <div><strong>{{ settings()->company_name }}</strong></div>
-                                <div>{{ settings()->company_address }}</div>
-                                <div>Email: {{ settings()->company_email }}</div>
-                                <div>Phone: {{ settings()->company_phone }}</div>
+                                <div><strong>{{ $company['name'] }}</strong></div>
+                                <div>{{ $company['address'] }}</div>
+                                <div>Email: {{ $company['email'] }}</div>
+                                <div>Phone: {{ $company['phone'] }}</div>
+
                             </div>
 
                             <div class="col-sm-4 mb-3 mb-md-0">
                                 <h5 class="mb-2 border-bottom pb-2">Supplier Info:</h5>
                                 <div><strong>{{ $supplier->supplier_name }}</strong></div>
-                                <div>{{ $supplier->address }}</div>
-                                <div>Email: {{ $supplier->supplier_email }}</div>
-                                <div>Phone: {{ $supplier->supplier_phone }}</div>
+                                <div>{{ $supplier->address ?: '-' }}</div>
+                                <div>Email: {{ $supplier->supplier_email ?: '-' }}</div>
+                                <div>Phone: {{ $supplier->supplier_phone ?: '-' }}</div>
+
                             </div>
 
                             <div class="col-sm-4 mb-3 mb-md-0">
                                 <h5 class="mb-2 border-bottom pb-2">Invoice Info:</h5>
                                 <div>Invoice: <strong>INV/{{ $purchase->reference }}</strong></div>
                                 <div>Date: {{ \Carbon\Carbon::parse($purchase->date)->format('d M, Y') }}</div>
-                                <div>
-                                    Status: <strong>{{ $purchase->status }}</strong>
-                                </div>
+
                                 <div>
                                     Payment Status: <strong>{{ $purchase->payment_status }}</strong>
                                 </div>
+                                <div>Supplier Invoice: <strong>{{ $purchase->reference_supplier ?: '-' }}</strong></div>
+                                <div>Payment Method: <strong>{{ $purchase->payment_method ?: '-' }}</strong></div>
+                                <div>Paid Amount: <strong>{{ format_currency($purchase->paid_amount ?? 0) }}</strong></div>
+                                <div>Due Amount: <strong>{{ format_currency($purchase->due_amount ?? 0) }}</strong></div>
+                                @if(!empty($purchase->due_date))
+                                    <div>Due Date: {{ \Carbon\Carbon::parse($purchase->due_date)->format('d M, Y') }}</div>
+                                @endif
+
                                 <div>
                                     Related Delivery:
                                     @if($purchase->purchase_delivery_id)
@@ -91,7 +99,13 @@
                                             </span>
                                         </td>
 
-                                        <td class="align-middle">{{ format_currency($item->unit_price) }}</td>
+                                        @php
+                                            $unit = (float) ($item->unit_price ?? 0);
+                                            $price = (float) ($item->price ?? 0);
+                                            $shownUnitPrice = $unit > 0 ? $unit : $price;
+                                        @endphp
+
+                                        <td class="align-middle">{{ format_currency($shownUnitPrice) }}</td>
 
                                         <td class="align-middle">
                                             {{ $item->quantity }}
@@ -105,9 +119,15 @@
                                             {{ format_currency($item->product_tax_amount) }}
                                         </td>
 
+                                        @php
+                                            $sub = (float) ($item->sub_total ?? 0);
+                                            if ($sub <= 0) $sub = $shownUnitPrice * (int) ($item->quantity ?? 0);
+                                        @endphp
+
                                         <td class="align-middle">
-                                            {{ format_currency($item->sub_total) }}
+                                            {{ format_currency($sub) }}
                                         </td>
+
                                     </tr>
                                 @endforeach
                                 </tbody>

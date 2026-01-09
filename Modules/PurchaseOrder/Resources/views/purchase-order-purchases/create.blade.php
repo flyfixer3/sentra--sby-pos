@@ -232,34 +232,53 @@
     </div>
 @endsection
 @push('page_scripts')
+<script src="{{ asset('js/jquery-mask-money.js') }}"></script>
 <script>
-  $(function () {
-    $('#paid_amount').maskMoney({
-      prefix:'{{ settings()->currency->symbol }}',
-      thousands:'{{ settings()->currency->thousand_separator }}',
-      decimal:'{{ settings()->currency->decimal_separator }}',
-      allowZero: true,
-      precision: 0,
+    function initPaidAmountMask() {
+        const $paid = $('#paid_amount');
+        if (!$paid.length) return;
+
+        $paid.maskMoney({
+            prefix:'{{ settings()->currency->symbol }}',
+            thousands:'{{ settings()->currency->thousand_separator }}',
+            decimal:'{{ settings()->currency->decimal_separator }}',
+            allowZero: true,
+            precision: 0,
+        });
+    }
+
+    // delegasi click biar gak mati walau Livewire rerender
+    $(document).on('click', '#getTotalAmount', function () {
+        // ambil dari hidden input yg di-render livewire
+        const raw = $('input[name="total_amount"]').val() || '0';
+
+        // pastikan numeric (hapus Rp, titik, koma, spasi)
+        const num = parseInt(raw.toString().replace(/[^\d]/g, ''), 10) || 0;
+
+        $('#paid_amount').maskMoney('mask', num);
     });
 
-    // ✅ QUICK FILL = GRAND TOTAL
-    $('#getTotalAmount').on('click', function () {
-      const total = parseFloat(
-        ($('input[name="total_amount"]').val() || '0')
-          .toString()
-          .replace(',', '.')
-      ) || 0;
+    $(function () {
+        initPaidAmountMask();
 
-      $('#paid_amount').maskMoney('mask', total);
+        // saat submit, convert ke angka murni
+        $('#purchase-form').on('submit', function () {
+            const paid_amount = $('#paid_amount').maskMoney('destroy')[0];
+            const new_number = parseInt((paid_amount.value || '').toString().replace(/[^\d]/g, ''), 10) || 0;
+            $('#paid_amount').val(new_number);
+        });
     });
 
-    // sebelum submit, convert ke integer
-    $('#purchase-form').on('submit', function () {
-      const el = $('#paid_amount').maskMoney('destroy')[0];
-      const clean = parseInt((el.value || '').replaceAll(/[^\d]/g, '')) || 0;
-      $('#paid_amount').val(clean);
+    // kalau halaman ini ada Livewire render ulang, mask perlu di-init ulang
+    document.addEventListener("livewire:load", function () {
+        initPaidAmountMask();
+        if (window.Livewire) {
+            window.Livewire.hook('message.processed', function () {
+                initPaidAmountMask();
+            });
+        }
     });
-  });
 </script>
 @endpush
+
 

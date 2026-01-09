@@ -53,9 +53,9 @@ class PurchaseDataTable extends DataTable
                 return format_currency($data->due_amount);
             })
 
-            ->editColumn('status', function ($data) {
-                return view('purchase::partials.status', compact('data'));
-            })
+            // ->editColumn('status', function ($data) {
+            //     return view('purchase::partials.status', compact('data'));
+            // })
 
             ->editColumn('payment_status', function ($data) {
                 return view('purchase::partials.payment-status', compact('data'));
@@ -132,7 +132,7 @@ class PurchaseDataTable extends DataTable
              * 13 action
              * 14 created_at (hidden)  <-- ini yang dipakai sorting
              */
-            ->orderBy(14, 'desc')
+            ->orderBy(13, 'desc')
 
             ->buttons(
                 Button::make('excel')->text('<i class="bi bi-file-earmark-excel-fill"></i> Excel'),
@@ -161,8 +161,8 @@ class PurchaseDataTable extends DataTable
                 ->title('Supplier')
                 ->className('text-center align-middle'),
 
-            Column::make('status')
-                ->className('text-center align-middle'),
+            // Column::make('status')
+            //     ->className('text-center align-middle'),
 
             Column::computed('total_amount')
                 ->className('text-center align-middle'),

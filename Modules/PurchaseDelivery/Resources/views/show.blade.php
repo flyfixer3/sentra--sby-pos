@@ -215,6 +215,11 @@
     ?? $purchaseDelivery->branch?->getRawOriginal('address')
     ?? $warehouse?->branch?->getRawOriginal('address')
     ?? '-';
+
+    $hasInvoice = $purchaseDelivery->relationLoaded('purchase')
+    ? !empty($purchaseDelivery->purchase)
+    : $purchaseDelivery->purchase()->exists();
+
 @endphp
 
 <div class="container-fluid pd-wrap">
@@ -583,24 +588,30 @@
                 </form>
 
                 <div class="pd-actions d-flex gap-2">
-                    <a href="{{ route('purchase-deliveries.edit', $purchaseDelivery->id) }}" class="btn btn-outline-secondary btn-sm">
-                        <i class="bi bi-pencil"></i> Edit
-                    </a>
+                    @if(!$hasInvoice)
+                        <a href="{{ route('purchase-deliveries.edit', $purchaseDelivery->id) }}" class="btn btn-outline-secondary btn-sm">
+                            <i class="bi bi-pencil"></i> Edit
+                        </a>
+                    @endif
+
 
                     @if($isPending)
                         <a href="{{ route('purchase-deliveries.confirm', $purchaseDelivery->id) }}" class="btn btn-primary btn-sm">
                             Confirm Delivery
                         </a>
                     @else
-                        @php
-                            $hasInvoice = false;
+                       @php
+                            $hasInvoice = \Modules\Purchase\Entities\Purchase::whereNull('deleted_at')
+                                ->where(function($q) use ($purchaseDelivery){
+                                    $q->where('purchase_delivery_id', (int) $purchaseDelivery->id);
 
-                            if ($purchaseDelivery->purchase_order_id) {
-                                $hasInvoice = \Modules\Purchase\Entities\Purchase::where('purchase_order_id', $purchaseDelivery->purchase_order_id)
-                                    ->whereNull('deleted_at')
-                                    ->exists();
-                            }
+                                    if (!empty($purchaseDelivery->purchase_order_id)) {
+                                        $q->orWhere('purchase_order_id', (int) $purchaseDelivery->purchase_order_id);
+                                    }
+                                })
+                                ->exists();
                         @endphp
+
 
                         @if(!$hasInvoice)
                             <a href="{{ route('purchases.createFromDelivery', ['purchase_delivery' => $purchaseDelivery]) }}"

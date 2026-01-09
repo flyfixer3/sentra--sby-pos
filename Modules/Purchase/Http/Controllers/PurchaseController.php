@@ -526,13 +526,32 @@ class PurchaseController extends Controller
     }
 
 
-    public function show(Purchase $purchase) {
+    public function show(Purchase $purchase)
+    {
         abort_if(Gate::denies('show_purchases'), 403);
+
+        $purchase->loadMissing([
+            'purchaseDetails',
+        ]);
 
         $supplier = Supplier::findOrFail($purchase->supplier_id);
 
-        return view('purchase::show', compact('purchase', 'supplier'));
+        // ✅ ambil cabang dari purchase (paling aman, karena invoice itu milik cabang tsb)
+        $branch = DB::table('branches')
+            ->where('id', (int) $purchase->branch_id)
+            ->first();
+
+        // fallback kalau branch record gak ketemu
+        $company = [
+            'name'    => $branch->name    ?? settings()->company_name,
+            'address' => $branch->address ?? settings()->company_address,
+            'email'   => $branch->email   ?? settings()->company_email,
+            'phone'   => $branch->phone   ?? settings()->company_phone,
+        ];
+
+        return view('purchase::show', compact('purchase', 'supplier', 'company'));
     }
+
 
     public function edit(Purchase $purchase) {
         abort_if(Gate::denies('edit_purchases'), 403);
@@ -881,9 +900,6 @@ class PurchaseController extends Controller
 
     private function createPendingPurchaseDeliveryForWalkIn(Purchase $purchase): PurchaseDelivery
     {
-        // NOTE: PD dibuat PENDING, tidak auto received, tidak create mutation.
-        // Confirm PD yang akan melakukan mutation + update fulfilled PO.
-
         $roleString = '-';
         if (auth()->user() && method_exists(auth()->user(), 'getRoleNames')) {
             $roles = auth()->user()->getRoleNames()->toArray();
@@ -901,27 +917,30 @@ class PurchaseController extends Controller
             'note'              => $autoNote,
             'ship_via'          => null,
             'tracking_number'   => null,
-
-            // ✅ PENDING (wajib confirm manual)
             'status'            => 'Pending',
-
             'created_by'        => auth()->id(),
 
-            // ✅ note meta (create/edit PD note)
             'note_updated_by'   => auth()->id(),
             'note_updated_role' => $roleString,
             'note_updated_at'   => now(),
         ]);
 
-        foreach (Cart::instance('purchase')->content() as $cart_item) {
+        // ✅ SUMBER PALING AMAN: purchase_details (SUDAH DIPAKSA product_code TIDAK NULL)
+        $purchase->loadMissing(['purchaseDetails']);
+
+        foreach ($purchase->purchaseDetails as $pd) {
+            $finalCode = trim((string) ($pd->product_code ?? ''));
+            if ($finalCode === '') $finalCode = 'UNKNOWN';
+
             PurchaseDeliveryDetails::create([
                 'purchase_delivery_id' => (int) $autoPD->id,
-                'product_id'           => (int) $cart_item->id,
-                'product_name'         => (string) $cart_item->name,
-                'product_code'         => (string) (($cart_item->options->code ?? null) ?: 'UNKNOWN'),
-                'quantity'             => (int) $cart_item->qty,
+                'product_id'           => (int) $pd->product_id,
+                'product_name'         => (string) ($pd->product_name ?? '-'),
+                'product_code'         => (string) $finalCode,
+                'quantity'             => (int) ($pd->quantity ?? 0),
+                'unit_price'           => (float) ($pd->unit_price ?? 0),
+                'sub_total'            => (float) ($pd->sub_total ?? 0),
 
-                // ✅ belum diterima sebelum confirm
                 'qty_received'         => 0,
                 'qty_defect'           => 0,
                 'qty_damaged'          => 0,
