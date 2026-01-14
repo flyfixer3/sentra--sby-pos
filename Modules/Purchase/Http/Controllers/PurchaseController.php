@@ -90,6 +90,23 @@ class PurchaseController extends Controller
 
         /**
          * ======================================================
+         * ✅ NEW GUARD: PO HARUS FULLY FULFILLED (NO PARTIAL INVOICE)
+         * ======================================================
+         * Rule bisnis kamu: invoice hanya boleh dibuat kalau seluruh qty PO sudah diterima.
+         * Kita pakai helper yang sudah ada di model PurchaseOrder: isFullyFulfilled()
+         */
+        $purchaseOrder = $purchaseDelivery->purchaseOrder;
+
+        if ($purchaseOrder) {
+            if (!$purchaseOrder->isFullyFulfilled()) {
+                return redirect()
+                    ->route('purchase-deliveries.show', $purchaseDelivery->id)
+                    ->with('error', 'Invoice cannot be created because this Purchase Order is still PARTIAL. Please complete all deliveries first.');
+            }
+        }
+
+        /**
+         * ======================================================
          * 🚫 HARD GUARD: 1 PO = 1 INVOICE (PURCHASE)
          * ======================================================
          */
@@ -119,8 +136,6 @@ class PurchaseController extends Controller
          */
         Cart::instance('purchase')->destroy();
         $cart = Cart::instance('purchase');
-
-        $purchaseOrder = $purchaseDelivery->purchaseOrder;
 
         $branchId    = $this->getActiveBranchId();
         $warehouseId = $this->resolveDefaultWarehouseId($branchId);
@@ -245,7 +260,6 @@ class PurchaseController extends Controller
             'purchaseDelivery' => $purchaseDelivery,
         ]);
     }
-
 
     public function create() {
         abort_if(Gate::denies('create_purchases'), 403);
@@ -525,7 +539,6 @@ class PurchaseController extends Controller
         };
     }
 
-
     public function show(Purchase $purchase)
     {
         abort_if(Gate::denies('show_purchases'), 403);
@@ -549,9 +562,45 @@ class PurchaseController extends Controller
             'phone'   => $branch->phone   ?? settings()->company_phone,
         ];
 
-        return view('purchase::show', compact('purchase', 'supplier', 'company'));
-    }
+        /**
+         * ======================================================
+         * ✅ NEW: related deliveries (multi PD)
+         * ======================================================
+         */
+        $poId = (int) ($purchase->purchase_order_id ?? 0);
 
+        // fallback: kalau invoice tidak nyimpen PO tapi nyimpen PD
+        if ($poId <= 0 && !empty($purchase->purchase_delivery_id)) {
+            $poId = (int) PurchaseDelivery::query()
+                ->where('id', (int) $purchase->purchase_delivery_id)
+                ->value('purchase_order_id');
+        }
+
+        $relatedDeliveries = collect();
+
+        if ($poId > 0) {
+            // ambil semua PD untuk PO tsb
+            $relatedDeliveries = PurchaseDelivery::query()
+                ->where('purchase_order_id', $poId)
+                ->orderByDesc('date')
+                ->orderByDesc('id')
+                ->get();
+        } elseif (!empty($purchase->purchase_delivery_id)) {
+            // fallback terakhir: tampilkan PD tunggal
+            $relatedDeliveries = PurchaseDelivery::query()
+                ->where('id', (int) $purchase->purchase_delivery_id)
+                ->get();
+        }
+
+        $relatedDeliveries = $relatedDeliveries->unique('id')->values();
+
+        return view('purchase::show', compact(
+            'purchase',
+            'supplier',
+            'company',
+            'relatedDeliveries'
+        ));
+    }
 
     public function edit(Purchase $purchase) {
         abort_if(Gate::denies('edit_purchases'), 403);

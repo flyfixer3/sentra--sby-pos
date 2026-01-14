@@ -573,13 +573,12 @@
                 </div>
             </div>
 
-
             {{-- ACTIONS --}}
             <div class="pd-footer">
                 <form action="{{ route('purchase-deliveries.destroy', $purchaseDelivery->id) }}"
-                      method="POST"
-                      class="d-inline-block"
-                      onsubmit="return confirm('Are you sure? It will delete the data permanently!');">
+                    method="POST"
+                    class="d-inline-block"
+                    onsubmit="return confirm('Are you sure? It will delete the data permanently!');">
                     @csrf
                     @method('DELETE')
                     <button type="submit" class="btn btn-outline-danger btn-sm">
@@ -594,13 +593,13 @@
                         </a>
                     @endif
 
-
                     @if($isPending)
                         <a href="{{ route('purchase-deliveries.confirm', $purchaseDelivery->id) }}" class="btn btn-primary btn-sm">
                             Confirm Delivery
                         </a>
                     @else
-                       @php
+                        @php
+                            // invoice exist check (punya kamu)
                             $hasInvoice = \Modules\Purchase\Entities\Purchase::whereNull('deleted_at')
                                 ->where(function($q) use ($purchaseDelivery){
                                     $q->where('purchase_delivery_id', (int) $purchaseDelivery->id);
@@ -610,14 +609,30 @@
                                     }
                                 })
                                 ->exists();
+
+                            // ✅ NEW: PO harus fully fulfilled agar tombol create invoice muncul
+                            $poIsFullyFulfilled = false;
+                            if (!empty($purchaseDelivery->purchaseOrder)) {
+                                $poIsFullyFulfilled = (bool) $purchaseDelivery->purchaseOrder->isFullyFulfilled();
+                            }
                         @endphp
 
-
                         @if(!$hasInvoice)
-                            <a href="{{ route('purchases.createFromDelivery', ['purchase_delivery' => $purchaseDelivery]) }}"
-                            class="btn btn-primary btn-sm">
-                                Create Purchase (Invoice)
-                            </a>
+
+                            @if($poIsFullyFulfilled)
+                                <a href="{{ route('purchases.createFromDelivery', ['purchase_delivery' => $purchaseDelivery]) }}"
+                                class="btn btn-primary btn-sm">
+                                    Create Purchase (Invoice)
+                                </a>
+                            @else
+                                <button type="button"
+                                        class="btn btn-primary btn-sm"
+                                        disabled
+                                        title="Invoice hanya bisa dibuat jika seluruh qty di Purchase Order sudah diterima (no partial invoice).">
+                                    Create Purchase (Invoice)
+                                </button>
+                            @endif
+
                         @else
                             <span class="pd-muted">Invoice already created</span>
                         @endif
