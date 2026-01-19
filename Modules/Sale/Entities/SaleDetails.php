@@ -20,7 +20,7 @@ class SaleDetails extends Model
     }
 
     public function warehouse() {
-        return $this->belongsTo(Warehouse::class, 'product_id', 'id');
+        return $this->belongsTo(Warehouse::class, 'warehouse_id', 'id');
     }
 
     public function sale() {

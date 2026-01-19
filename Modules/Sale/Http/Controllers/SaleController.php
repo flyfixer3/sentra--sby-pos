@@ -90,6 +90,9 @@ class SaleController extends Controller
 
     public function store(StoreSaleRequest $request) {
         DB::transaction(function () use ($request) {
+
+            $branchId = \App\Support\BranchContext::id(); // ✅ branch aktif (null kalau mode all)
+
             $due_amount = $request->total_amount - $request->paid_amount;
 
             if ($due_amount == $request->total_amount) {
@@ -99,19 +102,20 @@ class SaleController extends Controller
             } else {
                 $payment_status = 'Paid';
             }
-            
-            if($request->quotation_id){
+
+            if ($request->quotation_id) {
                 $quotation = Quotation::findOrFail($request->quotation_id);
                 $quotation->update([
                     'status' => 'Sent'
                 ]);
             }
-            // dd(Cart::instance('sale')->content());
-            $total_cost=0;
-            $sale = Sale::create([
+
+            $total_cost = 0;
+
+            $saleData = [
                 'date' => $request->date,
-                'license_number'=> $request->car_number_plate,
-                'sale_from'=> $request->sale_from,
+                'license_number' => $request->car_number_plate,
+                'sale_from' => $request->sale_from,
                 'customer_id' => $request->customer_id,
                 'customer_name' => Customer::findOrFail($request->customer_id)->customer_name,
                 'tax_percentage' => $request->tax_percentage,
@@ -120,7 +124,7 @@ class SaleController extends Controller
                 'paid_amount' => $request->paid_amount * 1,
                 'total_amount' => $request->total_amount * 1,
                 'total_quantity' => $request->total_quantity,
-                'fee_amount' => $request-> fee_amount * 1,
+                'fee_amount' => $request->fee_amount * 1,
                 'due_amount' => $due_amount * 1,
                 'status' => $request->status,
                 'payment_status' => $payment_status,
@@ -128,53 +132,26 @@ class SaleController extends Controller
                 'note' => $request->note,
                 'tax_amount' => Cart::instance('sale')->tax() * 1,
                 'discount_amount' => Cart::instance('sale')->discount() * 1,
-            ]);
-            foreach (Cart::instance('sale')->content() as $cart_item) {
-                // dd($cart_item->options);
-                // PurchaseDetail::where('date')->where('product_id', $cart_item->id)
-                // $sale = SaleDetails::where('date', '<=' , $request->date)
-                // ->where('product_id', $cart_item->id)
-                // ->latest()->first();
-                // $purchase = PurchaseDetail::where('date', '<=' , $request->date)
-                // ->where('product_id', $cart_item->id)
-                // ->latest()->first();
-                // $mutationSale = Mutation::where('reference', $sale->id)->first();
-                // $productCost =0;
-                // if($sale && $mutationSale->stock_last != 0){
-                //     if($sale->date > $purchase->date ){
-                //         $productCost = $sale->product_cost;
-                //     }else{
-                //         $sumPurchase = PurchaseDetail::select(
-                //             DB::raw("SUM(sub_total) as sub_total"),
-                //             DB::raw("SUM(quantity) as total_quantity")
-                //         )
-                //         ->where('date','>=', $request->date)
-                //         ->where('product_id', $cart_item->id)
-                //         ->groupBy('product_id')
-                //         ->first();
+            ];
 
-                //         $productCost = $sale->product_cost * $mutationSale->stock_last + $sumPurchase->sub_total
-                //         / $mutationSale->stock_last + $sumPurchase->total_quantity;
-                //     }
-                // }
-                // else{
-                //     $sumPurchase = PurchaseDetail::select(
-                //         DB::raw("SUM(sub_total) as sub_total"),
-                //         DB::raw("SUM(quantity) as total_quantity")
-                //     )
-                //     ->where('product_id', $cart_item->id)
-                //     ->groupBy('product_id')
-                //     ->first();
-                //     $productCost = $sumPurchase->sub_total / $sumPurchase->total_quantity;
-                // }
+            // ✅ set branch_id kalau kolom ada (biar aman di project lama)
+            if (\Illuminate\Support\Facades\Schema::hasColumn('sales', 'branch_id')) {
+                $saleData['branch_id'] = $branchId;
+            }
+
+            $sale = Sale::create($saleData);
+
+            foreach (Cart::instance('sale')->content() as $cart_item) {
+
                 $total_cost += $cart_item->options->product_cost;
-                SaleDetails::create([
+
+                $saleDetailData = [
                     'sale_id' => $sale->id,
                     'product_id' => $cart_item->id,
                     'product_name' => $cart_item->name,
                     'product_code' => $cart_item->options->code,
-                    'product_cost'=> $cart_item->options->product_cost,
-                    'warehouse_id'=> $cart_item->options->warehouse_id,
+                    'product_cost' => $cart_item->options->product_cost,
+                    'warehouse_id' => $cart_item->options->warehouse_id,
                     'quantity' => $cart_item->qty,
                     'price' => $cart_item->price * 1,
                     'unit_price' => $cart_item->options->unit_price * 1,
@@ -182,100 +159,99 @@ class SaleController extends Controller
                     'product_discount_amount' => $cart_item->options->product_discount * 1,
                     'product_discount_type' => $cart_item->options->product_discount_type,
                     'product_tax_amount' => $cart_item->options->product_tax * 1,
-                ]);
-                $warehouse_ks = Warehouse::where('warehouse_code', 'KS')->first();
-                if($warehouse_ks){
-                    if($warehouse_ks->id == $cart_item->options->warehouse_id){
-                        $purchase = Purchase::create([
-                            'date' => $request->date,
-                            'due_date' => 0,
-                            'supplier_id' => Supplier::where('supplier_name', 'MJD-KS')->first()->id,
-                            'supplier_name' => Supplier::where('supplier_name', 'MJD-KS')->first()->supplier_name,
-                            'tax_percentage' => 0,
-                            'discount_percentage' => 0,
-                            'shipping_amount' => 0,
-                            'paid_amount' => 0,
-                            'total_amount' => $cart_item->options->product_cost * $cart_item->qty,
-                            'due_amount' =>  $cart_item->options->product_cost * $cart_item->qty,
-                            'status' => "Pending",
-                            'total_quantity' => $request->total_quantity,
-                            'payment_status' => "Unpaid",
-                            'payment_method' => "Bank Transfer",
-                            'note' => "Penjualan Konsyinasi, referensi nota sale: ". $sale->reference ,
-                            'tax_amount' => Cart::instance('sale')->tax() * 1,
-                            'discount_amount' => 0,
-                        ]);
-                        PurchaseDetail::create([
-                            'purchase_id' => $purchase->id,
-                            'product_id' => $cart_item->id,
-                            'product_name' => $cart_item->name,
-                            'product_code' => $cart_item->options->code,
-                            'quantity' => $cart_item->qty,
-                            'price' => $cart_item->options->product_cost,
-                            'unit_price' => $cart_item->options->unit_price * 1,
-                            'sub_total' => $cart_item->options->product_cost *
-                            $cart_item->qty,
-                            'warehouse_id'=> $cart_item->options->warehouse_id,
-                            'product_discount_amount' => $cart_item->options->unit_price -
-                            $cart_item->options->product_cost,
-                            'product_discount_type' => "fixed",
-                            'product_tax_amount' => 0,
-                        ]);
-                    
-    
-                        // if ($request->status == 'Shipped' || $request->status == 'Completed') {
-                        //     $mutation = Mutation::where('product_id', $cart_item->id)
-                        //     ->where('warehouse_id', $cart_item->options->warehouse_id)
-                        //     ->latest()->first();
-                        //     $_stock_early = $mutation ? $mutation->stock_last : 0;
-                        //     $_stock_in = 0;
-                        //     $_stock_out = $cart_item->qty;
-                        //     $_stock_last = $_stock_early - $_stock_out;
-    
-                        //     Mutation::create([
-                        //         'reference' => $sale->reference,
-                        //         'date' => $request->date,
-                        //         'mutation_type' => "Out",
-                        //         'note' => "Konsyinasi Mutation For Sale : ". $sale->reference .
-                        //         "and Purchase: ". $purchase->reference,
-                        //         'warehouse_id' => $cart_item->options->warehouse_id,
-                        //         'product_id' => $cart_item->id,
-                        //         'stock_early' => $_stock_early,
-                        //         'stock_in' => $_stock_in,
-                        //         'stock_out'=> $_stock_out,
-                        //         'stock_last'=> $_stock_last,
-                        //     ]);
-                        // }
-                    }
+                ];
+
+                if (\Illuminate\Support\Facades\Schema::hasColumn('sale_details', 'branch_id')) {
+                    $saleDetailData['branch_id'] = $branchId;
                 }
-               else{
+
+                SaleDetails::create($saleDetailData);
+
+                $warehouse_ks = Warehouse::where('warehouse_code', 'KS')->first();
+
+                if ($warehouse_ks) {
+                    if ($warehouse_ks->id == $cart_item->options->warehouse_id) {
+
+                        $supplierKs = Supplier::where('supplier_name', 'MJD-KS')->first();
+
+                        if ($supplierKs) {
+                            $purchase = Purchase::create([
+                                'date' => $request->date,
+                                'due_date' => 0,
+                                'supplier_id' => $supplierKs->id,
+                                'supplier_name' => $supplierKs->supplier_name,
+                                'tax_percentage' => 0,
+                                'discount_percentage' => 0,
+                                'shipping_amount' => 0,
+                                'paid_amount' => 0,
+                                'total_amount' => $cart_item->options->product_cost * $cart_item->qty,
+                                'due_amount' => $cart_item->options->product_cost * $cart_item->qty,
+                                'status' => "Pending",
+                                'total_quantity' => $request->total_quantity,
+                                'payment_status' => "Unpaid",
+                                'payment_method' => "Bank Transfer",
+                                'note' => "Penjualan Konsyinasi, referensi nota sale: " . $sale->reference,
+                                'tax_amount' => Cart::instance('sale')->tax() * 1,
+                                'discount_amount' => 0,
+                            ]);
+
+                            PurchaseDetail::create([
+                                'purchase_id' => $purchase->id,
+                                'product_id' => $cart_item->id,
+                                'product_name' => $cart_item->name,
+                                'product_code' => $cart_item->options->code,
+                                'quantity' => $cart_item->qty,
+                                'price' => $cart_item->options->product_cost,
+                                'unit_price' => $cart_item->options->unit_price * 1,
+                                'sub_total' => $cart_item->options->product_cost * $cart_item->qty,
+                                'warehouse_id' => $cart_item->options->warehouse_id,
+                                'product_discount_amount' => $cart_item->options->unit_price - $cart_item->options->product_cost,
+                                'product_discount_type' => "fixed",
+                                'product_tax_amount' => 0,
+                            ]);
+                        }
+                    }
+                } else {
                     if ($request->status == 'Shipped' || $request->status == 'Completed') {
+
                         $mutation = Mutation::where('product_id', $cart_item->id)
-                        ->where('warehouse_id', $cart_item->options->warehouse_id)
-                        ->latest()->first();
+                            ->where('warehouse_id', $cart_item->options->warehouse_id)
+                            ->latest()
+                            ->first();
+
                         $_stock_early = $mutation ? $mutation->stock_last : 0;
                         $_stock_in = 0;
-                        $_stock_out = $cart_item->qty;
+                        $_stock_out = (int) $cart_item->qty;
                         $_stock_last = $_stock_early - $_stock_out;
-    
-                        Mutation::create([
+
+                        $mutationData = [
                             'reference' => $sale->reference,
                             'date' => $request->date,
                             'mutation_type' => "Out",
-                            'note' => "Mutation for Sale: ". $sale->reference,
+                            'note' => "Mutation for Sale: " . $sale->reference,
                             'warehouse_id' => $cart_item->options->warehouse_id,
                             'product_id' => $cart_item->id,
                             'stock_early' => $_stock_early,
                             'stock_in' => $_stock_in,
-                            'stock_out'=> $_stock_out,
-                            'stock_last'=> $_stock_last,
-                        ]);
-                        if($total_cost <= 0){
+                            'stock_out' => $_stock_out,
+                            'stock_last' => $_stock_last,
+                        ];
+
+                        if (\Illuminate\Support\Facades\Schema::hasColumn('mutations', 'branch_id')) {
+                            $mutationData['branch_id'] = $branchId;
+                        }
+
+                        Mutation::create($mutationData);
+
+                        // ==============================
+                        // Accounting Transaction
+                        // ==============================
+                        if ($total_cost <= 0) {
 
                             Helper::addNewTransaction([
                                 'date' => $request->date,
-                                'label' => "Sale Invoice for #". $sale->reference,
-                                'description' => "Order ID: ".$sale->reference,
+                                'label' => "Sale Invoice for #" . $sale->reference,
+                                'description' => "Order ID: " . $sale->reference,
                                 'purchase_id' => null,
                                 'purchase_payment_id' => null,
                                 'purchase_return_id' => null,
@@ -296,12 +272,13 @@ class SaleController extends Controller
                                     'type' => 'credit'
                                 ]
                             ]);
-                        }else{
+
+                        } else {
 
                             Helper::addNewTransaction([
                                 'date' => $sale->date,
-                                'label' => "Sale Invoice for #". $sale->reference,
-                                'description' => "Order ID: ".$sale->reference,
+                                'label' => "Sale Invoice for #" . $sale->reference,
+                                'description' => "Order ID: " . $sale->reference,
                                 'purchase_id' => null,
                                 'purchase_payment_id' => null,
                                 'purchase_return_id' => null,
@@ -323,9 +300,10 @@ class SaleController extends Controller
                                 ],
                                 [
                                     'subaccount_number' => '4-40000', // Pendapatan Usaha
-                                    'amount' => $total_amount,
+                                    'amount' => $sale->total_amount, // ✅ FIX: tadinya $total_amount undefined
                                     'type' => 'credit'
-                                ],[
+                                ],
+                                [
                                     'subaccount_number' => '1-10200', // Persediaan
                                     'amount' => $total_cost,
                                     'type' => 'credit'
@@ -334,24 +312,31 @@ class SaleController extends Controller
                         }
                     }
                 }
-                
             }
 
             Cart::instance('sale')->destroy();
 
             if ($sale->paid_amount > 0) {
-                $created_payment = SalePayment::create([
+
+                $paymentData = [
                     'date' => $request->date,
-                    'reference' => 'INV/'.$sale->reference,
+                    'reference' => 'INV/' . $sale->reference,
                     'amount' => $sale->paid_amount,
                     'sale_id' => $sale->id,
                     'payment_method' => $request->payment_method,
                     'deposit_code' => $request->deposit_code
-                ]);
+                ];
+
+                if (\Illuminate\Support\Facades\Schema::hasColumn('sale_payments', 'branch_id')) {
+                    $paymentData['branch_id'] = $branchId;
+                }
+
+                $created_payment = SalePayment::create($paymentData);
+
                 Helper::addNewTransaction([
-                    'date'=> $request->date,
-                    'label' => "Payment for Sales Order #".$sale->reference,
-                    'description' => "Sale ID: ".$sale->reference,
+                    'date' => $request->date,
+                    'label' => "Payment for Sales Order #" . $sale->reference,
+                    'description' => "Sale ID: " . $sale->reference,
                     'purchase_id' => null,
                     'purchase_payment_id' => null,
                     'purchase_return_id' => null,
@@ -380,10 +365,9 @@ class SaleController extends Controller
         return redirect()->route('sales.index');
     }
 
-
     public function show(Sale $sale) {
         abort_if(Gate::denies('show_sales'), 403);
-        
+
         $sale->load(['creator', 'updater']);
         $customer = Customer::findOrFail($sale->customer_id);
 
@@ -514,12 +498,12 @@ class SaleController extends Controller
     public function destroy(Sale $sale) {
         abort_if(Gate::denies('delete_sales'), 403);
         // DB::transaction(function () use ($sale) {
-            
+
         // });
         // $sale->delete();
         foreach ($sale->saleDetails as $sale_detail) {
             // dd($sale_detail);
-            
+
             if ($sale->status == 'Shipped' || $sale->status == 'Completed') {
                 $mutation = Mutation::with('warehouse')->where('product_id', $sale_detail->product_id)
                 ->where('warehouse_id', $sale_detail->warehouse_id)
@@ -533,13 +517,13 @@ class SaleController extends Controller
                     });
                     $purchase->update(['status' => 'Void']);
                 }
-                
-                
+
+
                 $_stock_early = $mutation ? $mutation->stock_last : 0;
                 $_stock_in = $sale_detail->quantity;
                 $_stock_out = 0;
                 $_stock_last = $_stock_early + $_stock_in;
-                
+
                 Mutation::create([
                     'reference' => $sale->reference,
                     'date' => $sale->date,
@@ -554,10 +538,10 @@ class SaleController extends Controller
                 ]);
             }
         }
-        
+
         $sale->update(['status' => 'Void']);
         toast('Sale Deleted!', 'warning');
-        
+
         return redirect()->route('sales.index');
     }
 }
