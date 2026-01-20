@@ -12,7 +12,6 @@ class EnsureBranchSelected
     {
         $activeBranch = session('active_branch');
 
-        // ✅ Deteksi mode ALL dari berbagai kemungkinan value
         $isAll = false;
 
         if ($activeBranch === null) {
@@ -26,22 +25,25 @@ class EnsureBranchSelected
         }
 
         if ($isAll) {
-            // ✅ Pesan yang jelas
-            if (function_exists('toast')) {
-                toast('Please select a branch first. This action is not allowed in All Branch mode.', 'warning');
-            }
-
-            // ✅ Untuk request API/AJAX
+            // AJAX/API -> jangan redirect
             if ($request->expectsJson()) {
                 return response()->json([
                     'message' => 'Please select a branch first. This action is not allowed in All Branch mode.'
                 ], 422);
             }
 
-            // ✅ Redirect balik kalau bisa, fallback ke sales.index
-            $fallback = route('sales.index');
+            if (function_exists('toast')) {
+                toast('Please select a branch first. This action is not allowed in All Branch mode.', 'warning');
+            }
 
-            return redirect()->to(url()->previous() ?: $fallback);
+            // ✅ Jangan back/previous (biar tidak loop)
+            // Selalu redirect ke halaman yang pasti aman
+            if (\Illuminate\Support\Facades\Route::has('sales.index')) {
+                return redirect()->route('sales.index');
+            }
+
+            // fallback aman kalau route belum ada
+            return redirect('/sales');
         }
 
         return $next($request);
