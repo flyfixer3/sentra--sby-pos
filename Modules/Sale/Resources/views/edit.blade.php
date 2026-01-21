@@ -38,7 +38,7 @@
                                         <div class="form-group">
                                             <label for="customer_id">Customer <span class="text-danger">*</span></label>
                                             <select class="form-control" name="customer_id" id="customer_id" required>
-                                                @foreach(\Modules\People\Entities\Customer::all() as $customer)
+                                                @foreach($customers as $customer)
                                                     <option {{ $sale->customer_id == $customer->id ? 'selected' : '' }} value="{{ $customer->id }}">{{ $customer->customer_name }}</option>
                                                 @endforeach
                                             </select>
@@ -51,7 +51,7 @@
                                         <input type="text" class="form-control" name="car_number_plate" id="car_number_plate" required >
                                     </div>
                                 </div>
-                              
+
                                 <div class="col-lg-2">
                                     <div class="form-group">
                                         <label for="sale_form">Sales From <span class="text-danger">*</span></label>
@@ -76,7 +76,7 @@
                                 </div>
                             </div>
 
-                            <livewire:product-cart-sale :cartInstance="'sale'" :data="$sale" :warehouses="\Modules\Product\Entities\Warehouse::all()"/>
+                            <livewire:product-cart-sale :cartInstance="'sale'" :data="$sale" :warehouses="$warehouses"/>
 
                             <div class="form-row">
                                 <div class="col-lg-4">

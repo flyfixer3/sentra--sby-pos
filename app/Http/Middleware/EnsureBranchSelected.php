@@ -2,27 +2,19 @@
 
 namespace App\Http\Middleware;
 
+use App\Support\BranchContext;
 use Closure;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Route;
 use Symfony\Component\HttpFoundation\Response;
 
 class EnsureBranchSelected
 {
     public function handle(Request $request, Closure $next): Response
     {
-        $activeBranch = session('active_branch');
-
-        $isAll = false;
-
-        if ($activeBranch === null) {
-            $isAll = true;
-        } elseif (is_string($activeBranch) && strtolower(trim($activeBranch)) === 'all') {
-            $isAll = true;
-        } elseif (is_numeric($activeBranch) && (int) $activeBranch <= 0) {
-            $isAll = true;
-        } elseif (is_array($activeBranch) && empty($activeBranch)) {
-            $isAll = true;
-        }
+        // ✅ ikuti definisi project lama:
+        // ALL kalau BranchContext::id() === null
+        $isAll = BranchContext::id() === null;
 
         if ($isAll) {
             // AJAX/API -> jangan redirect
@@ -36,13 +28,12 @@ class EnsureBranchSelected
                 toast('Please select a branch first. This action is not allowed in All Branch mode.', 'warning');
             }
 
-            // ✅ Jangan back/previous (biar tidak loop)
-            // Selalu redirect ke halaman yang pasti aman
-            if (\Illuminate\Support\Facades\Route::has('sales.index')) {
+            // ✅ redirect ke halaman aman yang READ-ONLY
+            // PENTING: pastikan route ini memang tidak pakai branch.selected
+            if (Route::has('sales.index')) {
                 return redirect()->route('sales.index');
             }
 
-            // fallback aman kalau route belum ada
             return redirect('/sales');
         }
 

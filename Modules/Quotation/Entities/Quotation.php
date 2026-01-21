@@ -2,6 +2,7 @@
 
 namespace Modules\Quotation\Entities;
 
+use App\Traits\HasBranchScope;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Support\Carbon;
@@ -9,7 +10,7 @@ use Modules\People\Entities\Customer;
 
 class Quotation extends Model
 {
-    use HasFactory;
+    use HasFactory, HasBranchScope;
 
     protected $guarded = [];
 

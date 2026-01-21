@@ -38,7 +38,7 @@
                                         <div class="form-group">
                                             <label for="customer_id">Customer <span class="text-danger">*</span></label>
                                             <select class="form-control" name="customer_id" id="customer_id" required>
-                                                @foreach(\Modules\People\Entities\Customer::all() as $customer)
+                                                @foreach($customers as $customer)
                                                     <option {{ $quotation->customer_id == $customer->id ? 'selected' : '' }} value="{{ $customer->id }}">{{ $customer->customer_name }}</option>
                                                 @endforeach
                                             </select>
@@ -55,7 +55,7 @@
                                 </div>
                             </div>
 
-                            <livewire:product-cart :cartInstance="'quotation'" :data="$quotation"/>
+                            <livewire:product-cart :cartInstance="'quotation'" :data="$quotation" :warehouses="$warehouses"/>
 
                             <div class="form-row">
                                 <div class="col-lg-4">

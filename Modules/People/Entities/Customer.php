@@ -16,4 +16,11 @@ class Customer extends Model
         return \Modules\People\Database\factories\CustomerFactory::new();
     }
 
+    public function scopeForActiveBranch($q, int $branchId)
+    {
+        return $q->where(function($qq) use ($branchId){
+            $qq->whereNull('branch_id')->orWhere('branch_id', $branchId);
+        });
+    }
+
 }
