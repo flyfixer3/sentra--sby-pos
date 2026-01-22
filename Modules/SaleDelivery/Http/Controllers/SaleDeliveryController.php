@@ -13,35 +13,146 @@ use Modules\People\Entities\Customer;
 use Modules\Product\Entities\Warehouse;
 use Modules\Product\Entities\Product;
 use Modules\Mutation\Entities\Mutation;
+use Modules\Mutation\Http\Controllers\MutationController;
+use Modules\SaleDelivery\DataTables\SaleDeliveriesDataTable;
 use Modules\SaleDelivery\Entities\SaleDelivery;
 use Modules\SaleDelivery\Entities\SaleDeliveryItem;
 
 class SaleDeliveryController extends Controller
 {
-    public function index()
+    private MutationController $mutationController;
+
+    public function __construct(MutationController $mutationController)
+    {
+        $this->mutationController = $mutationController;
+    }
+
+    public function index(SaleDeliveriesDataTable $dataTable)
     {
         abort_if(Gate::denies('access_sale_deliveries'), 403);
-
-        $deliveries = SaleDelivery::query()
-            ->withCount('items')
-            ->latest('id')
-            ->paginate(20);
-
-        return view('saledelivery::index', compact('deliveries'));
+        return $dataTable->render('saledelivery::index');
     }
 
     public function show(SaleDelivery $saleDelivery)
     {
         abort_if(Gate::denies('show_sale_deliveries'), 403);
 
-        $saleDelivery->load(['items']);
+        $saleDelivery->load(['items.product', 'warehouse', 'customer']);
 
         return view('saledelivery::show', compact('saleDelivery'));
     }
 
-    public function create()
+    public function confirmForm(SaleDelivery $saleDelivery)
+    {
+        abort_if(Gate::denies('confirm_sale_deliveries'), 403);
+
+        // ✅ Guard: tidak boleh confirm kalau active branch = all / kosong
+        $active = session('active_branch');
+        if ($active === 'all' || empty($active)) {
+            abort(403, "Please choose a specific branch first (not 'All Branch').");
+        }
+
+        // ✅ status guard
+        if (strtolower((string) $saleDelivery->status) !== 'pending') {
+            abort(422, 'Sale Delivery is not pending.');
+        }
+
+        // ✅ branch context guard
+        $branchId = BranchContext::id();
+        if ((int) $saleDelivery->branch_id !== (int) $branchId) {
+            abort(403, 'Wrong branch context.');
+        }
+
+        $saleDelivery->load(['items.product', 'warehouse', 'customer']);
+
+        return view('saledelivery::confirm', compact('saleDelivery'));
+    }
+
+    public function confirmStore(Request $request, SaleDelivery $saleDelivery)
+    {
+        abort_if(Gate::denies('confirm_sale_deliveries'), 403);
+
+        // ✅ Guard: tidak boleh confirm kalau active branch = all / kosong
+        $active = session('active_branch');
+        if ($active === 'all' || empty($active)) {
+            abort(403, "Please choose a specific branch first (not 'All Branch').");
+        }
+
+        $branchId = BranchContext::id();
+
+        DB::transaction(function () use ($saleDelivery, $branchId) {
+
+            // ✅ lock record biar aman dari double click / race condition
+            $saleDelivery = SaleDelivery::withoutGlobalScopes()
+                ->lockForUpdate()
+                ->findOrFail($saleDelivery->id);
+
+            // ✅ status guard (ulang setelah lock)
+            if (strtolower((string) $saleDelivery->status) !== 'pending') {
+                abort(422, 'Sale Delivery is not pending.');
+            }
+
+            // ✅ branch context guard
+            if ((int) $saleDelivery->branch_id !== (int) $branchId) {
+                abort(403, 'Wrong branch context.');
+            }
+
+            $saleDelivery->loadMissing(['items', 'warehouse']);
+
+            // ✅ reference wajib ada sebelum bikin mutation
+            if (empty($saleDelivery->reference)) {
+                $saleDelivery->update([
+                    'reference' => $this->generateReference((int) $saleDelivery->id),
+                ]);
+            }
+
+            // ✅ anti double confirm: cek mutation sudah pernah dibuat belum
+            $exists = Mutation::withoutGlobalScopes()
+                ->where('reference', (string) $saleDelivery->reference)
+                ->where('note', 'like', 'Sales Delivery OUT%')
+                ->exists();
+
+            if ($exists) {
+                abort(422, 'This sale delivery was already confirmed (stock movement exists).');
+            }
+
+            foreach ($saleDelivery->items as $item) {
+                $this->mutationController->applyInOut(
+                    (int) $branchId,
+                    (int) $saleDelivery->warehouse_id,
+                    (int) $item->product_id,
+                    'Out',
+                    (int) $item->quantity,
+                    (string) $saleDelivery->reference,
+                    "Sales Delivery OUT #{$saleDelivery->reference} | WH {$saleDelivery->warehouse_id}",
+                    (string) $saleDelivery->getRawOriginal('date') // raw string, aman
+                );
+            }
+
+            $saleDelivery->update([
+                'status'       => 'confirmed',
+                'confirmed_by' => Auth::id(),
+                'confirmed_at' => now(),
+            ]);
+        });
+
+        toast('Sale Delivery Confirmed!', 'success');
+        return redirect()->route('sale-deliveries.show', $saleDelivery->id);
+    }
+
+    public function create(Request $request)
     {
         abort_if(Gate::denies('create_sale_deliveries'), 403);
+
+        // ✅ wajib ada source (biar gak bisa akses langsung dari menu)
+        $source = (string) $request->get('source', '');
+        if (!in_array($source, ['quotation', 'sale'], true)) {
+            abort(403, 'Sale Delivery can only be created from Quotation or Sale.');
+        }
+
+        // optional: validasi id sumber
+        if ($source === 'quotation' && !$request->filled('quotation_id')) abort(422, 'quotation_id is required');
+        if ($source === 'sale' && !$request->filled('sale_id')) abort(422, 'sale_id is required');
 
         $branchId = BranchContext::id();
 
@@ -65,6 +176,9 @@ class SaleDeliveryController extends Controller
     {
         abort_if(Gate::denies('create_sale_deliveries'), 403);
 
+        $source = (string) $request->get('source', '');
+        abort_unless(in_array($source, ['quotation', 'sale'], true), 403);
+
         $branchId = BranchContext::id();
 
         $request->validate([
@@ -81,27 +195,27 @@ class SaleDeliveryController extends Controller
 
         DB::transaction(function () use ($request, $branchId) {
 
-            // customer harus global atau branch aktif
+            // ✅ customer harus global atau branch aktif
             $customer = Customer::query()
-                ->where('id', $request->customer_id)
                 ->forActiveBranch($branchId)
+                ->where('id', $request->customer_id)
                 ->firstOrFail();
 
-            // warehouse harus milik branch aktif
+            // ✅ warehouse harus milik branch aktif
             $warehouse = Warehouse::query()
-                ->where('id', $request->warehouse_id)
                 ->where('branch_id', $branchId)
+                ->where('id', $request->warehouse_id)
                 ->firstOrFail();
 
             $delivery = SaleDelivery::create([
-                'branch_id' => $branchId,
+                'branch_id'    => $branchId,
                 'quotation_id' => $request->quotation_id ?: null,
-                'customer_id' => $customer->id,
-                'date' => $request->date,
+                'customer_id'  => $customer->id,
+                'date'         => $request->date,
                 'warehouse_id' => $warehouse->id,
-                'status' => 'pending',
-                'note' => $request->note,
-                'created_by' => Auth::id(),
+                'status'       => 'pending',
+                'note'         => $request->note,
+                'created_by'   => Auth::id(),
             ]);
 
             foreach ($request->items as $row) {
@@ -109,96 +223,15 @@ class SaleDeliveryController extends Controller
                     'sale_delivery_id' => $delivery->id,
                     'product_id' => (int) $row['product_id'],
                     'quantity' => (int) $row['quantity'],
-                    'price' => isset($row['price']) ? (int) $row['price'] : null,
+                    'price' => array_key_exists('price', $row) && $row['price'] !== null
+                        ? (int) $row['price']
+                        : null,
                 ]);
             }
         });
 
         toast('Sale Delivery Created!', 'success');
         return redirect()->route('sale-deliveries.index');
-    }
-
-    public function confirmForm(SaleDelivery $saleDelivery)
-    {
-        abort_if(Gate::denies('confirm_sale_deliveries'), 403);
-
-        if (strtolower($saleDelivery->status) !== 'pending') {
-            abort(422, 'Sale Delivery is not pending.');
-        }
-
-        $saleDelivery->load('items');
-
-        return view('saledelivery::confirm', compact('saleDelivery'));
-    }
-
-    public function confirmStore(Request $request, SaleDelivery $saleDelivery)
-    {
-        abort_if(Gate::denies('confirm_sale_deliveries'), 403);
-
-        if (strtolower($saleDelivery->status) !== 'pending') {
-            abort(422, 'Sale Delivery is not pending.');
-        }
-
-        $branchId = BranchContext::id();
-
-        // pastikan user confirm sesuai branch aktif
-        if ((int)$saleDelivery->branch_id !== (int)$branchId) {
-            abort(403, 'Wrong branch context.');
-        }
-
-        DB::transaction(function () use ($saleDelivery, $branchId) {
-
-            $saleDelivery->load('items');
-
-            // MUTATION OUT untuk tiap item
-            foreach ($saleDelivery->items as $item) {
-
-                $last = Mutation::query()
-                    ->where('warehouse_id', $saleDelivery->warehouse_id)
-                    ->where('product_id', $item->product_id)
-                    ->latest('id')
-                    ->first();
-
-                $stockEarly = $last ? (int)$last->stock_last : 0;
-                $stockOut   = (int)$item->quantity;
-                $stockLast  = $stockEarly - $stockOut;
-
-                // MVP: kita belum bikin “issue” kalau minus.
-                // Kalau kamu mau strict: kalau $stockLast < 0 -> abort 422.
-                if ($stockLast < 0) {
-                    abort(422, "Stock not enough for product_id={$item->product_id}. Available={$stockEarly}, need={$stockOut}");
-                }
-
-                $mutationData = [
-                    'reference' => $saleDelivery->reference,
-                    'date' => $saleDelivery->date,
-                    'mutation_type' => 'Out',
-                    'note' => "Sales Delivery OUT #{$saleDelivery->reference}",
-                    'warehouse_id' => $saleDelivery->warehouse_id,
-                    'product_id' => $item->product_id,
-                    'stock_early' => $stockEarly,
-                    'stock_in' => 0,
-                    'stock_out' => $stockOut,
-                    'stock_last' => $stockLast,
-                ];
-
-                // branch aware kalau kolom ada
-                if (\Illuminate\Support\Facades\Schema::hasColumn('mutations', 'branch_id')) {
-                    $mutationData['branch_id'] = $branchId;
-                }
-
-                Mutation::create($mutationData);
-            }
-
-            $saleDelivery->update([
-                'status' => 'confirmed',
-                'confirmed_by' => Auth::id(),
-                'confirmed_at' => now(),
-            ]);
-        });
-
-        toast('Sale Delivery Confirmed!', 'success');
-        return redirect()->route('sale-deliveries.show', $saleDelivery->id);
     }
 
     /**

@@ -220,6 +220,14 @@
                 <i class="c-sidebar-nav-icon bi bi-journals" style="line-height: 1;"></i> All Quotations
             </a>
         </li>
+        @can('access_sale_deliveries')
+        <li class="c-sidebar-nav-item">
+            <a class="c-sidebar-nav-link {{ request()->routeIs('sale-deliveries.*') ? 'c-active' : '' }}"
+            href="{{ route('sale-deliveries.index') }}">
+                <i class="c-sidebar-nav-icon bi bi-truck" style="line-height: 1;"></i> Sale Deliveries
+            </a>
+        </li>
+        @endcan
     </ul>
 </li>
 @endcan
