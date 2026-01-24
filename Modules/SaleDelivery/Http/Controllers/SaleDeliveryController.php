@@ -72,7 +72,6 @@ class SaleDeliveryController extends Controller
     {
         abort_if(Gate::denies('confirm_sale_deliveries'), 403);
 
-        // ✅ Guard: tidak boleh confirm kalau active branch = all / kosong
         $active = session('active_branch');
         if ($active === 'all' || empty($active)) {
             abort(403, "Please choose a specific branch first (not 'All Branch').");
@@ -99,10 +98,10 @@ class SaleDeliveryController extends Controller
 
             $saleDelivery->loadMissing(['items', 'warehouse']);
 
-            // ✅ reference wajib ada sebelum bikin mutation
+            // ✅ safety: pastikan reference ada (buat data legacy)
             if (empty($saleDelivery->reference)) {
                 $saleDelivery->update([
-                    'reference' => $this->generateReference((int) $saleDelivery->id),
+                    'reference' => make_reference_id('SDO', (int) $saleDelivery->id),
                 ]);
             }
 
@@ -234,25 +233,87 @@ class SaleDeliveryController extends Controller
         return redirect()->route('sale-deliveries.index');
     }
 
-    /**
-     * Show the form for editing the specified resource.
-     * @param int $id
-     * @return Renderable
-     */
-    public function edit($id)
+    public function edit(SaleDelivery $saleDelivery)
     {
-        return view('saledelivery::edit');
+        abort_if(Gate::denies('edit_sale_deliveries'), 403);
+
+        // ✅ Guard: tidak boleh edit kalau active branch = all / kosong
+        $active = session('active_branch');
+        if ($active === 'all' || empty($active)) {
+            abort(403, "Please choose a specific branch first (not 'All Branch').");
+        }
+
+        // ✅ status guard
+        if (strtolower((string) $saleDelivery->status) !== 'pending') {
+            abort(422, 'Only pending Sale Delivery can be edited.');
+        }
+
+        // ✅ branch context guard
+        $branchId = BranchContext::id();
+        if ((int) $saleDelivery->branch_id !== (int) $branchId) {
+            abort(403, 'Wrong branch context.');
+        }
+
+        $saleDelivery->load(['items.product', 'warehouse', 'customer']);
+
+        $warehouses = Warehouse::query()
+            ->where('branch_id', $branchId)
+            ->orderBy('warehouse_name')
+            ->get();
+
+        return view('saledelivery::edit', compact('saleDelivery', 'warehouses'));
     }
 
-    /**
-     * Update the specified resource in storage.
-     * @param Request $request
-     * @param int $id
-     * @return Renderable
-     */
-    public function update(Request $request, $id)
+    public function update(Request $request, SaleDelivery $saleDelivery)
     {
-        //
+        abort_if(Gate::denies('edit_sale_deliveries'), 403);
+
+        // ✅ Guard: tidak boleh edit kalau active branch = all / kosong
+        $active = session('active_branch');
+        if ($active === 'all' || empty($active)) {
+            abort(403, "Please choose a specific branch first (not 'All Branch').");
+        }
+
+        $branchId = BranchContext::id();
+
+        DB::transaction(function () use ($request, $saleDelivery, $branchId) {
+
+            // ✅ lock for update
+            $saleDelivery = SaleDelivery::withoutGlobalScopes()
+                ->lockForUpdate()
+                ->findOrFail($saleDelivery->id);
+
+            // ✅ status guard
+            if (strtolower((string) $saleDelivery->status) !== 'pending') {
+                abort(422, 'Only pending Sale Delivery can be edited.');
+            }
+
+            // ✅ branch context guard
+            if ((int) $saleDelivery->branch_id !== (int) $branchId) {
+                abort(403, 'Wrong branch context.');
+            }
+
+            $request->validate([
+                'date' => 'required|date',
+                'warehouse_id' => 'required|integer',
+                'note' => 'nullable|string|max:2000',
+            ]);
+
+            // ✅ warehouse harus milik branch aktif
+            $warehouse = Warehouse::query()
+                ->where('branch_id', $branchId)
+                ->where('id', (int) $request->warehouse_id)
+                ->firstOrFail();
+
+            $saleDelivery->update([
+                'date'         => $request->date,
+                'warehouse_id' => $warehouse->id,
+                'note'         => $request->note,
+            ]);
+        });
+
+        toast('Sale Delivery Updated!', 'success');
+        return redirect()->route('sale-deliveries.show', $saleDelivery->id);
     }
 
     /**
