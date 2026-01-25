@@ -23,16 +23,21 @@
                         Date: {{ $saleDelivery->getAttributes()['date'] ?? $saleDelivery->date }} •
                         Warehouse: {{ optional($saleDelivery->warehouse)->warehouse_name ?? '-' }}
                     </div>
+
+                    <div class="text-muted small mt-1">
+                        Created at: {{ $saleDelivery->created_at ? $saleDelivery->created_at->format('d-m-Y H:i') : '-' }} •
+                        Created by: {{ optional($saleDelivery->creator)->name ?? '-' }}
+                    </div>
                 </div>
 
                 <div class="d-flex gap-2">
-                    @php $st = strtolower($saleDelivery->status); @endphp
+                    @php $st = strtolower((string) $saleDelivery->status); @endphp
                     <span class="badge
                         {{ $st==='pending' ? 'bg-warning text-dark' : '' }}
                         {{ $st==='confirmed' ? 'bg-success' : '' }}
                         {{ $st==='cancelled' ? 'bg-danger' : '' }}
                     ">
-                        {{ strtoupper($saleDelivery->status) }}
+                        {{ strtoupper((string) $saleDelivery->status) }}
                     </span>
 
                     @if(session('active_branch') && $st==='pending')
@@ -50,9 +55,28 @@
                     <div class="small text-muted">Customer</div>
                     <div class="fw-bold">{{ $saleDelivery->customer_name ?? optional($saleDelivery->customer)->customer_name }}</div>
                 </div>
+
                 <div class="col-md-6">
                     <div class="small text-muted">Note</div>
                     <div>{{ $saleDelivery->note ?: '-' }}</div>
+                </div>
+            </div>
+
+            <hr class="my-3">
+
+            <div class="row g-3">
+                <div class="col-md-6">
+                    <div class="small text-muted">Confirmed At</div>
+                    <div class="fw-bold">
+                        {{ $saleDelivery->confirmed_at ? \Carbon\Carbon::parse($saleDelivery->confirmed_at)->format('d-m-Y H:i') : '-' }}
+                    </div>
+                </div>
+
+                <div class="col-md-6">
+                    <div class="small text-muted">Confirmed By</div>
+                    <div class="fw-bold">
+                        {{ optional($saleDelivery->confirmer)->name ?? '-' }}
+                    </div>
                 </div>
             </div>
         </div>
@@ -61,6 +85,7 @@
     <div class="card">
         <div class="card-body">
             <h6 class="mb-2">Items</h6>
+
             <div class="table-responsive">
                 <table class="table table-hover align-middle">
                     <thead>
@@ -70,21 +95,19 @@
                         </tr>
                     </thead>
                     <tbody>
-                        @foreach($saleDelivery->items as $it)
+                        @forelse($saleDelivery->items as $it)
                             <tr>
                                 <td>{{ $it->product_name ?? optional($it->product)->product_name }}</td>
-                                <td class="text-end">{{ number_format((int)$it->quantity) }}</td>
+                                <td class="text-end">{{ number_format((int) $it->quantity) }}</td>
                             </tr>
-                        @endforeach
+                        @empty
+                            <tr>
+                                <td colspan="2" class="text-center text-muted">No items.</td>
+                            </tr>
+                        @endforelse
                     </tbody>
                 </table>
             </div>
-
-            @if($saleDelivery->confirmed_at)
-                <div class="small text-muted mt-2">
-                    Confirmed at: {{ $saleDelivery->confirmed_at }} • Confirmed by: {{ $saleDelivery->confirmed_by ?? '-' }}
-                </div>
-            @endif
         </div>
     </div>
 </div>

@@ -37,7 +37,13 @@ class SaleDeliveryController extends Controller
     {
         abort_if(Gate::denies('show_sale_deliveries'), 403);
 
-        $saleDelivery->load(['items.product', 'warehouse', 'customer']);
+        $saleDelivery->load([
+            'items.product',
+            'warehouse',
+            'customer',
+            'creator',
+            'confirmer',
+        ]);
 
         return view('saledelivery::show', compact('saleDelivery'));
     }
@@ -46,18 +52,15 @@ class SaleDeliveryController extends Controller
     {
         abort_if(Gate::denies('confirm_sale_deliveries'), 403);
 
-        // ✅ Guard: tidak boleh confirm kalau active branch = all / kosong
         $active = session('active_branch');
         if ($active === 'all' || empty($active)) {
             abort(403, "Please choose a specific branch first (not 'All Branch').");
         }
 
-        // ✅ status guard
         if (strtolower((string) $saleDelivery->status) !== 'pending') {
             abort(422, 'Sale Delivery is not pending.');
         }
 
-        // ✅ branch context guard
         $branchId = BranchContext::id();
         if ((int) $saleDelivery->branch_id !== (int) $branchId) {
             abort(403, 'Wrong branch context.');
@@ -81,31 +84,26 @@ class SaleDeliveryController extends Controller
 
         DB::transaction(function () use ($saleDelivery, $branchId) {
 
-            // ✅ lock record biar aman dari double click / race condition
             $saleDelivery = SaleDelivery::withoutGlobalScopes()
                 ->lockForUpdate()
                 ->findOrFail($saleDelivery->id);
 
-            // ✅ status guard (ulang setelah lock)
             if (strtolower((string) $saleDelivery->status) !== 'pending') {
                 abort(422, 'Sale Delivery is not pending.');
             }
 
-            // ✅ branch context guard
             if ((int) $saleDelivery->branch_id !== (int) $branchId) {
                 abort(403, 'Wrong branch context.');
             }
 
             $saleDelivery->loadMissing(['items', 'warehouse']);
 
-            // ✅ safety: pastikan reference ada (buat data legacy)
             if (empty($saleDelivery->reference)) {
                 $saleDelivery->update([
                     'reference' => make_reference_id('SDO', (int) $saleDelivery->id),
                 ]);
             }
 
-            // ✅ anti double confirm: cek mutation sudah pernah dibuat belum
             $exists = Mutation::withoutGlobalScopes()
                 ->where('reference', (string) $saleDelivery->reference)
                 ->where('note', 'like', 'Sales Delivery OUT%')
@@ -124,7 +122,7 @@ class SaleDeliveryController extends Controller
                     (int) $item->quantity,
                     (string) $saleDelivery->reference,
                     "Sales Delivery OUT #{$saleDelivery->reference} | WH {$saleDelivery->warehouse_id}",
-                    (string) $saleDelivery->getRawOriginal('date') // raw string, aman
+                    (string) $saleDelivery->getRawOriginal('date')
                 );
             }
 
@@ -143,13 +141,11 @@ class SaleDeliveryController extends Controller
     {
         abort_if(Gate::denies('create_sale_deliveries'), 403);
 
-        // ✅ wajib ada source (biar gak bisa akses langsung dari menu)
         $source = (string) $request->get('source', '');
         if (!in_array($source, ['quotation', 'sale'], true)) {
             abort(403, 'Sale Delivery can only be created from Quotation or Sale.');
         }
 
-        // optional: validasi id sumber
         if ($source === 'quotation' && !$request->filled('quotation_id')) abort(422, 'quotation_id is required');
         if ($source === 'sale' && !$request->filled('sale_id')) abort(422, 'sale_id is required');
 
@@ -165,7 +161,6 @@ class SaleDeliveryController extends Controller
             ->orderBy('customer_name')
             ->get();
 
-        // Product list optional untuk MVP (boleh taruh di UI pakai livewire search-product)
         $products = Product::query()->orderBy('product_name')->limit(200)->get();
 
         return view('saledelivery::create', compact('warehouses', 'customers', 'products'));
@@ -194,13 +189,11 @@ class SaleDeliveryController extends Controller
 
         DB::transaction(function () use ($request, $branchId) {
 
-            // ✅ customer harus global atau branch aktif
             $customer = Customer::query()
                 ->forActiveBranch($branchId)
                 ->where('id', $request->customer_id)
                 ->firstOrFail();
 
-            // ✅ warehouse harus milik branch aktif
             $warehouse = Warehouse::query()
                 ->where('branch_id', $branchId)
                 ->where('id', $request->warehouse_id)
@@ -237,18 +230,15 @@ class SaleDeliveryController extends Controller
     {
         abort_if(Gate::denies('edit_sale_deliveries'), 403);
 
-        // ✅ Guard: tidak boleh edit kalau active branch = all / kosong
         $active = session('active_branch');
         if ($active === 'all' || empty($active)) {
             abort(403, "Please choose a specific branch first (not 'All Branch').");
         }
 
-        // ✅ status guard
         if (strtolower((string) $saleDelivery->status) !== 'pending') {
             abort(422, 'Only pending Sale Delivery can be edited.');
         }
 
-        // ✅ branch context guard
         $branchId = BranchContext::id();
         if ((int) $saleDelivery->branch_id !== (int) $branchId) {
             abort(403, 'Wrong branch context.');
@@ -268,7 +258,6 @@ class SaleDeliveryController extends Controller
     {
         abort_if(Gate::denies('edit_sale_deliveries'), 403);
 
-        // ✅ Guard: tidak boleh edit kalau active branch = all / kosong
         $active = session('active_branch');
         if ($active === 'all' || empty($active)) {
             abort(403, "Please choose a specific branch first (not 'All Branch').");
@@ -278,17 +267,14 @@ class SaleDeliveryController extends Controller
 
         DB::transaction(function () use ($request, $saleDelivery, $branchId) {
 
-            // ✅ lock for update
             $saleDelivery = SaleDelivery::withoutGlobalScopes()
                 ->lockForUpdate()
                 ->findOrFail($saleDelivery->id);
 
-            // ✅ status guard
             if (strtolower((string) $saleDelivery->status) !== 'pending') {
                 abort(422, 'Only pending Sale Delivery can be edited.');
             }
 
-            // ✅ branch context guard
             if ((int) $saleDelivery->branch_id !== (int) $branchId) {
                 abort(403, 'Wrong branch context.');
             }
@@ -299,7 +285,6 @@ class SaleDeliveryController extends Controller
                 'note' => 'nullable|string|max:2000',
             ]);
 
-            // ✅ warehouse harus milik branch aktif
             $warehouse = Warehouse::query()
                 ->where('branch_id', $branchId)
                 ->where('id', (int) $request->warehouse_id)
@@ -316,11 +301,6 @@ class SaleDeliveryController extends Controller
         return redirect()->route('sale-deliveries.show', $saleDelivery->id);
     }
 
-    /**
-     * Remove the specified resource from storage.
-     * @param int $id
-     * @return Renderable
-     */
     public function destroy($id)
     {
         //
