@@ -9,20 +9,29 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Support\Facades\Auth;
 use Modules\People\Entities\Customer;
 use Modules\Product\Entities\Warehouse;
+use Modules\Sale\Entities\Sale;
 
 class SaleDelivery extends Model
 {
     use HasFactory, HasBranchScope;
 
-   protected $fillable = [
+    protected $fillable = [
         'branch_id',
         'quotation_id',
+        'sale_id',
+
         'customer_id',
         'reference',
         'date',
         'warehouse_id',
         'status',
         'note',
+
+        'confirm_note',
+        'confirm_note_updated_by',
+        'confirm_note_updated_role',
+        'confirm_note_updated_at',
+
         'created_by',
         'confirmed_by',
         'confirmed_at',
@@ -31,6 +40,7 @@ class SaleDelivery extends Model
     protected $casts = [
         'date' => 'date',
         'confirmed_at' => 'datetime',
+        'confirm_note_updated_at' => 'datetime',
     ];
 
     public function items()
@@ -48,6 +58,11 @@ class SaleDelivery extends Model
         return $this->belongsTo(Warehouse::class, 'warehouse_id');
     }
 
+    public function sale()
+    {
+        return $this->belongsTo(Sale::class, 'sale_id');
+    }
+
     public function creator()
     {
         return $this->belongsTo(User::class, 'created_by');
@@ -63,13 +78,24 @@ class SaleDelivery extends Model
         parent::boot();
 
         static::creating(function ($model) {
-            // reference auto
-            $next = (int) (static::max('id') ?? 0) + 1;
-            $model->reference = $model->reference ?: make_reference_id('SDO', $next);
 
-            // created_by
             if (empty($model->created_by) && Auth::check()) {
                 $model->created_by = Auth::id();
+            }
+
+            if (empty($model->status)) {
+                $model->status = 'pending';
+            }
+
+            if (empty($model->reference)) {
+                $model->reference = 'SDO-TMP-' . strtoupper(bin2hex(random_bytes(4)));
+            }
+        });
+
+        static::created(function ($model) {
+            if (is_string($model->reference) && str_starts_with($model->reference, 'SDO-TMP-')) {
+                $model->reference = make_reference_id('SDO', (int) $model->id);
+                $model->saveQuietly();
             }
         });
     }

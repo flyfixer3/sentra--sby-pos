@@ -19,8 +19,9 @@
             <div class="d-flex align-items-start justify-content-between flex-wrap gap-2">
                 <div>
                     <h4 class="mb-0">{{ $saleDelivery->reference }}</h4>
+
                     <div class="text-muted small">
-                        Date: {{ $saleDelivery->getAttributes()['date'] ?? $saleDelivery->date }} •
+                        Date: {{ $saleDelivery->date ? $saleDelivery->date->format('d-m-Y') : ($saleDelivery->getAttributes()['date'] ?? '-') }} •
                         Warehouse: {{ optional($saleDelivery->warehouse)->warehouse_name ?? '-' }}
                     </div>
 
@@ -30,17 +31,19 @@
                     </div>
                 </div>
 
-                <div class="d-flex gap-2">
-                    @php $st = strtolower((string) $saleDelivery->status); @endphp
+                <div class="d-flex gap-2 align-items-center">
+                    @php $st = strtolower((string)($saleDelivery->status ?? '')); @endphp
+
                     <span class="badge
                         {{ $st==='pending' ? 'bg-warning text-dark' : '' }}
                         {{ $st==='confirmed' ? 'bg-success' : '' }}
+                        {{ $st==='partial' ? 'bg-info text-dark' : '' }}
                         {{ $st==='cancelled' ? 'bg-danger' : '' }}
                     ">
                         {{ strtoupper((string) $saleDelivery->status) }}
                     </span>
 
-                    @if(session('active_branch') && $st==='pending')
+                    @if(session('active_branch') && in_array($st, ['pending','partial'], true))
                         <a href="{{ route('sale-deliveries.confirm.form', $saleDelivery->id) }}" class="btn btn-primary btn-sm">
                             Confirm <i class="bi bi-check-lg"></i>
                         </a>
@@ -53,7 +56,7 @@
             <div class="row g-3">
                 <div class="col-md-6">
                     <div class="small text-muted">Customer</div>
-                    <div class="fw-bold">{{ $saleDelivery->customer_name ?? optional($saleDelivery->customer)->customer_name }}</div>
+                    <div class="fw-bold">{{ optional($saleDelivery->customer)->customer_name ?? ($saleDelivery->customer_name ?? '-') }}</div>
                 </div>
 
                 <div class="col-md-6">
@@ -68,15 +71,16 @@
                 <div class="col-md-6">
                     <div class="small text-muted">Confirmed At</div>
                     <div class="fw-bold">
-                        {{ $saleDelivery->confirmed_at ? \Carbon\Carbon::parse($saleDelivery->confirmed_at)->format('d-m-Y H:i') : '-' }}
+                        {{ $saleDelivery->confirmed_at ? $saleDelivery->confirmed_at->format('d-m-Y H:i') : '-' }}
+                    </div>
+                    <div class="small text-muted mt-1">
+                        Confirmed by: {{ $saleDelivery->confirmed_at ? (optional($saleDelivery->confirmer)->name ?? '-') : '-' }}
                     </div>
                 </div>
 
                 <div class="col-md-6">
-                    <div class="small text-muted">Confirmed By</div>
-                    <div class="fw-bold">
-                        {{ optional($saleDelivery->confirmer)->name ?? '-' }}
-                    </div>
+                    <div class="small text-muted">Confirmation Note</div>
+                    <div>{{ $saleDelivery->confirm_note ?: '-' }}</div>
                 </div>
             </div>
         </div>
@@ -91,22 +95,32 @@
                     <thead>
                         <tr>
                             <th>Product</th>
-                            <th class="text-end">Qty</th>
+                            <th class="text-end" style="width:120px;">Qty</th>
+                            <th class="text-end" style="width:120px;">Good</th>
+                            <th class="text-end" style="width:120px;">Defect</th>
+                            <th class="text-end" style="width:120px;">Damaged</th>
                         </tr>
                     </thead>
                     <tbody>
                         @forelse($saleDelivery->items as $it)
                             <tr>
-                                <td>{{ $it->product_name ?? optional($it->product)->product_name }}</td>
-                                <td class="text-end">{{ number_format((int) $it->quantity) }}</td>
+                                <td>{{ optional($it->product)->product_name ?? ($it->product_name ?? '-') }}</td>
+                                <td class="text-end">{{ number_format((int)($it->quantity ?? 0)) }}</td>
+                                <td class="text-end">{{ number_format((int)($it->qty_good ?? 0)) }}</td>
+                                <td class="text-end">{{ number_format((int)($it->qty_defect ?? 0)) }}</td>
+                                <td class="text-end">{{ number_format((int)($it->qty_damaged ?? 0)) }}</td>
                             </tr>
                         @empty
                             <tr>
-                                <td colspan="2" class="text-center text-muted">No items.</td>
+                                <td colspan="5" class="text-center text-muted">No items.</td>
                             </tr>
                         @endforelse
                     </tbody>
                 </table>
+            </div>
+
+            <div class="small text-muted mt-2">
+                * Breakdown Good/Defect/Damaged akan terisi setelah proses confirm.
             </div>
         </div>
     </div>

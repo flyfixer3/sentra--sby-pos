@@ -14,7 +14,20 @@ class SaleDeliveryItem extends Model
         'sale_delivery_id',
         'product_id',
         'quantity',
+
+        'qty_good',
+        'qty_defect',
+        'qty_damaged',
+
         'price',
+    ];
+
+    protected $casts = [
+        'quantity' => 'int',
+        'qty_good' => 'int',
+        'qty_defect' => 'int',
+        'qty_damaged' => 'int',
+        'price' => 'int',
     ];
 
     public function saleDelivery()
