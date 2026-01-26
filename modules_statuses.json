@@ -22,5 +22,6 @@
     "Branch": true,
     "Transfer": true,
     "Inventory": true,
-    "SaleDelivery": true
+    "SaleDelivery": true,
+    "SaleOrder": true
 }

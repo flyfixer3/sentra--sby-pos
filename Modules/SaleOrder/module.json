@@ -1,0 +1,13 @@
+{
+    "name": "SaleOrder",
+    "alias": "saleorder",
+    "description": "",
+    "keywords": [],
+    "priority": 0,
+    "providers": [
+        "Modules\\SaleOrder\\Providers\\SaleOrderServiceProvider"
+    ],
+    "aliases": {},
+    "files": [],
+    "requires": []
+}
