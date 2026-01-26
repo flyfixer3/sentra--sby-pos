@@ -73,6 +73,11 @@ class SaleDelivery extends Model
         return $this->belongsTo(User::class, 'confirmed_by');
     }
 
+    public function saleOrder()
+    {
+        return $this->belongsTo(\Modules\SaleOrder\Entities\SaleOrder::class, 'sale_order_id');
+    }
+
     protected static function boot()
     {
         parent::boot();

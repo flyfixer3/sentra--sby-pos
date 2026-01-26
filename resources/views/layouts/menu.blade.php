@@ -220,14 +220,6 @@
                 <i class="c-sidebar-nav-icon bi bi-journals" style="line-height: 1;"></i> All Quotations
             </a>
         </li>
-        @can('access_sale_deliveries')
-        <li class="c-sidebar-nav-item">
-            <a class="c-sidebar-nav-link {{ request()->routeIs('sale-deliveries.*') ? 'c-active' : '' }}"
-            href="{{ route('sale-deliveries.index') }}">
-                <i class="c-sidebar-nav-icon bi bi-truck" style="line-height: 1;"></i> Sale Deliveries
-            </a>
-        </li>
-        @endcan
     </ul>
 </li>
 @endcan
@@ -285,6 +277,45 @@
     </ul>
 </li>
 @endcan
+
+{{-- =========================
+    SALES ORDERS
+========================= --}}
+@can('access_sale_orders')
+<li class="c-sidebar-nav-item c-sidebar-nav-dropdown {{ request()->routeIs('sale-orders.*') || request()->routeIs('sale-deliveries.*') ? 'c-show' : '' }}">
+    <a class="c-sidebar-nav-link c-sidebar-nav-dropdown-toggle" href="#">
+        <i class="c-sidebar-nav-icon bi bi-clipboard-check" style="line-height: 1;"></i> Sales Orders
+    </a>
+
+    <ul class="c-sidebar-nav-dropdown-items">
+        @can('create_sale_orders')
+        <li class="c-sidebar-nav-item">
+            <a class="c-sidebar-nav-link {{ request()->routeIs('sale-orders.create') ? 'c-active' : '' }}"
+               href="{{ route('sale-orders.create') }}">
+                <i class="c-sidebar-nav-icon bi bi-journal-plus" style="line-height: 1;"></i> Create Sale Order
+            </a>
+        </li>
+        @endcan
+
+        <li class="c-sidebar-nav-item">
+            <a class="c-sidebar-nav-link {{ request()->routeIs('sale-orders.index') ? 'c-active' : '' }}"
+               href="{{ route('sale-orders.index') }}">
+                <i class="c-sidebar-nav-icon bi bi-journals" style="line-height: 1;"></i> All Sale Orders
+            </a>
+        </li>
+
+        @can('access_sale_deliveries')
+        <li class="c-sidebar-nav-item">
+            <a class="c-sidebar-nav-link {{ request()->routeIs('sale-deliveries.*') ? 'c-active' : '' }}"
+               href="{{ route('sale-deliveries.index') }}">
+                <i class="c-sidebar-nav-icon bi bi-truck" style="line-height: 1;"></i> Sale Deliveries
+            </a>
+        </li>
+        @endcan
+    </ul>
+</li>
+@endcan
+
 
 {{-- =========================
     SALES

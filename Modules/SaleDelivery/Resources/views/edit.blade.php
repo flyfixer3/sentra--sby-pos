@@ -46,6 +46,12 @@
                 <span class="sd-badge">
                     <i class="bi bi-truck"></i> {{ $saleDelivery->reference }}
                 </span>
+                @if($saleDelivery->saleOrder)
+                    <span class="sd-badge">
+                        <i class="bi bi-file-earmark-text"></i>
+                        SO: {{ $saleDelivery->saleOrder->reference ?? ('SO#'.$saleDelivery->sale_order_id) }}
+                    </span>
+                @endif
                 <span class="sd-badge">
                     <i class="bi bi-person"></i> {{ $saleDelivery->customer?->customer_name ?? '-' }}
                 </span>

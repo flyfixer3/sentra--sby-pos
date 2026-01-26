@@ -11,6 +11,21 @@
 |
 */
 
-Route::prefix('saleorder')->group(function() {
-    Route::get('/', 'SaleOrderController@index');
+Route::group([
+    'middleware' => ['auth'],
+    'prefix' => 'sale-orders',
+], function () {
+
+    Route::get('/', 'SaleOrderController@index')
+        ->name('sale-orders.index');
+
+    Route::get('/create', 'SaleOrderController@create')
+        ->name('sale-orders.create');
+
+    Route::post('/', 'SaleOrderController@store')
+        ->name('sale-orders.store');
+
+    Route::get('/{saleOrder}', 'SaleOrderController@show')
+        ->name('sale-orders.show');
 });
+

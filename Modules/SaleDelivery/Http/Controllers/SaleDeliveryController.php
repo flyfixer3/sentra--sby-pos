@@ -19,6 +19,8 @@ use Modules\SaleDelivery\Entities\SaleDelivery;
 use Modules\SaleDelivery\Entities\SaleDeliveryItem;
 use Modules\Sale\Entities\Sale;
 use Modules\Sale\Entities\SaleDetails;
+use Modules\SaleOrder\Entities\SaleOrder;
+use Modules\SaleOrder\Entities\SaleOrderItem;
 
 class SaleDeliveryController extends Controller
 {
@@ -308,16 +310,16 @@ class SaleDeliveryController extends Controller
         abort_if(Gate::denies('create_sale_deliveries'), 403);
 
         $source = (string) $request->get('source', '');
-        if (!in_array($source, ['quotation', 'sale'], true)) {
-            abort(403, 'Sale Delivery can only be created from Quotation or Sale.');
+        if (!in_array($source, ['quotation', 'sale', 'sale_order'], true)) {
+            abort(403, 'Sale Delivery can only be created from Quotation, Sale, or Sale Order.');
         }
 
         if ($source === 'quotation' && !$request->filled('quotation_id')) abort(422, 'quotation_id is required');
         if ($source === 'sale' && !$request->filled('sale_id')) abort(422, 'sale_id is required');
+        if ($source === 'sale_order' && !$request->filled('sale_order_id')) abort(422, 'sale_order_id is required');
 
         $branchId = BranchContext::id();
 
-        // warehouse list
         $warehouses = Warehouse::query()
             ->where('branch_id', $branchId)
             ->orderBy('warehouse_name')
@@ -330,14 +332,56 @@ class SaleDeliveryController extends Controller
 
         $products = Product::query()->orderBy('product_name')->limit(200)->get();
 
-        // default items yang akan dipush ke form create (untuk source sale)
         $prefillItems = [];
+        $prefillCustomerId = null;
+        $prefillSaleOrderRef = null;
 
+        /**
+         * SOURCE: SALE ORDER (recommended)
+         */
+        if ($source === 'sale_order') {
+
+            $saleOrderId = (int) $request->sale_order_id;
+
+
+            $saleOrder = SaleOrder::query()
+            ->where('id', $saleOrderId)
+            ->where('branch_id', $branchId)
+            ->with(['items'])
+            ->firstOrFail();
+
+            $prefillSaleOrderRef = $saleOrder->reference ?? ('SO#' . $saleOrder->id);
+            $prefillCustomerId = (int) $saleOrder->customer_id;
+
+            // remaining map by sale_order
+            $remainingMap = $this->getRemainingQtyBySaleOrder($saleOrderId);
+
+            foreach ($saleOrder->items as $it) {
+                $pid = (int) $it->product_id;
+                if ($pid <= 0) continue;
+
+                $rem = (int) ($remainingMap[$pid] ?? 0);
+                if ($rem <= 0) continue;
+
+                $prefillItems[] = [
+                    'product_id' => $pid,
+                    'quantity'   => $rem,
+                    'price'      => (int) ($it->price ?? 0),
+                ];
+            }
+
+            if (count($prefillItems) === 0) {
+                toast('This sale order is already fully delivered (no remaining qty).', 'warning');
+            }
+        }
+
+        /**
+         * SOURCE: SALE (legacy)
+         */
         if ($source === 'sale') {
 
             $saleId = (int) $request->sale_id;
 
-            // pastikan sale milik branch aktif (kalau sale kamu sudah pakai branch_id)
             $sale = DB::table('sales')
                 ->where('id', $saleId)
                 ->where('branch_id', $branchId)
@@ -345,10 +389,8 @@ class SaleDeliveryController extends Controller
 
             if (!$sale) abort(404, 'Sale (invoice) not found in this branch.');
 
-            // hitung remaining
             $remainingMap = $this->getRemainingQtyBySale($saleId);
 
-            // ambil detail sale untuk prefill
             $details = DB::table('sale_details')
                 ->where('sale_id', $saleId)
                 ->get();
@@ -357,8 +399,8 @@ class SaleDeliveryController extends Controller
                 $pid = (int) $d->product_id;
                 if ($pid <= 0) continue;
 
-                $rem = $remainingMap[$pid] ?? 0;
-                if ($rem <= 0) continue; // kalau sudah habis terkirim, jangan tampil
+                $rem = (int) ($remainingMap[$pid] ?? 0);
+                if ($rem <= 0) continue;
 
                 $prefillItems[] = [
                     'product_id' => $pid,
@@ -367,7 +409,6 @@ class SaleDeliveryController extends Controller
                 ];
             }
 
-            // kalau remaining kosong -> berarti invoice sudah fully delivered
             if (count($prefillItems) === 0) {
                 toast('This invoice is already fully delivered (no remaining qty).', 'warning');
             }
@@ -378,7 +419,9 @@ class SaleDeliveryController extends Controller
             'customers',
             'products',
             'source',
-            'prefillItems'
+            'prefillItems',
+            'prefillCustomerId',
+            'prefillSaleOrderRef'
         ));
     }
 
@@ -387,14 +430,13 @@ class SaleDeliveryController extends Controller
         abort_if(Gate::denies('create_sale_deliveries'), 403);
 
         $source = (string) $request->get('source', '');
-        abort_unless(in_array($source, ['quotation', 'sale'], true), 403);
+        abort_unless(in_array($source, ['quotation', 'sale', 'sale_order'], true), 403);
 
         $branchId = BranchContext::id();
 
         $rules = [
             'date' => 'required|date',
             'warehouse_id' => 'required|integer',
-            'customer_id' => 'required|integer',
             'note' => 'nullable|string|max:2000',
 
             'items' => 'required|array|min:1',
@@ -403,30 +445,65 @@ class SaleDeliveryController extends Controller
             'items.*.price' => 'nullable|integer|min:0',
         ];
 
-        if ($source === 'quotation') {
-            $rules['quotation_id'] = 'required|integer';
+        // customer_id: kalau sale_order, nanti kita kunci dari SO.
+        if ($source !== 'sale_order') {
+            $rules['customer_id'] = 'required|integer';
         }
 
-        if ($source === 'sale') {
-            $rules['sale_id'] = 'required|integer';
-        }
+        if ($source === 'quotation') $rules['quotation_id'] = 'required|integer';
+        if ($source === 'sale') $rules['sale_id'] = 'required|integer';
+        if ($source === 'sale_order') $rules['sale_order_id'] = 'required|integer';
 
         $request->validate($rules);
 
         DB::transaction(function () use ($request, $branchId, $source) {
 
-            $customer = Customer::query()
-                ->forActiveBranch($branchId)
-                ->where('id', $request->customer_id)
-                ->firstOrFail();
-
             $warehouse = Warehouse::query()
                 ->where('branch_id', $branchId)
-                ->where('id', $request->warehouse_id)
+                ->where('id', (int) $request->warehouse_id)
                 ->firstOrFail();
 
-            // guard sale (invoice) belongs to branch
             $saleId = null;
+            $saleOrderId = null;
+
+            // resolve customer
+            $customerId = null;
+
+            if ($source === 'sale_order') {
+                $saleOrderId = (int) $request->sale_order_id;
+
+                $saleOrder = SaleOrder::query()
+                    ->where('id', $saleOrderId)
+                    ->where('branch_id', $branchId)
+                    ->with(['items'])
+                    ->firstOrFail();
+
+                $customerId = (int) $saleOrder->customer_id;
+
+                // VALIDASI: qty tidak boleh melebihi remaining SO
+                $remainingMap = $this->getRemainingQtyBySaleOrder($saleOrderId);
+
+                foreach ($request->items as $row) {
+                    $pid = (int) $row['product_id'];
+                    $qty = (int) $row['quantity'];
+                    $rem = (int) ($remainingMap[$pid] ?? 0);
+
+                    if ($qty > $rem) {
+                        abort(422, "Qty exceeds remaining quantity for product_id {$pid}. Remaining: {$rem}.");
+                    }
+                }
+            }
+
+            if ($source !== 'sale_order') {
+                $customer = Customer::query()
+                    ->forActiveBranch($branchId)
+                    ->where('id', (int) $request->customer_id)
+                    ->firstOrFail();
+
+                $customerId = (int) $customer->id;
+            }
+
+            // guard sale belongs to branch (legacy)
             if ($source === 'sale') {
                 $saleId = (int) $request->sale_id;
 
@@ -443,8 +520,9 @@ class SaleDeliveryController extends Controller
 
                 'quotation_id' => $source === 'quotation' ? (int) $request->quotation_id : null,
                 'sale_id'      => $source === 'sale' ? (int) $saleId : null,
+                'sale_order_id'=> $source === 'sale_order' ? (int) $saleOrderId : null,
 
-                'customer_id'  => $customer->id,
+                'customer_id'  => $customerId,
                 'date'         => $request->date,
                 'warehouse_id' => $warehouse->id,
 
@@ -590,6 +668,53 @@ class SaleDeliveryController extends Controller
             $shippedQty = isset($shipped[$pid]) ? (int) $shipped[$pid]->qty : 0;
 
             $rem = $invoiceQty - $shippedQty;
+            if ($rem < 0) $rem = 0;
+
+            $remaining[$pid] = $rem;
+        }
+
+        return $remaining;
+    }
+
+    private function getRemainingQtyBySaleOrder(int $saleOrderId): array
+    {
+        // ordered qty dari sale_order_items
+        $ordered = DB::table('sale_order_items')
+            ->select('product_id', DB::raw('SUM(quantity) as qty'))
+            ->where('sale_order_id', $saleOrderId)
+            ->groupBy('product_id')
+            ->get();
+
+        // shipped qty dari sale_delivery_items untuk sale_deliveries yang terkait sale_order_id
+        $shipped = DB::table('sale_delivery_items as sdi')
+            ->join('sale_deliveries as sd', 'sd.id', '=', 'sdi.sale_delivery_id')
+            ->where('sd.sale_order_id', $saleOrderId)
+            ->where(function ($q) {
+                $q->whereNotNull('sd.confirmed_at')
+                ->orWhereIn(DB::raw('LOWER(sd.status)'), ['confirmed', 'partial']);
+            })
+            ->select(
+                'sdi.product_id',
+                DB::raw('SUM(
+                    CASE
+                        WHEN (COALESCE(sdi.qty_good,0) + COALESCE(sdi.qty_defect,0) + COALESCE(sdi.qty_damaged,0)) > 0
+                            THEN (COALESCE(sdi.qty_good,0) + COALESCE(sdi.qty_defect,0) + COALESCE(sdi.qty_damaged,0))
+                        ELSE COALESCE(sdi.quantity,0)
+                    END
+                ) as qty')
+            )
+            ->groupBy('sdi.product_id')
+            ->get()
+            ->keyBy('product_id');
+
+        $remaining = [];
+
+        foreach ($ordered as $row) {
+            $pid = (int) $row->product_id;
+            $orderedQty = (int) $row->qty;
+            $shippedQty = isset($shipped[$pid]) ? (int) $shipped[$pid]->qty : 0;
+
+            $rem = $orderedQty - $shippedQty;
             if ($rem < 0) $rem = 0;
 
             $remaining[$pid] = $rem;
