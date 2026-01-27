@@ -19,7 +19,15 @@
                         <div>
                             Reference: <strong>{{ $quotation->reference }}</strong>
                         </div>
-                        <a target="_blank" class="btn btn-sm btn-secondary mfs-auto mfe-1 d-print-none" href="{{ route('quotations.pdf', $quotation->id) }}">
+
+                        @can('create_sale_orders')
+                            <a class="btn btn-sm btn-primary mfs-auto mfe-1 d-print-none"
+                               href="{{ route('sale-orders.create', ['source'=>'quotation', 'quotation_id'=>$quotation->id]) }}">
+                                <i class="bi bi-clipboard-check"></i> Create Sale Order
+                            </a>
+                        @endcan
+
+                        <a target="_blank" class="btn btn-sm btn-secondary mfe-1 d-print-none" href="{{ route('quotations.pdf', $quotation->id) }}">
                             <i class="bi bi-printer"></i> Print
                         </a>
                         <a target="_blank" class="btn btn-sm btn-info mfe-1 d-print-none" href="{{ route('quotations.pdf', $quotation->id) }}">
@@ -132,4 +140,3 @@
         </div>
     </div>
 @endsection
-

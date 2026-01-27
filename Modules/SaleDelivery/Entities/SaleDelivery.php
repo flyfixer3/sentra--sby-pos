@@ -18,7 +18,9 @@ class SaleDelivery extends Model
     protected $fillable = [
         'branch_id',
         'quotation_id',
+        'sale_order_id',
         'sale_id',
+        'delivery_no',
 
         'customer_id',
         'reference',

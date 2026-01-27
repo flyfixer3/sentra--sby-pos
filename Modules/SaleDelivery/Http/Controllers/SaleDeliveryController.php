@@ -9,6 +9,8 @@ use App\Support\BranchContext;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\Auth;
+use Barryvdh\DomPDF\Facade\Pdf;
+
 use Modules\People\Entities\Customer;
 use Modules\Product\Entities\Warehouse;
 use Modules\Product\Entities\Product;
@@ -19,8 +21,14 @@ use Modules\SaleDelivery\Entities\SaleDelivery;
 use Modules\SaleDelivery\Entities\SaleDeliveryItem;
 use Modules\Sale\Entities\Sale;
 use Modules\Sale\Entities\SaleDetails;
+
 use Modules\SaleOrder\Entities\SaleOrder;
 use Modules\SaleOrder\Entities\SaleOrderItem;
+
+use Modules\Setting\Entities\Setting;
+use Modules\Branch\Entities\Branch;
+use Modules\Product\Entities\ProductDefectItem;
+use Modules\Product\Entities\ProductDamagedItem;
 
 class SaleDeliveryController extends Controller
 {
@@ -47,6 +55,7 @@ class SaleDeliveryController extends Controller
             'customer',
             'creator',
             'confirmer',
+            'saleOrder',
         ]);
 
         return view('saledelivery::show', compact('saleDelivery'));
@@ -190,7 +199,6 @@ class SaleDeliveryController extends Controller
              */
             foreach ($saleDelivery->items as $it) {
                 $productId = (int) $it->product_id;
-                $expected = (int) ($it->quantity ?? 0);
 
                 $good = (int) ($it->qty_good ?? 0);
                 $defect = (int) ($it->qty_defect ?? 0);
@@ -272,7 +280,6 @@ class SaleDeliveryController extends Controller
 
             $saleDelivery->update([
                 'status' => $isPartial ? 'partial' : 'confirmed',
-
                 'confirmed_by' => auth()->id(),
                 'confirmed_at' => now(),
 
@@ -281,6 +288,26 @@ class SaleDeliveryController extends Controller
                 'confirm_note_updated_role' => $confirmNote ? $this->roleString() : null,
                 'confirm_note_updated_at' => $confirmNote ? now() : null,
             ]);
+
+            // =========================================================
+            // ✅ UPDATE SALE ORDER STATUS (pending → partial_delivered → delivered)
+            // - priority: sale_delivery.sale_order_id
+            // - fallback: cari sale_order by sale_id (invoice) kalau SD dibuat dari sale
+            // =========================================================
+            $saleOrderId = (int) ($saleDelivery->sale_order_id ?? 0);
+
+            if ($saleOrderId <= 0 && !empty($saleDelivery->sale_id)) {
+                $found = SaleOrder::query()
+                    ->where('branch_id', (int) $saleDelivery->branch_id)
+                    ->where('sale_id', (int) $saleDelivery->sale_id)
+                    ->orderByDesc('id')
+                    ->first();
+                if ($found) $saleOrderId = (int) $found->id;
+            }
+
+            if ($saleOrderId > 0) {
+                $this->updateSaleOrderFulfillmentStatus((int) $saleOrderId);
+            }
         });
 
         toast('Sale Delivery confirmed successfully', 'success');
@@ -288,20 +315,140 @@ class SaleDeliveryController extends Controller
     }
 
     /**
-     * Samain gaya PurchaseDeliveryController biar konsisten.
+     * ✅ Print Surat Jalan Sale Delivery (optional)
+     * - tidak mengubah DB
+     * - watermark COPY jika ?copy=2 dst
      */
+    public function printPdf(Request $request, SaleDelivery $saleDelivery)
+    {
+        abort_if(Gate::denies('show_sale_deliveries'), 403);
+
+        $branchId = BranchContext::id();
+        $active = session('active_branch');
+        if ($active === 'all' || empty($active)) {
+            abort(403, "Please choose a specific branch first (not 'All Branch').");
+        }
+
+        $saleDelivery = SaleDelivery::withoutGlobalScopes()
+            ->with(['items.product', 'warehouse', 'customer', 'saleOrder'])
+            ->findOrFail($saleDelivery->id);
+
+        if ((int) $saleDelivery->branch_id !== (int) $branchId) {
+            abort(403, 'Wrong branch context.');
+        }
+
+        $setting = Setting::first();
+
+        $copyNumber = (int) ($request->query('copy') ?? 1);
+        if ($copyNumber <= 0) $copyNumber = 1;
+
+        $senderBranch = Branch::withoutGlobalScopes()->find((int) $saleDelivery->branch_id);
+
+        // ===============================
+        // ✅ Ambil defect/damaged berdasarkan moved_out_reference_* (OUTGOING)
+        // ===============================
+        $movedDefects = ProductDefectItem::query()
+            ->where('moved_out_reference_type', SaleDelivery::class)
+            ->where('moved_out_reference_id', (int) $saleDelivery->id)
+            ->orderBy('id', 'asc')
+            ->get();
+
+        $movedDamaged = ProductDamagedItem::query()
+            ->where('moved_out_reference_type', SaleDelivery::class)
+            ->where('moved_out_reference_id', (int) $saleDelivery->id)
+            ->where('damage_type', 'damaged')
+            ->orderBy('id', 'asc')
+            ->get();
+
+        $defectsByProduct = $movedDefects->groupBy('product_id');
+        $damagedByProduct = $movedDamaged->groupBy('product_id');
+
+        $truncate = function (?string $text, int $max = 45): ?string {
+            $text = trim((string) ($text ?? ''));
+            if ($text === '') return null;
+            if (mb_strlen($text) <= $max) return $text;
+            return mb_substr($text, 0, $max) . '...';
+        };
+
+        $notesByItemId = [];
+
+        foreach ($saleDelivery->items as $item) {
+            $itemId = (int) $item->id;
+            $pid = (int) $item->product_id;
+
+            $good = (int) ($item->qty_good ?? 0);
+            $defect = (int) ($item->qty_defect ?? 0);
+            $damaged = (int) ($item->qty_damaged ?? 0);
+
+            // kalau belum confirm, fallback ke expected qty (anggap GOOD)
+            $expected = (int) ($item->quantity ?? 0);
+            $sum = $good + $defect + $damaged;
+
+            if ($sum <= 0 && $expected > 0) {
+                $notesByItemId[$itemId] = 'GOOD';
+                continue;
+            }
+
+            // ✅ GOOD: tampilkan keterangannya juga biar jelas
+            if ($good > 0 && $defect === 0 && $damaged === 0) {
+                $notesByItemId[$itemId] = 'GOOD';
+                continue;
+            }
+
+            $chunks = [];
+
+            if ($good > 0) {
+                $chunks[] = "GOOD {$good}";
+            }
+
+            if ($defect > 0) {
+                $rows = $defectsByProduct->get($pid, collect());
+                $types = $rows->pluck('defect_type')->filter()->unique()->values()->take(3)->toArray();
+                $typeText = !empty($types) ? implode(', ', $types) : 'Defect';
+
+                $desc = $rows->pluck('description')->filter()->first();
+                $desc = $truncate($desc, 45);
+
+                $txt = "DEFECT {$defect} ({$typeText})";
+                if (!empty($desc)) $txt .= " - {$desc}";
+                $chunks[] = $txt;
+            }
+
+            if ($damaged > 0) {
+                $rows = $damagedByProduct->get($pid, collect());
+                $reason = $rows->pluck('reason')->filter()->first();
+                $reason = $truncate($reason, 45);
+
+                $txt = "DAMAGED {$damaged}";
+                if (!empty($reason)) $txt .= " - {$reason}";
+                $chunks[] = $txt;
+            }
+
+            $notesByItemId[$itemId] = implode(' | ', $chunks);
+        }
+
+        $pdf = Pdf::loadView('saledelivery::print', [
+            'saleDelivery'   => $saleDelivery,
+            'setting'        => $setting,
+            'copyNumber'     => $copyNumber,
+            'senderBranch'   => $senderBranch,
+            'notesByItemId'  => $notesByItemId,
+        ])->setPaper('A4', 'portrait');
+
+        $ref = $saleDelivery->reference ?? ('SDO-' . $saleDelivery->id);
+        return $pdf->download("Surat_Jalan_SaleDelivery_{$ref}_COPY_{$copyNumber}.pdf");
+    }
+
     private function roleString(): string
     {
         $user = auth()->user();
         if (!$user) return 'unknown';
 
-        // kalau kamu pakai spatie permission
         if (method_exists($user, 'getRoleNames')) {
             $roles = $user->getRoleNames();
             if (!empty($roles) && count($roles) > 0) return (string) $roles[0];
         }
 
-        // fallback
         return 'user';
     }
 
@@ -336,24 +483,19 @@ class SaleDeliveryController extends Controller
         $prefillCustomerId = null;
         $prefillSaleOrderRef = null;
 
-        /**
-         * SOURCE: SALE ORDER (recommended)
-         */
         if ($source === 'sale_order') {
 
             $saleOrderId = (int) $request->sale_order_id;
 
-
             $saleOrder = SaleOrder::query()
-            ->where('id', $saleOrderId)
-            ->where('branch_id', $branchId)
-            ->with(['items'])
-            ->firstOrFail();
+                ->where('id', $saleOrderId)
+                ->where('branch_id', $branchId)
+                ->with(['items'])
+                ->firstOrFail();
 
             $prefillSaleOrderRef = $saleOrder->reference ?? ('SO#' . $saleOrder->id);
             $prefillCustomerId = (int) $saleOrder->customer_id;
 
-            // remaining map by sale_order
             $remainingMap = $this->getRemainingQtyBySaleOrder($saleOrderId);
 
             foreach ($saleOrder->items as $it) {
@@ -369,15 +511,8 @@ class SaleDeliveryController extends Controller
                     'price'      => (int) ($it->price ?? 0),
                 ];
             }
-
-            if (count($prefillItems) === 0) {
-                toast('This sale order is already fully delivered (no remaining qty).', 'warning');
-            }
         }
 
-        /**
-         * SOURCE: SALE (legacy)
-         */
         if ($source === 'sale') {
 
             $saleId = (int) $request->sale_id;
@@ -408,10 +543,6 @@ class SaleDeliveryController extends Controller
                     'price'      => (int) ($d->price ?? 0),
                 ];
             }
-
-            if (count($prefillItems) === 0) {
-                toast('This invoice is already fully delivered (no remaining qty).', 'warning');
-            }
         }
 
         return view('saledelivery::create', compact(
@@ -438,14 +569,12 @@ class SaleDeliveryController extends Controller
             'date' => 'required|date',
             'warehouse_id' => 'required|integer',
             'note' => 'nullable|string|max:2000',
-
             'items' => 'required|array|min:1',
             'items.*.product_id' => 'required|integer',
             'items.*.quantity' => 'required|integer|min:1',
             'items.*.price' => 'nullable|integer|min:0',
         ];
 
-        // customer_id: kalau sale_order, nanti kita kunci dari SO.
         if ($source !== 'sale_order') {
             $rules['customer_id'] = 'required|integer';
         }
@@ -466,7 +595,6 @@ class SaleDeliveryController extends Controller
             $saleId = null;
             $saleOrderId = null;
 
-            // resolve customer
             $customerId = null;
 
             if ($source === 'sale_order') {
@@ -480,7 +608,6 @@ class SaleDeliveryController extends Controller
 
                 $customerId = (int) $saleOrder->customer_id;
 
-                // VALIDASI: qty tidak boleh melebihi remaining SO
                 $remainingMap = $this->getRemainingQtyBySaleOrder($saleOrderId);
 
                 foreach ($request->items as $row) {
@@ -503,7 +630,6 @@ class SaleDeliveryController extends Controller
                 $customerId = (int) $customer->id;
             }
 
-            // guard sale belongs to branch (legacy)
             if ($source === 'sale') {
                 $saleId = (int) $request->sale_id;
 
@@ -516,19 +642,16 @@ class SaleDeliveryController extends Controller
             }
 
             $delivery = SaleDelivery::create([
-                'branch_id'    => $branchId,
-
-                'quotation_id' => $source === 'quotation' ? (int) $request->quotation_id : null,
-                'sale_id'      => $source === 'sale' ? (int) $saleId : null,
-                'sale_order_id'=> $source === 'sale_order' ? (int) $saleOrderId : null,
-
-                'customer_id'  => $customerId,
-                'date'         => $request->date,
-                'warehouse_id' => $warehouse->id,
-
-                'status'       => 'pending',
-                'note'         => $request->note,
-                'created_by'   => Auth::id(),
+                'branch_id'     => $branchId,
+                'quotation_id'  => $source === 'quotation' ? (int) $request->quotation_id : null,
+                'sale_id'       => $source === 'sale' ? (int) $saleId : null,
+                'sale_order_id' => $source === 'sale_order' ? (int) $saleOrderId : null,
+                'customer_id'   => $customerId,
+                'date'          => $request->date,
+                'warehouse_id'  => $warehouse->id,
+                'status'        => 'pending',
+                'note'          => $request->note,
+                'created_by'    => Auth::id(),
             ]);
 
             foreach ($request->items as $row) {
@@ -565,14 +688,21 @@ class SaleDeliveryController extends Controller
             abort(403, 'Wrong branch context.');
         }
 
-        $saleDelivery->load(['items.product', 'warehouse', 'customer']);
+        $saleDelivery->load(['items.product', 'warehouse', 'customer', 'saleOrder']);
 
         $warehouses = Warehouse::query()
             ->where('branch_id', $branchId)
             ->orderBy('warehouse_name')
             ->get();
 
-        return view('saledelivery::edit', compact('saleDelivery', 'warehouses'));
+        $customers = Customer::query()
+            ->forActiveBranch($branchId)
+            ->orderBy('customer_name')
+            ->get();
+
+        $products = Product::query()->orderBy('product_name')->limit(200)->get();
+
+        return view('saledelivery::edit', compact('saleDelivery', 'warehouses', 'customers', 'products'));
     }
 
     public function update(Request $request, SaleDelivery $saleDelivery)
@@ -584,27 +714,32 @@ class SaleDeliveryController extends Controller
             abort(403, "Please choose a specific branch first (not 'All Branch').");
         }
 
+        if (strtolower((string) $saleDelivery->status) !== 'pending') {
+            abort(422, 'Only pending Sale Delivery can be edited.');
+        }
+
         $branchId = BranchContext::id();
+        if ((int) $saleDelivery->branch_id !== (int) $branchId) {
+            abort(403, 'Wrong branch context.');
+        }
+
+        $request->validate([
+            'date' => 'required|date',
+            'warehouse_id' => 'required|integer',
+            'note' => 'nullable|string|max:2000',
+            'items' => 'required|array|min:1',
+            'items.*.id' => 'nullable|integer',
+            'items.*.product_id' => 'required|integer',
+            'items.*.quantity' => 'required|integer|min:1',
+            'items.*.price' => 'nullable|integer|min:0',
+        ]);
 
         DB::transaction(function () use ($request, $saleDelivery, $branchId) {
 
             $saleDelivery = SaleDelivery::withoutGlobalScopes()
                 ->lockForUpdate()
+                ->with(['items'])
                 ->findOrFail($saleDelivery->id);
-
-            if (strtolower((string) $saleDelivery->status) !== 'pending') {
-                abort(422, 'Only pending Sale Delivery can be edited.');
-            }
-
-            if ((int) $saleDelivery->branch_id !== (int) $branchId) {
-                abort(403, 'Wrong branch context.');
-            }
-
-            $request->validate([
-                'date' => 'required|date',
-                'warehouse_id' => 'required|integer',
-                'note' => 'nullable|string|max:2000',
-            ]);
 
             $warehouse = Warehouse::query()
                 ->where('branch_id', $branchId)
@@ -612,39 +747,91 @@ class SaleDeliveryController extends Controller
                 ->firstOrFail();
 
             $saleDelivery->update([
-                'date'         => $request->date,
+                'date' => $request->date,
                 'warehouse_id' => $warehouse->id,
-                'note'         => $request->note,
+                'note' => $request->note,
+                'updated_by' => auth()->id(),
             ]);
+
+            // replace items
+            SaleDeliveryItem::where('sale_delivery_id', (int) $saleDelivery->id)->delete();
+
+            foreach ($request->items as $row) {
+                SaleDeliveryItem::create([
+                    'sale_delivery_id' => (int) $saleDelivery->id,
+                    'product_id' => (int) $row['product_id'],
+                    'quantity' => (int) $row['quantity'],
+                    'price' => array_key_exists('price', $row) && $row['price'] !== null ? (int) $row['price'] : null,
+                ]);
+            }
         });
 
         toast('Sale Delivery Updated!', 'success');
         return redirect()->route('sale-deliveries.show', $saleDelivery->id);
     }
 
-    public function destroy($id)
+    /**
+     * ✅ status SO dihitung dari remaining qty
+     */
+    private function updateSaleOrderFulfillmentStatus(int $saleOrderId): void
     {
-        //
+        $so = SaleOrder::query()
+            ->lockForUpdate()
+            ->with(['items'])
+            ->findOrFail($saleOrderId);
+
+        $remaining = $this->getRemainingQtyBySaleOrder((int) $so->id);
+
+        $totalRemaining = 0;
+        $totalOrdered = 0;
+
+        foreach ($so->items as $it) {
+            $pid = (int) $it->product_id;
+            $ordered = (int) ($it->quantity ?? 0);
+            $rem = (int) ($remaining[$pid] ?? 0);
+
+            $totalOrdered += $ordered;
+            $totalRemaining += $rem;
+        }
+
+        // kalau gak ada item, biarin pending
+        if ($totalOrdered <= 0) {
+            if ((string) $so->status !== 'pending') {
+                $so->update(['status' => 'pending', 'updated_by' => auth()->id()]);
+            }
+            return;
+        }
+
+        if ($totalRemaining <= 0) {
+            $newStatus = 'delivered';
+        } elseif ($totalRemaining < $totalOrdered) {
+            $newStatus = 'partial_delivered';
+        } else {
+            $newStatus = 'pending';
+        }
+
+        if ((string) $so->status !== $newStatus) {
+            $so->update([
+                'status' => $newStatus,
+                'updated_by' => auth()->id(),
+            ]);
+        }
     }
 
     private function getRemainingQtyBySale(int $saleId): array
     {
-        // hasil: [product_id => remaining_qty]
-        // sumber qty invoice dari sale_details.quantity
         $saleDetails = DB::table('sale_details')
             ->select('product_id', DB::raw('SUM(quantity) as qty'))
             ->where('sale_id', $saleId)
             ->groupBy('product_id')
             ->get();
 
-        // total already shipped dari sale_delivery_items untuk sale_deliveries sale_id tertentu
-        // hanya yang sudah confirmed (confirmed_at != null) ATAU status confirmed/partial
         $shipped = DB::table('sale_delivery_items as sdi')
             ->join('sale_deliveries as sd', 'sd.id', '=', 'sdi.sale_delivery_id')
             ->where('sd.sale_id', $saleId)
             ->where(function ($q) {
                 $q->whereNotNull('sd.confirmed_at')
-                ->orWhereIn(DB::raw('LOWER(sd.status)'), ['confirmed', 'partial']);
+                    ->orWhereIn(DB::raw('LOWER(sd.status)'), ['confirmed', 'partial']);
             })
             ->select(
                 'sdi.product_id',
@@ -678,20 +865,18 @@ class SaleDeliveryController extends Controller
 
     private function getRemainingQtyBySaleOrder(int $saleOrderId): array
     {
-        // ordered qty dari sale_order_items
         $ordered = DB::table('sale_order_items')
             ->select('product_id', DB::raw('SUM(quantity) as qty'))
             ->where('sale_order_id', $saleOrderId)
             ->groupBy('product_id')
             ->get();
 
-        // shipped qty dari sale_delivery_items untuk sale_deliveries yang terkait sale_order_id
         $shipped = DB::table('sale_delivery_items as sdi')
             ->join('sale_deliveries as sd', 'sd.id', '=', 'sdi.sale_delivery_id')
             ->where('sd.sale_order_id', $saleOrderId)
             ->where(function ($q) {
                 $q->whereNotNull('sd.confirmed_at')
-                ->orWhereIn(DB::raw('LOWER(sd.status)'), ['confirmed', 'partial']);
+                    ->orWhereIn(DB::raw('LOWER(sd.status)'), ['confirmed', 'partial']);
             })
             ->select(
                 'sdi.product_id',
@@ -722,5 +907,4 @@ class SaleDeliveryController extends Controller
 
         return $remaining;
     }
-
 }

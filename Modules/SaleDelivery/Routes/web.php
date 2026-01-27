@@ -1,22 +1,12 @@
 <?php
 
-/*
-|--------------------------------------------------------------------------
-| Web Routes
-|--------------------------------------------------------------------------
-|
-| Here is where you can register web routes for your application. These
-| routes are loaded by the RouteServiceProvider within a group which
-| contains the "web" middleware group. Now create something great!
-|
-*/
-
 use Illuminate\Support\Facades\Route;
 
 Route::group(['middleware' => 'auth'], function () {
 
     // WRITE (branch.selected)
     Route::group(['middleware' => 'branch.selected'], function () {
+
         Route::get('sale-deliveries/create', 'SaleDeliveryController@create')->name('sale-deliveries.create');
         Route::post('sale-deliveries', 'SaleDeliveryController@store')->name('sale-deliveries.store');
 
@@ -25,6 +15,10 @@ Route::group(['middleware' => 'auth'], function () {
 
         Route::get('sale-deliveries/{saleDelivery}/edit', 'SaleDeliveryController@edit')->name('sale-deliveries.edit');
         Route::put('sale-deliveries/{saleDelivery}', 'SaleDeliveryController@update')->name('sale-deliveries.update');
+
+        // ✅ PRINT PDF (optional)
+        Route::get('sale-deliveries/{saleDelivery}/print-pdf', 'SaleDeliveryController@printPdf')
+            ->name('sale-deliveries.print.pdf');
     });
 
     // READ

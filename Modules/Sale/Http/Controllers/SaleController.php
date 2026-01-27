@@ -11,7 +11,6 @@ use Modules\People\Entities\Customer;
 use Modules\People\Entities\Supplier;
 use Modules\Product\Entities\Product;
 use Modules\Product\Entities\Warehouse;
-use Modules\Mutation\Entities\Mutation;
 use Modules\Sale\Entities\Sale;
 use Modules\Quotation\Entities\Quotation;
 use Carbon\Carbon;
@@ -24,15 +23,16 @@ use Modules\Sale\Entities\SalePayment;
 use Modules\Sale\Http\Requests\StoreSaleRequest;
 use Modules\Sale\Http\Requests\UpdateSaleRequest;
 
+// ✅ NEW: SaleOrder anchor
+use Modules\SaleOrder\Entities\SaleOrder;
+use Modules\SaleOrder\Entities\SaleOrderItem;
+
 class SaleController extends Controller
 {
-
     public function index(SalesDataTable $dataTable) {
         abort_if(Gate::denies('access_sales'), 403);
-
         return $dataTable->render('sale::index');
     }
-
 
     public function create() {
         abort_if(Gate::denies('create_sales'), 403);
@@ -47,7 +47,7 @@ class SaleController extends Controller
         $customers = Customer::query()
             ->where(function ($q) use ($branchId) {
                 $q->whereNull('branch_id')
-                ->orWhere('branch_id', $branchId);
+                    ->orWhere('branch_id', $branchId);
             })
             ->orderBy('customer_name')
             ->get();
@@ -63,14 +63,14 @@ class SaleController extends Controller
 
         DB::transaction(function () use ($request) {
 
-            $branchId = BranchContext::id(); // wajib ada (route write udah pakai branch.selected)
+            $branchId = BranchContext::id();
 
             // ✅ validasi customer harus global atau branch aktif
             $customer = Customer::query()
                 ->where('id', $request->customer_id)
                 ->where(function ($q) use ($branchId) {
                     $q->whereNull('branch_id')
-                    ->orWhere('branch_id', $branchId);
+                        ->orWhere('branch_id', $branchId);
                 })
                 ->firstOrFail();
 
@@ -84,6 +84,7 @@ class SaleController extends Controller
                 $payment_status = 'Paid';
             }
 
+            // optional quotation
             if ($request->quotation_id) {
                 $quotation = Quotation::findOrFail($request->quotation_id);
                 $quotation->update(['status' => 'Sent']);
@@ -91,6 +92,18 @@ class SaleController extends Controller
 
             $total_cost = 0;
 
+            // ✅ Tentukan default warehouse untuk SaleOrder (kalau semua item 1 gudang)
+            $warehouseIds = collect(Cart::instance('sale')->content())
+                ->map(fn($it) => (int) ($it->options->warehouse_id ?? 0))
+                ->filter(fn($id) => $id > 0)
+                ->unique()
+                ->values();
+
+            $defaultWarehouseId = $warehouseIds->count() === 1 ? (int) $warehouseIds[0] : null;
+
+            // ==========================================
+            // ✅ CREATE INVOICE (SALE) - NO STOCK MOVEMENT
+            // ==========================================
             $saleData = [
                 'date'                => $request->date,
                 'license_number'      => $request->car_number_plate,
@@ -105,7 +118,10 @@ class SaleController extends Controller
                 'total_quantity'      => (int) $request->total_quantity,
                 'fee_amount'          => (int) $request->fee_amount,
                 'due_amount'          => (int) $due_amount,
-                'status'              => $request->status,
+
+                // ✅ invoice status tidak punya hubungan ke delivery lagi
+                'status'              => 'Invoiced',
+
                 'payment_status'      => $payment_status,
                 'payment_method'      => $request->payment_method,
                 'note'                => $request->note,
@@ -119,8 +135,36 @@ class SaleController extends Controller
 
             $sale = Sale::create($saleData);
 
-            // ✅ ambil warehouse KS SEKALI (jangan di dalam loop)
+            // ==========================================
+            // ✅ AUTO CREATE SALE ORDER (ANCHOR)
+            // sale_orders.sale_id = sales.id
+            // ==========================================
+            $saleOrder = SaleOrder::create([
+                'branch_id'    => $branchId,
+                'customer_id'  => (int) $customer->id,
+                'quotation_id' => $request->quotation_id ? (int) $request->quotation_id : null,
+                'sale_id'      => (int) $sale->id,
+                'warehouse_id' => $defaultWarehouseId,
+                'reference'    => 'SO-TEMP-' . uniqid(), // sementara untuk lolos unique
+                'date'         => $request->date,
+                'status'       => 'pending',
+                'note'         => $request->note,
+                'created_by'   => auth()->id(),
+                'updated_by'   => auth()->id(),
+            ]);
+
+            // setelah punya ID, set reference rapih
+            $saleOrder->update([
+                'reference' => make_reference_id('SO', (int) $saleOrder->id),
+            ]);
+
+            // ✅ ambil warehouse KS sekali (untuk konsinyasi)
             $warehouseKS = Warehouse::query()->where('warehouse_code', 'KS')->first();
+
+            // ==========================================
+            // ✅ Create SaleDetails + SaleOrderItem
+            // ==========================================
+            $aggregatedSOItems = []; // product_id => ['qty'=>x,'price'=>y]
 
             foreach (Cart::instance('sale')->content() as $cart_item) {
 
@@ -148,13 +192,23 @@ class SaleController extends Controller
 
                 SaleDetails::create($saleDetailData);
 
-                // ==================================================
-                // ✅ FIX BUG: KS vs non-KS harus pakai flag, bukan if-else warehouseKS exists
-                // ==================================================
+                // ✅ agregasi untuk sale_order_items
+                $pid = (int) $cart_item->id;
+                $qty = (int) $cart_item->qty;
+                $price = (int) $cart_item->price;
+
+                if (!isset($aggregatedSOItems[$pid])) {
+                    $aggregatedSOItems[$pid] = ['qty' => 0, 'price' => $price];
+                }
+                $aggregatedSOItems[$pid]['qty'] += $qty;
+
+                // ==========================================
+                // ✅ Konsinyasi KS: bikin purchase ke supplier KS
+                // (tetap ada, tapi tidak ada mutation out)
+                // ==========================================
                 $isKS = $warehouseKS && ((int) $warehouseKS->id === (int) $cart_item->options->warehouse_id);
 
                 if ($isKS) {
-                    // konsinyasi -> bikin purchase ke supplier KS
                     $supplierKs = Supplier::query()->where('supplier_name', 'MJD-KS')->first();
 
                     if ($supplierKs) {
@@ -193,98 +247,72 @@ class SaleController extends Controller
                             'product_tax_amount'       => 0,
                         ]);
                     }
-
-                    // NOTE: untuk KS kamu memang tidak bikin mutation out di code lama (asumsi stok KS gak dihitung)
-                    continue;
                 }
+            }
 
-                // ==================================================
-                // non-KS: kalau shipped/completed -> mutation out + accounting
-                // ==================================================
-                if ($request->status === 'Shipped' || $request->status === 'Completed') {
-
-                    $mutation = Mutation::where('product_id', $cart_item->id)
-                        ->where('warehouse_id', $cart_item->options->warehouse_id)
-                        ->latest()
-                        ->first();
-
-                    $_stock_early = $mutation ? (int) $mutation->stock_last : 0;
-                    $_stock_in    = 0;
-                    $_stock_out   = (int) $cart_item->qty;
-                    $_stock_last  = $_stock_early - $_stock_out;
-
-                    $mutationData = [
-                        'reference'     => $sale->reference,
-                        'date'          => $request->date,
-                        'mutation_type' => "Out",
-                        'note'          => "Mutation for Sale: " . $sale->reference,
-                        'warehouse_id'  => (int) $cart_item->options->warehouse_id,
-                        'product_id'    => (int) $cart_item->id,
-                        'stock_early'   => $_stock_early,
-                        'stock_in'      => $_stock_in,
-                        'stock_out'     => $_stock_out,
-                        'stock_last'    => $_stock_last,
-                    ];
-
-                    if (\Illuminate\Support\Facades\Schema::hasColumn('mutations', 'branch_id')) {
-                        $mutationData['branch_id'] = $branchId;
-                    }
-
-                    Mutation::create($mutationData);
-
-                    // ==============================
-                    // Accounting Transaction (tetap sama)
-                    // ==============================
-                    if ($total_cost <= 0) {
-                        Helper::addNewTransaction([
-                            'date' => $request->date,
-                            'label' => "Sale Invoice for #" . $sale->reference,
-                            'description' => "Order ID: " . $sale->reference,
-                            'purchase_id' => null,
-                            'purchase_payment_id' => null,
-                            'purchase_return_id' => null,
-                            'purchase_return_payment_id' => null,
-                            'sale_id' => $sale->id,
-                            'sale_payment_id' => null,
-                            'sale_return_id' => null,
-                            'sale_return_payment_id' => null,
-                        ], [
-                            ['subaccount_number' => '1-10100', 'amount' => $sale->total_amount, 'type' => 'debit'],
-                            ['subaccount_number' => '4-40000', 'amount' => $sale->total_amount, 'type' => 'credit'],
-                        ]);
-                    } else {
-                        Helper::addNewTransaction([
-                            'date' => $sale->date,
-                            'label' => "Sale Invoice for #" . $sale->reference,
-                            'description' => "Order ID: " . $sale->reference,
-                            'purchase_id' => null,
-                            'purchase_payment_id' => null,
-                            'purchase_return_id' => null,
-                            'purchase_return_payment_id' => null,
-                            'sale_id' => $sale->id,
-                            'sale_payment_id' => null,
-                            'sale_return_id' => null,
-                            'sale_return_payment_id' => null,
-                        ], [
-                            ['subaccount_number' => '1-10100', 'amount' => $sale->total_amount, 'type' => 'debit'],
-                            ['subaccount_number' => '5-50000', 'amount' => $total_cost, 'type' => 'debit'],
-                            ['subaccount_number' => '4-40000', 'amount' => $sale->total_amount, 'type' => 'credit'],
-                            ['subaccount_number' => '1-10200', 'amount' => $total_cost, 'type' => 'credit'],
-                        ]);
-                    }
-                }
+            // create sale_order_items
+            foreach ($aggregatedSOItems as $pid => $row) {
+                SaleOrderItem::create([
+                    'sale_order_id' => (int) $saleOrder->id,
+                    'product_id'    => (int) $pid,
+                    'quantity'      => (int) $row['qty'],
+                    'price'         => isset($row['price']) ? (int) $row['price'] : null,
+                ]);
             }
 
             Cart::instance('sale')->destroy();
 
-            // payment
-            if ($sale->paid_amount > 0) {
+            // ==========================================
+            // ✅ Accounting Transaction: selalu dibuat saat invoice dibuat
+            // ==========================================
+            if ($total_cost <= 0) {
+                Helper::addNewTransaction([
+                    'date' => $request->date,
+                    'label' => "Sale Invoice for #" . $sale->reference,
+                    'description' => "Order ID: " . $sale->reference,
+                    'purchase_id' => null,
+                    'purchase_payment_id' => null,
+                    'purchase_return_id' => null,
+                    'purchase_return_payment_id' => null,
+                    'sale_id' => $sale->id,
+                    'sale_payment_id' => null,
+                    'sale_return_id' => null,
+                    'sale_return_payment_id' => null,
+                ], [
+                    ['subaccount_number' => '1-10100', 'amount' => $sale->total_amount, 'type' => 'debit'],
+                    ['subaccount_number' => '4-40000', 'amount' => $sale->total_amount, 'type' => 'credit'],
+                ]);
+            } else {
+                Helper::addNewTransaction([
+                    'date' => $sale->date,
+                    'label' => "Sale Invoice for #" . $sale->reference,
+                    'description' => "Order ID: " . $sale->reference,
+                    'purchase_id' => null,
+                    'purchase_payment_id' => null,
+                    'purchase_return_id' => null,
+                    'purchase_return_payment_id' => null,
+                    'sale_id' => $sale->id,
+                    'sale_payment_id' => null,
+                    'sale_return_id' => null,
+                    'sale_return_payment_id' => null,
+                ], [
+                    ['subaccount_number' => '1-10100', 'amount' => $sale->total_amount, 'type' => 'debit'],
+                    ['subaccount_number' => '5-50000', 'amount' => $total_cost, 'type' => 'debit'],
+                    ['subaccount_number' => '4-40000', 'amount' => $sale->total_amount, 'type' => 'credit'],
+                    ['subaccount_number' => '1-10200', 'amount' => $total_cost, 'type' => 'credit'],
+                ]);
+            }
+
+            // ==========================================
+            // ✅ Payment record (kalau paid_amount > 0)
+            // ==========================================
+            if ((int) $sale->paid_amount > 0) {
 
                 $paymentData = [
                     'date' => $request->date,
                     'reference' => 'INV/' . $sale->reference,
-                    'amount' => $sale->paid_amount,
-                    'sale_id' => $sale->id,
+                    'amount' => (int) $sale->paid_amount,
+                    'sale_id' => (int) $sale->id,
                     'payment_method' => $request->payment_method,
                     'deposit_code' => $request->deposit_code
                 ];
@@ -327,7 +355,6 @@ class SaleController extends Controller
         return view('sale::show', compact('sale', 'customer'));
     }
 
-
     public function edit(Sale $sale) {
         abort_if(Gate::denies('edit_sales'), 403);
 
@@ -336,7 +363,6 @@ class SaleController extends Controller
         $branchId = BranchContext::id();
 
         Cart::instance('sale')->destroy();
-
         $cart = Cart::instance('sale');
 
         foreach ($sale_details as $sale_detail) {
@@ -351,15 +377,7 @@ class SaleController extends Controller
                     'product_discount_type' => $sale_detail->product_discount_type,
                     'sub_total'   => $sale_detail->sub_total,
                     'code'        => $sale_detail->product_code,
-                    'stock'       => !Mutation::with('warehouse')
-                                        ->where('warehouse_id', $sale_detail->warehouse_id)
-                                        ->where('product_id', $sale_detail->product_id)
-                                        ->latest()
-                                        ->first() ? 0 : Mutation::with('warehouse')
-                                        ->where('warehouse_id', $sale_detail->warehouse_id)
-                                        ->where('product_id', $sale_detail->product_id)
-                                        ->latest()
-                                        ->first()->stock_last,
+                    'stock'       => 0,
                     'warehouse_id'=> $sale_detail->warehouse_id,
                     'product_cost'=> $sale_detail->product_cost,
                     'product_tax' => $sale_detail->product_tax_amount,
@@ -376,7 +394,7 @@ class SaleController extends Controller
         $customers = Customer::query()
             ->where(function ($q) use ($branchId) {
                 $q->whereNull('branch_id')
-                ->orWhere('branch_id', $branchId);
+                    ->orWhere('branch_id', $branchId);
             })
             ->orderBy('customer_name')
             ->get();
@@ -396,15 +414,9 @@ class SaleController extends Controller
             } else {
                 $payment_status = 'Paid';
             }
-            $list_cost = array();
+
+            // ✅ invoice update: tidak menyentuh stock sama sekali
             foreach ($sale->saleDetails as $sale_detail) {
-                if ($sale->status == 'Shipped' || $sale->status == 'Completed') {
-                    $product = Product::findOrFail($sale_detail->product_id);
-                    $product->update([
-                        'product_quantity' => $product->product_quantity + $sale_detail->quantity
-                    ]);
-                }
-                $list_cost[$sale_detail->product_id] = $sale_detail->product_cost;
                 $sale_detail->delete();
             }
 
@@ -416,12 +428,15 @@ class SaleController extends Controller
                 'tax_percentage' => $request->tax_percentage,
                 'discount_percentage' => $request->discount_percentage,
                 'shipping_amount' => $request->shipping_amount * 1,
-                'fee_amount' => $request-> fee_amount * 1,
+                'fee_amount' => $request->fee_amount * 1,
                 'paid_amount' => $request->paid_amount * 1,
                 'total_amount' => $request->total_amount * 1,
                 'total_quantity' => $request->total_quantity,
                 'due_amount' => $due_amount * 1,
-                'status' => $request->status,
+
+                // ✅ tetap "Invoiced"
+                'status' => 'Invoiced',
+
                 'payment_status' => $payment_status,
                 'payment_method' => $request->payment_method,
                 'note' => $request->note,
@@ -435,80 +450,32 @@ class SaleController extends Controller
                     'product_id' => $cart_item->id,
                     'product_name' => $cart_item->name,
                     'product_code' => $cart_item->options->code,
-                    'product_cost'=> $list_cost[$cart_item->id],
-                    'quantity' => $cart_item->qty,
-                    'price' => $cart_item->price * 1,
-                    'unit_price' => $cart_item->options->unit_price * 1,
-                    'sub_total' => $cart_item->options->sub_total * 1,
-                    'product_discount_amount' => $cart_item->options->product_discount * 1,
+                    'product_cost'=> (int) ($cart_item->options->product_cost ?? 0),
+                    'warehouse_id' => (int) ($cart_item->options->warehouse_id ?? 0),
+                    'quantity' => (int) $cart_item->qty,
+                    'price' => (int) $cart_item->price,
+                    'unit_price' => (int) ($cart_item->options->unit_price ?? 0),
+                    'sub_total' => (int) ($cart_item->options->sub_total ?? 0),
+                    'product_discount_amount' => (int) ($cart_item->options->product_discount ?? 0),
                     'product_discount_type' => $cart_item->options->product_discount_type,
-                    'product_tax_amount' => $cart_item->options->product_tax * 1,
+                    'product_tax_amount' => (int) ($cart_item->options->product_tax ?? 0),
                 ]);
-
-                if ($request->status == 'Shipped' || $request->status == 'Completed') {
-                    $product = Product::findOrFail($cart_item->id);
-                    $product->update([
-                        'product_quantity' => $product->product_quantity - $cart_item->qty
-                    ]);
-                }
             }
 
             Cart::instance('sale')->destroy();
         });
 
         toast('Sale Updated!', 'info');
-
         return redirect()->route('sales.index');
     }
 
-
     public function destroy(Sale $sale) {
         abort_if(Gate::denies('delete_sales'), 403);
-        // DB::transaction(function () use ($sale) {
 
-        // });
-        // $sale->delete();
-        foreach ($sale->saleDetails as $sale_detail) {
-            // dd($sale_detail);
-
-            if ($sale->status == 'Shipped' || $sale->status == 'Completed') {
-                $mutation = Mutation::with('warehouse')->where('product_id', $sale_detail->product_id)
-                ->where('warehouse_id', $sale_detail->warehouse_id)
-                ->latest()->first();
-                // dd($mutation);
-                if($mutation['warehouse']->warehouse_code == 'KS'){
-                    $purchase = Purchase::with('purchaseDetails')
-                    ->where('note', 'like', '%' . $sale->reference . '%')
-                    ->whereHas('purchaseDetails', function($q) use ($sale_detail){
-                        $q->where('product_id', $sale_detail->product_id);
-                    });
-                    $purchase->update(['status' => 'Void']);
-                }
-
-
-                $_stock_early = $mutation ? $mutation->stock_last : 0;
-                $_stock_in = $sale_detail->quantity;
-                $_stock_out = 0;
-                $_stock_last = $_stock_early + $_stock_in;
-
-                Mutation::create([
-                    'reference' => $sale->reference,
-                    'date' => $sale->date,
-                    'mutation_type' => "In",
-                    'note' => "Hapus Penjualan, Referensi : ". $sale->reference,
-                    'warehouse_id' => $sale_detail->warehouse_id,
-                    'product_id' => $sale_detail->product_id,
-                    'stock_early' => $_stock_early,
-                    'stock_in' => $_stock_in,
-                    'stock_out'=> $_stock_out,
-                    'stock_last'=> $_stock_last,
-                ]);
-            }
-        }
-
+        // ✅ invoice delete/void tidak mengembalikan stock (karena stock diatur oleh SaleDelivery)
         $sale->update(['status' => 'Void']);
-        toast('Sale Deleted!', 'warning');
 
+        toast('Sale Deleted!', 'warning');
         return redirect()->route('sales.index');
     }
 }
