@@ -3,7 +3,6 @@
 namespace Modules\SaleOrder\Http\Controllers;
 
 use App\Support\BranchContext;
-use Illuminate\Contracts\Support\Renderable;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
 use Illuminate\Support\Facades\DB;
@@ -44,6 +43,7 @@ class SaleOrderController extends Controller
             ->get();
 
         $source = (string) $request->get('source', 'manual');
+        abort_unless(in_array($source, ['manual', 'quotation', 'sale'], true), 403);
 
         $prefillCustomerId = null;
         $prefillWarehouseId = null;
@@ -63,7 +63,10 @@ class SaleOrderController extends Controller
                 ->firstOrFail();
 
             $prefillCustomerId = (int) $quotation->customer_id;
-            $prefillDate = (string) $quotation->date;
+
+            // ✅ KRUSIAL: ambil raw date dari DB (Y-m-d), jangan pakai accessor (d M, Y)
+            $prefillDate = (string) $quotation->getRawOriginal('date');
+
             $prefillNote = 'Created from Quotation #' . ($quotation->reference ?? $quotation->id);
             $prefillRefText = 'Quotation: ' . ($quotation->reference ?? $quotation->id);
 
@@ -87,7 +90,10 @@ class SaleOrderController extends Controller
                 ->firstOrFail();
 
             $prefillCustomerId = (int) $sale->customer_id;
-            $prefillDate = (string) $sale->date;
+
+            // ✅ Sama: ambil raw date (Y-m-d) agar valid untuk <input type="date">
+            $prefillDate = (string) $sale->getRawOriginal('date');
+
             $prefillNote = 'Created from Invoice #' . ($sale->reference ?? $sale->id);
             $prefillRefText = 'Invoice: ' . ($sale->reference ?? $sale->id);
 
@@ -131,7 +137,10 @@ class SaleOrderController extends Controller
         $rules = [
             'date' => 'required|date',
             'customer_id' => 'required|integer',
-            'warehouse_id' => 'nullable|integer',
+
+            // ✅ REQUIRED untuk manual + quotation. Nullable hanya untuk sale (karena bisa auto prefill / user pilih).
+            'warehouse_id' => ($source === 'sale') ? 'nullable|integer' : 'required|integer',
+
             'note' => 'nullable|string|max:5000',
             'items' => 'required|array|min:1',
             'items.*.product_id' => 'required|integer',
@@ -163,7 +172,7 @@ class SaleOrderController extends Controller
             if ($source === 'quotation') {
                 $quotationId = (int) $request->quotation_id;
 
-                $q = Quotation::query()
+                Quotation::query()
                     ->where('id', $quotationId)
                     ->where('branch_id', $branchId)
                     ->firstOrFail();
@@ -182,7 +191,7 @@ class SaleOrderController extends Controller
             if ($source === 'sale') {
                 $saleId = (int) $request->sale_id;
 
-                $s = Sale::query()
+                Sale::query()
                     ->where('id', $saleId)
                     ->where('branch_id', $branchId)
                     ->firstOrFail();
@@ -198,10 +207,12 @@ class SaleOrderController extends Controller
                 }
             }
 
-            if ($request->warehouse_id) {
+            // ✅ warehouse validation (kalau required/filled)
+            $warehouseId = $request->warehouse_id ? (int) $request->warehouse_id : null;
+            if ($warehouseId) {
                 Warehouse::query()
                     ->where('branch_id', $branchId)
-                    ->where('id', (int) $request->warehouse_id)
+                    ->where('id', $warehouseId)
                     ->firstOrFail();
             }
 
@@ -210,7 +221,7 @@ class SaleOrderController extends Controller
                 'customer_id' => (int) $customer->id,
                 'quotation_id' => $quotationId,
                 'sale_id' => $saleId,
-                'warehouse_id' => $request->warehouse_id ? (int) $request->warehouse_id : null,
+                'warehouse_id' => $warehouseId,
                 'date' => $request->date,
                 'status' => 'pending',
                 'note' => $request->note,
