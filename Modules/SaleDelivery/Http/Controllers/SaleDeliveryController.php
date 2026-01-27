@@ -97,33 +97,37 @@ class SaleDeliveryController extends Controller
 
         $request->validate([
             'confirm_note' => 'nullable|string|max:5000',
+
             'items' => 'required|array|min:1',
             'items.*.id' => 'required|integer',
             'items.*.good' => 'required|integer|min:0',
             'items.*.defect' => 'required|integer|min:0',
             'items.*.damaged' => 'required|integer|min:0',
+
+            // ✅ OPTIONAL: selected IDs (kalau user pilih)
+            'items.*.selected_defect_ids' => 'nullable|array',
+            'items.*.selected_defect_ids.*' => 'integer',
+
+            'items.*.selected_damaged_ids' => 'nullable|array',
+            'items.*.selected_damaged_ids.*' => 'integer',
         ]);
 
         DB::transaction(function () use ($request, $saleDelivery, $branchId) {
 
-            // lock sale delivery
             $saleDelivery = SaleDelivery::withoutGlobalScopes()
                 ->lockForUpdate()
                 ->with(['items'])
                 ->findOrFail($saleDelivery->id);
 
-            // status guard
             $status = strtolower(trim((string) ($saleDelivery->getRawOriginal('status') ?? $saleDelivery->status ?? 'pending')));
             if (!in_array($status, ['pending'], true)) {
                 abort(422, 'Sale Delivery is not pending.');
             }
 
-            // branch context guard
             if ((int) $saleDelivery->branch_id !== (int) $branchId) {
                 abort(403, 'Wrong branch context.');
             }
 
-            // safety: reference
             if (empty($saleDelivery->reference)) {
                 $saleDelivery->update([
                     'reference' => make_reference_id('SDO', (int) $saleDelivery->id),
@@ -132,7 +136,7 @@ class SaleDeliveryController extends Controller
 
             $reference = (string) $saleDelivery->reference;
 
-            // anti double confirm (mutation exists)
+            // anti double confirm
             $exists = Mutation::withoutGlobalScopes()
                 ->where('reference', $reference)
                 ->where('note', 'like', 'Sales Delivery OUT%')
@@ -145,10 +149,24 @@ class SaleDeliveryController extends Controller
             // map input by item_id
             $inputById = [];
             foreach ($request->items as $row) {
-                $inputById[(int) $row['id']] = [
+                $itemId = (int) $row['id'];
+
+                $selectedDefectIds = [];
+                if (isset($row['selected_defect_ids']) && is_array($row['selected_defect_ids'])) {
+                    $selectedDefectIds = array_values(array_unique(array_map('intval', $row['selected_defect_ids'])));
+                }
+
+                $selectedDamagedIds = [];
+                if (isset($row['selected_damaged_ids']) && is_array($row['selected_damaged_ids'])) {
+                    $selectedDamagedIds = array_values(array_unique(array_map('intval', $row['selected_damaged_ids'])));
+                }
+
+                $inputById[$itemId] = [
                     'good' => (int) $row['good'],
                     'defect' => (int) $row['defect'],
                     'damaged' => (int) $row['damaged'],
+                    'selected_defect_ids' => $selectedDefectIds,
+                    'selected_damaged_ids' => $selectedDamagedIds,
                 ];
             }
 
@@ -163,10 +181,6 @@ class SaleDeliveryController extends Controller
                 $defect = (int) ($inputById[$itemId]['defect'] ?? 0);
                 $damaged = (int) ($inputById[$itemId]['damaged'] ?? 0);
 
-                if ($good < 0 || $defect < 0 || $damaged < 0) {
-                    abort(422, 'Invalid qty input.');
-                }
-
                 $confirmed = $good + $defect + $damaged;
 
                 if ($confirmed > $expected) {
@@ -177,9 +191,22 @@ class SaleDeliveryController extends Controller
                     $isPartial = true;
                 }
 
+                // ✅ Validasi selection count harus match qty yang diinput (kalau qty > 0)
+                $selDef = $inputById[$itemId]['selected_defect_ids'] ?? [];
+                $selDam = $inputById[$itemId]['selected_damaged_ids'] ?? [];
+
+                // kalau user isi defect > 0, maka harus pilih ids (atau kalau mau backward compatible: boleh kosong -> auto pick)
+                // Aku bikin: kalau user sudah memilih (selDef tidak kosong), maka jumlahnya WAJIB sama.
+                // Kalau tidak memilih sama sekali, kita fallback auto pick.
+                if ($defect > 0 && !empty($selDef) && count($selDef) !== $defect) {
+                    abort(422, "Selected DEFECT IDs count must equal defect qty for item ID {$itemId}.");
+                }
+                if ($damaged > 0 && !empty($selDam) && count($selDam) !== $damaged) {
+                    abort(422, "Selected DAMAGED IDs count must equal damaged qty for item ID {$itemId}.");
+                }
+
                 $totalConfirmedAll += $confirmed;
 
-                // simpan breakdown qty di item
                 $it->update([
                     'qty_good' => $good,
                     'qty_defect' => $defect,
@@ -194,8 +221,7 @@ class SaleDeliveryController extends Controller
             /**
              * MUTATION OUT:
              * - Out total confirmed per product (good+defect+damaged)
-             * - Lalu, kalau defect/damaged > 0:
-             *   "habiskan" per-unit rows di product_defect_items / product_damaged_items
+             * - Consume defect/damaged rows based on selected IDs (if provided) or auto-pick as fallback
              */
             foreach ($saleDelivery->items as $it) {
                 $productId = (int) $it->product_id;
@@ -220,20 +246,49 @@ class SaleDeliveryController extends Controller
                     (string) $saleDelivery->getRawOriginal('date')
                 );
 
-                // 2) Consume defect items (moved_out_*)
-                if ($defect > 0) {
-                    $ids = DB::table('product_defect_items')
-                        ->where('branch_id', (int) $saleDelivery->branch_id)
-                        ->where('warehouse_id', (int) $saleDelivery->warehouse_id)
-                        ->where('product_id', $productId)
-                        ->whereNull('moved_out_at')
-                        ->orderBy('id', 'asc')
-                        ->limit($defect)
-                        ->pluck('id')
-                        ->all();
+                $input = $inputById[(int) $it->id] ?? [];
+                $selectedDefectIds = $input['selected_defect_ids'] ?? [];
+                $selectedDamagedIds = $input['selected_damaged_ids'] ?? [];
 
-                    if (count($ids) !== $defect) {
-                        abort(422, "Not enough DEFECT stock for product_id {$productId}. Needed {$defect}, available " . count($ids) . ".");
+                // 2) Consume DEFECT items
+                if ($defect > 0) {
+
+                    $ids = [];
+
+                    if (!empty($selectedDefectIds)) {
+                        $ids = $selectedDefectIds;
+
+                        // ✅ Validasi ownership + availability
+                        $countValid = DB::table('product_defect_items')
+                            ->whereIn('id', $ids)
+                            ->where('branch_id', (int) $saleDelivery->branch_id)
+                            ->where('warehouse_id', (int) $saleDelivery->warehouse_id)
+                            ->where('product_id', $productId)
+                            ->whereNull('moved_out_at')
+                            ->count();
+
+                        if ($countValid !== count($ids)) {
+                            abort(422, "Some selected DEFECT IDs are invalid/unavailable for product_id {$productId}.");
+                        }
+
+                        if (count($ids) !== $defect) {
+                            abort(422, "Selected DEFECT IDs count mismatch for product_id {$productId}.");
+                        }
+                    } else {
+                        // fallback auto-pick
+                        $ids = DB::table('product_defect_items')
+                            ->where('branch_id', (int) $saleDelivery->branch_id)
+                            ->where('warehouse_id', (int) $saleDelivery->warehouse_id)
+                            ->where('product_id', $productId)
+                            ->whereNull('moved_out_at')
+                            ->orderBy('id', 'asc')
+                            ->limit($defect)
+                            ->pluck('id')
+                            ->all();
+
+                        if (count($ids) !== $defect) {
+                            abort(422, "Not enough DEFECT stock for product_id {$productId}. Needed {$defect}, available " . count($ids) . ".");
+                        }
                     }
 
                     DB::table('product_defect_items')
@@ -246,21 +301,48 @@ class SaleDeliveryController extends Controller
                         ]);
                 }
 
-                // 3) Consume damaged items (moved_out_* + mutation_out_id)
+                // 3) Consume DAMAGED items
                 if ($damaged > 0) {
-                    $ids = DB::table('product_damaged_items')
-                        ->where('branch_id', (int) $saleDelivery->branch_id)
-                        ->where('warehouse_id', (int) $saleDelivery->warehouse_id)
-                        ->where('product_id', $productId)
-                        ->where('resolution_status', 'pending')
-                        ->whereNull('moved_out_at')
-                        ->orderBy('id', 'asc')
-                        ->limit($damaged)
-                        ->pluck('id')
-                        ->all();
 
-                    if (count($ids) !== $damaged) {
-                        abort(422, "Not enough DAMAGED stock for product_id {$productId}. Needed {$damaged}, available " . count($ids) . ".");
+                    $ids = [];
+
+                    if (!empty($selectedDamagedIds)) {
+                        $ids = $selectedDamagedIds;
+
+                        $countValid = DB::table('product_damaged_items')
+                            ->whereIn('id', $ids)
+                            ->where('branch_id', (int) $saleDelivery->branch_id)
+                            ->where('warehouse_id', (int) $saleDelivery->warehouse_id)
+                            ->where('product_id', $productId)
+                            ->where('damage_type', 'damaged')
+                            ->where('resolution_status', 'pending')
+                            ->whereNull('moved_out_at')
+                            ->count();
+
+                        if ($countValid !== count($ids)) {
+                            abort(422, "Some selected DAMAGED IDs are invalid/unavailable for product_id {$productId}.");
+                        }
+
+                        if (count($ids) !== $damaged) {
+                            abort(422, "Selected DAMAGED IDs count mismatch for product_id {$productId}.");
+                        }
+                    } else {
+                        // fallback auto-pick
+                        $ids = DB::table('product_damaged_items')
+                            ->where('branch_id', (int) $saleDelivery->branch_id)
+                            ->where('warehouse_id', (int) $saleDelivery->warehouse_id)
+                            ->where('product_id', $productId)
+                            ->where('damage_type', 'damaged')
+                            ->where('resolution_status', 'pending')
+                            ->whereNull('moved_out_at')
+                            ->orderBy('id', 'asc')
+                            ->limit($damaged)
+                            ->pluck('id')
+                            ->all();
+
+                        if (count($ids) !== $damaged) {
+                            abort(422, "Not enough DAMAGED stock for product_id {$productId}. Needed {$damaged}, available " . count($ids) . ".");
+                        }
                     }
 
                     DB::table('product_damaged_items')
@@ -275,7 +357,7 @@ class SaleDeliveryController extends Controller
                 }
             }
 
-            // simpan confirm note meta
+            // save confirm note meta
             $confirmNote = $request->confirm_note ? (string) $request->confirm_note : null;
 
             $saleDelivery->update([
@@ -289,13 +371,8 @@ class SaleDeliveryController extends Controller
                 'confirm_note_updated_at' => $confirmNote ? now() : null,
             ]);
 
-            // =========================================================
-            // ✅ UPDATE SALE ORDER STATUS (pending → partial_delivered → delivered)
-            // - priority: sale_delivery.sale_order_id
-            // - fallback: cari sale_order by sale_id (invoice) kalau SD dibuat dari sale
-            // =========================================================
+            // update SO fulfillment status
             $saleOrderId = (int) ($saleDelivery->sale_order_id ?? 0);
-
             if ($saleOrderId <= 0 && !empty($saleDelivery->sale_id)) {
                 $found = SaleOrder::query()
                     ->where('branch_id', (int) $saleDelivery->branch_id)

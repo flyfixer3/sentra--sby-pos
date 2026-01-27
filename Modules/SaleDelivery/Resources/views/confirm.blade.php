@@ -1,188 +1,308 @@
 @extends('layouts.app')
 
-@section('title', "Confirm Sale Delivery #{$saleDelivery->reference}")
+@section('title', 'Confirm Sale Delivery')
 
 @section('breadcrumb')
 <ol class="breadcrumb border-0 m-0">
     <li class="breadcrumb-item"><a href="{{ route('home') }}">Home</a></li>
     <li class="breadcrumb-item"><a href="{{ route('sale-deliveries.index') }}">Sale Deliveries</a></li>
-    <li class="breadcrumb-item"><a href="{{ route('sale-deliveries.show', $saleDelivery->id) }}">{{ $saleDelivery->reference }}</a></li>
+    <li class="breadcrumb-item"><a href="{{ route('sale-deliveries.show', $saleDelivery->id) }}">Details</a></li>
     <li class="breadcrumb-item active">Confirm</li>
 </ol>
 @endsection
 
 @section('content')
+@php
+    $branchId = (int) ($saleDelivery->branch_id ?? 0);
+    $warehouseId = (int) ($saleDelivery->warehouse_id ?? 0);
+
+    // preload available defect/damaged IDs per product_id
+    $availableDefectByProduct = [];
+    $availableDamagedByProduct = [];
+
+    $productIds = [];
+    foreach ($saleDelivery->items as $it) {
+        $pid = (int) $it->product_id;
+        if ($pid > 0) $productIds[] = $pid;
+    }
+    $productIds = array_values(array_unique($productIds));
+
+    if (!empty($productIds)) {
+        $defRows = \Illuminate\Support\Facades\DB::table('product_defect_items')
+            ->where('branch_id', $branchId)
+            ->where('warehouse_id', $warehouseId)
+            ->whereIn('product_id', $productIds)
+            ->whereNull('moved_out_at')
+            ->orderBy('id', 'asc')
+            ->get();
+
+        foreach ($defRows as $r) {
+            $pid = (int) $r->product_id;
+            if (!isset($availableDefectByProduct[$pid])) $availableDefectByProduct[$pid] = [];
+            $availableDefectByProduct[$pid][] = $r;
+        }
+
+        $damRows = \Illuminate\Support\Facades\DB::table('product_damaged_items')
+            ->where('branch_id', $branchId)
+            ->where('warehouse_id', $warehouseId)
+            ->whereIn('product_id', $productIds)
+            ->where('damage_type', 'damaged')
+            ->where('resolution_status', 'pending')
+            ->whereNull('moved_out_at')
+            ->orderBy('id', 'asc')
+            ->get();
+
+        foreach ($damRows as $r) {
+            $pid = (int) $r->product_id;
+            if (!isset($availableDamagedByProduct[$pid])) $availableDamagedByProduct[$pid] = [];
+            $availableDamagedByProduct[$pid][] = $r;
+        }
+    }
+
+    $fmt = function ($txt, $max=40) {
+        $t = trim((string) ($txt ?? ''));
+        if ($t === '') return '';
+        if (mb_strlen($t) <= $max) return $t;
+        return mb_substr($t, 0, $max) . '...';
+    };
+@endphp
+
 <div class="container-fluid">
-    @include('utils.alerts')
+    <div class="row">
+        <div class="col-lg-12">
 
-    <div class="card mb-3">
-        <div class="card-body">
-            <div class="d-flex align-items-start justify-content-between flex-wrap gap-2">
-                <div>
-                    <h4 class="mb-1">Confirm Stock Out</h4>
-                    <div class="text-muted small">
-                        Once confirmed, stock will be deducted and cannot be confirmed again.
-                    </div>
-                    <div class="text-muted small mt-1">
-                        Ref: <span class="fw-bold">{{ $saleDelivery->reference }}</span> •
-                        Date: <span class="fw-bold">{{ $saleDelivery->getAttributes()['date'] ?? $saleDelivery->date }}</span> •
-                        WH: <span class="fw-bold">{{ optional($saleDelivery->warehouse)->warehouse_name ?? '-' }}</span>
+            <div class="card mb-3">
+                <div class="card-header d-flex align-items-center flex-wrap">
+                    <div>
+                        <strong>Confirm Sale Delivery</strong>
+                        <div class="text-muted small">
+                            Ref: <strong>{{ $saleDelivery->reference }}</strong> •
+                            Date: {{ $saleDelivery->date ? \Carbon\Carbon::parse($saleDelivery->date)->format('d M Y') : '-' }} •
+                            Warehouse: <strong>{{ $saleDelivery->warehouse?->warehouse_name ?? ('WH#'.$saleDelivery->warehouse_id) }}</strong>
+                        </div>
                     </div>
                 </div>
-                <div class="text-end">
-                    @php $st = strtolower((string)$saleDelivery->status); @endphp
-                    <span class="badge {{ $st==='pending' ? 'bg-warning text-dark' : 'bg-secondary' }}">
-                        {{ strtoupper($saleDelivery->status) }}
-                    </span>
+
+                <div class="card-body">
+
+                    <div class="alert alert-info">
+                        <strong>Catatan:</strong>
+                        <ul class="mb-0">
+                            <li>Qty yang kamu confirm (GOOD + DEFECT + DAMAGED) <strong>tidak boleh melebihi</strong> Expected Qty.</li>
+                            <li>Kalau kamu input DEFECT / DAMAGED, kamu bisa (dan disarankan) memilih ID itemnya agar tracking & soft-delete tepat.</li>
+                        </ul>
+                    </div>
+
+                    <form method="POST" action="{{ route('sale-deliveries.confirm.store', $saleDelivery->id) }}">
+                        @csrf
+
+                        <div class="table-responsive">
+                            <table class="table table-bordered">
+                                <thead>
+                                <tr>
+                                    <th style="width: 28%;">Product</th>
+                                    <th style="width: 8%;" class="text-center">Expected</th>
+                                    <th style="width: 8%;">GOOD</th>
+                                    <th style="width: 8%;">DEFECT</th>
+                                    <th style="width: 8%;">DAMAGED</th>
+                                    <th style="width: 20%;">Select DEFECT IDs</th>
+                                    <th style="width: 20%;">Select DAMAGED IDs</th>
+                                </tr>
+                                </thead>
+                                <tbody>
+                                @foreach($saleDelivery->items as $i => $it)
+                                    @php
+                                        $itemId = (int) $it->id;
+                                        $pid = (int) $it->product_id;
+                                        $expected = (int) ($it->quantity ?? 0);
+                                        $productName = $it->product?->product_name ?? ('Product #'.$pid);
+
+                                        $defList = $availableDefectByProduct[$pid] ?? [];
+                                        $damList = $availableDamagedByProduct[$pid] ?? [];
+                                    @endphp
+
+                                    <tr>
+                                        <td>
+                                            <strong>{{ $productName }}</strong>
+                                            <div class="small text-muted">
+                                                product_id: {{ $pid }}
+                                            </div>
+
+                                            <input type="hidden" name="items[{{ $i }}][id]" value="{{ $itemId }}">
+                                        </td>
+
+                                        <td class="text-center">
+                                            <span class="badge badge-secondary">{{ number_format($expected) }}</span>
+                                        </td>
+
+                                        <td>
+                                            <input type="number"
+                                                   name="items[{{ $i }}][good]"
+                                                   class="form-control qty-good"
+                                                   min="0"
+                                                   value="0"
+                                                   data-expected="{{ $expected }}"
+                                                   required>
+                                        </td>
+
+                                        <td>
+                                            <input type="number"
+                                                   name="items[{{ $i }}][defect]"
+                                                   class="form-control qty-defect"
+                                                   min="0"
+                                                   value="0"
+                                                   data-expected="{{ $expected }}"
+                                                   required>
+                                        </td>
+
+                                        <td>
+                                            <input type="number"
+                                                   name="items[{{ $i }}][damaged]"
+                                                   class="form-control qty-damaged"
+                                                   min="0"
+                                                   value="0"
+                                                   data-expected="{{ $expected }}"
+                                                   required>
+                                        </td>
+
+                                        <td>
+                                            <select name="items[{{ $i }}][selected_defect_ids][]"
+                                                    class="form-control select-defect"
+                                                    multiple
+                                                    data-max="0"
+                                                    data-item="{{ $itemId }}">
+                                                @foreach($defList as $r)
+                                                    @php
+                                                        $label = "ID {$r->id}";
+                                                        $extra = [];
+                                                        if (!empty($r->defect_type)) $extra[] = (string) $r->defect_type;
+                                                        if (!empty($r->description)) $extra[] = $fmt($r->description, 35);
+                                                        if (!empty($extra)) $label .= ' - ' . implode(' | ', $extra);
+                                                    @endphp
+                                                    <option value="{{ (int) $r->id }}">{{ $label }}</option>
+                                                @endforeach
+                                            </select>
+                                            <div class="small text-muted mt-1">
+                                                Pilih sebanyak qty DEFECT. (Kalau kosong, sistem auto-ambil oldest.)
+                                            </div>
+                                        </td>
+
+                                        <td>
+                                            <select name="items[{{ $i }}][selected_damaged_ids][]"
+                                                    class="form-control select-damaged"
+                                                    multiple
+                                                    data-max="0"
+                                                    data-item="{{ $itemId }}">
+                                                @foreach($damList as $r)
+                                                    @php
+                                                        $label = "ID {$r->id}";
+                                                        $extra = [];
+                                                        if (!empty($r->reason)) $extra[] = $fmt($r->reason, 35);
+                                                        if (!empty($extra)) $label .= ' - ' . implode(' | ', $extra);
+                                                    @endphp
+                                                    <option value="{{ (int) $r->id }}">{{ $label }}</option>
+                                                @endforeach
+                                            </select>
+                                            <div class="small text-muted mt-1">
+                                                Pilih sebanyak qty DAMAGED. (Kalau kosong, sistem auto-ambil oldest.)
+                                            </div>
+                                        </td>
+                                    </tr>
+                                @endforeach
+                                </tbody>
+                            </table>
+                        </div>
+
+                        <div class="form-group mt-3">
+                            <label class="form-label">Confirm Note (optional)</label>
+                            <textarea name="confirm_note" class="form-control" rows="3">{{ old('confirm_note') }}</textarea>
+                        </div>
+
+                        <div class="d-flex gap-2 mt-3">
+                            <button type="submit" class="btn btn-primary">
+                                <i class="bi bi-check2-circle"></i> Confirm & Apply Mutation Out
+                            </button>
+                            <a href="{{ route('sale-deliveries.show', $saleDelivery->id) }}" class="btn btn-secondary">
+                                Cancel
+                            </a>
+                        </div>
+
+                    </form>
+
                 </div>
             </div>
 
-            <hr class="my-3">
-
-            <div class="alert alert-info mb-0">
-                <div class="fw-bold mb-1">Rule Validasi</div>
-                <div class="small">
-                    - Good + Defect + Damaged boleh kurang dari Expected (partial), tapi tidak boleh melebihi Expected.<br>
-                    - Defect/Damaged akan diambil dari stok per-unit yang sudah ada (product_defect_items / product_damaged_items).<br>
-                    - Kalau stok defect/damaged tidak cukup, sistem akan menolak confirm.
-                </div>
-            </div>
         </div>
     </div>
-
-    <form action="{{ route('sale-deliveries.confirm.store', $saleDelivery->id) }}" method="POST">
-        @csrf
-
-        <div class="card">
-            <div class="card-body">
-
-                <div class="table-responsive">
-                    <table class="table table-bordered align-middle">
-                        <thead class="table-light">
-                            <tr>
-                                <th style="min-width: 320px;">Product</th>
-                                <th class="text-center" style="width:120px;">Expected</th>
-                                <th class="text-center" style="width:140px;">Good</th>
-                                <th class="text-center" style="width:140px;">Defect</th>
-                                <th class="text-center" style="width:140px;">Damaged</th>
-                                <th class="text-center" style="width:140px;">Remaining</th>
-                                <th class="text-center" style="width:160px;">Status</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            @foreach($saleDelivery->items as $idx => $it)
-                                @php
-                                    $expected = (int)($it->quantity ?? 0);
-                                @endphp
-                                <tr>
-                                    <td>
-                                        <div class="fw-bold">{{ $it->product_name ?? optional($it->product)->product_name ?? '-' }}</div>
-                                        <div class="small text-muted">PID: {{ (int)$it->product_id }}</div>
-                                    </td>
-
-                                    <td class="text-center">
-                                        <span class="badge bg-primary">{{ $expected }}</span>
-                                    </td>
-
-                                    <td>
-                                        <input type="hidden" name="items[{{ $idx }}][id]" value="{{ (int)$it->id }}">
-                                        <input type="number" min="0" class="form-control text-center qty-input"
-                                            name="items[{{ $idx }}][good]" value="{{ (int)($it->qty_good ?? 0) }}"
-                                            data-expected="{{ $expected }}">
-                                    </td>
-
-                                    <td>
-                                        <input type="number" min="0" class="form-control text-center qty-input"
-                                            name="items[{{ $idx }}][defect]" value="{{ (int)($it->qty_defect ?? 0) }}"
-                                            data-expected="{{ $expected }}">
-                                    </td>
-
-                                    <td>
-                                        <input type="number" min="0" class="form-control text-center qty-input"
-                                            name="items[{{ $idx }}][damaged]" value="{{ (int)($it->qty_damaged ?? 0) }}"
-                                            data-expected="{{ $expected }}">
-                                    </td>
-
-                                    <td class="text-center">
-                                        <span class="badge bg-secondary remaining-badge">0</span>
-                                    </td>
-
-                                    <td class="text-center">
-                                        <span class="badge status-badge bg-success">OK</span>
-                                        <div class="small text-muted status-text mt-1">-</div>
-                                    </td>
-                                </tr>
-                            @endforeach
-                        </tbody>
-                    </table>
-                </div>
-
-                <div class="mt-3">
-                    <label class="form-label fw-bold">Confirmation Note (General)</label>
-                    <textarea name="confirm_note" class="form-control" rows="4"
-                        placeholder="Isi catatan konfirmasi (contoh: dikirim partial karena stok kosong, sisanya menyusul)">{{ old('confirm_note') }}</textarea>
-                    <div class="small text-muted mt-1">
-                        Catatan ini akan tersimpan dan bisa ditampilkan di halaman detail Sale Delivery.
-                    </div>
-                </div>
-
-                <div class="d-flex justify-content-end gap-2 mt-4">
-                    <a href="{{ route('sale-deliveries.show', $saleDelivery->id) }}" class="btn btn-light">
-                        Back
-                    </a>
-                    <button type="submit" class="btn btn-primary">
-                        Yes, Confirm <i class="bi bi-check-lg"></i>
-                    </button>
-                </div>
-
-            </div>
-        </div>
-    </form>
 </div>
 @endsection
 
 @push('page_scripts')
 <script>
 (function(){
-    function recalcRow(tr){
-        const inputs = tr.querySelectorAll('.qty-input');
-        let expected = 0;
-        let sum = 0;
+    function sumRow(tr){
+        const good = parseInt(tr.querySelector('.qty-good')?.value || '0', 10);
+        const defect = parseInt(tr.querySelector('.qty-defect')?.value || '0', 10);
+        const damaged = parseInt(tr.querySelector('.qty-damaged')?.value || '0', 10);
+        return {good, defect, damaged, total: good + defect + damaged};
+    }
 
-        inputs.forEach((inp) => {
-            expected = parseInt(inp.getAttribute('data-expected') || '0', 10);
-            const val = parseInt(inp.value || '0', 10);
-            sum += isNaN(val) ? 0 : val;
-        });
+    function enforceMaxSelection(selectEl, max){
+        if (!selectEl) return;
+        const selected = Array.from(selectEl.selectedOptions || []);
+        if (max <= 0) return;
 
-        const remaining = Math.max(expected - sum, 0);
-
-        const remainingBadge = tr.querySelector('.remaining-badge');
-        const statusBadge = tr.querySelector('.status-badge');
-        const statusText = tr.querySelector('.status-text');
-
-        if (remainingBadge) remainingBadge.textContent = remaining;
-
-        if (sum > expected) {
-            statusBadge.className = 'badge status-badge bg-danger';
-            statusBadge.textContent = 'INVALID';
-            statusText.textContent = 'Total melebihi expected';
-        } else if (sum === 0) {
-            statusBadge.className = 'badge status-badge bg-warning text-dark';
-            statusBadge.textContent = 'EMPTY';
-            statusText.textContent = 'Belum ada qty';
-        } else {
-            statusBadge.className = 'badge status-badge bg-success';
-            statusBadge.textContent = 'OK';
-            statusText.textContent = (sum < expected) ? 'Partial' : 'Full';
+        if (selected.length > max) {
+            // keep first max
+            for (let i = max; i < selected.length; i++) {
+                selected[i].selected = false;
+            }
+            alert('Maksimal pilihan ID adalah: ' + max);
         }
     }
 
-    document.querySelectorAll('table tbody tr').forEach((tr) => {
-        recalcRow(tr);
-        tr.querySelectorAll('.qty-input').forEach((inp) => {
-            inp.addEventListener('input', () => recalcRow(tr));
+    function updateRow(tr){
+        const expected = parseInt(tr.querySelector('.qty-good')?.dataset.expected || '0', 10);
+        const sum = sumRow(tr);
+
+        if (sum.total > expected) {
+            alert('Total confirm (GOOD+DEFECT+DAMAGED) tidak boleh melebihi Expected (' + expected + ').');
+        }
+
+        // set max selection for defect/damaged selects
+        const selDef = tr.querySelector('.select-defect');
+        const selDam = tr.querySelector('.select-damaged');
+
+        if (selDef) {
+            selDef.dataset.max = String(sum.defect);
+            enforceMaxSelection(selDef, sum.defect);
+        }
+        if (selDam) {
+            selDam.dataset.max = String(sum.damaged);
+            enforceMaxSelection(selDam, sum.damaged);
+        }
+    }
+
+    const rows = document.querySelectorAll('table tbody tr');
+    rows.forEach(tr => {
+        ['.qty-good', '.qty-defect', '.qty-damaged'].forEach(cls => {
+            const el = tr.querySelector(cls);
+            if (el) el.addEventListener('input', () => updateRow(tr));
         });
+
+        const selDef = tr.querySelector('.select-defect');
+        if (selDef) selDef.addEventListener('change', () => {
+            const max = parseInt(selDef.dataset.max || '0', 10);
+            enforceMaxSelection(selDef, max);
+        });
+
+        const selDam = tr.querySelector('.select-damaged');
+        if (selDam) selDam.addEventListener('change', () => {
+            const max = parseInt(selDam.dataset.max || '0', 10);
+            enforceMaxSelection(selDam, max);
+        });
+
+        updateRow(tr);
     });
 })();
 </script>
