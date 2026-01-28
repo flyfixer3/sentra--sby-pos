@@ -11,137 +11,210 @@
 @endsection
 
 @section('content')
+@php
+    $status = strtolower((string)($saleOrder->status ?? 'pending'));
+    $statusBadge = match($status) {
+        'pending' => 'bg-warning text-dark',
+        'partial_delivered' => 'bg-info text-dark',
+        'delivered' => 'bg-success',
+        'cancelled' => 'bg-danger',
+        default => 'bg-secondary',
+    };
+
+    $dateText = $saleOrder->date ? \Carbon\Carbon::parse($saleOrder->date)->format('d M Y') : '-';
+
+    // ✅ RemainingMap (confirmed-based) masih boleh kamu pakai untuk tampilan status
+    $remainingConfirmedMap = $remainingMap ?? [];
+
+    // ✅ Kalau kamu sudah implement planned map di controller:
+    $plannedRemainingMap = $plannedRemainingMap ?? $remainingConfirmedMap;
+
+    $hasPlannedRemaining = false;
+    foreach(($plannedRemainingMap ?? []) as $rem){
+        if ((int)$rem > 0) { $hasPlannedRemaining = true; break; }
+    }
+@endphp
+
 <div class="container-fluid">
 
-    <div class="row">
-        <div class="col-lg-12">
-
-            <div class="card mb-3">
-                <div class="card-header d-flex flex-wrap align-items-center">
-                    <div>
-                        Reference: <strong>{{ $saleOrder->reference }}</strong>
-                        <div class="text-muted small">
-                            Date: {{ \Carbon\Carbon::parse($saleOrder->date)->format('d M, Y') }}
-                            • Status: <strong>{{ strtoupper($saleOrder->status) }}</strong>
-                        </div>
+    <div class="card mb-3 shadow-sm">
+        <div class="card-body">
+            <div class="d-flex flex-wrap justify-content-between align-items-start gap-3">
+                <div>
+                    <div class="d-flex align-items-center gap-2">
+                        <h4 class="mb-0">{{ $saleOrder->reference }}</h4>
+                        <span class="badge {{ $statusBadge }}">{{ strtoupper($saleOrder->status ?? 'PENDING') }}</span>
                     </div>
 
-                    <div class="mfs-auto d-flex flex-wrap gap-2">
+                    <div class="text-muted small mt-1">
+                        Date: <strong>{{ $dateText }}</strong>
+                        • Customer: <strong>{{ $saleOrder->customer?->customer_name ?? '-' }}</strong>
+                    </div>
+
+                    <div class="text-muted small mt-1">
+                        Quotation: <strong>{{ $saleOrder->quotation_id ? ('#'.$saleOrder->quotation_id) : '-' }}</strong>
+                        • Invoice (Sale): <strong>{{ $saleOrder->sale_id ? ('#'.$saleOrder->sale_id) : '-' }}</strong>
+                    </div>
+                </div>
+
+                <div class="d-flex flex-wrap gap-2 align-items-center">
+                    @can('create_sale_deliveries')
+                        @if($hasPlannedRemaining)
+                            <a class="btn btn-primary"
+                               href="{{ route('sale-deliveries.create', ['source'=>'sale_order', 'sale_order_id'=>$saleOrder->id]) }}">
+                                <i class="bi bi-truck"></i> Create Sale Delivery
+                            </a>
+                        @else
+                            <button class="btn btn-secondary" disabled>
+                                <i class="bi bi-check2-circle"></i> All Items Planned
+                            </button>
+                        @endif
+                    @endcan
+
+                    <a href="{{ route('sale-orders.index') }}" class="btn btn-light">
+                        <i class="bi bi-arrow-left"></i> Back
+                    </a>
+                </div>
+            </div>
+
+            @if(!empty($saleOrder->note))
+                <hr class="my-3">
+                <div class="p-3 border rounded-3 bg-light">
+                    <div class="text-muted small">Note</div>
+                    <div>{{ $saleOrder->note }}</div>
+                </div>
+            @endif
+        </div>
+    </div>
+
+    {{-- Items --}}
+    <div class="card mb-3 shadow-sm">
+        <div class="card-body">
+            <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-2">
+                <h6 class="mb-0">Items Progress</h6>
+                <div class="text-muted small">
+                    Delivered = confirmed/partial deliveries • Planned = pending+confirmed+partial
+                </div>
+            </div>
+
+            <div class="table-responsive">
+                <table class="table table-hover align-middle mb-0">
+                    <thead class="table-light">
+                        <tr>
+                            <th>Product</th>
+                            <th class="text-end" style="width:120px;">Ordered</th>
+                            <th class="text-end" style="width:120px;">Delivered</th>
+                            <th class="text-end" style="width:120px;">Planned Rem.</th>
+                            <th style="width:280px;">Progress</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                    @foreach($saleOrder->items as $it)
                         @php
-                            $hasRemaining = false;
-                            foreach(($remainingMap ?? []) as $rem){
-                                if ((int)$rem > 0) { $hasRemaining = true; break; }
-                            }
+                            $pid = (int) $it->product_id;
+                            $ordered = (int) ($it->quantity ?? 0);
+
+                            $remConfirmed = (int) ($remainingConfirmedMap[$pid] ?? 0);
+                            $delivered = max(0, $ordered - $remConfirmed);
+
+                            $remPlanned = (int) ($plannedRemainingMap[$pid] ?? 0);
+                            $plannedCovered = max(0, $ordered - $remPlanned);
+
+                            $deliveredPct = $ordered > 0 ? (int) round(($delivered / $ordered) * 100) : 0;
+                            $plannedPct = $ordered > 0 ? (int) round(($plannedCovered / $ordered) * 100) : 0;
+
+                            if ($deliveredPct > 100) $deliveredPct = 100;
+                            if ($plannedPct > 100) $plannedPct = 100;
                         @endphp
+                        <tr>
+                            <td>
+                                <div class="fw-semibold">{{ $it->product?->product_name ?? ('Product ID '.$pid) }}</div>
+                                <div class="text-muted small">product_id: {{ $pid }}</div>
+                            </td>
 
-                        @can('create_sale_deliveries')
-                            @if($hasRemaining)
-                                <a class="btn btn-sm btn-primary"
-                                   href="{{ route('sale-deliveries.create', ['source'=>'sale_order', 'sale_order_id'=>$saleOrder->id]) }}">
-                                    <i class="bi bi-truck"></i> Create Sale Delivery
+                            <td class="text-end">
+                                <span class="badge bg-secondary">{{ number_format($ordered) }}</span>
+                            </td>
+
+                            <td class="text-end">
+                                <span class="badge bg-success">{{ number_format($delivered) }}</span>
+                            </td>
+
+                            <td class="text-end">
+                                @if($remPlanned <= 0)
+                                    <span class="badge bg-dark">0</span>
+                                @else
+                                    <span class="badge bg-warning text-dark">{{ number_format($remPlanned) }}</span>
+                                @endif
+                            </td>
+
+                            <td>
+                                <div class="small text-muted mb-1">Delivered: {{ $deliveredPct }}% • Planned: {{ $plannedPct }}%</div>
+                                <div class="progress" style="height: 10px;">
+                                    <div class="progress-bar" role="progressbar" style="width: {{ $plannedPct }}%"></div>
+                                </div>
+                                <div class="small text-muted mt-1">
+                                    Planned covers {{ number_format($plannedCovered) }} of {{ number_format($ordered) }}
+                                </div>
+                            </td>
+                        </tr>
+                    @endforeach
+                    </tbody>
+                </table>
+            </div>
+
+        </div>
+    </div>
+
+    {{-- Deliveries --}}
+    <div class="card shadow-sm">
+        <div class="card-body">
+            <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-2">
+                <h6 class="mb-0">Sale Deliveries</h6>
+                <div class="text-muted small">History pengiriman untuk Sale Order ini</div>
+            </div>
+
+            <div class="table-responsive">
+                <table class="table table-bordered align-middle mb-0">
+                    <thead class="table-light">
+                        <tr>
+                            <th>Reference</th>
+                            <th style="width:140px;">Date</th>
+                            <th>Warehouse</th>
+                            <th style="width:140px;">Status</th>
+                            <th class="text-center" style="width:120px;">Action</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                    @forelse($saleOrder->deliveries as $d)
+                        @php
+                            $dst = strtolower((string)($d->status ?? 'pending'));
+                            $dBadge = match($dst) {
+                                'pending' => 'bg-warning text-dark',
+                                'confirmed' => 'bg-success',
+                                'partial' => 'bg-info text-dark',
+                                'cancelled' => 'bg-danger',
+                                default => 'bg-secondary',
+                            };
+                        @endphp
+                        <tr>
+                            <td class="fw-semibold">{{ $d->reference }}</td>
+                            <td>{{ $d->date ? \Carbon\Carbon::parse($d->date)->format('d M Y') : '-' }}</td>
+                            <td>{{ $d->warehouse?->warehouse_name ?? ('WH#'.$d->warehouse_id) }}</td>
+                            <td><span class="badge {{ $dBadge }}">{{ strtoupper($dst) }}</span></td>
+                            <td class="text-center">
+                                <a class="btn btn-sm btn-outline-primary" href="{{ route('sale-deliveries.show', $d->id) }}">
+                                    <i class="bi bi-eye"></i> View
                                 </a>
-                            @else
-                                <button class="btn btn-sm btn-secondary" disabled>
-                                    <i class="bi bi-check2-circle"></i> Fully Delivered
-                                </button>
-                            @endif
-                        @endcan
-                    </div>
-                </div>
-
-                <div class="card-body">
-
-                    <div class="row mb-3">
-                        <div class="col-md-4">
-                            <h6 class="border-bottom pb-2">Customer</h6>
-                            <div><strong>{{ $saleOrder->customer?->customer_name ?? '-' }}</strong></div>
-                            <div class="text-muted small">{{ $saleOrder->customer?->address ?? '' }}</div>
-                        </div>
-                        <div class="col-md-4">
-                            <h6 class="border-bottom pb-2">Links</h6>
-                            <div>Quotation: <strong>{{ $saleOrder->quotation_id ? ('#'.$saleOrder->quotation_id) : '-' }}</strong></div>
-                            <div>Invoice (Sale): <strong>{{ $saleOrder->sale_id ? ('#'.$saleOrder->sale_id) : '-' }}</strong></div>
-                        </div>
-                        <div class="col-md-4">
-                            <h6 class="border-bottom pb-2">Note</h6>
-                            <div class="text-muted">{{ $saleOrder->note ?? '-' }}</div>
-                        </div>
-                    </div>
-
-                    <hr>
-
-                    <h6 class="mb-2">Items (Anchor Qty vs Delivered)</h6>
-                    <div class="table-responsive">
-                        <table class="table table-striped">
-                            <thead>
-                                <tr>
-                                    <th>Product</th>
-                                    <th class="text-right">Ordered</th>
-                                    <th class="text-right">Remaining</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                            @foreach($saleOrder->items as $it)
-                                @php
-                                    $pid = (int) $it->product_id;
-                                    $rem = (int) ($remainingMap[$pid] ?? 0);
-                                @endphp
-                                <tr>
-                                    <td>
-                                        {{ $it->product?->product_name ?? ('Product ID '.$pid) }}
-                                        <div class="small text-muted">product_id: {{ $pid }}</div>
-                                    </td>
-                                    <td class="text-right">{{ number_format((int)($it->quantity ?? 0)) }}</td>
-                                    <td class="text-right">
-                                        @if($rem <= 0)
-                                            <span class="badge badge-success">0</span>
-                                        @else
-                                            <span class="badge badge-warning">{{ number_format($rem) }}</span>
-                                        @endif
-                                    </td>
-                                </tr>
-                            @endforeach
-                            </tbody>
-                        </table>
-                    </div>
-
-                    <hr>
-
-                    <h6 class="mb-2">Sale Deliveries for this Sale Order</h6>
-                    <div class="table-responsive">
-                        <table class="table table-bordered">
-                            <thead>
-                                <tr>
-                                    <th>Reference</th>
-                                    <th>Date</th>
-                                    <th>Warehouse</th>
-                                    <th>Status</th>
-                                    <th class="text-center" style="width:120px;">Action</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                            @forelse($saleOrder->deliveries as $d)
-                                <tr>
-                                    <td>{{ $d->reference }}</td>
-                                    <td>{{ $d->date ? \Carbon\Carbon::parse($d->date)->format('d-m-Y') : '-' }}</td>
-                                    <td>{{ $d->warehouse?->warehouse_name ?? ('WH#'.$d->warehouse_id) }}</td>
-                                    <td>{{ strtoupper($d->status ?? 'PENDING') }}</td>
-                                    <td class="text-center">
-                                        <a class="btn btn-sm btn-info" href="{{ route('sale-deliveries.show', $d->id) }}">
-                                            <i class="bi bi-eye"></i> View
-                                        </a>
-                                    </td>
-                                </tr>
-                            @empty
-                                <tr>
-                                    <td colspan="5" class="text-center text-muted">No deliveries yet.</td>
-                                </tr>
-                            @endforelse
-                            </tbody>
-                        </table>
-                    </div>
-
-                </div>
+                            </td>
+                        </tr>
+                    @empty
+                        <tr>
+                            <td colspan="5" class="text-center text-muted py-4">No deliveries yet.</td>
+                        </tr>
+                    @endforelse
+                    </tbody>
+                </table>
             </div>
 
         </div>

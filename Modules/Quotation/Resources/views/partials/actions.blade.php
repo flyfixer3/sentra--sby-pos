@@ -3,9 +3,9 @@
         <i class="bi bi-three-dots-vertical"></i>
     </button>
     <div class="dropdown-menu">
-        @can('create_quotation_sales')
-            <a href="{{ route('quotation-sales.create', $data) }}" class="dropdown-item">
-                <i class="bi bi-check2-circle mr-2 text-success" style="line-height: 1;"></i> Make Sale
+        @can('create_sale_orders')
+            <a class="dropdown-item" href="{{ route('sale-orders.create', ['source' => 'quotation', 'quotation_id' => $data->id]) }}">
+                <i class="bi bi-clipboard-check"></i> Create Sale Order
             </a>
         @endcan
         @can('send_quotation_mails')

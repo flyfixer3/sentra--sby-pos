@@ -8,6 +8,7 @@ use Illuminate\Routing\Controller;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
 use Modules\People\Entities\Customer;
+use Modules\Product\Entities\Product;
 use Modules\Product\Entities\Warehouse;
 use Modules\Quotation\Entities\Quotation;
 use Modules\Sale\Entities\Sale;
@@ -112,9 +113,15 @@ class SaleOrderController extends Controller
             }
         }
 
+        $products = Product::query()
+                    ->orderBy('product_name')
+                    ->limit(500)
+                    ->get();
+
         return view('saleorder::create', compact(
             'customers',
             'warehouses',
+            'products',
             'source',
             'prefillCustomerId',
             'prefillWarehouseId',
@@ -261,9 +268,14 @@ class SaleOrderController extends Controller
             },
         ]);
 
-        $remainingMap = $this->getRemainingQtyBySaleOrder((int) $saleOrder->id);
+        $remainingMap = $this->getRemainingQtyBySaleOrder($saleOrder->id); // confirmed-based (status)
+        $plannedRemainingMap = $this->getPlannedRemainingQtyBySaleOrder($saleOrder->id); // include pending
 
-        return view('saleorder::show', compact('saleOrder', 'remainingMap'));
+        return view('saleorder::show', compact(
+            'saleOrder',
+            'remainingMap',
+            'plannedRemainingMap'
+        ));
     }
 
     private function getRemainingQtyBySaleOrder(int $saleOrderId): array
@@ -310,4 +322,41 @@ class SaleOrderController extends Controller
 
         return $remaining;
     }
+
+    private function getPlannedRemainingQtyBySaleOrder(int $saleOrderId): array
+    {
+        $ordered = DB::table('sale_order_items')
+            ->select('product_id', DB::raw('SUM(quantity) as qty'))
+            ->where('sale_order_id', $saleOrderId)
+            ->groupBy('product_id')
+            ->get();
+
+        // include PENDING too (plan / allocation)
+        $planned = DB::table('sale_delivery_items as sdi')
+            ->join('sale_deliveries as sd', 'sd.id', '=', 'sdi.sale_delivery_id')
+            ->where('sd.sale_order_id', $saleOrderId)
+            ->whereIn(DB::raw('LOWER(sd.status)'), ['pending', 'confirmed', 'partial']) // include pending
+            ->select(
+                'sdi.product_id',
+                DB::raw('SUM(COALESCE(sdi.quantity,0)) as qty')
+            )
+            ->groupBy('sdi.product_id')
+            ->get()
+            ->keyBy('product_id');
+
+        $remaining = [];
+        foreach ($ordered as $row) {
+            $pid = (int) $row->product_id;
+            $orderedQty = (int) $row->qty;
+            $plannedQty = isset($planned[$pid]) ? (int) $planned[$pid]->qty : 0;
+
+            $rem = $orderedQty - $plannedQty;
+            if ($rem < 0) $rem = 0;
+
+            $remaining[$pid] = $rem;
+        }
+
+        return $remaining;
+    }
+
 }
