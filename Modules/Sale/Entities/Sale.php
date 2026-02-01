@@ -46,11 +46,11 @@ class Sale extends BaseModel
     }
 
     public function scopeCompleted($query) {
-        return $query->where('status', 'Completed');
+        return $query->where('payment_status', 'Paid');
     }
 
     public function getShippingAmountAttribute($value) {
-        return $value / 1;  
+        return $value / 1;
     }
 
     public function getPaidAmountAttribute($value) {

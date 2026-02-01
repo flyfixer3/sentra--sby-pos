@@ -26,6 +26,7 @@
                             <i class="bi bi-save"></i> Save
                         </a>
                     </div>
+
                     <div class="card-body">
                         <div class="row mb-4">
                             <div class="col-sm-4 mb-3 mb-md-0">
@@ -49,13 +50,45 @@
                                 <div>Invoice: <strong>INV/{{ $sale->reference }}</strong></div>
                                 <div>Date: {{ \Carbon\Carbon::parse($sale->date)->format('d M, Y') }}</div>
                                 <div>
-                                    Status: <strong>{{ $sale->status }}</strong>
-                                </div>
-                                <div>
                                     Payment Status: <strong>{{ $sale->payment_status }}</strong>
                                 </div>
-                            </div>
 
+                                {{-- ✅ Delivery links --}}
+                                <div class="mt-2">
+                                    <div class="text-muted" style="font-size: 12px;">Sale Delivery:</div>
+
+                                    @if(isset($saleDeliveries) && $saleDeliveries->count() > 0)
+                                        @foreach($saleDeliveries as $sd)
+                                            <div class="d-flex align-items-center" style="gap: 8px;">
+                                                <a href="{{ route('sale-deliveries.show', $sd->id) }}" class="text-decoration-none">
+                                                    <strong>
+                                                        {{ $sd->reference ?? ('SD#'.$sd->id) }}
+                                                    </strong>
+                                                </a>
+
+                                                @php
+                                                    $st = strtolower((string)($sd->status ?? 'pending'));
+                                                    $badgeClass = match($st) {
+                                                        'pending' => 'bg-warning text-dark',
+                                                        'confirmed' => 'bg-success',
+                                                        'partial' => 'bg-info text-dark',
+                                                        'cancelled' => 'bg-danger',
+                                                        default => 'bg-secondary',
+                                                    };
+                                                @endphp
+
+                                                <span class="badge {{ $badgeClass }}">{{ $sd->status }}</span>
+
+                                                @if(!empty($sd->note) && str_starts_with((string)$sd->note, '[AUTO]'))
+                                                    <span class="badge bg-secondary">AUTO</span>
+                                                @endif
+                                            </div>
+                                        @endforeach
+                                    @else
+                                        <div>-</div>
+                                    @endif
+                                </div>
+                            </div>
                         </div>
 
                         <div class="table-responsive-sm">
@@ -102,6 +135,7 @@
                                 </tbody>
                             </table>
                         </div>
+
                         <div class="row">
                             <div class="col-lg-5 col-sm-5 d-flex flex-column mt-auto">
                                 <div class="mt-auto d-flex justify-content-between">
@@ -109,7 +143,6 @@
                                     <span><strong>Last Updated At:</strong> {{ \Carbon\Carbon::parse($sale->updated_at)->format('d M, Y H:i') }} <strong>By:</strong> {{ $sale->updater->name ?? 'System' }}</span>
                                 </div>
                             </div>
-
 
                             <div class="col-lg-4 col-sm-5 ml-md-auto">
                                 <table class="table">
@@ -134,10 +167,9 @@
                                 </table>
                             </div>
                         </div>
-                    </div>
-                </div>
+                    </div><!-- card-body -->
+                </div><!-- card -->
             </div>
         </div>
     </div>
 @endsection
-

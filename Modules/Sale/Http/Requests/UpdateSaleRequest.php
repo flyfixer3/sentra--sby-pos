@@ -17,10 +17,6 @@ class UpdateSaleRequest extends FormRequest
             'shipping_amount' => 'required|numeric',
             'total_amount' => 'required|numeric',
             'paid_amount' => 'required|numeric|max:' . $this->sale->total_amount,
-
-            // ✅ invoice tidak punya status fulfillment lagi
-            'status' => 'nullable|string|max:255',
-
             'payment_method' => 'required|string|max:255',
             'note' => 'nullable|string|max:1000',
         ];

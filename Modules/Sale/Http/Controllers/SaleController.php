@@ -118,10 +118,6 @@ class SaleController extends Controller
                 'total_quantity'      => (int) $request->total_quantity,
                 'fee_amount'          => (int) $request->fee_amount,
                 'due_amount'          => (int) $due_amount,
-
-                // ✅ invoice status tidak punya hubungan ke delivery lagi
-                'status'              => 'Invoiced',
-
                 'payment_status'      => $payment_status,
                 'payment_method'      => $request->payment_method,
                 'note'                => $request->note,
@@ -147,7 +143,6 @@ class SaleController extends Controller
                 'warehouse_id' => $defaultWarehouseId,
                 'reference'    => 'SO-TEMP-' . uniqid(), // sementara untuk lolos unique
                 'date'         => $request->date,
-                'status'       => 'pending',
                 'note'         => $request->note,
                 'created_by'   => auth()->id(),
                 'updated_by'   => auth()->id(),
@@ -223,7 +218,6 @@ class SaleController extends Controller
                             'paid_amount'         => 0,
                             'total_amount'        => (int) ($cart_item->options->product_cost * $cart_item->qty),
                             'due_amount'          => (int) ($cart_item->options->product_cost * $cart_item->qty),
-                            'status'              => "Pending",
                             'total_quantity'      => (int) $request->total_quantity,
                             'payment_status'      => "Unpaid",
                             'payment_method'      => "Bank Transfer",
@@ -346,13 +340,29 @@ class SaleController extends Controller
         return redirect()->route('sales.index');
     }
 
-    public function show(Sale $sale) {
+    public function show(Sale $sale)
+    {
         abort_if(Gate::denies('show_sales'), 403);
 
-        $sale->load(['creator', 'updater']);
-        $customer = Customer::findOrFail($sale->customer_id);
+        $branchId = BranchContext::id();
 
-        return view('sale::show', compact('sale', 'customer'));
+        $sale->load(['creator', 'updater', 'saleDetails']);
+
+        $customer = Customer::query()
+            ->where('id', $sale->customer_id)
+            ->where(function ($q) use ($branchId) {
+                $q->whereNull('branch_id')->orWhere('branch_id', $branchId);
+            })
+            ->firstOrFail();
+
+        // ✅ ambil sale deliveries yang terhubung ke invoice ini
+        $saleDeliveries = \Modules\SaleDelivery\Entities\SaleDelivery::query()
+            ->where('branch_id', $branchId)
+            ->where('sale_id', (int) $sale->id)
+            ->orderByDesc('id')
+            ->get();
+
+        return view('sale::show', compact('sale', 'customer', 'saleDeliveries'));
     }
 
     public function edit(Sale $sale) {
@@ -433,10 +443,6 @@ class SaleController extends Controller
                 'total_amount' => $request->total_amount * 1,
                 'total_quantity' => $request->total_quantity,
                 'due_amount' => $due_amount * 1,
-
-                // ✅ tetap "Invoiced"
-                'status' => 'Invoiced',
-
                 'payment_status' => $payment_status,
                 'payment_method' => $request->payment_method,
                 'note' => $request->note,
@@ -471,10 +477,6 @@ class SaleController extends Controller
 
     public function destroy(Sale $sale) {
         abort_if(Gate::denies('delete_sales'), 403);
-
-        // ✅ invoice delete/void tidak mengembalikan stock (karena stock diatur oleh SaleDelivery)
-        $sale->update(['status' => 'Void']);
-
         toast('Sale Deleted!', 'warning');
         return redirect()->route('sales.index');
     }
