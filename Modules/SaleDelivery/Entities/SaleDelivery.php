@@ -80,6 +80,11 @@ class SaleDelivery extends Model
         return $this->belongsTo(\Modules\SaleOrder\Entities\SaleOrder::class, 'sale_order_id');
     }
 
+    public function printLogs()
+    {
+        return $this->hasMany(\Modules\SaleDelivery\Entities\SaleDeliveryPrintLog::class, 'sale_delivery_id');
+    }
+
     protected static function boot()
     {
         parent::boot();

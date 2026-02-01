@@ -169,7 +169,7 @@ class SaleOrderController extends Controller
                 ->where('id', (int) $request->customer_id)
                 ->where(function ($q) use ($branchId) {
                     $q->whereNull('branch_id')
-                      ->orWhere('branch_id', $branchId);
+                        ->orWhere('branch_id', $branchId);
                 })
                 ->firstOrFail();
 
@@ -244,10 +244,42 @@ class SaleOrderController extends Controller
                     'price' => array_key_exists('price', $row) && $row['price'] !== null ? (int) $row['price'] : null,
                 ]);
             }
+
+            // ✅ Requirement E:
+            // kalau sudah pernah dibuat SO ATAU SD dari quotation => quotation status Completed
+            $qid = (int) ($so->quotation_id ?? 0);
+            if ($qid > 0) {
+                $this->markQuotationCompletedIfHasChildren($qid, (int) $branchId);
+            }
         });
 
         toast('Sale Order Created!', 'success');
         return redirect()->route('sale-orders.show', $saleOrderId);
+    }
+
+    private function markQuotationCompletedIfHasChildren(int $quotationId, int $branchId): void
+    {
+        // Rule: kalau ada minimal 1 SO atau 1 SD dari quotation => Completed
+
+        $hasSO = DB::table('sale_orders')
+            ->where('branch_id', $branchId)
+            ->where('quotation_id', $quotationId)
+            ->exists();
+
+        $hasSD = DB::table('sale_deliveries')
+            ->where('branch_id', $branchId)
+            ->where('quotation_id', $quotationId)
+            ->exists();
+
+        if ($hasSO || $hasSD) {
+            DB::table('quotations')
+                ->where('branch_id', $branchId)
+                ->where('id', $quotationId)
+                ->update([
+                    'status' => 'Completed',
+                    'updated_at' => now(),
+                ]);
+        }
     }
 
     public function show(SaleOrder $saleOrder)
@@ -291,7 +323,7 @@ class SaleOrderController extends Controller
             ->where('sd.sale_order_id', $saleOrderId)
             ->where(function ($q) {
                 $q->whereNotNull('sd.confirmed_at')
-                  ->orWhereIn(DB::raw('LOWER(sd.status)'), ['confirmed', 'partial']);
+                  ->orWhereIn(DB::raw('LOWER(sd.status)'), ['confirmed']);
             })
             ->select(
                 'sdi.product_id',
@@ -335,7 +367,7 @@ class SaleOrderController extends Controller
         $planned = DB::table('sale_delivery_items as sdi')
             ->join('sale_deliveries as sd', 'sd.id', '=', 'sdi.sale_delivery_id')
             ->where('sd.sale_order_id', $saleOrderId)
-            ->whereIn(DB::raw('LOWER(sd.status)'), ['pending', 'confirmed', 'partial']) // include pending
+            ->whereIn(DB::raw('LOWER(sd.status)'), ['pending', 'confirmed']) // include pending
             ->select(
                 'sdi.product_id',
                 DB::raw('SUM(COALESCE(sdi.quantity,0)) as qty')

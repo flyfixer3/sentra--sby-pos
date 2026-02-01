@@ -3,6 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <title>Surat Jalan - {{ $saleDelivery->reference ?? ('SDO-' . $saleDelivery->id) }}</title>
+
     <style>
         @page { margin: 18px 22px; }
 
@@ -20,7 +21,14 @@
 
         .small { font-size: 11px; }
 
-        .header { width: 100%; text-align: center; margin-bottom: 10px; }
+        /* =========================
+           HEADER
+        ========================= */
+        .header {
+            width: 100%;
+            text-align: center;
+            margin-bottom: 10px;
+        }
 
         .company-name {
             font-size: 22px;
@@ -28,7 +36,10 @@
             margin: 0 0 4px 0;
         }
 
-        .company-meta { margin: 0; font-size: 12px; }
+        .company-meta {
+            margin: 0;
+            font-size: 12px;
+        }
 
         .divider {
             border: 0;
@@ -45,13 +56,16 @@
         }
 
         .copy-label {
-            text-align:center;
+            text-align: center;
             font-size: 12px;
             font-weight: 800;
             margin: 0 0 10px 0;
             letter-spacing: .5px;
         }
 
+        /* =========================
+           INFO TABLE
+        ========================= */
         .info-table {
             width: 100%;
             border-collapse: collapse;
@@ -65,8 +79,15 @@
             font-size: 13px;
         }
 
-        .info-label { font-weight: 700; width: 140px; white-space: nowrap; }
+        .info-label {
+            font-weight: 700;
+            width: 140px;
+            white-space: nowrap;
+        }
 
+        /* =========================
+           ITEMS TABLE
+        ========================= */
         .items-table {
             width: 100%;
             border-collapse: collapse;
@@ -74,7 +95,8 @@
             margin-top: 10px;
         }
 
-        .items-table th, .items-table td {
+        .items-table th,
+        .items-table td {
             border: 1px solid #000;
             padding: 8px 8px;
             vertical-align: top;
@@ -87,12 +109,15 @@
             font-weight: 800;
         }
 
-        .col-no { width: 7%; text-align: center; }
+        .col-no   { width: 7%;  text-align: center; }
         .col-name { width: 50%; }
-        .col-qty { width: 10%; text-align: center; }
+        .col-qty  { width: 10%; text-align: center; }
         .col-unit { width: 10%; text-align: center; }
         .col-note { width: 23%; }
 
+        /* =========================
+           SIGNATURE
+        ========================= */
         .signature-table {
             width: 100%;
             border-collapse: collapse;
@@ -118,6 +143,9 @@
             height: 1px;
         }
 
+        /* =========================
+           WATERMARK
+        ========================= */
         .watermark {
             position: fixed;
             top: 42%;
@@ -126,136 +154,151 @@
             font-size: 74px;
             font-weight: 800;
             color: rgba(120,120,120,0.16);
-            z-index: 999;
+            z-index: 0;
             letter-spacing: 2px;
+        }
+
+        .page-content {
+            position: relative;
+            z-index: 1;
         }
     </style>
 </head>
+
 <body>
 
 @php
     $copyNo = (int) ($copyNumber ?? 1);
     if ($copyNo <= 0) $copyNo = 1;
 
-    $senderName = $senderBranch->name ?? ($setting->company_name ?? 'Sentra Autoglass');
-    $senderAddr = $senderBranch->address ?? ($setting->company_address ?? '-');
+    $senderName  = $senderBranch->name ?? ($setting->company_name ?? 'Sentra Autoglass');
+    $senderAddr  = $senderBranch->address ?? ($setting->company_address ?? '-');
     $senderPhone = $senderBranch->phone ?? ($setting->company_phone ?? null);
 
     $ref = $saleDelivery->reference ?? ('SDO-' . $saleDelivery->id);
 
-    $customerName = $saleDelivery->customer->customer_name ?? '-';
-    $customerAddr = $saleDelivery->customer->customer_address ?? '-';
+    $customerName  = $saleDelivery->customer->customer_name ?? '-';
+    $customerAddr  = $saleDelivery->customer->customer_address ?? '-';
     $customerPhone = $saleDelivery->customer->customer_phone ?? null;
 
     $warehouseName = $saleDelivery->warehouse->warehouse_name ?? '-';
-    $saleOrderRef = $saleDelivery->saleOrder->reference ?? null;
+    $saleOrderRef  = $saleDelivery->saleOrder->reference ?? null;
 @endphp
 
-@if($copyNo > 1)
-    <div class="watermark">COPY #{{ $copyNo }}</div>
-@endif
+<div class="watermark">COPY #{{ $copyNo }}</div>
 
-<div class="header">
-    <div class="company-name">{{ $senderName }}</div>
-    <p class="company-meta small">
-        {{ $senderAddr }}
-        @if(!empty($senderPhone))
-            | Telp: {{ $senderPhone }}
-        @endif
-    </p>
-    <hr class="divider">
-    <div class="title">SURAT JALAN</div>
-    <div class="copy-label">COPY #{{ $copyNo }}</div>
-</div>
+<div class="page-content">
 
-<table class="info-table">
-    <tr>
-        <td>
-            <span class="info-label">No. Referensi</span>:
-            <strong>{{ $ref }}</strong>
-        </td>
-        <td class="text-right">
-            <span class="info-label">Tanggal</span>:
-            <strong>{{ \Carbon\Carbon::parse($saleDelivery->date)->format('d M Y') }}</strong>
-        </td>
-    </tr>
-    <tr>
-        <td>
-            <span class="info-label">Gudang</span>:
-            <strong>{{ $warehouseName }}</strong>
-        </td>
-        <td class="text-right">
-            <span class="info-label">Status</span>:
-            <strong>{{ strtoupper((string) $saleDelivery->status) }}</strong>
-        </td>
-    </tr>
-    <tr>
-        <td colspan="2">
-            <span class="info-label">Customer</span>:
-            <strong>{{ $customerName }}</strong>
-            @if(!empty($customerPhone))
-                | {{ $customerPhone }}
+    {{-- HEADER --}}
+    <div class="header">
+        <div class="company-name">{{ $senderName }}</div>
+        <p class="company-meta small">
+            {{ $senderAddr }}
+            @if(!empty($senderPhone))
+                | Telp: {{ $senderPhone }}
             @endif
-            <div class="small" style="margin-top:4px;">
-                {{ $customerAddr }}
-            </div>
-        </td>
-    </tr>
-    @if(!empty($saleOrderRef))
-    <tr>
-        <td colspan="2">
-            <span class="info-label">Sale Order</span>:
-            <strong>{{ $saleOrderRef }}</strong>
-        </td>
-    </tr>
-    @endif
-</table>
+        </p>
 
-<table class="items-table">
-    <thead>
+        <hr class="divider">
+
+        <div class="title">SURAT JALAN</div>
+        <div class="copy-label">COPY #{{ $copyNo }}</div>
+    </div>
+
+    {{-- INFO --}}
+    <table class="info-table">
         <tr>
-            <th class="col-no">No</th>
-            <th class="col-name">Item</th>
-            <th class="col-qty">Qty</th>
-            <th class="col-unit">Unit</th>
-            <th class="col-note">Keterangan</th>
+            <td>
+                <span class="info-label">No. Referensi</span>:
+                <strong>{{ $ref }}</strong>
+            </td>
+            <td class="text-right">
+                <span class="info-label">Tanggal</span>:
+                <strong>{{ \Carbon\Carbon::parse($saleDelivery->date)->format('d M Y') }}</strong>
+            </td>
         </tr>
-    </thead>
-    <tbody>
-        @foreach($saleDelivery->items as $i => $it)
-            @php
-                $name = $it->product->product_name ?? ('Product #' . $it->product_id);
-                $unit = $it->product->product_unit ?? '';
-                $qty = (int) ($it->quantity ?? 0);
-                $note = $notesByItemId[(int)$it->id] ?? '';
-            @endphp
-            <tr>
-                <td class="text-center">{{ $i + 1 }}</td>
-                <td>{{ $name }}</td>
-                <td class="text-center">{{ number_format($qty) }}</td>
-                <td class="text-center">{{ $unit }}</td>
-                <td>{{ $note }}</td>
-            </tr>
-        @endforeach
-    </tbody>
-</table>
+        <tr>
+            <td>
+                <span class="info-label">Gudang</span>:
+                <strong>{{ $warehouseName }}</strong>
+            </td>
+            <td class="text-right">
+                <span class="info-label">Status</span>:
+                <strong>{{ strtoupper((string) $saleDelivery->status) }}</strong>
+            </td>
+        </tr>
+        <tr>
+            <td colspan="2">
+                <span class="info-label">Customer</span>:
+                <strong>{{ $customerName }}</strong>
+                @if(!empty($customerPhone))
+                    | {{ $customerPhone }}
+                @endif
+                <div class="small" style="margin-top:4px;">
+                    {{ $customerAddr }}
+                </div>
+            </td>
+        </tr>
 
-<table class="signature-table">
-    <tr>
-        <td>
-            <div class="signature-title">Disiapkan</div>
-            <div class="signature-line"></div>
-        </td>
-        <td>
-            <div class="signature-title">Dikirim</div>
-            <div class="signature-line"></div>
-        </td>
-        <td>
-            <div class="signature-title">Diterima</div>
-            <div class="signature-line"></div>
-        </td>
-    </tr>
-</table>
+        @if(!empty($saleOrderRef))
+            <tr>
+                <td colspan="2">
+                    <span class="info-label">Sale Order</span>:
+                    <strong>{{ $saleOrderRef }}</strong>
+                </td>
+            </tr>
+        @endif
+    </table>
+
+    {{-- ITEMS --}}
+    <table class="items-table">
+        <thead>
+            <tr>
+                <th class="col-no">No</th>
+                <th class="col-name">Item</th>
+                <th class="col-qty">Qty</th>
+                <th class="col-unit">Unit</th>
+                <th class="col-note">Keterangan</th>
+            </tr>
+        </thead>
+        <tbody>
+            @foreach($saleDelivery->items as $i => $it)
+                @php
+                    $name = $it->product->product_name ?? ('Product #' . $it->product_id);
+                    $unit = $it->product->product_unit ?? '';
+                    $qty  = (int) ($it->quantity ?? 0);
+                    $note = $notesByItemId[(int) $it->id] ?? '';
+                @endphp
+                <tr>
+                    <td class="text-center">{{ $i + 1 }}</td>
+                    <td>{{ $name }}</td>
+                    <td class="text-center">{{ number_format($qty) }}</td>
+                    <td class="text-center">{{ $unit }}</td>
+                    <td>{{ $note }}</td>
+                </tr>
+            @endforeach
+        </tbody>
+    </table>
+
+    {{-- SIGNATURE --}}
+    <table class="signature-table">
+        <tr>
+            <td>
+                <div class="signature-title">Disiapkan</div>
+                <div class="signature-line"></div>
+            </td>
+            <td>
+                <div class="signature-title">Dikirim</div>
+                <div class="signature-line"></div>
+            </td>
+            <td>
+                <div class="signature-title">Diterima</div>
+                <div class="signature-line"></div>
+            </td>
+        </tr>
+    </table>
+
+</div>
 
 </body>
 </html>

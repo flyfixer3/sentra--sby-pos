@@ -17,8 +17,12 @@ Route::group(['middleware' => 'auth'], function () {
         Route::put('sale-deliveries/{saleDelivery}', 'SaleDeliveryController@update')->name('sale-deliveries.update');
 
         // ✅ PRINT PDF (optional)
+        Route::post('sale-deliveries/{saleDelivery}/prepare-print', 'SaleDeliveryController@preparePrint')
+            ->name('sale-deliveries.prepare.print');
         Route::get('sale-deliveries/{saleDelivery}/print-pdf', 'SaleDeliveryController@printPdf')
             ->name('sale-deliveries.print.pdf');
+        Route::post('sale-deliveries/{saleDelivery}/create-invoice', 'SaleDeliveryController@createInvoice')
+        ->name('sale-deliveries.create-invoice');
     });
 
     // READ

@@ -18,6 +18,7 @@ use Modules\Mutation\Http\Controllers\MutationController;
 use Modules\SaleDelivery\DataTables\SaleDeliveriesDataTable;
 use Modules\SaleDelivery\Entities\SaleDelivery;
 use Modules\SaleDelivery\Entities\SaleDeliveryItem;
+use Modules\SaleDelivery\Entities\SaleDeliveryPrintLog;
 
 use Modules\SaleOrder\Entities\SaleOrder;
 use Modules\Setting\Entities\Setting;
@@ -178,8 +179,8 @@ class SaleDeliveryController extends Controller
                 }
 
                 $totalConfirmedAll = 0;
-                $isPartial = false;
 
+                // ✅ STRICT VALIDATION: per item MUST EQUAL expected
                 foreach ($saleDelivery->items as $it) {
                     $itemId = (int) $it->id;
                     $expected = (int) ($it->quantity ?? 0);
@@ -190,12 +191,9 @@ class SaleDeliveryController extends Controller
 
                     $confirmed = $good + $defect + $damaged;
 
-                    if ($confirmed > $expected) {
-                        throw new \RuntimeException("Confirmed qty cannot exceed expected qty for item ID {$itemId}.");
-                    }
-
-                    if ($confirmed < $expected) {
-                        $isPartial = true;
+                    // ✅ sebelumnya kamu allow < jadi partial. Sekarang TIDAK BOLEH mismatch sama sekali.
+                    if ($confirmed !== $expected) {
+                        throw new \RuntimeException("Qty mismatch for item ID {$itemId}. Good + Defect + Damaged must equal {$expected}.");
                     }
 
                     // selection count match (kalau user memilih manual)
@@ -218,6 +216,7 @@ class SaleDeliveryController extends Controller
                     ]);
                 }
 
+                // kalau semua expected qty = 0 (case aneh) baru akan kena ini
                 if ($totalConfirmedAll <= 0) {
                     throw new \RuntimeException('Nothing to confirm. Please input at least 1 quantity.');
                 }
@@ -351,17 +350,19 @@ class SaleDeliveryController extends Controller
 
                 $confirmNote = $request->confirm_note ? (string) $request->confirm_note : null;
 
+                // ✅ STATUS selalu confirmed (NO PARTIAL)
                 $saleDelivery->update([
-                    'status' => $isPartial ? 'partial' : 'confirmed',
+                    'status' => 'confirmed',
                     'confirmed_by' => auth()->id(),
                     'confirmed_at' => now(),
                     'confirm_note' => $confirmNote,
                     'confirm_note_updated_by' => $confirmNote ? auth()->id() : null,
                     'confirm_note_updated_role' => $confirmNote ? $this->roleString() : null,
                     'confirm_note_updated_at' => $confirmNote ? now() : null,
+                    'updated_by' => auth()->id(),
                 ]);
 
-                // update SO fulfillment status
+                // update SO fulfillment status (partial ada di SO, bukan di delivery)
                 $saleOrderId = (int) ($saleDelivery->sale_order_id ?? 0);
                 if ($saleOrderId <= 0 && !empty($saleDelivery->sale_id)) {
                     $found = SaleOrder::query()
@@ -384,13 +385,68 @@ class SaleDeliveryController extends Controller
         }
     }
 
+    public function preparePrint(SaleDelivery $saleDelivery)
+    {
+        abort_if(Gate::denies('show_sale_deliveries'), 403);
+
+        try {
+            $this->ensureSpecificBranchSelected();
+            $branchId = BranchContext::id();
+
+            $saleDelivery = SaleDelivery::withoutGlobalScopes()
+                ->findOrFail($saleDelivery->id);
+
+            if ((int) $saleDelivery->branch_id !== (int) $branchId) {
+                abort(403, 'Unauthorized. Only owner branch can print sale delivery.');
+            }
+
+            $status = strtolower(trim((string) ($saleDelivery->getRawOriginal('status') ?? $saleDelivery->status ?? 'pending')));
+
+            // ✅ RULE kamu: pending tidak boleh print
+            // pilih salah satu:
+            // (A) strict: hanya confirmed
+            if (!in_array($status, ['confirmed'], true)) {
+                abort(422, "Sale Delivery can be printed only when status is CONFIRMED.");
+            }
+
+            DB::transaction(function () use ($saleDelivery) {
+                SaleDeliveryPrintLog::create([
+                    'sale_delivery_id' => (int) $saleDelivery->id,
+                    'user_id'          => (int) auth()->id(),
+                    'printed_at'       => now(),
+                    'ip_address'       => request()->ip(),
+                ]);
+            });
+
+            $copyNumber = (int) SaleDeliveryPrintLog::query()
+                ->where('sale_delivery_id', (int) $saleDelivery->id)
+                ->count();
+
+            if ($copyNumber <= 0) $copyNumber = 1;
+
+            return response()->json([
+                'ok'          => true,
+                'status'      => $status,
+                'copy_number' => $copyNumber,
+                'pdf_url'     => route('sale-deliveries.print.pdf', [
+                    'saleDelivery' => $saleDelivery->id,
+                    'copy' => $copyNumber,
+                ]),
+            ]);
+        } catch (\Throwable $e) {
+            return response()->json([
+                'ok' => false,
+                'message' => $e->getMessage(),
+            ], 422);
+        }
+    }
+
     public function printPdf(Request $request, SaleDelivery $saleDelivery)
     {
         abort_if(Gate::denies('show_sale_deliveries'), 403);
 
         try {
             $this->ensureSpecificBranchSelected();
-
             $branchId = BranchContext::id();
 
             $saleDelivery = SaleDelivery::withoutGlobalScopes()
@@ -401,10 +457,23 @@ class SaleDeliveryController extends Controller
                 throw new \RuntimeException('Wrong branch context.');
             }
 
+            $status = strtolower(trim((string) ($saleDelivery->getRawOriginal('status') ?? $saleDelivery->status ?? 'pending')));
+
+            // ✅ pending tidak boleh print
+            if (!in_array($status, ['confirmed'], true)) {
+                throw new \RuntimeException("Sale Delivery can be printed only when status is CONFIRMED.");
+            }
+
             $setting = Setting::first();
 
-            $copyNumber = (int) ($request->query('copy') ?? 1);
-            if ($copyNumber <= 0) $copyNumber = 1;
+            $copyNumber = (int) ($request->query('copy') ?? 0);
+            if ($copyNumber <= 0) {
+                $copyNumber = (int) SaleDeliveryPrintLog::query()
+                    ->where('sale_delivery_id', (int) $saleDelivery->id)
+                    ->count();
+
+                if ($copyNumber <= 0) $copyNumber = 1;
+            }
 
             $senderBranch = Branch::withoutGlobalScopes()->find((int) $saleDelivery->branch_id);
 
@@ -942,7 +1011,7 @@ class SaleDeliveryController extends Controller
             ->where('sd.sale_order_id', $saleOrderId)
             ->where(function ($q) {
                 $q->whereNotNull('sd.confirmed_at')
-                    ->orWhereIn(DB::raw('LOWER(sd.status)'), ['confirmed', 'partial']);
+                    ->orWhereIn(DB::raw('LOWER(sd.status)'), ['confirmed']);
             })
             ->select(
                 'sdi.product_id',
@@ -1011,4 +1080,118 @@ class SaleDeliveryController extends Controller
         return $remaining;
     }
 
+    public function createInvoice(SaleDelivery $saleDelivery)
+    {
+        abort_if(Gate::denies('create_sales'), 403);
+
+        try {
+            $this->ensureSpecificBranchSelected();
+
+            $branchId = BranchContext::id();
+
+            $saleId = null;
+
+            DB::transaction(function () use ($saleDelivery, $branchId, &$saleId) {
+                $saleDelivery = SaleDelivery::withoutGlobalScopes()
+                    ->lockForUpdate()
+                    ->with(['items.product', 'customer'])
+                    ->findOrFail((int) $saleDelivery->id);
+
+                if ((int) $saleDelivery->branch_id !== (int) $branchId) {
+                    throw new \RuntimeException('Wrong branch context.');
+                }
+
+                $st = strtolower(trim((string) ($saleDelivery->getRawOriginal('status') ?? $saleDelivery->status ?? 'pending')));
+                if ($st !== 'confirmed') {
+                    throw new \RuntimeException('Invoice can be created only when Sale Delivery is CONFIRMED.');
+                }
+
+                // idempotent: sudah pernah dibuat
+                if (!empty($saleDelivery->sale_id)) {
+                    $exists = \Modules\Sale\Entities\Sale::query()
+                        ->where('id', (int) $saleDelivery->sale_id)
+                        ->where('branch_id', $branchId)
+                        ->exists();
+
+                    if ($exists) {
+                        $saleId = (int) $saleDelivery->sale_id;
+                        return;
+                    }
+                }
+
+                // hitung total
+                $totalQty = 0;
+                $totalAmount = 0;
+
+                foreach ($saleDelivery->items as $it) {
+                    $qty = (int) ($it->quantity ?? 0);
+                    $price = $it->price !== null ? (int) $it->price : (int) ($it->product?->product_price ?? 0);
+                    $totalQty += $qty;
+                    $totalAmount += ($qty * $price);
+                }
+
+                if ($totalQty <= 0) {
+                    throw new \RuntimeException('Cannot create invoice because delivery has no items.');
+                }
+
+                $dateRaw = (string) $saleDelivery->getRawOriginal('date');
+                if (trim($dateRaw) === '') {
+                    $dateRaw = date('Y-m-d');
+                }
+
+                // create sale (invoice)
+                $sale = \Modules\Sale\Entities\Sale::create([
+                    'branch_id'            => $branchId,
+                    'customer_id'          => (int) $saleDelivery->customer_id,
+                    'customer_name'        => (string) ($saleDelivery->customer_name ?? ($saleDelivery->customer?->customer_name ?? '')),
+                    'date'                 => $dateRaw,
+                    'tax_percentage'       => 0,
+                    'discount_percentage'  => 0,
+                    'shipping_amount'      => 0,
+                    'total_amount'         => $totalAmount,
+                    'paid_amount'          => 0,
+                    'due_amount'           => $totalAmount,
+                    'status'               => 'Completed',
+                    'payment_status'       => 'Unpaid',
+                    'note'                 => 'Auto created from Sale Delivery #' . ($saleDelivery->reference ?? $saleDelivery->id),
+                ]);
+
+                // create sale details from delivery items
+                foreach ($saleDelivery->items as $it) {
+                    $qty = (int) ($it->quantity ?? 0);
+                    if ($qty <= 0) continue;
+
+                    $product = $it->product;
+                    $price = $it->price !== null ? (int) $it->price : (int) ($product?->product_price ?? 0);
+
+                    \Modules\Sale\Entities\SaleDetails::create([
+                        'sale_id'       => (int) $sale->id,
+                        'product_id'    => (int) $it->product_id,
+                        'product_name'  => (string) ($product?->product_name ?? ''),
+                        'product_code'  => (string) ($product?->product_code ?? ''),
+                        'quantity'      => $qty,
+                        'price'         => $price,
+                        'unit_price'    => $price,
+                        'sub_total'     => $qty * $price,
+                        'product_discount_amount' => 0,
+                        'product_discount_type'   => 'fixed',
+                        'product_tax_amount'      => 0,
+                    ]);
+                }
+
+                // link invoice to delivery (1 delivery = 1 invoice)
+                $saleDelivery->update([
+                    'sale_id' => (int) $sale->id,
+                    'updated_by' => auth()->id(),
+                ]);
+
+                $saleId = (int) $sale->id;
+            });
+
+            toast('Invoice created from Sale Delivery!', 'success');
+            return redirect()->route('sales.show', $saleId);
+        } catch (\Throwable $e) {
+            return $this->failBack($e->getMessage(), 422);
+        }
+    }
 }

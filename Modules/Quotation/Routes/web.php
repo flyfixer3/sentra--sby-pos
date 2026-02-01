@@ -27,6 +27,9 @@ Route::group(['middleware' => 'auth'], function () {
 
         Route::get('/quotation-sales/{quotation}', 'QuotationSalesController')->name('quotation-sales.create');
         Route::get('/quotation/mail/{quotation}', 'SendQuotationEmailController')->name('quotation.email');
+
+        Route::post('quotations/{quotation}/create-invoice-direct', 'QuotationController@createInvoiceDirect')
+        ->name('quotations.create-invoice-direct');
     });
 
     // READ-ONLY

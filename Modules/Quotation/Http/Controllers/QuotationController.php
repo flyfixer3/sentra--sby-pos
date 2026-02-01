@@ -10,11 +10,15 @@ use Illuminate\Support\Facades\Gate;
 use Modules\People\Entities\Customer;
 use Modules\Product\Entities\Product;
 use Modules\Product\Entities\Warehouse;
+use Modules\SaleDelivery\Entities\SaleDelivery;
+use Modules\SaleDelivery\Entities\SaleDeliveryItem;
 use Modules\Quotation\DataTables\QuotationsDataTable;
 use Modules\Quotation\Entities\Quotation;
 use Modules\Quotation\Entities\QuotationDetails;
 use Modules\Quotation\Http\Requests\StoreQuotationRequest;
 use Modules\Quotation\Http\Requests\UpdateQuotationRequest;
+use Modules\Sale\Entities\Sale;
+use Modules\Sale\Entities\SaleDetails;
 
 class QuotationController extends Controller
 {
@@ -73,7 +77,7 @@ class QuotationController extends Controller
                 'discount_percentage' => $request->discount_percentage,
                 'shipping_amount'     => (int) $request->shipping_amount,
                 'total_amount'        => (int) $request->total_amount,
-                'status'              => $request->status, // nanti kita rapihin enum statusnya
+                'status'              => $request->status,
                 'note'                => $request->note,
                 'tax_amount'          => (int) Cart::instance('quotation')->tax(),
                 'discount_amount'     => (int) Cart::instance('quotation')->discount(),
@@ -239,5 +243,135 @@ class QuotationController extends Controller
         toast('Quotation Deleted!', 'warning');
 
         return redirect()->route('quotations.index');
+    }
+
+    public function createInvoiceDirect(Quotation $quotation)
+    {
+        abort_if(Gate::denies('create_sale_invoices'), 403);
+
+        $branchId = BranchContext::id();
+        if ((int) $quotation->branch_id !== (int) $branchId) {
+            abort(403, 'Wrong branch context.');
+        }
+
+        try {
+            $saleId = null;
+            $saleDeliveryId = null;
+
+            DB::transaction(function () use ($quotation, $branchId, &$saleId, &$saleDeliveryId) {
+
+                $quotation = Quotation::query()
+                    ->lockForUpdate()
+                    ->with(['quotationDetails'])
+                    ->findOrFail((int) $quotation->id);
+
+                // ✅ Idempotent: kalau sudah pernah bikin invoice dari quotation ini, block
+                // (sesuaikan kalau kamu punya kolom quotation_id di sales)
+                $existsSale = Sale::query()
+                    ->where('branch_id', $branchId)
+                    ->where('quotation_id', (int) $quotation->id)
+                    ->exists();
+
+                if ($existsSale) {
+                    abort(422, 'Sale Invoice for this quotation already exists.');
+                }
+
+                // ✅ Warehouse default untuk SD (pending)
+                $warehouse = Warehouse::query()
+                    ->where('branch_id', $branchId)
+                    ->orderBy('warehouse_name')
+                    ->first();
+
+                if (!$warehouse) {
+                    abort(422, 'No warehouse found in this branch. Please create a warehouse first.');
+                }
+
+                $dateRaw = (string) $quotation->getRawOriginal('date');
+                if (trim($dateRaw) === '') $dateRaw = date('Y-m-d');
+
+                // 1) ✅ Create SALE (Invoice) dulu
+                $sale = Sale::create([
+                    'branch_id'      => $branchId,
+                    'quotation_id'   => (int) $quotation->id,     // pastikan ada kolom ini di sales
+                    'customer_id'    => (int) $quotation->customer_id,
+                    'customer_name'  => (string) $quotation->customer_name,
+                    'date'           => $dateRaw,
+                    'status'         => 'pending',               // atau 'unpaid' sesuai projectmu
+                    'payment_status' => 'unpaid',                // sesuaikan
+                    'tax_percentage' => (float) $quotation->tax_percentage,
+                    'discount_percentage' => (float) $quotation->discount_percentage,
+                    'shipping_amount' => (int) $quotation->shipping_amount,
+                    'tax_amount'     => (int) $quotation->tax_amount,
+                    'discount_amount'=> (int) $quotation->discount_amount,
+                    'total_amount'   => (int) $quotation->total_amount,
+                    'note'           => 'Direct Invoice from Quotation #' . ($quotation->reference ?? $quotation->id),
+                    'created_by'     => auth()->id(),
+                    'updated_by'     => auth()->id(),
+                ]);
+
+                $saleId = (int) $sale->id;
+
+                // 2) ✅ Copy items ke sale_details
+                foreach ($quotation->quotationDetails as $d) {
+                    SaleDetails::create([
+                        'sale_id'       => $saleId,
+                        'product_id'    => (int) $d->product_id,
+                        'product_name'  => (string) $d->product_name,
+                        'product_code'  => (string) $d->product_code,
+                        'quantity'      => (int) $d->quantity,
+                        'price'         => (int) ($d->price ?? 0),
+                        'unit_price'    => (int) ($d->unit_price ?? 0),
+                        'sub_total'     => (int) ($d->sub_total ?? 0),
+                        'tax_amount'    => (int) ($d->product_tax_amount ?? 0),
+                        'discount_amount' => (int) ($d->product_discount_amount ?? 0),
+                    ]);
+                }
+
+                // 3) ✅ Auto create SALE DELIVERY (pending) untuk mutation out nanti
+                $sd = SaleDelivery::create([
+                    'branch_id'    => $branchId,
+                    'quotation_id' => (int) $quotation->id,
+                    'sale_order_id'=> null,
+                    'sale_id'      => $saleId, // 🔥 Link ke invoice
+                    'customer_id'  => (int) $quotation->customer_id,
+                    'customer_name'=> (string) $quotation->customer_name,
+                    'warehouse_id' => (int) $warehouse->id,
+                    'date'         => $dateRaw,
+                    'status'       => 'pending',
+                    'note'         => 'Auto-created from Quotation Invoice #' . ($quotation->reference ?? $quotation->id),
+                    'created_by'   => auth()->id(),
+                    'updated_by'   => auth()->id(),
+                ]);
+
+                $saleDeliveryId = (int) $sd->id;
+
+                foreach ($quotation->quotationDetails as $d) {
+                    SaleDeliveryItem::create([
+                        'sale_delivery_id' => $saleDeliveryId,
+                        'product_id'       => (int) $d->product_id,
+                        'quantity'         => (int) $d->quantity,
+                        'price'            => $d->price !== null ? (int) $d->price : null,
+                    ]);
+                }
+
+                // 4) ✅ Mark quotation completed (pakai lowercase biar konsisten)
+                $quotation->update([
+                    'status' => 'completed',
+                ]);
+            });
+
+            toast('Sales Invoice created. Sale Delivery is pending for manual confirm.', 'success');
+
+            // kamu pilih mau redirect ke invoice atau ke delivery.
+            // aku sarankan ke invoice dulu:
+            return redirect()->route('sales.show', $saleId);
+
+            // atau kalau kamu mau cek delivery:
+            // return redirect()->route('sale-deliveries.show', $saleDeliveryId);
+
+        } catch (\Throwable $e) {
+            toast($e->getMessage(), 'error');
+            return back()->withInput();
+        }
     }
 }

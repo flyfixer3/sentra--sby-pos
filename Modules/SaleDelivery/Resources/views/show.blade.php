@@ -12,12 +12,11 @@
 
 @section('content')
 @php
-    $st = strtolower((string)($saleDelivery->status ?? 'pending'));
+    $st = strtolower(trim((string)($saleDelivery->status ?? 'pending')));
 
     $badgeClass = match($st) {
         'pending' => 'bg-warning text-dark',
         'confirmed' => 'bg-success',
-        'partial' => 'bg-info text-dark',
         'cancelled' => 'bg-danger',
         default => 'bg-secondary',
     };
@@ -30,60 +29,111 @@
     $confirmedAt = $saleDelivery->confirmed_at ? $saleDelivery->confirmed_at->format('d M Y H:i') : '-';
 
     $soRef = $saleDelivery->saleOrder?->reference ?? null;
+
+    $canConfirm = ($st === 'pending');
+    $canPrint = ($st === 'confirmed');
+
+    $canCreateInvoice = ($st === 'confirmed' && empty($saleDelivery->sale_id));
 @endphp
 
 <div class="container-fluid">
     @include('utils.alerts')
 
-    {{-- Header --}}
-    <div class="card mb-3 shadow-sm">
+    {{-- Header / Hero --}}
+    <div class="card shadow-sm mb-3">
         <div class="card-body">
             <div class="d-flex flex-wrap align-items-start justify-content-between gap-3">
-                <div class="d-flex flex-column">
-                    <div class="d-flex align-items-center gap-2">
+                <div>
+                    <div class="d-flex align-items-center gap-2 flex-wrap">
                         <h4 class="mb-0">{{ $saleDelivery->reference }}</h4>
                         <span class="badge {{ $badgeClass }}">{{ strtoupper($st) }}</span>
                     </div>
 
                     <div class="text-muted small mt-1">
-                        Date: <strong>{{ $dateText }}</strong> •
+                        Date: <strong>{{ $dateText }}</strong>
+                        <span class="mx-1">•</span>
                         Warehouse: <strong>{{ $saleDelivery->warehouse?->warehouse_name ?? '-' }}</strong>
                     </div>
 
                     <div class="text-muted small mt-1">
-                        Created: <strong>{{ $createdAt }}</strong> by <strong>{{ $saleDelivery->creator?->name ?? '-' }}</strong>
+                        Created: <strong>{{ $createdAt }}</strong>
+                        by <strong>{{ $saleDelivery->creator?->name ?? '-' }}</strong>
+                    </div>
+
+                    {{-- ✅ moved to next line (lebih enak dilihat) --}}
+                    <div class="text-muted small mt-1">
                         @if($saleDelivery->sale_order_id)
-                            • Sale Order: <a href="{{ route('sale-orders.show', $saleDelivery->sale_order_id) }}"><strong>{{ $soRef ?? ('SO#'.$saleDelivery->sale_order_id) }}</strong></a>
+                            <span class="me-2">
+                                <i class="bi bi-clipboard-check me-1"></i>
+                                Sale Order:
+                                <a href="{{ route('sale-orders.show', $saleDelivery->sale_order_id) }}">
+                                    <strong>{{ $soRef ?? ('SO#'.$saleDelivery->sale_order_id) }}</strong>
+                                </a>
+                            </span>
+                        @endif
+
+                        @if($saleDelivery->quotation_id)
+                            <span>
+                                <i class="bi bi-file-earmark-text me-1"></i>
+                                Quotation:
+                                <a href="{{ route('quotations.show', $saleDelivery->quotation_id) }}">
+                                    <strong>{{ $saleDelivery->quotation_id }}</strong>
+                                </a>
+                            </span>
                         @endif
                     </div>
                 </div>
 
+                {{-- Actions --}}
                 <div class="d-flex flex-wrap gap-2 align-items-center">
-                    @if(session('active_branch') && in_array($st, ['pending','partial'], true))
+                    @if(session('active_branch') && $canConfirm)
                         <a href="{{ route('sale-deliveries.confirm.form', $saleDelivery->id) }}"
                            class="btn btn-primary">
-                            <i class="bi bi-check2-circle"></i> Confirm Delivery
+                            <i class="bi bi-check2-circle me-1"></i> Confirm Delivery
                         </a>
                     @endif
 
-                    <a href="{{ route('sale-deliveries.print', $saleDelivery->id) }}"
-                       class="btn btn-outline-secondary">
-                        <i class="bi bi-printer"></i> Print
-                    </a>
+                    @if($canCreateInvoice)
+                        <form method="POST"
+                              action="{{ route('sale-deliveries.create-invoice', $saleDelivery->id) }}"
+                              class="d-inline"
+                              onsubmit="return confirm('Create Invoice from this Sale Delivery? (1 Delivery = 1 Invoice)');">
+                            @csrf
+                            <button type="submit" class="btn btn-success">
+                                <i class="bi bi-receipt me-1"></i> Create Invoice
+                            </button>
+                        </form>
+                    @elseif(!empty($saleDelivery->sale_id))
+                        <a href="{{ route('sales.show', (int)$saleDelivery->sale_id) }}" class="btn btn-outline-success">
+                            <i class="bi bi-box-arrow-up-right me-1"></i> Open Invoice
+                        </a>
+                    @endif
+
+                    @if($canPrint)
+                        <button type="button"
+                            class="btn btn-outline-secondary"
+                            onclick="printSaleDelivery({{ $saleDelivery->id }})">
+                            <i class="bi bi-printer me-1"></i> Print
+                        </button>
+                    @endif
 
                     <a href="{{ route('sale-deliveries.index') }}" class="btn btn-light">
-                        <i class="bi bi-arrow-left"></i> Back
+                        <i class="bi bi-arrow-left me-1"></i> Back
                     </a>
                 </div>
             </div>
 
             <hr class="my-3">
 
-            {{-- Summary --}}
+            {{-- Summary Cards --}}
             <div class="row g-3">
-                <div class="col-md-6">
-                    <div class="p-3 border rounded-3 bg-light">
-                        <div class="text-muted small">Customer</div>
+                <div class="col-lg-6">
+                    <div class="p-3 border rounded-3 bg-light h-100">
+                        <div class="d-flex align-items-center justify-content-between">
+                            <div class="fw-semibold">Customer</div>
+                            <span class="badge bg-light text-dark border"><i class="bi bi-person me-1"></i> Info</span>
+                        </div>
+                        <hr class="my-2">
                         <div class="fw-bold">
                             {{ $saleDelivery->customer?->customer_name ?? ($saleDelivery->customer_name ?? '-') }}
                         </div>
@@ -93,19 +143,27 @@
                     </div>
                 </div>
 
-                <div class="col-md-6">
-                    <div class="p-3 border rounded-3 bg-light">
-                        <div class="text-muted small">Confirmation</div>
-                        <div class="fw-bold">Confirmed at: {{ $confirmedAt }}</div>
-                        <div class="text-muted small mt-1">
-                            Confirmed by: {{ $saleDelivery->confirmed_at ? ($saleDelivery->confirmer?->name ?? '-') : '-' }}
+                <div class="col-lg-6">
+                    <div class="p-3 border rounded-3 bg-light h-100">
+                        <div class="d-flex align-items-center justify-content-between">
+                            <div class="fw-semibold">Confirmation</div>
+                            <span class="badge bg-light text-dark border"><i class="bi bi-shield-check me-1"></i> Status</span>
                         </div>
-                        <div class="text-muted small mt-1">
-                            Confirmation Note: {{ $saleDelivery->confirm_note ?: '-' }}
+                        <hr class="my-2">
+                        <div class="small">
+                            <div>Confirmed at: <strong>{{ $confirmedAt }}</strong></div>
+                            <div class="mt-1">
+                                Confirmed by:
+                                <strong>{{ $saleDelivery->confirmed_at ? ($saleDelivery->confirmer?->name ?? '-') : '-' }}</strong>
+                            </div>
+                            <div class="mt-1">
+                                Confirmation Note: <strong>{{ $saleDelivery->confirm_note ?: '-' }}</strong>
+                            </div>
                         </div>
                     </div>
                 </div>
             </div>
+
         </div>
     </div>
 
@@ -113,9 +171,9 @@
     <div class="card shadow-sm">
         <div class="card-body">
             <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-2">
-                <h6 class="mb-0">Items</h6>
-                <div class="text-muted small">
-                    * Breakdown Good/Defect/Damaged akan terisi setelah proses confirm.
+                <div>
+                    <h6 class="mb-0">Items</h6>
+                    <div class="text-muted small">Breakdown Good/Defect/Damaged akan terisi setelah confirm.</div>
                 </div>
             </div>
 
@@ -139,8 +197,10 @@
                                 $damaged = (int)($it->qty_damaged ?? 0);
                                 $sum = $good + $defect + $damaged;
                                 $isFilled = $sum > 0;
+
+                                $isMismatch = ($st === 'confirmed' && $expected > 0 && $sum > 0 && $sum !== $expected);
                             @endphp
-                            <tr>
+                            <tr @if($isMismatch) class="table-danger" @endif>
                                 <td>
                                     <div class="fw-semibold">{{ $it->product?->product_name ?? ($it->product_name ?? '-') }}</div>
                                     <div class="text-muted small">product_id: {{ (int)($it->product_id ?? 0) }}</div>
@@ -181,3 +241,33 @@
     </div>
 </div>
 @endsection
+
+@push('page_scripts')
+<script>
+async function printSaleDelivery(id) {
+    try {
+        const res = await fetch(`{{ url('/') }}/sale-deliveries/${id}/prepare-print`, {
+            method: 'POST',
+            headers: {
+                'X-Requested-With': 'XMLHttpRequest',
+                'X-CSRF-TOKEN': document
+                    .querySelector('meta[name="csrf-token"]')
+                    .getAttribute('content'),
+                'Accept': 'application/json',
+            }
+        });
+
+        const data = await res.json();
+
+        if (!res.ok || !data.ok) {
+            alert(data.message || 'Cannot print sale delivery.');
+            return;
+        }
+
+        window.open(data.pdf_url, '_blank');
+    } catch (e) {
+        alert('Unexpected error. Please try again.');
+    }
+}
+</script>
+@endpush
