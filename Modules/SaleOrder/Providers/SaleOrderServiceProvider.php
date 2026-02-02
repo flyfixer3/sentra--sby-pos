@@ -28,6 +28,7 @@ class SaleOrderServiceProvider extends ServiceProvider
         $this->registerConfig();
         $this->registerViews();
         $this->loadMigrationsFrom(module_path($this->moduleName, 'Database/Migrations'));
+        \Livewire\Livewire::component('sale-order.product-table', \Modules\SaleOrder\Http\Livewire\ProductTable::class);
     }
 
     /**

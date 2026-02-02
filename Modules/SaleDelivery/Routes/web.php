@@ -23,6 +23,10 @@ Route::group(['middleware' => 'auth'], function () {
             ->name('sale-deliveries.print.pdf');
         Route::post('sale-deliveries/{saleDelivery}/create-invoice', 'SaleDeliveryController@createInvoice')
         ->name('sale-deliveries.create-invoice');
+        Route::delete('sale-deliveries/{saleDelivery}', [
+            \Modules\SaleDelivery\Http\Controllers\SaleDeliveryController::class,
+            'destroy'
+        ])->name('sale-deliveries.destroy');
     });
 
     // READ

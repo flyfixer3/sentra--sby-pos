@@ -1088,10 +1088,10 @@ class SaleDeliveryController extends Controller
             $this->ensureSpecificBranchSelected();
 
             $branchId = BranchContext::id();
-
             $saleId = null;
 
             DB::transaction(function () use ($saleDelivery, $branchId, &$saleId) {
+
                 $saleDelivery = SaleDelivery::withoutGlobalScopes()
                     ->lockForUpdate()
                     ->with(['items.product', 'customer'])
@@ -1106,11 +1106,13 @@ class SaleDeliveryController extends Controller
                     throw new \RuntimeException('Invoice can be created only when Sale Delivery is CONFIRMED.');
                 }
 
-                // idempotent: sudah pernah dibuat
+                // idempotent: kalau sudah ada sale_id dan memang ada record sales-nya
                 if (!empty($saleDelivery->sale_id)) {
                     $exists = \Modules\Sale\Entities\Sale::query()
                         ->where('id', (int) $saleDelivery->sale_id)
-                        ->where('branch_id', $branchId)
+                        ->when(\Illuminate\Support\Facades\Schema::hasColumn('sales', 'branch_id'), function ($q) use ($branchId) {
+                            $q->where('branch_id', (int) $branchId);
+                        })
                         ->exists();
 
                     if ($exists) {
@@ -1125,7 +1127,12 @@ class SaleDeliveryController extends Controller
 
                 foreach ($saleDelivery->items as $it) {
                     $qty = (int) ($it->quantity ?? 0);
-                    $price = $it->price !== null ? (int) $it->price : (int) ($it->product?->product_price ?? 0);
+                    $price = $it->price !== null
+                        ? (int) $it->price
+                        : (int) ($it->product?->product_price ?? 0);
+
+                    if ($qty <= 0) continue;
+
                     $totalQty += $qty;
                     $totalAmount += ($qty * $price);
                 }
@@ -1135,26 +1142,78 @@ class SaleDeliveryController extends Controller
                 }
 
                 $dateRaw = (string) $saleDelivery->getRawOriginal('date');
-                if (trim($dateRaw) === '') {
-                    $dateRaw = date('Y-m-d');
+                if (trim($dateRaw) === '') $dateRaw = date('Y-m-d');
+
+                // ===============================
+                // ✅ BUILD SALE DATA (SAFE FIELDS)
+                // ===============================
+                $saleData = [
+                    'customer_id'         => (int) $saleDelivery->customer_id,
+                    'customer_name'       => (string) ($saleDelivery->customer_name ?? ($saleDelivery->customer?->customer_name ?? '')),
+                    'date'                => $dateRaw,
+                    'tax_percentage'      => 0,
+                    'discount_percentage' => 0,
+                    'shipping_amount'     => 0,
+                    'total_amount'        => (int) $totalAmount,
+                    'paid_amount'         => 0,
+                    'due_amount'          => (int) $totalAmount,
+                    'payment_status'      => 'Unpaid',
+                    'note'                => 'Auto created from Sale Delivery #' . ($saleDelivery->reference ?? $saleDelivery->id),
+                ];
+
+                // branch_id (kalau ada)
+                if (\Illuminate\Support\Facades\Schema::hasColumn('sales', 'branch_id')) {
+                    $saleData['branch_id'] = (int) $branchId;
+                }
+
+                // total_quantity (kalau ada)
+                if (\Illuminate\Support\Facades\Schema::hasColumn('sales', 'total_quantity')) {
+                    $saleData['total_quantity'] = (int) $totalQty;
+                }
+
+                // tax_amount / discount_amount (kalau ada)
+                if (\Illuminate\Support\Facades\Schema::hasColumn('sales', 'tax_amount')) {
+                    $saleData['tax_amount'] = 0;
+                }
+                if (\Illuminate\Support\Facades\Schema::hasColumn('sales', 'discount_amount')) {
+                    $saleData['discount_amount'] = 0;
+                }
+
+                // created_by / updated_by (kalau ada)
+                if (\Illuminate\Support\Facades\Schema::hasColumn('sales', 'created_by')) {
+                    $saleData['created_by'] = (int) auth()->id();
+                }
+                if (\Illuminate\Support\Facades\Schema::hasColumn('sales', 'updated_by')) {
+                    $saleData['updated_by'] = (int) auth()->id();
+                }
+
+                // ✅ status column: ADA DI BEBERAPA PROJECT, TAPI DB KAMU TIDAK PUNYA
+                // jadi kita set hanya kalau kolomnya ada
+                if (\Illuminate\Support\Facades\Schema::hasColumn('sales', 'status')) {
+                    $saleData['status'] = 'Completed';
+                } elseif (\Illuminate\Support\Facades\Schema::hasColumn('sales', 'sale_status')) {
+                    // fallback kalau project kamu pakai nama ini
+                    $saleData['sale_status'] = 'Completed';
+                }
+
+                // ✅ warehouse_id on sales (kalau kamu sudah punya kolomnya)
+                // Ini membantu kalau invoice 1 warehouse (case invoice dari delivery)
+                if (\Illuminate\Support\Facades\Schema::hasColumn('sales', 'warehouse_id')) {
+                    $saleData['warehouse_id'] = (int) $saleDelivery->warehouse_id;
                 }
 
                 // create sale (invoice)
-                $sale = \Modules\Sale\Entities\Sale::create([
-                    'branch_id'            => $branchId,
-                    'customer_id'          => (int) $saleDelivery->customer_id,
-                    'customer_name'        => (string) ($saleDelivery->customer_name ?? ($saleDelivery->customer?->customer_name ?? '')),
-                    'date'                 => $dateRaw,
-                    'tax_percentage'       => 0,
-                    'discount_percentage'  => 0,
-                    'shipping_amount'      => 0,
-                    'total_amount'         => $totalAmount,
-                    'paid_amount'          => 0,
-                    'due_amount'           => $totalAmount,
-                    'status'               => 'Completed',
-                    'payment_status'       => 'Unpaid',
-                    'note'                 => 'Auto created from Sale Delivery #' . ($saleDelivery->reference ?? $saleDelivery->id),
-                ]);
+                $sale = \Modules\Sale\Entities\Sale::create($saleData);
+
+                // ✅ set reference kalau ada kolom reference dan masih kosong
+                if (\Illuminate\Support\Facades\Schema::hasColumn('sales', 'reference')) {
+                    $ref = (string) ($sale->reference ?? '');
+                    if (trim($ref) === '') {
+                        $sale->update([
+                            'reference' => make_reference_id('BB', (int) $sale->id),
+                        ]);
+                    }
+                }
 
                 // create sale details from delivery items
                 foreach ($saleDelivery->items as $it) {
@@ -1164,25 +1223,36 @@ class SaleDeliveryController extends Controller
                     $product = $it->product;
                     $price = $it->price !== null ? (int) $it->price : (int) ($product?->product_price ?? 0);
 
-                    \Modules\Sale\Entities\SaleDetails::create([
-                        'sale_id'       => (int) $sale->id,
-                        'product_id'    => (int) $it->product_id,
-                        'product_name'  => (string) ($product?->product_name ?? ''),
-                        'product_code'  => (string) ($product?->product_code ?? ''),
-                        'quantity'      => $qty,
-                        'price'         => $price,
-                        'unit_price'    => $price,
-                        'sub_total'     => $qty * $price,
+                    $detailData = [
+                        'sale_id'      => (int) $sale->id,
+                        'product_id'   => (int) $it->product_id,
+                        'product_name' => (string) ($product?->product_name ?? ''),
+                        'product_code' => (string) ($product?->product_code ?? ''),
+                        'quantity'     => (int) $qty,
+                        'price'        => (int) $price,
+                        'unit_price'   => (int) $price,
+                        'sub_total'    => (int) ($qty * $price),
                         'product_discount_amount' => 0,
                         'product_discount_type'   => 'fixed',
                         'product_tax_amount'      => 0,
-                    ]);
+                    ];
+
+                    // ✅ penting: invoice dari delivery ini pasti 1 warehouse
+                    if (\Illuminate\Support\Facades\Schema::hasColumn('sale_details', 'warehouse_id')) {
+                        $detailData['warehouse_id'] = (int) $saleDelivery->warehouse_id;
+                    }
+
+                    if (\Illuminate\Support\Facades\Schema::hasColumn('sale_details', 'branch_id')) {
+                        $detailData['branch_id'] = (int) $branchId;
+                    }
+
+                    \Modules\Sale\Entities\SaleDetails::create($detailData);
                 }
 
                 // link invoice to delivery (1 delivery = 1 invoice)
                 $saleDelivery->update([
-                    'sale_id' => (int) $sale->id,
-                    'updated_by' => auth()->id(),
+                    'sale_id'     => (int) $sale->id,
+                    'updated_by'  => auth()->id(),
                 ]);
 
                 $saleId = (int) $sale->id;
@@ -1190,8 +1260,70 @@ class SaleDeliveryController extends Controller
 
             toast('Invoice created from Sale Delivery!', 'success');
             return redirect()->route('sales.show', $saleId);
+
         } catch (\Throwable $e) {
             return $this->failBack($e->getMessage(), 422);
+        }
+    }
+
+    public function destroy(SaleDelivery $saleDelivery)
+    {
+        abort_if(Gate::denies('delete_sale_deliveries'), 403);
+        if (!empty($saleDelivery->sale_id)) {
+            throw new \RuntimeException('Cannot delete. This Sale Delivery already has an invoice.');
+        }
+
+        try {
+            $this->ensureSpecificBranchSelected();
+
+            $branchId = BranchContext::id();
+
+            // ✅ hard stop kalau delivery beda cabang
+            if ((int) ($saleDelivery->branch_id ?? 0) !== (int) $branchId) {
+                throw new \RuntimeException('Wrong branch context.');
+            }
+
+            $st = strtolower(trim((string) ($saleDelivery->getRawOriginal('status') ?? $saleDelivery->status ?? 'pending')));
+
+            // ✅ confirmed tidak boleh dihapus (sudah ada stock movement)
+            if ($st === 'confirmed') {
+                throw new \RuntimeException('Cannot delete. Sale Delivery is already confirmed.');
+            }
+
+            DB::transaction(function () use ($saleDelivery, $branchId) {
+
+                $saleDelivery = SaleDelivery::withoutGlobalScopes()
+                    ->lockForUpdate()
+                    ->with(['items'])
+                    ->findOrFail((int) $saleDelivery->id);
+
+                if ((int) ($saleDelivery->branch_id ?? 0) !== (int) $branchId) {
+                    throw new \RuntimeException('Wrong branch context.');
+                }
+
+                $st = strtolower(trim((string) ($saleDelivery->getRawOriginal('status') ?? $saleDelivery->status ?? 'pending')));
+                if ($st === 'confirmed') {
+                    throw new \RuntimeException('Cannot delete. Sale Delivery is already confirmed.');
+                }
+
+                // ✅ delete items dulu (relasi kamu namanya "items")
+                if (method_exists($saleDelivery, 'items')) {
+                    $saleDelivery->items()->delete();
+                } else {
+                    SaleDeliveryItem::query()
+                        ->where('sale_delivery_id', (int) $saleDelivery->id)
+                        ->delete();
+                }
+
+                $saleDelivery->delete();
+            });
+
+            toast('Sale Delivery deleted!', 'warning');
+            return redirect()->route('sale-deliveries.index');
+
+        } catch (\Throwable $e) {
+            toast($e->getMessage(), 'error');
+            return back();
         }
     }
 }

@@ -14,12 +14,19 @@
 @php
     $items = old('items', $prefillItems ?? []);
     if (!is_array($items) || count($items) === 0) {
-        $items = [['product_id'=>'','quantity'=>1,'price'=>0]];
+        $items = [];
     }
 @endphp
 
-<div class="container-fluid">
+<div class="container-fluid mb-4">
+    {{-- ✅ search bar (komponen yang sama seperti Transfer) --}}
     <div class="row">
+        <div class="col-12">
+            <livewire:search-product />
+        </div>
+    </div>
+
+    <div class="row mt-4">
         <div class="col-lg-12">
 
             <div class="card">
@@ -33,6 +40,8 @@
                 </div>
 
                 <div class="card-body">
+                    @include('utils.alerts')
+
                     <form action="{{ route('sale-orders.store') }}" method="POST" id="soForm">
                         @csrf
 
@@ -90,73 +99,26 @@
 
                         <hr>
 
-                        <div class="d-flex align-items-center justify-content-between">
-                            <div><strong>Items</strong></div>
-                            <div class="text-muted small">Pilih product, qty, dan price. Kamu bisa tambah/hapus baris.</div>
+                        {{-- ✅ Items table: Livewire (selaras dengan Transfer style) --}}
+                        <div class="mt-2">
+                            <livewire:sale-order.product-table :prefillItems="$items" />
                         </div>
 
-                        <div class="table-responsive mt-2">
-                            <table class="table table-bordered" id="itemsTable">
-                                <thead>
-                                    <tr>
-                                        <th style="width: 55%;">Product</th>
-                                        <th style="width: 20%;">Qty</th>
-                                        <th style="width: 20%;">Price</th>
-                                        <th style="width: 5%;" class="text-center">#</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                @foreach($items as $i => $row)
-                                    <tr>
-                                        <td>
-                                            <select name="items[{{ $i }}][product_id]" class="form-control" required>
-                                                <option value="">-- Choose Product --</option>
-                                                @foreach(($products ?? []) as $p)
-                                                    <option value="{{ $p->id }}"
-                                                        {{ (int)($row['product_id'] ?? 0) === (int)$p->id ? 'selected' : '' }}>
-                                                        {{ $p->product_name }} @if(!empty($p->product_code)) ({{ $p->product_code }}) @endif
-                                                    </option>
-                                                @endforeach
-                                            </select>
-                                            <div class="small text-muted mt-1">
-                                                Kalau list product terlalu panjang, nanti kita upgrade jadi searchable select.
-                                            </div>
-                                        </td>
-                                        <td>
-                                            <input type="number" name="items[{{ $i }}][quantity]" class="form-control"
-                                                   value="{{ (int)($row['quantity'] ?? 1) }}" min="1" required>
-                                        </td>
-                                        <td>
-                                            <input type="number" name="items[{{ $i }}][price]" class="form-control"
-                                                   value="{{ (int)($row['price'] ?? 0) }}" min="0">
-                                        </td>
-                                        <td class="text-center">
-                                            <button type="button" class="btn btn-sm btn-danger btn-remove-row" title="Remove">
-                                                <i class="bi bi-trash"></i>
-                                            </button>
-                                        </td>
-                                    </tr>
-                                @endforeach
-                                </tbody>
-                            </table>
-                        </div>
+                        <div class="d-flex justify-content-end gap-2 mt-3">
 
-                        <div class="d-flex gap-2 mt-2">
-                            <button type="button" class="btn btn-sm btn-info" id="btnAddRow">
-                                <i class="bi bi-plus-circle"></i> Add Row
-                            </button>
-                        </div>
-
-                        <div class="d-flex gap-2 mt-3">
                             <button class="btn btn-primary" type="submit">
                                 <i class="bi bi-save"></i> Save Sale Order
                             </button>
+
                             <a href="{{ route('sale-orders.index') }}" class="btn btn-secondary">
                                 Cancel
                             </a>
                         </div>
-
                     </form>
+
+                    <div class="small text-muted mt-3">
+                        Tips: cari produk lewat search bar di atas, lalu klik hasilnya untuk menambahkan ke tabel item.
+                    </div>
                 </div>
             </div>
 
@@ -164,76 +126,3 @@
     </div>
 </div>
 @endsection
-
-@push('page_scripts')
-<script>
-(function(){
-    const tableBody = document.querySelector('#itemsTable tbody');
-    const addBtn = document.getElementById('btnAddRow');
-
-    function reIndex(){
-        const rows = Array.from(tableBody.querySelectorAll('tr'));
-        rows.forEach((tr, idx) => {
-            const selects = tr.querySelectorAll('select, input');
-            selects.forEach(el => {
-                const name = el.getAttribute('name') || '';
-                // items[0][product_id] => items[idx][product_id]
-                const newName = name.replace(/items\[\d+\]/g, 'items['+idx+']');
-                el.setAttribute('name', newName);
-            });
-        });
-    }
-
-    function addRow(){
-        const idx = tableBody.querySelectorAll('tr').length;
-
-        const tr = document.createElement('tr');
-        tr.innerHTML = `
-            <td>
-                <select name="items[${idx}][product_id]" class="form-control" required>
-                    <option value="">-- Choose Product --</option>
-                    @foreach(($products ?? []) as $p)
-                        <option value="{{ $p->id }}">{{ $p->product_name }} @if(!empty($p->product_code)) ({{ $p->product_code }}) @endif</option>
-                    @endforeach
-                </select>
-                <div class="small text-muted mt-1">
-                    Kalau list product terlalu panjang, nanti kita upgrade jadi searchable select.
-                </div>
-            </td>
-            <td>
-                <input type="number" name="items[${idx}][quantity]" class="form-control" value="1" min="1" required>
-            </td>
-            <td>
-                <input type="number" name="items[${idx}][price]" class="form-control" value="0" min="0">
-            </td>
-            <td class="text-center">
-                <button type="button" class="btn btn-sm btn-danger btn-remove-row" title="Remove">
-                    <i class="bi bi-trash"></i>
-                </button>
-            </td>
-        `;
-        tableBody.appendChild(tr);
-        bindRemoveButtons();
-        reIndex();
-    }
-
-    function bindRemoveButtons(){
-        const btns = tableBody.querySelectorAll('.btn-remove-row');
-        btns.forEach(btn => {
-            btn.onclick = function(){
-                const rows = tableBody.querySelectorAll('tr');
-                if (rows.length <= 1) {
-                    alert('Minimal harus ada 1 item.');
-                    return;
-                }
-                btn.closest('tr').remove();
-                reIndex();
-            };
-        });
-    }
-
-    if (addBtn) addBtn.addEventListener('click', addRow);
-    bindRemoveButtons();
-})();
-</script>
-@endpush

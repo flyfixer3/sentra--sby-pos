@@ -117,9 +117,20 @@
                         </button>
                     @endif
 
-                    <a href="{{ route('sale-deliveries.index') }}" class="btn btn-light">
-                        <i class="bi bi-arrow-left me-1"></i> Back
-                    </a>
+                    @can('delete_sale_deliveries')
+                        @if($st !== 'confirmed')
+                            <form method="POST"
+                                action="{{ route('sale-deliveries.destroy', $saleDelivery->id) }}"
+                                class="d-inline"
+                                onsubmit="return confirm('Delete this Sale Delivery? Only allowed if status is not CONFIRMED.');">
+                                @csrf
+                                @method('DELETE')
+                                <button type="submit" class="btn btn-outline-danger">
+                                    <i class="bi bi-trash me-1"></i> Delete
+                                </button>
+                            </form>
+                        @endif
+                    @endcan
                 </div>
             </div>
 
