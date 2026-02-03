@@ -1269,19 +1269,13 @@ class SaleDeliveryController extends Controller
         }
     }
 
-    public function destroy(SaleDelivery $saleDelivery)
-    {
+    public function destroy(SaleDelivery $saleDelivery) {
         abort_if(Gate::denies('delete_sale_deliveries'), 403);
-        if (!empty($saleDelivery->sale_id)) {
-            throw new \RuntimeException('Cannot delete. This Sale Delivery already has an invoice.');
-        }
 
         try {
             $this->ensureSpecificBranchSelected();
-
             $branchId = BranchContext::id();
 
-            // ✅ hard stop kalau delivery beda cabang
             if ((int) ($saleDelivery->branch_id ?? 0) !== (int) $branchId) {
                 throw new \RuntimeException('Wrong branch context.');
             }
@@ -1294,7 +1288,6 @@ class SaleDeliveryController extends Controller
             }
 
             DB::transaction(function () use ($saleDelivery, $branchId) {
-
                 $saleDelivery = SaleDelivery::withoutGlobalScopes()
                     ->lockForUpdate()
                     ->with(['items'])
@@ -1309,7 +1302,6 @@ class SaleDeliveryController extends Controller
                     throw new \RuntimeException('Cannot delete. Sale Delivery is already confirmed.');
                 }
 
-                // ✅ delete items dulu (relasi kamu namanya "items")
                 if (method_exists($saleDelivery, 'items')) {
                     $saleDelivery->items()->delete();
                 } else {

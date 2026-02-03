@@ -59,13 +59,11 @@ class SaleController extends Controller
         return view('sale::create', compact('warehouses', 'customers'));
     }
 
-    public function store(StoreSaleRequest $request)
-    {
+    public function store(StoreSaleRequest $request) {
         abort_if(Gate::denies('create_sales'), 403);
 
         try {
             DB::transaction(function () use ($request) {
-
                 $branchId = BranchContext::id();
 
                 // ✅ validasi customer harus global atau branch aktif
@@ -73,57 +71,36 @@ class SaleController extends Controller
                     ->where('id', $request->customer_id)
                     ->where(function ($q) use ($branchId) {
                         $q->whereNull('branch_id')
-                            ->orWhere('branch_id', $branchId);
+                        ->orWhere('branch_id', $branchId);
                     })
                     ->firstOrFail();
 
                 // ✅ ambil cart
                 $cartItems = collect(Cart::instance('sale')->content());
-
                 if ($cartItems->isEmpty()) {
                     throw new \RuntimeException('Cart is empty. Please add items first.');
                 }
 
-                /**
-                 * ==========================================================
-                 * ✅ HARD RULE (biar 1 SaleDelivery = 1 Invoice):
-                 * Invoice direct hanya boleh 1 warehouse saja.
-                 * Karena kalau multi-warehouse, nanti Delivery-nya bingung.
-                 * ==========================================================
-                 */
-                $warehouseIds = $cartItems
-                    ->map(fn($it) => (int) ($it->options->warehouse_id ?? 0))
-                    ->filter(fn($id) => $id > 0)
-                    ->unique()
-                    ->values();
+                // ✅ VALIDASI: semua item WAJIB punya warehouse_id (per item)
+                $missingWarehouse = $cartItems->filter(function ($it) {
+                    $wid = (int) ($it->options->warehouse_id ?? 0);
+                    return $wid <= 0;
+                });
 
-                if ($warehouseIds->count() !== 1) {
-
-                    // bikin pesan error yang lebih manusiawi
-                    $whMap = Warehouse::query()
-                        ->where('branch_id', $branchId)
-                        ->whereIn('id', $warehouseIds->all())
-                        ->pluck('warehouse_name', 'id')
-                        ->toArray();
-
+                if ($missingWarehouse->isNotEmpty()) {
                     $lines = [];
-                    foreach ($cartItems as $it) {
-                        $wid = (int) ($it->options->warehouse_id ?? 0);
-                        $wName = $wid > 0 ? ($whMap[$wid] ?? ('WH#' . $wid)) : '-';
-                        $lines[] = "- {$it->name} (qty {$it->qty}) → Warehouse: {$wName}";
+                    foreach ($missingWarehouse as $it) {
+                        $lines[] = "- {$it->name} (qty {$it->qty})";
                     }
-
-                    $msg = "Cannot create Invoice because items are from multiple warehouses.\n\n"
-                        . "Please make separate invoice per warehouse.\n\n"
-                        . "Items detail:\n" . implode("\n", $lines);
+                    $msg = "Cannot create Invoice because some items do not have Warehouse selected.\n\n"
+                        . "Please choose Warehouse for each item.\n\n"
+                        . "Items without warehouse:\n" . implode("\n", $lines);
 
                     throw new \RuntimeException($msg);
                 }
 
-                $defaultWarehouseId = (int) $warehouseIds->first();
-
+                // ✅ hitung payment status
                 $due_amount = $request->total_amount - $request->paid_amount;
-
                 if ($due_amount == $request->total_amount) {
                     $payment_status = 'Unpaid';
                 } elseif ($due_amount > 0) {
@@ -144,24 +121,24 @@ class SaleController extends Controller
                 // ✅ CREATE INVOICE (SALE) - NO STOCK MOVEMENT
                 // ==========================================
                 $saleData = [
-                    'date'                => $request->date,
-                    'license_number'      => $request->car_number_plate,
-                    'sale_from'           => $request->sale_from,
-                    'customer_id'         => $customer->id,
-                    'customer_name'       => $customer->customer_name,
-                    'tax_percentage'      => $request->tax_percentage,
+                    'date' => $request->date,
+                    'license_number' => $request->car_number_plate,
+                    'sale_from' => $request->sale_from,
+                    'customer_id' => $customer->id,
+                    'customer_name' => $customer->customer_name,
+                    'tax_percentage' => $request->tax_percentage,
                     'discount_percentage' => $request->discount_percentage,
-                    'shipping_amount'     => (int) $request->shipping_amount,
-                    'paid_amount'         => (int) $request->paid_amount,
-                    'total_amount'        => (int) $request->total_amount,
-                    'total_quantity'      => (int) $request->total_quantity,
-                    'fee_amount'          => (int) $request->fee_amount,
-                    'due_amount'          => (int) $due_amount,
-                    'payment_status'      => $payment_status,
-                    'payment_method'      => $request->payment_method,
-                    'note'                => $request->note,
-                    'tax_amount'          => (int) Cart::instance('sale')->tax(),
-                    'discount_amount'     => (int) Cart::instance('sale')->discount(),
+                    'shipping_amount' => (int) $request->shipping_amount,
+                    'paid_amount' => (int) $request->paid_amount,
+                    'total_amount' => (int) $request->total_amount,
+                    'total_quantity' => (int) $request->total_quantity,
+                    'fee_amount' => (int) $request->fee_amount,
+                    'due_amount' => (int) $due_amount,
+                    'payment_status' => $payment_status,
+                    'payment_method' => $request->payment_method,
+                    'note' => $request->note,
+                    'tax_amount' => (int) Cart::instance('sale')->tax(),
+                    'discount_amount' => (int) Cart::instance('sale')->discount(),
                 ];
 
                 if (\Illuminate\Support\Facades\Schema::hasColumn('sales', 'branch_id')) {
@@ -177,23 +154,22 @@ class SaleController extends Controller
                 // ✅ Create SaleDetails (warehouse per item tetap disimpan)
                 // ==========================================
                 foreach ($cartItems as $cart_item) {
-
                     $total_cost += (int) ($cart_item->options->product_cost ?? 0);
 
                     $saleDetailData = [
-                        'sale_id'                 => $sale->id,
-                        'product_id'              => $cart_item->id,
-                        'product_name'            => $cart_item->name,
-                        'product_code'            => $cart_item->options->code,
-                        'product_cost'            => (int) $cart_item->options->product_cost,
-                        'warehouse_id'            => (int) $cart_item->options->warehouse_id,
-                        'quantity'                => (int) $cart_item->qty,
-                        'price'                   => (int) $cart_item->price,
-                        'unit_price'              => (int) $cart_item->options->unit_price,
-                        'sub_total'               => (int) $cart_item->options->sub_total,
+                        'sale_id' => $sale->id,
+                        'product_id' => $cart_item->id,
+                        'product_name' => $cart_item->name,
+                        'product_code' => $cart_item->options->code,
+                        'product_cost' => (int) $cart_item->options->product_cost,
+                        'warehouse_id' => (int) $cart_item->options->warehouse_id,
+                        'quantity' => (int) $cart_item->qty,
+                        'price' => (int) $cart_item->price,
+                        'unit_price' => (int) $cart_item->options->unit_price,
+                        'sub_total' => (int) $cart_item->options->sub_total,
                         'product_discount_amount' => (int) $cart_item->options->product_discount,
-                        'product_discount_type'   => $cart_item->options->product_discount_type,
-                        'product_tax_amount'      => (int) $cart_item->options->product_tax,
+                        'product_discount_type' => $cart_item->options->product_discount_type,
+                        'product_tax_amount' => (int) $cart_item->options->product_tax,
                     ];
 
                     if (\Illuminate\Support\Facades\Schema::hasColumn('sale_details', 'branch_id')) {
@@ -206,51 +182,49 @@ class SaleController extends Controller
                     // ✅ Konsinyasi KS: bikin purchase ke supplier KS
                     // ==========================================
                     $isKS = $warehouseKS && ((int) $warehouseKS->id === (int) $cart_item->options->warehouse_id);
-
                     if ($isKS) {
                         $supplierKs = Supplier::query()->where('supplier_name', 'MJD-KS')->first();
-
                         if ($supplierKs) {
                             $purchase = Purchase::create([
-                                'date'                => $request->date,
-                                'due_date'            => 0,
-                                'supplier_id'         => $supplierKs->id,
-                                'supplier_name'       => $supplierKs->supplier_name,
-                                'tax_percentage'      => 0,
+                                'date' => $request->date,
+                                'due_date' => 0,
+                                'supplier_id' => $supplierKs->id,
+                                'supplier_name' => $supplierKs->supplier_name,
+                                'tax_percentage' => 0,
                                 'discount_percentage' => 0,
-                                'shipping_amount'     => 0,
-                                'paid_amount'         => 0,
-                                'total_amount'        => (int) ($cart_item->options->product_cost * $cart_item->qty),
-                                'due_amount'          => (int) ($cart_item->options->product_cost * $cart_item->qty),
-                                'total_quantity'      => (int) $request->total_quantity,
-                                'payment_status'      => "Unpaid",
-                                'payment_method'      => "Bank Transfer",
-                                'note'                => "Penjualan Konsyinasi, referensi nota sale: " . $sale->reference,
-                                'tax_amount'          => (int) Cart::instance('sale')->tax(),
-                                'discount_amount'     => 0,
+                                'shipping_amount' => 0,
+                                'paid_amount' => 0,
+                                'total_amount' => (int) ($cart_item->options->product_cost * $cart_item->qty),
+                                'due_amount' => (int) ($cart_item->options->product_cost * $cart_item->qty),
+                                'total_quantity' => (int) $request->total_quantity,
+                                'payment_status' => "Unpaid",
+                                'payment_method' => "Bank Transfer",
+                                'note' => "Penjualan Konsyinasi, referensi nota sale: " . $sale->reference,
+                                'tax_amount' => (int) Cart::instance('sale')->tax(),
+                                'discount_amount' => 0,
                             ]);
 
                             PurchaseDetail::create([
-                                'purchase_id'              => $purchase->id,
-                                'product_id'               => $cart_item->id,
-                                'product_name'             => $cart_item->name,
-                                'product_code'             => $cart_item->options->code,
-                                'quantity'                 => (int) $cart_item->qty,
-                                'price'                    => (int) $cart_item->options->product_cost,
-                                'unit_price'               => (int) $cart_item->options->unit_price,
-                                'sub_total'                => (int) ($cart_item->options->product_cost * $cart_item->qty),
-                                'warehouse_id'             => (int) $cart_item->options->warehouse_id,
-                                'product_discount_amount'  => (int) ($cart_item->options->unit_price - $cart_item->options->product_cost),
-                                'product_discount_type'    => "fixed",
-                                'product_tax_amount'       => 0,
+                                'purchase_id' => $purchase->id,
+                                'product_id' => $cart_item->id,
+                                'product_name' => $cart_item->name,
+                                'product_code' => $cart_item->options->code,
+                                'quantity' => (int) $cart_item->qty,
+                                'price' => (int) $cart_item->options->product_cost,
+                                'unit_price' => (int) $cart_item->options->unit_price,
+                                'sub_total' => (int) ($cart_item->options->product_cost * $cart_item->qty),
+                                'warehouse_id' => (int) $cart_item->options->warehouse_id,
+                                'product_discount_amount' => (int) ($cart_item->options->unit_price - $cart_item->options->product_cost),
+                                'product_discount_type' => "fixed",
+                                'product_tax_amount' => 0,
                             ]);
                         }
                     }
                 }
 
                 // ==========================================
-                // ✅ AUTO CREATE SALE DELIVERY (WAJIB) - TANPA SALE ORDER
-                // 1 invoice = 1 delivery (warehouse sudah dipaksa 1)
+                // ✅ AUTO CREATE SALE DELIVERY (WAJIB)
+                // - sekarang boleh multi-warehouse → system split per warehouse
                 // ==========================================
                 $this->autoCreateSaleDeliveryFromSale(
                     $sale,
@@ -306,11 +280,9 @@ class SaleController extends Controller
                 // ✅ Payment record (kalau paid_amount > 0)
                 // ==========================================
                 if ((int) $sale->paid_amount > 0) {
-
                     $depositCode = (string) ($request->deposit_code ?? '');
                     $depositCode = trim($depositCode);
 
-                    // UI kamu defaultnya "-" → itu HARUS ditolak
                     if ($depositCode === '' || $depositCode === '-') {
                         throw new \RuntimeException("Deposit To wajib dipilih jika Amount Received > 0.");
                     }
@@ -364,15 +336,6 @@ class SaleController extends Controller
         ?int $quotationId = null,
         ?int $saleOrderId = null
     ): void {
-
-        // idempotent: jangan bikin dobel
-        $exists = SaleDelivery::query()
-            ->where('branch_id', $branchId)
-            ->where('sale_id', (int) $sale->id)
-            ->exists();
-
-        if ($exists) return;
-
         // ambil detail invoice
         $details = SaleDetails::query()
             ->where('sale_id', (int) $sale->id)
@@ -382,78 +345,75 @@ class SaleController extends Controller
             throw new \RuntimeException('Cannot auto create Sale Delivery because invoice has no items.');
         }
 
-        // tentuin warehouse: harus 1 warehouse saja
-        $warehouseIds = $details->pluck('warehouse_id')
-            ->filter(fn($id) => (int)$id > 0)
-            ->unique()
-            ->values();
-
-        if ($warehouseIds->count() !== 1) {
-            // user friendly message
-            $whMap = Warehouse::query()
-                ->where('branch_id', $branchId)
-                ->whereIn('id', $warehouseIds->all())
-                ->pluck('warehouse_name', 'id')
-                ->toArray();
-
+        // validasi: semua detail wajib punya warehouse
+        $missing = $details->filter(fn($d) => (int)($d->warehouse_id ?? 0) <= 0);
+        if ($missing->isNotEmpty()) {
             $lines = [];
-            foreach ($details as $d) {
-                $wid = (int) ($d->warehouse_id ?? 0);
-                $wName = $wid > 0 ? ($whMap[$wid] ?? ('WH#' . $wid)) : '-';
-                $lines[] = "- {$d->product_name} (qty {$d->quantity}) → Warehouse: {$wName}";
+            foreach ($missing as $d) {
+                $lines[] = "- {$d->product_name} (qty {$d->quantity})";
             }
-
-            $msg = "Cannot auto create Sale Delivery because invoice items are from multiple warehouses.\n\n"
-                . "Please create separate invoice per warehouse.\n\n"
-                . "Items detail:\n" . implode("\n", $lines);
+            $msg = "Cannot auto create Sale Delivery because some invoice items do not have Warehouse.\n\n"
+                . "Please set Warehouse per item.\n\n"
+                . "Items without warehouse:\n" . implode("\n", $lines);
 
             throw new \RuntimeException($msg);
         }
 
-        $warehouseId = (int) $warehouseIds->first();
+        // group by warehouse_id
+        $groupByWarehouse = $details->groupBy(function ($d) {
+            return (int) $d->warehouse_id;
+        });
 
-        if ($warehouseId <= 0) {
-            throw new \RuntimeException('Cannot auto create Sale Delivery. Warehouse is not determined on invoice items.');
-        }
+        foreach ($groupByWarehouse as $warehouseId => $rows) {
+            $warehouseId = (int) $warehouseId;
+            if ($warehouseId <= 0) continue;
 
-        // NOTE:
-        // - saleOrderId sengaja tidak dipakai untuk direct invoice flow
-        // - biar tidak membuat hubungan palsu ke SO
+            // ✅ idempotent PER warehouse
+            $exists = SaleDelivery::query()
+                ->where('branch_id', $branchId)
+                ->where('sale_id', (int) $sale->id)
+                ->where('warehouse_id', $warehouseId)
+                ->exists();
 
-        $delivery = SaleDelivery::create([
-            'branch_id'     => $branchId,
-            'quotation_id'  => $quotationId,
-            'sale_id'       => (int) $sale->id,
-            'sale_order_id' => null, // ✅ NO sale order
-            'customer_id'   => (int) $sale->customer_id,
-            'date'          => (string) $sale->getRawOriginal('date'),
-            'warehouse_id'  => $warehouseId,
-            'status'        => 'pending',
-            'note'          => 'Auto generated from Invoice #' . ($sale->reference ?? $sale->id),
-            'created_by'    => auth()->id(),
-        ]);
+            if ($exists) {
+                continue;
+            }
 
-        // agregasi per product_id (karena sale_details bisa berulang)
-        $grouped = $details->groupBy('product_id');
-
-        foreach ($grouped as $productId => $rows) {
-            $qty = (int) $rows->sum('quantity');
-            if ($qty <= 0) continue;
-
-            $price = (int) ($rows->first()->price ?? 0);
-
-            SaleDeliveryItem::create([
-                'sale_delivery_id' => (int) $delivery->id,
-                'product_id'       => (int) $productId,
-                'quantity'         => $qty,
-                'price'            => $price > 0 ? $price : null,
+            $delivery = SaleDelivery::create([
+                'branch_id' => $branchId,
+                'quotation_id' => $quotationId,
+                'sale_id' => (int) $sale->id,
+                'sale_order_id' => null, // ✅ NO sale order for invoice-first
+                'customer_id' => (int) $sale->customer_id,
+                'date' => (string) $sale->getRawOriginal('date'),
+                'warehouse_id' => $warehouseId,
+                'status' => 'pending',
+                'note' => 'Auto generated from Invoice #' . ($sale->reference ?? $sale->id)
+                    . ' | Payment: ' . ((string)($sale->payment_status ?? '')),
+                'created_by' => auth()->id(),
             ]);
-        }
 
-        if (empty($delivery->reference)) {
-            $delivery->update([
-                'reference' => make_reference_id('SDO', (int) $delivery->id),
-            ]);
+            // agregasi per product_id di warehouse tersebut
+            $grouped = $rows->groupBy('product_id');
+            foreach ($grouped as $productId => $productRows) {
+                $qty = (int) $productRows->sum('quantity');
+                if ($qty <= 0) continue;
+
+                $price = (int) ($productRows->first()->price ?? 0);
+
+                SaleDeliveryItem::create([
+                    'sale_delivery_id' => (int) $delivery->id,
+                    'product_id' => (int) $productId,
+                    'quantity' => $qty,
+                    'price' => $price > 0 ? $price : null,
+                ]);
+            }
+
+            if (empty($delivery->reference)) {
+                $delivery->update([
+                    'reference' => make_reference_id('SDO', (int) $delivery->id),
+                ]);
+            }
         }
     }
 
