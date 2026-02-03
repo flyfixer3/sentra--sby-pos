@@ -33,6 +33,39 @@
     foreach(($plannedRemainingMap ?? []) as $rem){
         if ((int)$rem > 0) { $hasPlannedRemaining = true; break; }
     }
+
+    // ✅ Link Quotation + Sale (Invoice)
+    $quotationId = $saleOrder->quotation_id ? (int) $saleOrder->quotation_id : null;
+    $saleId      = $saleOrder->sale_id ? (int) $saleOrder->sale_id : null;
+
+    // route names yang mungkin dipakai project:
+    // - Quotation: quotations.show / quotation.show / sale-quotations.show / etc
+    // - Sale Invoice: sales.show / sale.show / invoices.show / etc
+    // Kita pakai route() hanya kalau route exists, supaya tidak error.
+
+    $quotationUrl = null;
+    if ($quotationId) {
+        if (\Illuminate\Support\Facades\Route::has('quotations.show')) {
+            $quotationUrl = route('quotations.show', $quotationId);
+        } elseif (\Illuminate\Support\Facades\Route::has('quotation.show')) {
+            $quotationUrl = route('quotation.show', $quotationId);
+        } elseif (\Illuminate\Support\Facades\Route::has('sale-quotations.show')) {
+            $quotationUrl = route('sale-quotations.show', $quotationId);
+        }
+    }
+
+    $saleUrl = null;
+    if ($saleId) {
+        if (\Illuminate\Support\Facades\Route::has('sales.show')) {
+            $saleUrl = route('sales.show', $saleId);
+        } elseif (\Illuminate\Support\Facades\Route::has('sale.show')) {
+            $saleUrl = route('sale.show', $saleId);
+        } elseif (\Illuminate\Support\Facades\Route::has('invoices.show')) {
+            $saleUrl = route('invoices.show', $saleId);
+        } elseif (\Illuminate\Support\Facades\Route::has('sale-invoices.show')) {
+            $saleUrl = route('sale-invoices.show', $saleId);
+        }
+    }
 @endphp
 
 <div class="container-fluid">
@@ -51,9 +84,37 @@
                         • Customer: <strong>{{ $saleOrder->customer?->customer_name ?? '-' }}</strong>
                     </div>
 
+                    {{-- ✅ LINKABLE Quotation + Invoice --}}
                     <div class="text-muted small mt-1">
-                        Quotation: <strong>{{ $saleOrder->quotation_id ? ('#'.$saleOrder->quotation_id) : '-' }}</strong>
-                        • Invoice (Sale): <strong>{{ $saleOrder->sale_id ? ('#'.$saleOrder->sale_id) : '-' }}</strong>
+                        Quotation:
+                        <strong>
+                            @if($quotationId)
+                                @if($quotationUrl)
+                                    <a href="{{ $quotationUrl }}" class="text-decoration-none">
+                                        #{{ $quotationId }}
+                                    </a>
+                                @else
+                                    #{{ $quotationId }}
+                                @endif
+                            @else
+                                -
+                            @endif
+                        </strong>
+
+                        • Invoice (Sale):
+                        <strong>
+                            @if($saleId)
+                                @if($saleUrl)
+                                    <a href="{{ $saleUrl }}" class="text-decoration-none">
+                                        #{{ $saleId }}
+                                    </a>
+                                @else
+                                    #{{ $saleId }}
+                                @endif
+                            @else
+                                -
+                            @endif
+                        </strong>
                     </div>
                 </div>
 
@@ -68,6 +129,28 @@
                             <button class="btn btn-secondary" disabled>
                                 <i class="bi bi-check2-circle"></i> All Items Planned
                             </button>
+                        @endif
+                    @endcan
+
+                    {{-- ✅ Edit/Delete only when pending --}}
+                    @can('edit_sale_orders')
+                        @if($status === 'pending')
+                            <a href="{{ route('sale-orders.edit', $saleOrder->id) }}" class="btn btn-outline-primary">
+                                <i class="bi bi-pencil"></i> Edit
+                            </a>
+                        @endif
+                    @endcan
+
+                    @can('delete_sale_orders')
+                        @if($status === 'pending')
+                            <form action="{{ route('sale-orders.destroy', $saleOrder->id) }}" method="POST"
+                                  onsubmit="return confirm('Delete this Sale Order? This cannot be undone.')">
+                                @csrf
+                                @method('DELETE')
+                                <button type="submit" class="btn btn-outline-danger">
+                                    <i class="bi bi-trash"></i> Delete
+                                </button>
+                            </form>
                         @endif
                     @endcan
 

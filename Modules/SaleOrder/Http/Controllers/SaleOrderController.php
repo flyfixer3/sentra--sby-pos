@@ -18,6 +18,12 @@ use Modules\SaleOrder\Entities\SaleOrderItem;
 
 class SaleOrderController extends Controller
 {
+    private function failBack(string $message, int $status = 422)
+    {
+        toast($message, 'error');
+        return redirect()->back()->withInput();
+    }
+
     public function index(SaleOrdersDataTable $dataTable)
     {
         abort_if(Gate::denies('access_sale_orders'), 403);
@@ -47,7 +53,7 @@ class SaleOrderController extends Controller
         abort_unless(in_array($source, ['manual', 'quotation', 'sale'], true), 403);
 
         $prefillCustomerId = null;
-        $prefillWarehouseId = null;
+        $prefillWarehouseId = null; // (opsional, tapi nanti kita bisa set NULL)
         $prefillDate = date('Y-m-d');
         $prefillNote = null;
         $prefillItems = [];
@@ -64,10 +70,7 @@ class SaleOrderController extends Controller
                 ->firstOrFail();
 
             $prefillCustomerId = (int) $quotation->customer_id;
-
-            // ✅ KRUSIAL: ambil raw date dari DB (Y-m-d), jangan pakai accessor (d M, Y)
             $prefillDate = (string) $quotation->getRawOriginal('date');
-
             $prefillNote = 'Created from Quotation #' . ($quotation->reference ?? $quotation->id);
             $prefillRefText = 'Quotation: ' . ($quotation->reference ?? $quotation->id);
 
@@ -91,10 +94,7 @@ class SaleOrderController extends Controller
                 ->firstOrFail();
 
             $prefillCustomerId = (int) $sale->customer_id;
-
-            // ✅ Sama: ambil raw date (Y-m-d) agar valid untuk <input type="date">
             $prefillDate = (string) $sale->getRawOriginal('date');
-
             $prefillNote = 'Created from Invoice #' . ($sale->reference ?? $sale->id);
             $prefillRefText = 'Invoice: ' . ($sale->reference ?? $sale->id);
 
@@ -106,7 +106,6 @@ class SaleOrderController extends Controller
                 ];
             }
 
-            // kalau semua item invoice di warehouse yang sama, boleh auto set
             $whIds = $sale->saleDetails->pluck('warehouse_id')->filter()->unique()->values();
             if ($whIds->count() === 1) {
                 $prefillWarehouseId = (int) $whIds->first();
@@ -114,9 +113,9 @@ class SaleOrderController extends Controller
         }
 
         $products = Product::query()
-                    ->orderBy('product_name')
-                    ->limit(500)
-                    ->get();
+            ->orderBy('product_name')
+            ->limit(500)
+            ->get();
 
         return view('saleorder::create', compact(
             'customers',
@@ -136,149 +135,118 @@ class SaleOrderController extends Controller
     {
         abort_if(Gate::denies('create_sale_orders'), 403);
 
-        $branchId = BranchContext::id();
+        try {
+            $branchId = BranchContext::id();
 
-        $source = (string) $request->get('source', 'manual');
-        abort_unless(in_array($source, ['manual', 'quotation', 'sale'], true), 403);
+            $source = (string) $request->get('source', 'manual');
+            abort_unless(in_array($source, ['manual', 'quotation', 'sale'], true), 403);
 
-        $rules = [
-            'date' => 'required|date',
-            'customer_id' => 'required|integer',
+            $rules = [
+                'date' => 'required|date',
+                'customer_id' => 'required|integer',
 
-            // ✅ REQUIRED untuk manual + quotation. Nullable hanya untuk sale (karena bisa auto prefill / user pilih).
-            'warehouse_id' => ($source === 'sale') ? 'nullable|integer' : 'required|integer',
+                // ✅ Saran kita: warehouse di SO jangan bikin bingung -> boleh nullable selalu
+                'warehouse_id' => 'nullable|integer',
 
-            'note' => 'nullable|string|max:5000',
-            'items' => 'required|array|min:1',
-            'items.*.product_id' => 'required|integer',
-            'items.*.quantity' => 'required|integer|min:1',
-            'items.*.price' => 'nullable|integer|min:0',
-        ];
+                'note' => 'nullable|string|max:5000',
+                'items' => 'required|array|min:1',
+                'items.*.product_id' => 'required|integer',
+                'items.*.quantity' => 'required|integer|min:1',
+                'items.*.price' => 'nullable|integer|min:0',
+            ];
 
-        if ($source === 'quotation') $rules['quotation_id'] = 'required|integer';
-        if ($source === 'sale') $rules['sale_id'] = 'required|integer';
+            if ($source === 'quotation') $rules['quotation_id'] = 'required|integer';
+            if ($source === 'sale') $rules['sale_id'] = 'required|integer';
 
-        $request->validate($rules);
+            $request->validate($rules);
 
-        $saleOrderId = null;
+            $saleOrderId = null;
 
-        DB::transaction(function () use ($request, $branchId, $source, &$saleOrderId) {
+            DB::transaction(function () use ($request, $branchId, $source, &$saleOrderId) {
 
-            // validasi customer global/branch
-            $customer = Customer::query()
-                ->where('id', (int) $request->customer_id)
-                ->where(function ($q) use ($branchId) {
-                    $q->whereNull('branch_id')
-                        ->orWhere('branch_id', $branchId);
-                })
-                ->firstOrFail();
-
-            $quotationId = null;
-            $saleId = null;
-
-            if ($source === 'quotation') {
-                $quotationId = (int) $request->quotation_id;
-
-                Quotation::query()
-                    ->where('id', $quotationId)
-                    ->where('branch_id', $branchId)
+                $customer = Customer::query()
+                    ->where('id', (int) $request->customer_id)
+                    ->where(function ($q) use ($branchId) {
+                        $q->whereNull('branch_id')
+                            ->orWhere('branch_id', $branchId);
+                    })
                     ->firstOrFail();
 
-                // optional: cegah double SO untuk quotation yang sama
-                $exists = SaleOrder::query()
-                    ->where('branch_id', $branchId)
-                    ->where('quotation_id', $quotationId)
-                    ->exists();
+                $quotationId = null;
+                $saleId = null;
 
-                if ($exists) {
-                    abort(422, 'Sale Order for this quotation already exists.');
+                if ($source === 'quotation') {
+                    $quotationId = (int) $request->quotation_id;
+
+                    Quotation::query()
+                        ->where('id', $quotationId)
+                        ->where('branch_id', $branchId)
+                        ->firstOrFail();
+
+                    $exists = SaleOrder::query()
+                        ->where('branch_id', $branchId)
+                        ->where('quotation_id', $quotationId)
+                        ->exists();
+
+                    if ($exists) {
+                        abort(422, 'Sale Order for this quotation already exists.');
+                    }
                 }
-            }
 
-            if ($source === 'sale') {
-                $saleId = (int) $request->sale_id;
+                if ($source === 'sale') {
+                    $saleId = (int) $request->sale_id;
 
-                Sale::query()
-                    ->where('id', $saleId)
-                    ->where('branch_id', $branchId)
-                    ->firstOrFail();
+                    Sale::query()
+                        ->where('id', $saleId)
+                        ->where('branch_id', $branchId)
+                        ->firstOrFail();
 
-                // optional: cegah double SO untuk invoice yang sama
-                $exists = SaleOrder::query()
-                    ->where('branch_id', $branchId)
-                    ->where('sale_id', $saleId)
-                    ->exists();
+                    $exists = SaleOrder::query()
+                        ->where('branch_id', $branchId)
+                        ->where('sale_id', $saleId)
+                        ->exists();
 
-                if ($exists) {
-                    abort(422, 'Sale Order for this invoice already exists.');
+                    if ($exists) {
+                        abort(422, 'Sale Order for this invoice already exists.');
+                    }
                 }
-            }
 
-            // ✅ warehouse validation (kalau required/filled)
-            $warehouseId = $request->warehouse_id ? (int) $request->warehouse_id : null;
-            if ($warehouseId) {
-                Warehouse::query()
-                    ->where('branch_id', $branchId)
-                    ->where('id', $warehouseId)
-                    ->firstOrFail();
-            }
+                // ✅ warehouse di SO kita set NULL biar gak redundant
+                $warehouseId = null;
 
-            $so = SaleOrder::create([
-                'branch_id' => $branchId,
-                'customer_id' => (int) $customer->id,
-                'quotation_id' => $quotationId,
-                'sale_id' => $saleId,
-                'warehouse_id' => $warehouseId,
-                'date' => $request->date,
-                'status' => 'pending',
-                'note' => $request->note,
-            ]);
-
-            $saleOrderId = (int) $so->id;
-
-            foreach ($request->items as $row) {
-                SaleOrderItem::create([
-                    'sale_order_id' => $so->id,
-                    'product_id' => (int) $row['product_id'],
-                    'quantity' => (int) $row['quantity'],
-                    'price' => array_key_exists('price', $row) && $row['price'] !== null ? (int) $row['price'] : null,
+                $so = SaleOrder::create([
+                    'branch_id' => $branchId,
+                    'customer_id' => (int) $customer->id,
+                    'quotation_id' => $quotationId,
+                    'sale_id' => $saleId,
+                    'warehouse_id' => null,
+                    'date' => $request->date,
+                    'status' => 'pending',
+                    'note' => $request->note,
                 ]);
-            }
 
-            // ✅ Requirement E:
-            // kalau sudah pernah dibuat SO ATAU SD dari quotation => quotation status Completed
-            $qid = (int) ($so->quotation_id ?? 0);
-            if ($qid > 0) {
-                $this->markQuotationCompletedIfHasChildren($qid, (int) $branchId);
-            }
-        });
+                $saleOrderId = (int) $so->id;
 
-        toast('Sale Order Created!', 'success');
-        return redirect()->route('sale-orders.show', $saleOrderId);
-    }
+                foreach ($request->items as $row) {
+                    SaleOrderItem::create([
+                        'sale_order_id' => $so->id,
+                        'product_id' => (int) $row['product_id'],
+                        'quantity' => (int) $row['quantity'],
+                        'price' => array_key_exists('price', $row) && $row['price'] !== null ? (int) $row['price'] : null,
+                    ]);
+                }
 
-    private function markQuotationCompletedIfHasChildren(int $quotationId, int $branchId): void
-    {
-        // Rule: kalau ada minimal 1 SO atau 1 SD dari quotation => Completed
+                $qid = (int) ($so->quotation_id ?? 0);
+                if ($qid > 0) {
+                    $this->markQuotationCompletedIfHasChildren($qid, (int) $branchId);
+                }
+            });
 
-        $hasSO = DB::table('sale_orders')
-            ->where('branch_id', $branchId)
-            ->where('quotation_id', $quotationId)
-            ->exists();
+            toast('Sale Order Created!', 'success');
+            return redirect()->route('sale-orders.show', $saleOrderId);
 
-        $hasSD = DB::table('sale_deliveries')
-            ->where('branch_id', $branchId)
-            ->where('quotation_id', $quotationId)
-            ->exists();
-
-        if ($hasSO || $hasSD) {
-            DB::table('quotations')
-                ->where('branch_id', $branchId)
-                ->where('id', $quotationId)
-                ->update([
-                    'status' => 'Completed',
-                    'updated_at' => now(),
-                ]);
+        } catch (\Throwable $e) {
+            return $this->failBack($e->getMessage(), 422);
         }
     }
 
@@ -300,14 +268,216 @@ class SaleOrderController extends Controller
             },
         ]);
 
-        $remainingMap = $this->getRemainingQtyBySaleOrder($saleOrder->id); // confirmed-based (status)
-        $plannedRemainingMap = $this->getPlannedRemainingQtyBySaleOrder($saleOrder->id); // include pending
+        $remainingMap = $this->getRemainingQtyBySaleOrder($saleOrder->id);
+        $plannedRemainingMap = $this->getPlannedRemainingQtyBySaleOrder($saleOrder->id);
 
         return view('saleorder::show', compact(
             'saleOrder',
             'remainingMap',
             'plannedRemainingMap'
         ));
+    }
+
+    // =========================
+    // ✅ NEW: EDIT SALE ORDER
+    // =========================
+    public function edit(SaleOrder $saleOrder)
+    {
+        abort_if(Gate::denies('edit_sale_orders'), 403);
+
+        try {
+            $branchId = BranchContext::id();
+
+            if ((int) $saleOrder->branch_id !== (int) $branchId) {
+                throw new \RuntimeException('Wrong branch context.');
+            }
+
+            $st = strtolower((string) ($saleOrder->status ?? 'pending'));
+            if ($st !== 'pending') {
+                throw new \RuntimeException('Only pending Sale Order can be edited.');
+            }
+
+            $saleOrder->load(['items']);
+
+            $customers = Customer::query()
+                ->where(function ($q) use ($branchId) {
+                    $q->whereNull('branch_id')
+                      ->orWhere('branch_id', $branchId);
+                })
+                ->orderBy('customer_name')
+                ->get();
+
+            $products = Product::query()
+                ->orderBy('product_name')
+                ->limit(500)
+                ->get();
+
+            // convert items to prefill format for Livewire
+            $items = $saleOrder->items->map(function ($it) {
+                return [
+                    'product_id' => (int) $it->product_id,
+                    'quantity'   => (int) $it->quantity,
+                    'price'      => $it->price !== null ? (int) $it->price : null,
+                ];
+            })->values()->toArray();
+
+            return view('saleorder::edit', compact(
+                'saleOrder',
+                'customers',
+                'products',
+                'items'
+            ));
+        } catch (\Throwable $e) {
+            return $this->failBack($e->getMessage(), 422);
+        }
+    }
+
+    // =========================
+    // ✅ NEW: UPDATE SALE ORDER
+    // =========================
+    public function update(Request $request, SaleOrder $saleOrder)
+    {
+        abort_if(Gate::denies('edit_sale_orders'), 403);
+
+        try {
+            $branchId = BranchContext::id();
+
+            if ((int) $saleOrder->branch_id !== (int) $branchId) {
+                throw new \RuntimeException('Wrong branch context.');
+            }
+
+            $st = strtolower((string) ($saleOrder->status ?? 'pending'));
+            if ($st !== 'pending') {
+                throw new \RuntimeException('Only pending Sale Order can be edited.');
+            }
+
+            $request->validate([
+                'date' => 'required|date',
+                'customer_id' => 'required|integer',
+                'note' => 'nullable|string|max:5000',
+
+                'items' => 'required|array|min:1',
+                'items.*.product_id' => 'required|integer',
+                'items.*.quantity' => 'required|integer|min:1',
+                'items.*.price' => 'nullable|integer|min:0',
+            ]);
+
+            DB::transaction(function () use ($request, $saleOrder, $branchId) {
+
+                $saleOrder = SaleOrder::query()
+                    ->lockForUpdate()
+                    ->with(['items'])
+                    ->findOrFail((int) $saleOrder->id);
+
+                $st = strtolower((string) ($saleOrder->status ?? 'pending'));
+                if ($st !== 'pending') {
+                    throw new \RuntimeException('Only pending Sale Order can be edited.');
+                }
+
+                $customer = Customer::query()
+                    ->where('id', (int) $request->customer_id)
+                    ->where(function ($q) use ($branchId) {
+                        $q->whereNull('branch_id')
+                          ->orWhere('branch_id', $branchId);
+                    })
+                    ->firstOrFail();
+
+                // ✅ warehouse di SO kita keep NULL (biar gak redundant)
+                $saleOrder->update([
+                    'date' => $request->date,
+                    'customer_id' => (int) $customer->id,
+                    'warehouse_id' => null,
+                    'note' => $request->note,
+                ]);
+
+                // replace items (pending only)
+                SaleOrderItem::query()
+                    ->where('sale_order_id', (int) $saleOrder->id)
+                    ->delete();
+
+                foreach ($request->items as $row) {
+                    SaleOrderItem::create([
+                        'sale_order_id' => (int) $saleOrder->id,
+                        'product_id' => (int) $row['product_id'],
+                        'quantity' => (int) $row['quantity'],
+                        'price' => array_key_exists('price', $row) && $row['price'] !== null ? (int) $row['price'] : null,
+                    ]);
+                }
+            });
+
+            toast('Sale Order updated!', 'success');
+            return redirect()->route('sale-orders.show', $saleOrder->id);
+
+        } catch (\Throwable $e) {
+            return $this->failBack($e->getMessage(), 422);
+        }
+    }
+
+    // =========================
+    // ✅ NEW: DELETE SALE ORDER
+    // =========================
+    public function destroy(SaleOrder $saleOrder)
+    {
+        abort_if(Gate::denies('delete_sale_orders'), 403);
+
+        try {
+            $branchId = BranchContext::id();
+
+            if ((int) $saleOrder->branch_id !== (int) $branchId) {
+                throw new \RuntimeException('Wrong branch context.');
+            }
+
+            $st = strtolower((string) ($saleOrder->status ?? 'pending'));
+            if ($st !== 'pending') {
+                throw new \RuntimeException('Only pending Sale Order can be deleted.');
+            }
+
+            // ✅ safety: kalau sudah ada Sale Delivery turunan, jangan boleh delete
+            $hasDelivery = DB::table('sale_deliveries')
+                ->where('sale_order_id', (int) $saleOrder->id)
+                ->exists();
+
+            if ($hasDelivery) {
+                throw new \RuntimeException('Cannot delete. This Sale Order already has Sale Deliveries.');
+            }
+
+            DB::transaction(function () use ($saleOrder) {
+                SaleOrderItem::query()
+                    ->where('sale_order_id', (int) $saleOrder->id)
+                    ->delete();
+
+                $saleOrder->delete();
+            });
+
+            toast('Sale Order deleted!', 'warning');
+            return redirect()->route('sale-orders.index');
+
+        } catch (\Throwable $e) {
+            return $this->failBack($e->getMessage(), 422);
+        }
+    }
+
+    private function markQuotationCompletedIfHasChildren(int $quotationId, int $branchId): void
+    {
+        $hasSO = DB::table('sale_orders')
+            ->where('branch_id', $branchId)
+            ->where('quotation_id', $quotationId)
+            ->exists();
+
+        $hasSD = DB::table('sale_deliveries')
+            ->where('branch_id', $branchId)
+            ->where('quotation_id', $quotationId)
+            ->exists();
+
+        if ($hasSO || $hasSD) {
+            DB::table('quotations')
+                ->where('branch_id', $branchId)
+                ->where('id', $quotationId)
+                ->update([
+                    'status' => 'Completed',
+                    'updated_at' => now(),
+                ]);
+        }
     }
 
     private function getRemainingQtyBySaleOrder(int $saleOrderId): array
@@ -363,20 +533,17 @@ class SaleOrderController extends Controller
             ->groupBy('product_id')
             ->get();
 
-        // include PENDING too (plan / allocation)
         $planned = DB::table('sale_delivery_items as sdi')
             ->join('sale_deliveries as sd', 'sd.id', '=', 'sdi.sale_delivery_id')
             ->where('sd.sale_order_id', $saleOrderId)
-            ->whereIn(DB::raw('LOWER(sd.status)'), ['pending', 'confirmed']) // include pending
-            ->select(
-                'sdi.product_id',
-                DB::raw('SUM(COALESCE(sdi.quantity,0)) as qty')
-            )
+            ->whereIn(DB::raw('LOWER(sd.status)'), ['pending', 'confirmed'])
+            ->select('sdi.product_id', DB::raw('SUM(COALESCE(sdi.quantity,0)) as qty'))
             ->groupBy('sdi.product_id')
             ->get()
             ->keyBy('product_id');
 
         $remaining = [];
+
         foreach ($ordered as $row) {
             $pid = (int) $row->product_id;
             $orderedQty = (int) $row->qty;
@@ -390,5 +557,4 @@ class SaleOrderController extends Controller
 
         return $remaining;
     }
-
 }

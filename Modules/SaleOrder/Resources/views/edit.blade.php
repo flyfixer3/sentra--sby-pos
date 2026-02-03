@@ -1,25 +1,24 @@
 @extends('layouts.app')
 
-@section('title', 'Create Sale Order')
+@section('title', "Edit Sale Order #{$saleOrder->reference}")
 
 @section('breadcrumb')
     <ol class="breadcrumb border-0 m-0">
         <li class="breadcrumb-item"><a href="{{ route('home') }}">Home</a></li>
         <li class="breadcrumb-item"><a href="{{ route('sale-orders.index') }}">Sale Orders</a></li>
-        <li class="breadcrumb-item active">Create</li>
+        <li class="breadcrumb-item"><a href="{{ route('sale-orders.show', $saleOrder->id) }}">Details</a></li>
+        <li class="breadcrumb-item active">Edit</li>
     </ol>
 @endsection
 
 @section('content')
 @php
-    $items = old('items', $prefillItems ?? []);
-    if (!is_array($items) || count($items) === 0) {
-        $items = [];
-    }
+    $items = old('items', $items ?? []);
+    if (!is_array($items)) $items = [];
 @endphp
 
 <div class="container-fluid mb-4">
-    {{-- ✅ search bar (komponen yang sama seperti Transfer) --}}
+    {{-- ✅ search bar (komponen yang sama seperti Transfer / Create) --}}
     <div class="row">
         <div class="col-12">
             <livewire:search-product />
@@ -32,43 +31,41 @@
             <div class="card">
                 <div class="card-header d-flex flex-wrap align-items-center">
                     <div>
-                        <strong>Create Sale Order</strong>
-                        @if(!empty($prefillRefText))
-                            <div class="text-muted small">{{ $prefillRefText }}</div>
-                        @endif
+                        <strong>Edit Sale Order</strong>
+                        <div class="text-muted small">
+                            Reference: <span class="fw-bold">{{ $saleOrder->reference }}</span>
+                            • Status: <span class="badge bg-warning text-dark">{{ ucfirst($saleOrder->status) }}</span>
+                        </div>
+                    </div>
+
+                    <div class="mfs-auto d-flex gap-2">
+                        <a href="{{ route('sale-orders.show', $saleOrder->id) }}" class="btn btn-sm btn-light">
+                            Back
+                        </a>
                     </div>
                 </div>
 
                 <div class="card-body">
                     @include('utils.alerts')
 
-                    <form action="{{ route('sale-orders.store') }}" method="POST" id="soForm">
+                    <form action="{{ route('sale-orders.update', $saleOrder->id) }}" method="POST" id="soEditForm">
                         @csrf
-
-                        <input type="hidden" name="source" value="{{ $source }}">
-
-                        @if($source === 'quotation')
-                            <input type="hidden" name="quotation_id" value="{{ request('quotation_id') }}">
-                        @endif
-
-                        @if($source === 'sale')
-                            <input type="hidden" name="sale_id" value="{{ request('sale_id') }}">
-                        @endif
+                        @method('PUT')
 
                         <div class="row">
                             <div class="col-md-3 mb-3">
                                 <label class="form-label">Date</label>
                                 <input type="date" name="date" class="form-control"
-                                       value="{{ old('date', $prefillDate) }}" required>
+                                       value="{{ old('date', (string) $saleOrder->getRawOriginal('date')) }}" required>
                             </div>
 
-                            <div class="col-md-9 mb-3">
+                            <div class="col-md-5 mb-3">
                                 <label class="form-label">Customer</label>
                                 <select name="customer_id" class="form-control" required>
                                     <option value="">-- Choose --</option>
                                     @foreach($customers as $c)
                                         <option value="{{ $c->id }}"
-                                            {{ (int) old('customer_id', $prefillCustomerId) === (int) $c->id ? 'selected' : '' }}>
+                                            {{ (int) old('customer_id', $saleOrder->customer_id) === (int) $c->id ? 'selected' : '' }}>
                                             {{ $c->customer_name }}
                                         </option>
                                     @endforeach
@@ -77,26 +74,26 @@
 
                             <div class="col-md-12 mb-3">
                                 <label class="form-label">Note</label>
-                                <textarea name="note" class="form-control" rows="2">{{ old('note', $prefillNote) }}</textarea>
+                                <textarea name="note" class="form-control" rows="2">{{ old('note', $saleOrder->note) }}</textarea>
                                 <div class="small text-muted mt-1">
-                                    Warehouse tidak dipilih di Sale Order. Warehouse ditentukan saat membuat Sale Delivery (Stock Out).
+                                    Warehouse tidak diatur di Sale Order (dipilih saat membuat Sale Delivery).
                                 </div>
                             </div>
                         </div>
 
                         <hr>
 
-                        {{-- ✅ Items table: Livewire (selaras dengan Transfer style) --}}
+                        {{-- ✅ Items table: Livewire (selaras dengan Create) --}}
                         <div class="mt-2">
                             <livewire:sale-order.product-table :prefillItems="$items" />
                         </div>
 
                         <div class="d-flex justify-content-end gap-2 mt-3">
                             <button class="btn btn-primary" type="submit">
-                                <i class="bi bi-save"></i> Save Sale Order
+                                <i class="bi bi-save"></i> Save Changes
                             </button>
 
-                            <a href="{{ route('sale-orders.index') }}" class="btn btn-secondary">
+                            <a href="{{ route('sale-orders.show', $saleOrder->id) }}" class="btn btn-secondary">
                                 Cancel
                             </a>
                         </div>

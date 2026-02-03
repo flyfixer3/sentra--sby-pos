@@ -1,16 +1,5 @@
 <?php
 
-/*
-|--------------------------------------------------------------------------
-| Web Routes
-|--------------------------------------------------------------------------
-|
-| Here is where you can register web routes for your application. These
-| routes are loaded by the RouteServiceProvider within a group which
-| contains the "web" middleware group. Now create something great!
-|
-*/
-
 Route::group([
     'middleware' => ['auth'],
     'prefix' => 'sale-orders',
@@ -25,7 +14,18 @@ Route::group([
     Route::post('/', 'SaleOrderController@store')
         ->name('sale-orders.store');
 
+    // ✅ EDIT
+    Route::get('/{saleOrder}/edit', 'SaleOrderController@edit')
+        ->name('sale-orders.edit');
+
+    // ✅ UPDATE
+    Route::put('/{saleOrder}', 'SaleOrderController@update')
+        ->name('sale-orders.update');
+
     Route::get('/{saleOrder}', 'SaleOrderController@show')
         ->name('sale-orders.show');
-});
 
+    // ✅ DELETE
+    Route::delete('/{saleOrder}', 'SaleOrderController@destroy')
+        ->name('sale-orders.destroy');
+});
