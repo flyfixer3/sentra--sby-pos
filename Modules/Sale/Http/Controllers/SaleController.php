@@ -307,13 +307,21 @@ class SaleController extends Controller
                 // ==========================================
                 if ((int) $sale->paid_amount > 0) {
 
+                    $depositCode = (string) ($request->deposit_code ?? '');
+                    $depositCode = trim($depositCode);
+
+                    // UI kamu defaultnya "-" → itu HARUS ditolak
+                    if ($depositCode === '' || $depositCode === '-') {
+                        throw new \RuntimeException("Deposit To wajib dipilih jika Amount Received > 0.");
+                    }
+
                     $paymentData = [
                         'date' => $request->date,
                         'reference' => 'INV/' . $sale->reference,
                         'amount' => (int) $sale->paid_amount,
                         'sale_id' => (int) $sale->id,
                         'payment_method' => $request->payment_method,
-                        'deposit_code' => $request->deposit_code
+                        'deposit_code' => $depositCode,
                     ];
 
                     if (\Illuminate\Support\Facades\Schema::hasColumn('sale_payments', 'branch_id')) {

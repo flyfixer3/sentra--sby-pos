@@ -21,13 +21,37 @@ class Sale extends BaseModel
         return $this->hasMany(SalePayment::class, 'sale_id', 'id');
     }
 
-    public static function boot() {
+    public static function boot()
+    {
         parent::boot();
 
         static::creating(function ($model) {
-            // dd($model);
-            $number = Sale::count()+1;
-            $model->reference = make_sale_id('B', $number, $model);
+            // kalau sudah ada reference dari luar, biarkan
+            $ref = trim((string) ($model->reference ?? ''));
+
+            // kalau kosong atau "AUTO" maka isi dummy dulu supaya DB tidak null
+            if ($ref === '' || strtoupper($ref) === 'AUTO') {
+                $model->reference = 'TMP-' . strtoupper(\Illuminate\Support\Str::random(10));
+            }
+        });
+
+        static::created(function ($model) {
+            // kalau sudah INV-... skip
+            $ref = (string) ($model->reference ?? '');
+            if (str_starts_with($ref, 'INV-')) return;
+
+            $prefix = 'INV';
+
+            // pakai helper kalau ada
+            if (function_exists('make_reference_id')) {
+                $newRef = make_reference_id($prefix, (int) $model->id);
+            } else {
+                // fallback aman
+                $newRef = 'INV-' . str_pad((string) $model->id, 6, '0', STR_PAD_LEFT);
+            }
+
+            $model->reference = $newRef;
+            $model->saveQuietly();
         });
     }
 

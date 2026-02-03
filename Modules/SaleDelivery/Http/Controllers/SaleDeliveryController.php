@@ -1106,7 +1106,7 @@ class SaleDeliveryController extends Controller
                     throw new \RuntimeException('Invoice can be created only when Sale Delivery is CONFIRMED.');
                 }
 
-                // idempotent: kalau sudah ada sale_id dan memang ada record sales-nya
+                // ✅ 1 Delivery = 1 Invoice (idempotent)
                 if (!empty($saleDelivery->sale_id)) {
                     $exists = \Modules\Sale\Entities\Sale::query()
                         ->where('id', (int) $saleDelivery->sale_id)
@@ -1121,12 +1121,18 @@ class SaleDeliveryController extends Controller
                     }
                 }
 
+                // ✅ warehouse must exist
+                if (empty($saleDelivery->warehouse_id)) {
+                    throw new \RuntimeException('Cannot create invoice because Sale Delivery has no warehouse.');
+                }
+
                 // hitung total
                 $totalQty = 0;
                 $totalAmount = 0;
 
                 foreach ($saleDelivery->items as $it) {
                     $qty = (int) ($it->quantity ?? 0);
+
                     $price = $it->price !== null
                         ? (int) $it->price
                         : (int) ($it->product?->product_price ?? 0);
@@ -1166,6 +1172,11 @@ class SaleDeliveryController extends Controller
                     $saleData['branch_id'] = (int) $branchId;
                 }
 
+                // ✅ header warehouse_id (kalau ada)
+                if (\Illuminate\Support\Facades\Schema::hasColumn('sales', 'warehouse_id')) {
+                    $saleData['warehouse_id'] = (int) $saleDelivery->warehouse_id;
+                }
+
                 // total_quantity (kalau ada)
                 if (\Illuminate\Support\Facades\Schema::hasColumn('sales', 'total_quantity')) {
                     $saleData['total_quantity'] = (int) $totalQty;
@@ -1187,30 +1198,22 @@ class SaleDeliveryController extends Controller
                     $saleData['updated_by'] = (int) auth()->id();
                 }
 
-                // ✅ status column: ADA DI BEBERAPA PROJECT, TAPI DB KAMU TIDAK PUNYA
-                // jadi kita set hanya kalau kolomnya ada
+                // status column: hanya set kalau kolomnya ada
                 if (\Illuminate\Support\Facades\Schema::hasColumn('sales', 'status')) {
                     $saleData['status'] = 'Completed';
                 } elseif (\Illuminate\Support\Facades\Schema::hasColumn('sales', 'sale_status')) {
-                    // fallback kalau project kamu pakai nama ini
                     $saleData['sale_status'] = 'Completed';
-                }
-
-                // ✅ warehouse_id on sales (kalau kamu sudah punya kolomnya)
-                // Ini membantu kalau invoice 1 warehouse (case invoice dari delivery)
-                if (\Illuminate\Support\Facades\Schema::hasColumn('sales', 'warehouse_id')) {
-                    $saleData['warehouse_id'] = (int) $saleDelivery->warehouse_id;
                 }
 
                 // create sale (invoice)
                 $sale = \Modules\Sale\Entities\Sale::create($saleData);
 
-                // ✅ set reference kalau ada kolom reference dan masih kosong
+                // ✅ reference format NORMAL (INV)
                 if (\Illuminate\Support\Facades\Schema::hasColumn('sales', 'reference')) {
                     $ref = (string) ($sale->reference ?? '');
                     if (trim($ref) === '') {
                         $sale->update([
-                            'reference' => make_reference_id('BB', (int) $sale->id),
+                            'reference' => make_reference_id('INV', (int) $sale->id),
                         ]);
                     }
                 }
@@ -1237,7 +1240,7 @@ class SaleDeliveryController extends Controller
                         'product_tax_amount'      => 0,
                     ];
 
-                    // ✅ penting: invoice dari delivery ini pasti 1 warehouse
+                    // ✅ invoice dari delivery pasti 1 warehouse
                     if (\Illuminate\Support\Facades\Schema::hasColumn('sale_details', 'warehouse_id')) {
                         $detailData['warehouse_id'] = (int) $saleDelivery->warehouse_id;
                     }
@@ -1251,8 +1254,8 @@ class SaleDeliveryController extends Controller
 
                 // link invoice to delivery (1 delivery = 1 invoice)
                 $saleDelivery->update([
-                    'sale_id'     => (int) $sale->id,
-                    'updated_by'  => auth()->id(),
+                    'sale_id'    => (int) $sale->id,
+                    'updated_by' => auth()->id(),
                 ]);
 
                 $saleId = (int) $sale->id;
