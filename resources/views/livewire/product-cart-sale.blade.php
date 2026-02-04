@@ -10,29 +10,36 @@
                 </div>
             </div>
         @endif
+
         <div class="table-responsive position-relative">
-            <div wire:loading.flex class="col-12 position-absolute justify-content-center align-items-center" style="top:0;right:0;left:0;bottom:0;background-color: rgba(255,255,255,0.5);z-index: 99;">
+            <div
+                wire:loading.flex
+                class="col-12 position-absolute justify-content-center align-items-center"
+                style="top:0;right:0;left:0;bottom:0;background-color: rgba(255,255,255,0.5);z-index: 99;"
+            >
                 <div class="spinner-border text-primary" role="status">
                     <span class="sr-only">Loading...</span>
                 </div>
             </div>
+
             <div>
                 <h6>Total Quantity: {{ $global_qty }} Unit</h6>
             </div>
+
             <table class="table table-bordered">
                 <thead class="thead-dark">
-                <tr>
-                    <th class="align-middle">Product</th>
-                    <th class="align-middle">Sell Unit Price</th>
-                    <th class="align-middle">Warehouse</th>
-                    <th class="align-middle">Stock</th>
-                    <th class="align-middle">Quantity</th>
-                    <th class="align-middle">Discount</th>
-                    <th class="align-middle">Tax</th>
-                    <th class="align-middle">Sub Total</th>
-                    <th class="align-middle">Action</th>
-                </tr>
+                    <tr>
+                        <th class="align-middle">Product</th>
+                        <th class="align-middle">Sell Unit Price</th>
+                        <th class="align-middle">Stock</th>
+                        <th class="align-middle">Quantity</th>
+                        <th class="align-middle">Discount</th>
+                        <th class="align-middle">Tax</th>
+                        <th class="align-middle">Sub Total</th>
+                        <th class="align-middle">Action</th>
+                    </tr>
                 </thead>
+
                 <tbody>
                     @if($cart_items->isNotEmpty())
                         @foreach($cart_items as $cart_item)
@@ -45,14 +52,14 @@
                                     @include('livewire.includes.product-cart-modal-sale')
                                 </td>
 
-                                <td class="align-middle">{{ format_currency($cart_item->options->unit_price) }}</td>
-                                
-                                <td class="align-middle text-center">
-                                    @include('livewire.includes.product-cart-warehouse-sale')
+                                <td class="align-middle">
+                                    {{ format_currency($cart_item->options->unit_price) }}
                                 </td>
-                                
+
                                 <td class="align-middle text-center">
-                                    <span class="badge badge-info">{{ $cart_item->options->stock . ' ' . $cart_item->options->unit }}</span>
+                                    <span class="badge badge-info">
+                                        {{ $cart_item->options->stock . ' ' . $cart_item->options->unit }}
+                                    </span>
                                 </td>
 
                                 <td class="align-middle">
@@ -70,6 +77,7 @@
                                 <td class="align-middle">
                                     {{ format_currency($cart_item->options->sub_total) }}
                                 </td>
+
                                 <td class="align-middle text-center">
                                     <a href="#" wire:click.prevent="removeItem('{{ $cart_item->rowId }}')">
                                         <i class="bi bi-x-circle font-2xl text-danger"></i>
@@ -80,9 +88,9 @@
                     @else
                         <tr>
                             <td colspan="8" class="text-center">
-                        <span class="text-danger">
-                            Please search & select products!
-                        </span>
+                                <span class="text-danger">
+                                    Please search &amp; select products!
+                                </span>
                             </td>
                         </tr>
                     @endif
@@ -95,68 +103,109 @@
         <div class="col-md-4">
             <div class="table-responsive">
                 <table class="table table-striped">
-                @if($cart_instance == 'sale')
-                    <tr>
-                        <th>Platform Fee</th>
-                        <input type="hidden" value="{{ $platform_fee }}" name="fee_amount">
-                        <td>(+) {{ format_currency($platform_fee) }}</td>
-                    </tr>
-                @endif
+                    @if($cart_instance == 'sale')
+                        <tr>
+                            <th>Platform Fee</th>
+                            <td>(+) {{ format_currency($platform_fee) }}</td>
+                        </tr>
+                    @endif
+
                     <tr>
                         <th>Order Tax ({{ $global_tax }}%)</th>
                         <td>(+) {{ format_currency(Cart::instance($cart_instance)->tax()) }}</td>
                     </tr>
+
                     <tr>
                         <th>Discount ({{ $global_discount }}%)</th>
                         <td>(-) {{ format_currency(Cart::instance($cart_instance)->discount()) }}</td>
                     </tr>
+
                     <tr>
                         <th>Shipping</th>
-                        <input type="hidden" value="{{ $shipping }}" name="shipping_amount">
                         <td>(+) {{ format_currency($shipping) }}</td>
                     </tr>
+
                     <tr>
                         <th>Grand Total</th>
                         @php
-                            $total_with_shipping = Cart::instance($cart_instance)->total() + (float) $shipping + (float) $platform_fee
+                            $total_with_shipping = (float) Cart::instance($cart_instance)->total()
+                                + (float) $shipping
+                                + (float) ($cart_instance == 'sale' ? $platform_fee : 0);
                         @endphp
-                        <th>
-                            (=) {{ format_currency($total_with_shipping) }}
-                        </th>
+                        <th>(=) {{ format_currency($total_with_shipping) }}</th>
                     </tr>
                 </table>
             </div>
         </div>
     </div>
 
+    {{-- Yang dikirim ke backend (hindari field dobel) --}}
     <input type="hidden" name="total_amount" value="{{ $total_with_shipping }}">
-    <input type="hidden" name="total_quantity" value="{{ $global_qty}}">
+    <input type="hidden" name="total_quantity" value="{{ $global_qty }}">
 
     <div class="form-row">
-        <div class="{{$cart_instance == 'sale' ? 'col-lg-3' : 'col-lg-4'}}">
+        <div class="{{ $cart_instance == 'sale' ? 'col-lg-3' : 'col-lg-4' }}">
             <div class="form-group">
                 <label for="tax_percentage">Order Tax (%)</label>
-                <input wire:model.lazy="global_tax" type="number" class="form-control" name="tax_percentage" min="0" max="100" value="{{ $global_tax }}" required>
+                <input
+                    wire:model.lazy="global_tax"
+                    type="number"
+                    class="form-control"
+                    name="tax_percentage"
+                    min="0"
+                    max="100"
+                    value="{{ $global_tax }}"
+                    required
+                >
             </div>
         </div>
-        <div class="{{$cart_instance == 'sale' ? 'col-lg-3' : 'col-lg-4'}}">
+
+        <div class="{{ $cart_instance == 'sale' ? 'col-lg-3' : 'col-lg-4' }}">
             <div class="form-group">
                 <label for="discount_percentage">Discount (%)</label>
-                <input wire:model.lazy="global_discount" type="number" class="form-control" name="discount_percentage" min="0" max="100" value="{{ $global_discount }}" required>
+                <input
+                    wire:model.lazy="global_discount"
+                    type="number"
+                    class="form-control"
+                    name="discount_percentage"
+                    min="0"
+                    max="100"
+                    value="{{ $global_discount }}"
+                    required
+                >
             </div>
         </div>
-        <!-- @if($cart_instance == 'sale') -->
-        <div class="col-lg-3">
-            <div class="form-group">
-                <label for="fee_amount">Platform Fee</label>
-                <input wire:model.lazy="platform_fee" type="number" class="form-control" name="fee_amount" min="0" value="0" required>
+
+        @if($cart_instance == 'sale')
+            <div class="col-lg-3">
+                <div class="form-group">
+                    <label for="fee_amount">Platform Fee</label>
+                    <input
+                        wire:model.lazy="platform_fee"
+                        type="number"
+                        class="form-control"
+                        name="fee_amount"
+                        min="0"
+                        value="{{ $platform_fee }}"
+                        required
+                    >
+                </div>
             </div>
-        </div>
-        <!-- @endif -->
+        @endif
+
         <div class="col-lg-3">
             <div class="form-group">
                 <label for="shipping_amount">Shipping</label>
-                <input wire:model.lazy="shipping" type="number" class="form-control" name="shipping_amount" min="0" value="0" required step="0.01">
+                <input
+                    wire:model.lazy="shipping"
+                    type="number"
+                    class="form-control"
+                    name="shipping_amount"
+                    min="0"
+                    value="{{ $shipping }}"
+                    required
+                    step="0.01"
+                >
             </div>
         </div>
     </div>

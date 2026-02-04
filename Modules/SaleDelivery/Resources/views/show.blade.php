@@ -51,8 +51,6 @@
 
                     <div class="text-muted small mt-1">
                         Date: <strong>{{ $dateText }}</strong>
-                        <span class="mx-1">•</span>
-                        Warehouse: <strong>{{ $saleDelivery->warehouse?->warehouse_name ?? '-' }}</strong>
                     </div>
 
                     <div class="text-muted small mt-1">
@@ -250,6 +248,45 @@
 
         </div>
     </div>
+
+    @if(strtolower((string)$saleDelivery->status) === 'confirmed')
+        <div class="card mt-3">
+            <div class="card-header">
+                <strong>Stock Out Log (Mutation)</strong>
+            </div>
+            <div class="card-body">
+                @if(isset($mutations) && $mutations->count() > 0)
+                    <div class="table-responsive">
+                        <table class="table table-bordered mb-0">
+                            <thead>
+                                <tr>
+                                    <th>Product</th>
+                                    <th>Warehouse</th>
+                                    <th>Qty Out</th>
+                                    <th>Note</th>
+                                    <th>Date</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach($mutations as $m)
+                                    <tr>
+                                        <td>{{ $m->product?->product_name ?? ('Product#'.$m->product_id) }}</td>
+                                        <td>{{ $m->warehouse?->warehouse_name ?? ('WH#'.$m->warehouse_id) }}</td>
+                                        <td class="text-center">{{ (int) $m->stock_out }}</td>
+                                        <td>{{ $m->note }}</td>
+                                        <td>{{ \Carbon\Carbon::parse($m->date)->format('d M Y') }}</td>
+                                    </tr>
+                                @endforeach
+                            </tbody>
+                        </table>
+                    </div>
+                @else
+                    <div class="text-muted">No mutation log found.</div>
+                @endif
+            </div>
+        </div>
+    @endif
+
 </div>
 @endsection
 

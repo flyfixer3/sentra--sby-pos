@@ -72,7 +72,7 @@
                                value="{{ old('date', now()->format('Y-m-d')) }}" required>
                     </div>
 
-                    <div class="col-md-5">
+                    <div class="col-md-9">
                         <label class="form-label">Customer <span class="text-danger">*</span></label>
 
                         <select name="customer_id"
@@ -93,18 +93,6 @@
                         @endif
                     </div>
 
-                    <div class="col-md-4">
-                        <label class="form-label">Warehouse (Stock Out) <span class="text-danger">*</span></label>
-                        <select name="warehouse_id" class="form-control" required>
-                            @foreach($warehouses as $w)
-                                <option value="{{ $w->id }}"
-                                    {{ (int) old('warehouse_id') === (int) $w->id ? 'selected' : '' }}>
-                                    {{ $w->warehouse_name }} {{ $w->is_main ? '(Main)' : '' }}
-                                </option>
-                            @endforeach
-                        </select>
-                    </div>
-
                     <div class="col-12">
                         <label class="form-label">Note</label>
                         <textarea name="note" class="form-control" rows="3" placeholder="Optional">{{ old('note') }}</textarea>
@@ -121,7 +109,6 @@
                         </small>
                     </div>
 
-                    {{-- sale_order: lock items structure (no add) --}}
                     <button type="button"
                             class="btn btn-sm btn-outline-primary"
                             id="add-row"
@@ -134,9 +121,9 @@
                     <table class="table align-middle" id="items-table">
                         <thead>
                             <tr>
-                                <th style="width:60%">Product</th>
+                                <th style="width:70%">Product</th>
                                 <th style="width:20%">Qty</th>
-                                <th class="text-end" style="width:20%">Action</th>
+                                <th class="text-end" style="width:10%">Action</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -159,7 +146,6 @@
                                             @endforeach
                                         </select>
 
-                                        {{-- disabled product_id tidak ikut submit --}}
                                         @if($isSaleOrder)
                                             <input type="hidden" name="items[{{ $i }}][product_id]" value="{{ (int) $pid }}">
                                         @endif
@@ -202,45 +188,45 @@
 @push('page_scripts')
 <script>
 (function(){
-    const isSaleOrder = {{ request('source') === 'sale_order' ? 'true' : 'false' }};
+    let idx = {{ (int)$idxStart }};
 
-    let idx = {{ (int) $idxStart }};
-    if (!idx || idx < 1) idx = 1;
+    function addRow(){
+        const tbody = document.querySelector('#items-table tbody');
+        const tr = document.createElement('tr');
 
-    const tableBody = document.querySelector('#items-table tbody');
-    const addBtn = document.getElementById('add-row');
+        tr.innerHTML = `
+            <td>
+                <select name="items[${idx}][product_id]" class="form-control" required>
+                    @foreach($products as $p)
+                        <option value="{{ $p->id }}">{{ $p->product_name }} ({{ $p->product_code }})</option>
+                    @endforeach
+                </select>
+            </td>
+            <td>
+                <input type="number" name="items[${idx}][quantity]" class="form-control" min="1" value="1" required>
+            </td>
+            <td class="text-end">
+                <button type="button" class="btn btn-sm btn-outline-danger remove-row">Remove</button>
+            </td>
+        `;
 
-    if (addBtn) {
-        addBtn.addEventListener('click', function(){
-            if (isSaleOrder) return; // safety
-
-            const tr = document.createElement('tr');
-            tr.innerHTML = `
-                <td>
-                    <select name="items[${idx}][product_id]" class="form-control" required>
-                        @foreach($products as $p)
-                            <option value="{{ $p->id }}">{{ $p->product_name }} ({{ $p->product_code }})</option>
-                        @endforeach
-                    </select>
-                </td>
-                <td>
-                    <input type="number" name="items[${idx}][quantity]" class="form-control" min="1" value="1" required>
-                </td>
-                <td class="text-end">
-                    <button type="button" class="btn btn-sm btn-outline-danger remove-row">Remove</button>
-                </td>
-            `;
-            tableBody.appendChild(tr);
-            idx++;
-        });
+        tbody.appendChild(tr);
+        idx++;
     }
 
     document.addEventListener('click', function(e){
-        if (!e.target.classList.contains('remove-row')) return;
-        if (isSaleOrder) return; // lock remove for sale_order
+        if (e.target && (e.target.id === 'add-row' || e.target.closest('#add-row'))) {
+            addRow();
+        }
 
-        const tr = e.target.closest('tr');
-        if (tr) tr.remove();
+        const rm = e.target && (e.target.classList.contains('remove-row') ? e.target : e.target.closest('.remove-row'));
+        if (rm) {
+            const tr = rm.closest('tr');
+            const tbody = document.querySelector('#items-table tbody');
+            if (tbody && tbody.querySelectorAll('tr').length > 1) {
+                tr.remove();
+            }
+        }
     });
 })();
 </script>

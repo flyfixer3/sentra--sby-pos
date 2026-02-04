@@ -68,7 +68,15 @@ class SaleDeliveryController extends Controller
             'saleOrder',
         ]);
 
-        return view('saledelivery::show', compact('saleDelivery'));
+        $mutations = \Modules\Mutation\Entities\Mutation::withoutGlobalScopes()
+            ->with(['warehouse', 'product'])
+            ->where('branch_id', (int) $saleDelivery->branch_id)
+            ->where('reference', (string) $saleDelivery->reference)
+            ->where('note', 'like', 'Sales Delivery OUT #%')
+            ->orderBy('id', 'asc')
+            ->get();
+
+        return view('saledelivery::show', compact('saleDelivery', 'mutations'));
     }
 
     public function confirmForm(SaleDelivery $saleDelivery)
@@ -82,14 +90,82 @@ class SaleDeliveryController extends Controller
                 throw new \RuntimeException('Sale Delivery is not pending.');
             }
 
-            $branchId = BranchContext::id();
+            $branchId = (int) BranchContext::id();
             if ((int) $saleDelivery->branch_id !== (int) $branchId) {
                 throw new \RuntimeException('Wrong branch context.');
             }
 
-            $saleDelivery->load(['items.product', 'warehouse', 'customer']);
+            $saleDelivery->load(['items.product', 'customer']);
 
-            return view('saledelivery::confirm', compact('saleDelivery'));
+            // dropdown warehouses
+            $warehouses = Warehouse::query()
+                ->where('branch_id', (int) $branchId)
+                ->orderBy('warehouse_name')
+                ->get();
+
+            // collect product ids
+            $productIds = [];
+            foreach ($saleDelivery->items as $it) {
+                $pid = (int) $it->product_id;
+                if ($pid > 0) $productIds[] = $pid;
+            }
+            $productIds = array_values(array_unique($productIds));
+
+            // build defectData: [product_id][warehouse_id] => rows
+            $defectData = [];
+            $damagedData = [];
+
+            if (!empty($productIds)) {
+                $defRows = DB::table('product_defect_items')
+                    ->where('branch_id', (int) $branchId)
+                    ->whereIn('product_id', $productIds)
+                    ->whereNull('moved_out_at')
+                    ->orderBy('id', 'asc')
+                    ->get();
+
+                foreach ($defRows as $r) {
+                    $pid = (int) $r->product_id;
+                    $wid = (int) $r->warehouse_id;
+
+                    if (!isset($defectData[$pid])) $defectData[$pid] = [];
+                    if (!isset($defectData[$pid][$wid])) $defectData[$pid][$wid] = [];
+
+                    $defectData[$pid][$wid][] = [
+                        'id' => (int) $r->id,
+                        'defect_type' => (string) ($r->defect_type ?? ''),
+                        'description' => (string) ($r->description ?? ''),
+                    ];
+                }
+
+                $damRows = DB::table('product_damaged_items')
+                    ->where('branch_id', (int) $branchId)
+                    ->whereIn('product_id', $productIds)
+                    ->where('damage_type', 'damaged')
+                    ->where('resolution_status', 'pending')
+                    ->whereNull('moved_out_at')
+                    ->orderBy('id', 'asc')
+                    ->get();
+
+                foreach ($damRows as $r) {
+                    $pid = (int) $r->product_id;
+                    $wid = (int) $r->warehouse_id;
+
+                    if (!isset($damagedData[$pid])) $damagedData[$pid] = [];
+                    if (!isset($damagedData[$pid][$wid])) $damagedData[$pid][$wid] = [];
+
+                    $damagedData[$pid][$wid][] = [
+                        'id' => (int) $r->id,
+                        'reason' => (string) ($r->reason ?? ''),
+                    ];
+                }
+            }
+
+            return view('saledelivery::confirm', compact(
+                'saleDelivery',
+                'warehouses',
+                'defectData',
+                'damagedData'
+            ));
         } catch (\Throwable $e) {
             return $this->failBack($e->getMessage(), 422);
         }
@@ -109,6 +185,10 @@ class SaleDeliveryController extends Controller
 
                 'items' => 'required|array|min:1',
                 'items.*.id' => 'required|integer',
+
+                // ✅ NEW: warehouse per item
+                'items.*.warehouse_id' => 'required|integer|min:1',
+
                 'items.*.good' => 'required|integer|min:0',
                 'items.*.defect' => 'required|integer|min:0',
                 'items.*.damaged' => 'required|integer|min:0',
@@ -144,7 +224,7 @@ class SaleDeliveryController extends Controller
 
                 $reference = (string) $saleDelivery->reference;
 
-                // anti double confirm
+                // anti double confirm (reference sama + note prefix sama)
                 $exists = Mutation::withoutGlobalScopes()
                     ->where('reference', $reference)
                     ->where('note', 'like', 'Sales Delivery OUT%')
@@ -170,6 +250,7 @@ class SaleDeliveryController extends Controller
                     }
 
                     $inputById[$itemId] = [
+                        'warehouse_id' => (int) $row['warehouse_id'],
                         'good' => (int) $row['good'],
                         'defect' => (int) $row['defect'],
                         'damaged' => (int) $row['damaged'],
@@ -178,9 +259,20 @@ class SaleDeliveryController extends Controller
                     ];
                 }
 
+                // ✅ validasi warehouse_id per item harus milik branch
+                $warehouseIds = array_values(array_unique(array_map(fn($x) => (int)$x['warehouse_id'], $inputById)));
+                $countValidWh = Warehouse::query()
+                    ->where('branch_id', (int) $branchId)
+                    ->whereIn('id', $warehouseIds)
+                    ->count();
+
+                if ($countValidWh !== count($warehouseIds)) {
+                    throw new \RuntimeException('Invalid warehouse selection (must belong to active branch).');
+                }
+
                 $totalConfirmedAll = 0;
 
-                // ✅ STRICT VALIDATION: per item MUST EQUAL expected
+                // STRICT VALIDATION per item: good+defect+damaged must equal expected
                 foreach ($saleDelivery->items as $it) {
                     $itemId = (int) $it->id;
                     $expected = (int) ($it->quantity ?? 0);
@@ -191,12 +283,10 @@ class SaleDeliveryController extends Controller
 
                     $confirmed = $good + $defect + $damaged;
 
-                    // ✅ sebelumnya kamu allow < jadi partial. Sekarang TIDAK BOLEH mismatch sama sekali.
                     if ($confirmed !== $expected) {
                         throw new \RuntimeException("Qty mismatch for item ID {$itemId}. Good + Defect + Damaged must equal {$expected}.");
                     }
 
-                    // selection count match (kalau user memilih manual)
                     $selDef = $inputById[$itemId]['selected_defect_ids'] ?? [];
                     $selDam = $inputById[$itemId]['selected_damaged_ids'] ?? [];
 
@@ -216,12 +306,11 @@ class SaleDeliveryController extends Controller
                     ]);
                 }
 
-                // kalau semua expected qty = 0 (case aneh) baru akan kena ini
                 if ($totalConfirmedAll <= 0) {
                     throw new \RuntimeException('Nothing to confirm. Please input at least 1 quantity.');
                 }
 
-                // MUTATION OUT + consume defect/damaged
+                // MUTATION OUT per item (warehouse dari input)
                 foreach ($saleDelivery->items as $it) {
                     $productId = (int) $it->product_id;
 
@@ -232,10 +321,18 @@ class SaleDeliveryController extends Controller
                     $confirmed = $good + $defect + $damaged;
                     if ($confirmed <= 0) continue;
 
-                    $noteOut = "Sales Delivery OUT #{$reference} | WH {$saleDelivery->warehouse_id}";
+                    $input = $inputById[(int) $it->id] ?? [];
+                    $warehouseId = (int) ($input['warehouse_id'] ?? 0);
+                    if ($warehouseId <= 0) {
+                        throw new \RuntimeException("Warehouse is required for item_id {$it->id}.");
+                    }
+
+                    // ✅ note: nanti rack bisa ditambah, sekarang placeholder
+                    $noteOut = "Sales Delivery OUT #{$reference} | WH {$warehouseId} | Rack: (TBD)";
+
                     $outId = $this->mutationController->applyInOutAndGetMutationId(
                         (int) $saleDelivery->branch_id,
-                        (int) $saleDelivery->warehouse_id,
+                        (int) $warehouseId,
                         $productId,
                         'Out',
                         $confirmed,
@@ -244,10 +341,10 @@ class SaleDeliveryController extends Controller
                         (string) $saleDelivery->getRawOriginal('date')
                     );
 
-                    $input = $inputById[(int) $it->id] ?? [];
                     $selectedDefectIds = $input['selected_defect_ids'] ?? [];
                     $selectedDamagedIds = $input['selected_damaged_ids'] ?? [];
 
+                    // DEFECT (validasi per warehouseId terpilih)
                     if ($defect > 0) {
                         $ids = [];
 
@@ -257,13 +354,13 @@ class SaleDeliveryController extends Controller
                             $countValid = DB::table('product_defect_items')
                                 ->whereIn('id', $ids)
                                 ->where('branch_id', (int) $saleDelivery->branch_id)
-                                ->where('warehouse_id', (int) $saleDelivery->warehouse_id)
+                                ->where('warehouse_id', (int) $warehouseId)
                                 ->where('product_id', $productId)
                                 ->whereNull('moved_out_at')
                                 ->count();
 
                             if ($countValid !== count($ids)) {
-                                throw new \RuntimeException("Some selected DEFECT IDs are invalid/unavailable for product_id {$productId}.");
+                                throw new \RuntimeException("Some selected DEFECT IDs are invalid/unavailable for product_id {$productId} (WH {$warehouseId}).");
                             }
 
                             if (count($ids) !== $defect) {
@@ -272,7 +369,7 @@ class SaleDeliveryController extends Controller
                         } else {
                             $ids = DB::table('product_defect_items')
                                 ->where('branch_id', (int) $saleDelivery->branch_id)
-                                ->where('warehouse_id', (int) $saleDelivery->warehouse_id)
+                                ->where('warehouse_id', (int) $warehouseId)
                                 ->where('product_id', $productId)
                                 ->whereNull('moved_out_at')
                                 ->orderBy('id', 'asc')
@@ -281,7 +378,7 @@ class SaleDeliveryController extends Controller
                                 ->all();
 
                             if (count($ids) !== $defect) {
-                                throw new \RuntimeException("Not enough DEFECT stock for product_id {$productId}. Needed {$defect}, available " . count($ids) . ".");
+                                throw new \RuntimeException("Not enough DEFECT stock for product_id {$productId} (WH {$warehouseId}). Needed {$defect}, available " . count($ids) . ".");
                             }
                         }
 
@@ -295,6 +392,7 @@ class SaleDeliveryController extends Controller
                             ]);
                     }
 
+                    // DAMAGED (validasi per warehouseId terpilih)
                     if ($damaged > 0) {
                         $ids = [];
 
@@ -304,7 +402,7 @@ class SaleDeliveryController extends Controller
                             $countValid = DB::table('product_damaged_items')
                                 ->whereIn('id', $ids)
                                 ->where('branch_id', (int) $saleDelivery->branch_id)
-                                ->where('warehouse_id', (int) $saleDelivery->warehouse_id)
+                                ->where('warehouse_id', (int) $warehouseId)
                                 ->where('product_id', $productId)
                                 ->where('damage_type', 'damaged')
                                 ->where('resolution_status', 'pending')
@@ -312,7 +410,7 @@ class SaleDeliveryController extends Controller
                                 ->count();
 
                             if ($countValid !== count($ids)) {
-                                throw new \RuntimeException("Some selected DAMAGED IDs are invalid/unavailable for product_id {$productId}.");
+                                throw new \RuntimeException("Some selected DAMAGED IDs are invalid/unavailable for product_id {$productId} (WH {$warehouseId}).");
                             }
 
                             if (count($ids) !== $damaged) {
@@ -321,7 +419,7 @@ class SaleDeliveryController extends Controller
                         } else {
                             $ids = DB::table('product_damaged_items')
                                 ->where('branch_id', (int) $saleDelivery->branch_id)
-                                ->where('warehouse_id', (int) $saleDelivery->warehouse_id)
+                                ->where('warehouse_id', (int) $warehouseId)
                                 ->where('product_id', $productId)
                                 ->where('damage_type', 'damaged')
                                 ->where('resolution_status', 'pending')
@@ -332,7 +430,7 @@ class SaleDeliveryController extends Controller
                                 ->all();
 
                             if (count($ids) !== $damaged) {
-                                throw new \RuntimeException("Not enough DAMAGED stock for product_id {$productId}. Needed {$damaged}, available " . count($ids) . ".");
+                                throw new \RuntimeException("Not enough DAMAGED stock for product_id {$productId} (WH {$warehouseId}). Needed {$damaged}, available " . count($ids) . ".");
                             }
                         }
 
@@ -350,7 +448,6 @@ class SaleDeliveryController extends Controller
 
                 $confirmNote = $request->confirm_note ? (string) $request->confirm_note : null;
 
-                // ✅ STATUS selalu confirmed (NO PARTIAL)
                 $saleDelivery->update([
                     'status' => 'confirmed',
                     'confirmed_by' => auth()->id(),
@@ -362,7 +459,7 @@ class SaleDeliveryController extends Controller
                     'updated_by' => auth()->id(),
                 ]);
 
-                // update SO fulfillment status (partial ada di SO, bukan di delivery)
+                // update SO fulfillment status (kalau ada)
                 $saleOrderId = (int) ($saleDelivery->sale_order_id ?? 0);
                 if ($saleOrderId <= 0 && !empty($saleDelivery->sale_id)) {
                     $found = SaleOrder::query()
@@ -597,11 +694,7 @@ class SaleDeliveryController extends Controller
 
             $branchId = BranchContext::id();
 
-            $warehouses = Warehouse::query()
-                ->where('branch_id', $branchId)
-                ->orderBy('warehouse_name')
-                ->get();
-
+            // ✅ Warehouse tidak diperlukan di create (karena stock out dipilih saat confirm)
             $customers = Customer::query()
                 ->forActiveBranch($branchId)
                 ->orderBy('customer_name')
@@ -625,7 +718,6 @@ class SaleDeliveryController extends Controller
                 $prefillSaleOrderRef = $saleOrder->reference ?? ('SO#' . $saleOrder->id);
                 $prefillCustomerId = (int) $saleOrder->customer_id;
 
-                // ✅ FIX RAPET: planned remaining (include pending)
                 $remainingMap = $this->getPlannedRemainingQtyBySaleOrder($saleOrderId);
 
                 $hasAny = false;
@@ -683,7 +775,6 @@ class SaleDeliveryController extends Controller
             }
 
             return view('saledelivery::create', compact(
-                'warehouses',
                 'customers',
                 'products',
                 'source',
@@ -696,7 +787,7 @@ class SaleDeliveryController extends Controller
         }
     }
 
-    public function store(Request $request)
+   public function store(Request $request)
     {
         abort_if(Gate::denies('create_sale_deliveries'), 403);
 
@@ -708,9 +799,9 @@ class SaleDeliveryController extends Controller
 
             $branchId = BranchContext::id();
 
+            // ✅ warehouse_id dihapus dari validasi
             $rules = [
                 'date' => 'required|date',
-                'warehouse_id' => 'required|integer',
                 'note' => 'nullable|string|max:2000',
                 'items' => 'required|array|min:1',
                 'items.*.product_id' => 'required|integer',
@@ -727,11 +818,6 @@ class SaleDeliveryController extends Controller
 
             DB::transaction(function () use ($request, $branchId, $source) {
 
-                $warehouse = Warehouse::query()
-                    ->where('branch_id', $branchId)
-                    ->where('id', (int) $request->warehouse_id)
-                    ->firstOrFail();
-
                 $saleId = null;
                 $saleOrderId = null;
                 $customerId = null;
@@ -747,7 +833,6 @@ class SaleDeliveryController extends Controller
 
                     $customerId = (int) $saleOrder->customer_id;
 
-                    // ✅ FIX RAPET: planned remaining (include pending)
                     $remainingMap = $this->getPlannedRemainingQtyBySaleOrder($saleOrderId);
 
                     foreach ($request->items as $row) {
@@ -761,15 +846,6 @@ class SaleDeliveryController extends Controller
                     }
                 }
 
-                if ($source !== 'sale_order') {
-                    $customer = Customer::query()
-                        ->forActiveBranch($branchId)
-                        ->where('id', (int) $request->customer_id)
-                        ->firstOrFail();
-
-                    $customerId = (int) $customer->id;
-                }
-
                 if ($source === 'sale') {
                     $saleId = (int) $request->sale_id;
 
@@ -778,37 +854,63 @@ class SaleDeliveryController extends Controller
                         ->where('branch_id', $branchId)
                         ->first();
 
-                    if (!$sale) {
-                        throw new \RuntimeException('Sale (invoice) not found in this branch.');
+                    if (!$sale) throw new \RuntimeException('Sale (invoice) not found in this branch.');
+
+                    $remainingMap = $this->getRemainingQtyBySale($saleId);
+
+                    foreach ($request->items as $row) {
+                        $pid = (int) $row['product_id'];
+                        $qty = (int) $row['quantity'];
+                        $rem = (int) ($remainingMap[$pid] ?? 0);
+
+                        if ($qty > $rem) {
+                            throw new \RuntimeException("Qty exceeds remaining for product_id {$pid}. Remaining: {$rem}.");
+                        }
                     }
+
+                    $customerId = (int) ($sale->customer_id ?? 0);
                 }
 
-                $delivery = SaleDelivery::create([
-                    'branch_id'     => $branchId,
+                if ($source === 'quotation') {
+                    $customerId = (int) $request->customer_id;
+                }
+
+                // ✅ create delivery WITHOUT warehouse_id
+                $saleDelivery = SaleDelivery::create([
+                    'branch_id'     => (int) $branchId,
                     'quotation_id'  => $source === 'quotation' ? (int) $request->quotation_id : null,
-                    'sale_id'       => $source === 'sale' ? (int) $saleId : null,
-                    'sale_order_id' => $source === 'sale_order' ? (int) $saleOrderId : null,
-                    'customer_id'   => $customerId,
-                    'date'          => $request->date,
-                    'warehouse_id'  => $warehouse->id,
+                    'sale_order_id' => $source === 'sale_order' ? (int) $request->sale_order_id : null,
+                    'sale_id'       => $source === 'sale' ? (int) $request->sale_id : null,
+
+                    'customer_id'   => (int) $customerId,
+                    'reference'     => null, // auto by boot
+                    'date'          => (string) $request->date,
+
+                    // ✅ penting: warehouse_id null
+                    'warehouse_id'  => null,
+
                     'status'        => 'pending',
-                    'note'          => $request->note,
-                    'created_by'    => Auth::id(),
+                    'note'          => $request->note ? (string) $request->note : null,
+                    'created_by'    => auth()->id(),
                 ]);
 
                 foreach ($request->items as $row) {
                     SaleDeliveryItem::create([
-                        'sale_delivery_id' => $delivery->id,
-                        'product_id' => (int) $row['product_id'],
-                        'quantity' => (int) $row['quantity'],
-                        'price' => array_key_exists('price', $row) && $row['price'] !== null
-                            ? (int) $row['price']
-                            : null,
+                        'sale_delivery_id' => (int) $saleDelivery->id,
+                        'product_id'       => (int) $row['product_id'],
+                        'quantity'         => (int) $row['quantity'],
+                        'price'            => (int) ($row['price'] ?? 0),
+                        'qty_good'         => 0,
+                        'qty_defect'       => 0,
+                        'qty_damaged'      => 0,
                     ]);
                 }
+
+                // kalau source quotation: kamu punya logic update status quotation di flow lain,
+                // di sini biarkan mengikuti logic existing kamu (jangan paksa kalau belum ada)
             });
 
-            toast('Sale Delivery Created!', 'success');
+            toast('Sale Delivery created successfully', 'success');
             return redirect()->route('sale-deliveries.index');
         } catch (\Throwable $e) {
             return $this->failBack($e->getMessage(), 422);
