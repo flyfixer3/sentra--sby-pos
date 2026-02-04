@@ -150,6 +150,11 @@ class PermissionsTableSeeder extends Seeder
 
             // ✅ TRANSFER (tambahkan permission baru kamu di sini)
             'cancel_transfers',
+
+            'access_racks',
+            'create_racks',
+            'edit_racks',
+            'delete_racks',
         ];
 
         foreach ($permissions as $permission) {

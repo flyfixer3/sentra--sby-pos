@@ -7,6 +7,8 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use App\Models\BaseModel;
 use App\Traits\HasBranchScope;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Modules\Branch\Entities\Branch;
+use Modules\Product\Entities\Warehouse;
 
 class StockRack extends BaseModel
 {
@@ -36,11 +38,11 @@ class StockRack extends BaseModel
 
     public function warehouse(): BelongsTo
     {
-        return $this->belongsTo(\Modules\Warehouse\Entities\Warehouse::class, 'warehouse_id');
+        return $this->belongsTo(Warehouse::class, 'warehouse_id');
     }
 
     public function branch(): BelongsTo
     {
-        return $this->belongsTo(\Modules\Branch\Entities\Branch::class, 'branch_id');
+        return $this->belongsTo(Branch::class, 'branch_id');
     }
 }

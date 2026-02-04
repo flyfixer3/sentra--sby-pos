@@ -7,6 +7,7 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use App\Models\BaseModel;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Modules\Product\Entities\Warehouse;
 
 class Rack extends BaseModel
 {
@@ -25,7 +26,7 @@ class Rack extends BaseModel
 
     public function warehouse(): BelongsTo
     {
-        return $this->belongsTo(\Modules\Warehouse\Entities\Warehouse::class, 'warehouse_id');
+        return $this->belongsTo(Warehouse::class, 'warehouse_id');
     }
 
     public function stockRacks(): HasMany
