@@ -7,12 +7,14 @@ use Illuminate\Routing\Controller;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
 
+use Modules\Inventory\Entities\Rack;
 use Modules\PurchaseDelivery\DataTables\PurchaseDeliveriesDataTable;
 use Modules\PurchaseDelivery\Entities\PurchaseDelivery;
 use Modules\PurchaseDelivery\Entities\PurchaseDeliveryDetails;
 use Modules\PurchaseOrder\Entities\PurchaseOrder;
 use Modules\PurchaseOrder\Entities\PurchaseOrderDetails;
 use Modules\Product\Entities\Warehouse;
+use Modules\Inventory\Entities\StockRack;
 
 use Modules\Product\Entities\ProductDefectItem;
 use Modules\Product\Entities\ProductDamagedItem;
@@ -138,7 +140,6 @@ class PurchaseDeliveryController extends Controller
 
             $purchaseOrder = PurchaseOrder::lockForUpdate()->findOrFail($request->purchase_order_id);
 
-            // Guard: warehouse harus 1 branch dengan PO
             $wh = Warehouse::findOrFail((int) $request->warehouse_id);
             if ((int) $wh->branch_id !== (int) $purchaseOrder->branch_id) {
                 abort(403, 'Warehouse must belong to the same branch as the PO.');
@@ -157,7 +158,6 @@ class PurchaseDeliveryController extends Controller
                 'status'            => 'Pending',
                 'created_by'        => auth()->id(),
 
-                // meta note create
                 'note_updated_by'   => $note ? auth()->id() : null,
                 'note_updated_role' => $note ? $this->roleString() : null,
                 'note_updated_at'   => $note ? now() : null,
@@ -264,7 +264,6 @@ class PurchaseDeliveryController extends Controller
                 ->lockForUpdate()
                 ->findOrFail($purchaseDelivery->id);
 
-            // guard warehouse must be same branch
             $wh = Warehouse::findOrFail((int) $request->warehouse_id);
             if ((int) $wh->branch_id !== (int) $purchaseDelivery->branch_id) {
                 abort(403, 'Warehouse must belong to the same branch as this Purchase Delivery.');
@@ -279,7 +278,6 @@ class PurchaseDeliveryController extends Controller
                 'tracking_number' => $request->tracking_number,
                 'note'            => $note,
 
-                // meta note update
                 'note_updated_by'   => $note ? auth()->id() : null,
                 'note_updated_role' => $note ? $this->roleString() : null,
                 'note_updated_at'   => $note ? now() : null,
@@ -300,13 +298,408 @@ class PurchaseDeliveryController extends Controller
     {
         abort_if(Gate::denies('confirm_purchase_deliveries'), 403);
 
+        // ✅ guard (UI page)
         if (strtolower((string) $purchaseDelivery->status) !== 'pending') {
             return redirect()->back()->with('error', 'This delivery has already been confirmed.');
         }
 
         $purchaseDelivery->load(['purchaseOrder', 'purchase', 'purchaseDeliveryDetails', 'warehouse']);
 
-        return view('purchase-deliveries::confirm', compact('purchaseDelivery'));
+        $racks = Rack::query()
+            ->where('warehouse_id', (int) $purchaseDelivery->warehouse_id)
+            ->orderByRaw("CASE WHEN code IS NULL OR code = '' THEN 1 ELSE 0 END ASC")
+            ->orderBy('code')
+            ->orderBy('name')
+            ->orderBy('id')
+            ->get();
+
+        return view('purchase-deliveries::confirm', compact('purchaseDelivery', 'racks'));
+    }
+
+    private function upsertStockRack(
+        int $branchId,
+        int $warehouseId,
+        int $rackId,
+        int $productId,
+        int $qtyAll,
+        int $qtyGood,
+        int $qtyDefect,
+        int $qtyDamaged
+    ): void {
+        $row = StockRack::withoutGlobalScopes()->firstOrNew([
+            'branch_id'    => $branchId,
+            'warehouse_id' => $warehouseId,
+            'rack_id'      => $rackId,
+            'product_id'   => $productId,
+        ]);
+
+        $row->qty_available = (int) ($row->qty_available ?? 0);
+        $row->qty_good      = (int) ($row->qty_good ?? 0);
+        $row->qty_defect    = (int) ($row->qty_defect ?? 0);
+        $row->qty_damaged   = (int) ($row->qty_damaged ?? 0);
+
+        $row->qty_available += $qtyAll;
+        $row->qty_good      += $qtyGood;
+        $row->qty_defect    += $qtyDefect;
+        $row->qty_damaged   += $qtyDamaged;
+
+        if ($row->qty_available < 0) $row->qty_available = 0;
+        if ($row->qty_good < 0)      $row->qty_good = 0;
+        if ($row->qty_defect < 0)    $row->qty_defect = 0;
+        if ($row->qty_damaged < 0)   $row->qty_damaged = 0;
+
+        $row->save();
+    }
+
+    private function assertRackBelongsToWarehouse(int $rackId, int $warehouseId): void
+    {
+        $ok = Rack::query()
+            ->where('id', $rackId)
+            ->where('warehouse_id', $warehouseId)
+            ->exists();
+
+        if (!$ok) {
+            throw new \RuntimeException("Invalid rack: rack_id={$rackId} does not belong to this warehouse.");
+        }
+    }
+
+    private function normalizeStatus(string $status): string
+    {
+        return strtolower(trim((string) $status));
+    }
+
+    /**
+     * =====================
+     * CONFIRM STORE
+     * =====================
+     * ✅ Good allocation (split rack)
+     * ✅ Anti double-confirm (race condition safe)
+     */
+   public function confirmStore(Request $request, PurchaseDelivery $purchaseDelivery)
+    {
+        abort_if(Gate::denies('confirm_purchase_deliveries'), 403);
+
+        $request->validate([
+            'confirm_note' => 'nullable|string|max:1000',
+
+            'items' => 'required|array|min:1',
+            'items.*.detail_id'     => 'required|integer',
+            'items.*.product_id'    => 'required|integer',
+            'items.*.expected'      => 'required|integer|min:0',
+            'items.*.already_confirmed' => 'required|integer|min:0',
+            'items.*.remaining'     => 'required|integer|min:0',
+
+            // ✅ batch qty (yang baru dikonfirmasi sekarang)
+            'items.*.add_good'      => 'required|integer|min:0',
+            'items.*.add_defect'    => 'required|integer|min:0',
+            'items.*.add_damaged'   => 'required|integer|min:0',
+
+            // ✅ allocations untuk batch GOOD
+            'items.*.good_allocations' => 'nullable|array',
+            'items.*.good_allocations.*.rack_id' => 'required_with:items.*.good_allocations|integer|min:1',
+            'items.*.good_allocations.*.qty'     => 'required_with:items.*.good_allocations|integer|min:1',
+            'items.*.good_allocations.*.note'    => 'nullable|string|max:255',
+
+            // per-unit arrays tetap (batch)
+            'items.*.defects'        => 'nullable|array',
+            'items.*.damaged_items'  => 'nullable|array',
+        ]);
+
+        DB::transaction(function () use ($request, $purchaseDelivery) {
+
+            $purchaseDelivery = PurchaseDelivery::withoutGlobalScopes()
+                ->lockForUpdate()
+                ->findOrFail($purchaseDelivery->id);
+
+            $statusNow = $this->normalizeStatus((string) $purchaseDelivery->status);
+            if (!in_array($statusNow, ['pending', 'partial'], true)) {
+                abort(422, 'This delivery can no longer be confirmed.');
+            }
+
+            $purchaseDelivery->loadMissing([
+                'purchaseOrder.purchaseOrderDetails',
+                'purchaseDeliveryDetails',
+                'warehouse',
+            ]);
+
+            $activeBranchId = $this->activeBranchIdOrFail('purchase-deliveries.index');
+            if ((int) $purchaseDelivery->branch_id !== (int) $activeBranchId) {
+                abort(403, 'Active branch mismatch for this Purchase Delivery.');
+            }
+
+            $wh = Warehouse::findOrFail((int) $purchaseDelivery->warehouse_id);
+            if ((int) $wh->branch_id !== (int) $purchaseDelivery->branch_id) {
+                abort(403, 'Warehouse must belong to the same branch as this Purchase Delivery.');
+            }
+
+            // ✅ tentukan batch ke-N (biar reference mutation unik)
+            $baseRef = 'PD-' . (int) $purchaseDelivery->id;
+            $batchNo = (int) Mutation::withoutGlobalScopes()
+                ->where('reference', 'like', $baseRef . '-B%')
+                ->count() + 1;
+
+            $reference = $baseRef . '-B' . $batchNo;
+
+            $anyConfirmedInThisBatch = false;
+
+            foreach ($request->items as $idx => $row) {
+
+                $detailId  = (int) $row['detail_id'];
+                $productId = (int) $row['product_id'];
+
+                $expected  = (int) $row['expected'];
+                $already   = (int) $row['already_confirmed'];
+                $remainingClient = (int) $row['remaining'];
+
+                $addGood   = (int) $row['add_good'];
+                $addDefect = (int) $row['add_defect'];
+                $addDamaged= (int) $row['add_damaged'];
+
+                $batchTotal = $addGood + $addDefect + $addDamaged;
+
+                // skip kalau batch item ini 0 semua
+                if ($batchTotal <= 0) {
+                    continue;
+                }
+
+                $anyConfirmedInThisBatch = true;
+
+                // ambil detail asli (DB)
+                $pdDetail = $purchaseDelivery->purchaseDeliveryDetails->firstWhere('id', $detailId);
+                if (!$pdDetail) {
+                    throw new \RuntimeException("PD Detail not found: {$detailId}");
+                }
+
+                // hitung remaining real berdasarkan DB (anti manipulasi)
+                $dbConfirmed = (int) ($pdDetail->qty_received ?? 0)
+                            + (int) ($pdDetail->qty_defect ?? 0)
+                            + (int) ($pdDetail->qty_damaged ?? 0);
+
+                $dbRemaining = (int) $expected - (int) $dbConfirmed;
+                if ($dbRemaining < 0) $dbRemaining = 0;
+
+                // cross-check ringan (opsional tapi bagus)
+                if ($dbConfirmed !== $already) {
+                    throw new \RuntimeException("Data changed, please reload page. (detail_id={$detailId})");
+                }
+                if ($dbRemaining !== $remainingClient) {
+                    throw new \RuntimeException("Remaining changed, please reload page. (detail_id={$detailId})");
+                }
+
+                if ($batchTotal > $dbRemaining) {
+                    throw new \RuntimeException("Invalid qty: batch_total > remaining (detail_id={$detailId})");
+                }
+
+                // ✅ GOOD allocations (split by rack) untuk batch ini
+                $goodAlloc = $row['good_allocations'] ?? [];
+                $sumAlloc = 0;
+                foreach ($goodAlloc as $a) {
+                    $sumAlloc += (int) ($a['qty'] ?? 0);
+                }
+
+                if ($addGood > 0 && $sumAlloc !== $addGood) {
+                    throw new \RuntimeException("Good allocation mismatch: Good={$addGood}, alloc_sum={$sumAlloc} (detail_id={$detailId})");
+                }
+
+                // per-unit detail defect/damaged untuk batch ini
+                $defRows = $row['defects'] ?? [];
+                $damRows = $row['damaged_items'] ?? [];
+
+                if (count($defRows) !== $addDefect) {
+                    throw new \RuntimeException("Defect detail mismatch: expected {$addDefect} rows, got " . count($defRows) . " (detail_id={$detailId})");
+                }
+                if (count($damRows) !== $addDamaged) {
+                    throw new \RuntimeException("Damaged detail mismatch: expected {$addDamaged} rows, got " . count($damRows) . " (detail_id={$detailId})");
+                }
+
+                $rackAgg = []; // rackId => ['good'=>x,'defect'=>y,'damaged'=>z,'total'=>t]
+                $pickFirstRackId = null;
+
+                // GOOD allocations
+                foreach ($goodAlloc as $k => $a) {
+                    $rackId = (int) ($a['rack_id'] ?? 0);
+                    $qty    = (int) ($a['qty'] ?? 0);
+                    if ($qty <= 0) continue;
+
+                    if ($rackId <= 0) {
+                        throw new \RuntimeException("Good allocation rack required (detail_id={$detailId}, row={$k}).");
+                    }
+                    $this->assertRackBelongsToWarehouse($rackId, (int) $purchaseDelivery->warehouse_id);
+                    $pickFirstRackId ??= $rackId;
+
+                    if (!isset($rackAgg[$rackId])) $rackAgg[$rackId] = ['good'=>0,'defect'=>0,'damaged'=>0,'total'=>0];
+                    $rackAgg[$rackId]['good']  += $qty;
+                    $rackAgg[$rackId]['total'] += $qty;
+                }
+
+                // DEFECT per-unit
+                foreach ($defRows as $k => $d) {
+                    $rackId = (int) ($d['rack_id'] ?? 0);
+                    if ($rackId <= 0) throw new \RuntimeException("Defect rack is required (detail_id={$detailId}, row={$k}).");
+                    $this->assertRackBelongsToWarehouse($rackId, (int) $purchaseDelivery->warehouse_id);
+                    $pickFirstRackId ??= $rackId;
+
+                    if (!isset($rackAgg[$rackId])) $rackAgg[$rackId] = ['good'=>0,'defect'=>0,'damaged'=>0,'total'=>0];
+                    $rackAgg[$rackId]['defect']++;
+                    $rackAgg[$rackId]['total']++;
+
+                    if (empty($d['defect_type']) || !trim((string)$d['defect_type'])) {
+                        throw new \RuntimeException("Defect type is required (detail_id={$detailId}, row={$k}).");
+                    }
+                }
+
+                // DAMAGED per-unit
+                foreach ($damRows as $k => $d) {
+                    $rackId = (int) ($d['rack_id'] ?? 0);
+                    if ($rackId <= 0) throw new \RuntimeException("Damaged rack is required (detail_id={$detailId}, row={$k}).");
+                    $this->assertRackBelongsToWarehouse($rackId, (int) $purchaseDelivery->warehouse_id);
+                    $pickFirstRackId ??= $rackId;
+
+                    if (!isset($rackAgg[$rackId])) $rackAgg[$rackId] = ['good'=>0,'defect'=>0,'damaged'=>0,'total'=>0];
+                    $rackAgg[$rackId]['damaged']++;
+                    $rackAgg[$rackId]['total']++;
+
+                    if (empty($d['damaged_reason']) || !trim((string)$d['damaged_reason'])) {
+                        throw new \RuntimeException("Damaged reason is required (detail_id={$detailId}, row={$k}).");
+                    }
+                }
+
+                // ✅ UPDATE PD DETAIL (cumulative add, bukan overwrite)
+                $newGood    = (int) ($pdDetail->qty_received ?? 0) + $addGood;
+                $newDefect  = (int) ($pdDetail->qty_defect ?? 0) + $addDefect;
+                $newDamaged = (int) ($pdDetail->qty_damaged ?? 0) + $addDamaged;
+
+                $pdDetail->update([
+                    'rack_id'      => $pickFirstRackId ?? $pdDetail->rack_id, // legacy default
+                    'qty_received' => $newGood,
+                    'qty_defect'   => $newDefect,
+                    'qty_damaged'  => $newDamaged,
+                ]);
+
+                // ✅ Update fulfilled qty PO detail (add batchTotal)
+                if (!empty($purchaseDelivery->purchase_order_id) && $purchaseDelivery->purchaseOrder) {
+                    $po = $purchaseDelivery->purchaseOrder;
+                    $poDetail = $po->purchaseOrderDetails->firstWhere('product_id', $productId);
+
+                    if ($poDetail) {
+                        $newFulfilled = (int) $poDetail->fulfilled_quantity + $batchTotal;
+                        if ($newFulfilled > (int) $poDetail->quantity) {
+                            $newFulfilled = (int) $poDetail->quantity;
+                        }
+                        $poDetail->update(['fulfilled_quantity' => $newFulfilled]);
+                    }
+                }
+
+                // ✅ MUTATION IN (batch)
+                $noteIn = "Purchase Delivery IN #{$reference} | WH {$purchaseDelivery->warehouse_id}";
+                $inId = $this->mutationController->applyInOutAndGetMutationId(
+                    (int) $purchaseDelivery->branch_id,
+                    (int) $purchaseDelivery->warehouse_id,
+                    $productId,
+                    'In',
+                    $batchTotal,
+                    $reference,
+                    $noteIn,
+                    (string) $purchaseDelivery->getRawOriginal('date')
+                );
+
+                // Defect Items (per unit, batch)
+                if ($addDefect > 0) {
+                    foreach ($defRows as $k => $d) {
+                        $photoPath = null;
+                        if (request()->hasFile("items.$idx.defects.$k.photo")) {
+                            $photoPath = request()->file("items.$idx.defects.$k.photo")->store('defects', 'public');
+                        }
+
+                        ProductDefectItem::create([
+                            'branch_id'      => (int) $purchaseDelivery->branch_id,
+                            'warehouse_id'   => (int) $purchaseDelivery->warehouse_id,
+                            'product_id'     => $productId,
+                            'reference_id'   => (int) $purchaseDelivery->id,
+                            'reference_type' => PurchaseDelivery::class,
+                            'quantity'       => 1,
+                            'defect_type'    => $d['defect_type'] ?? null,
+                            'description'    => $d['defect_description'] ?? null,
+                            'photo_path'     => $photoPath,
+                            'created_by'     => auth()->id(),
+                        ]);
+                    }
+                }
+
+                // Damaged Items (per unit, batch)
+                if ($addDamaged > 0) {
+                    foreach ($damRows as $k => $d) {
+                        $photoPath = null;
+                        if (request()->hasFile("items.$idx.damaged_items.$k.photo")) {
+                            $photoPath = request()->file("items.$idx.damaged_items.$k.photo")->store('damaged', 'public');
+                        }
+
+                        ProductDamagedItem::create([
+                            'branch_id'       => (int) $purchaseDelivery->branch_id,
+                            'warehouse_id'    => (int) $purchaseDelivery->warehouse_id,
+                            'product_id'      => $productId,
+                            'reference_id'    => (int) $purchaseDelivery->id,
+                            'reference_type'  => PurchaseDelivery::class,
+                            'quantity'        => 1,
+                            'reason'          => $d['damaged_reason'] ?? null,
+                            'photo_path'      => $photoPath,
+                            'created_by'      => auth()->id(),
+                            'mutation_in_id'  => (int) $inId,
+                            'mutation_out_id' => null,
+                        ]);
+                    }
+                }
+
+                // UPDATE stock_racks per rack (split) untuk batch ini
+                foreach ($rackAgg as $rackId => $agg) {
+                    $this->upsertStockRack(
+                        (int) $purchaseDelivery->branch_id,
+                        (int) $purchaseDelivery->warehouse_id,
+                        (int) $rackId,
+                        (int) $productId,
+                        (int) $agg['total'],
+                        (int) $agg['good'],
+                        (int) $agg['defect'],
+                        (int) $agg['damaged']
+                    );
+                }
+            }
+
+            if (!$anyConfirmedInThisBatch) {
+                throw new \RuntimeException('Batch confirm kosong. Isi minimal 1 qty untuk dikunci.');
+            }
+
+            // ✅ hitung apakah masih ada remaining setelah batch ini
+            $purchaseDelivery->refresh();
+            $purchaseDelivery->loadMissing(['purchaseDeliveryDetails']);
+
+            $stillHasRemaining = false;
+            foreach ($purchaseDelivery->purchaseDeliveryDetails as $d) {
+                $exp = (int) ($d->quantity ?? 0);
+                $conf = (int) ($d->qty_received ?? 0) + (int) ($d->qty_defect ?? 0) + (int) ($d->qty_damaged ?? 0);
+                if ($conf < $exp) { $stillHasRemaining = true; break; }
+            }
+
+            $confirmNote = $request->confirm_note ? (string) $request->confirm_note : null;
+
+            $purchaseDelivery->update([
+                'status' => $stillHasRemaining ? 'partial' : 'received',
+
+                'confirm_note'              => $confirmNote,
+                'confirm_note_updated_by'   => $confirmNote ? auth()->id() : null,
+                'confirm_note_updated_role' => $confirmNote ? $this->roleString() : null,
+                'confirm_note_updated_at'   => $confirmNote ? now() : null,
+            ]);
+
+            if (!empty($purchaseDelivery->purchase_order_id)) {
+                $po = PurchaseOrder::lockForUpdate()->findOrFail((int) $purchaseDelivery->purchase_order_id);
+                $po->calculateFulfilledQuantity();
+                $po->markAsCompleted();
+            }
+        });
+
+        toast('Purchase Delivery confirmed (batch locked) successfully', 'success');
+        return redirect()->route('purchase-deliveries.show', $purchaseDelivery->id);
     }
 
     public function show(PurchaseDelivery $purchaseDelivery)
@@ -334,229 +727,30 @@ class PurchaseDeliveryController extends Controller
                 : null)
             ?? '-';
 
+        $defects = ProductDefectItem::withoutGlobalScopes()
+            ->where('branch_id', (int) $purchaseDelivery->branch_id)
+            ->where('warehouse_id', (int) $purchaseDelivery->warehouse_id)
+            ->where('reference_type', PurchaseDelivery::class)
+            ->where('reference_id', (int) $purchaseDelivery->id)
+            ->orderBy('product_id')
+            ->orderBy('id')
+            ->get();
+
+        $damaged = ProductDamagedItem::withoutGlobalScopes()
+            ->where('branch_id', (int) $purchaseDelivery->branch_id)
+            ->where('warehouse_id', (int) $purchaseDelivery->warehouse_id)
+            ->where('reference_type', PurchaseDelivery::class)
+            ->where('reference_id', (int) $purchaseDelivery->id)
+            ->orderBy('product_id')
+            ->orderBy('id')
+            ->get();
+
         return view('purchase-deliveries::show', [
             'purchaseDelivery' => $purchaseDelivery,
             'vendorName'       => $vendorName,
             'vendorEmail'      => $vendorEmail,
+            'defects'          => $defects,
+            'damaged'          => $damaged,
         ]);
-    }
-
-    /**
-     * =====================
-     * CONFIRM STORE
-     * =====================
-     * NOTE: partial allowed (NOT missing)
-     */
-    public function confirmStore(Request $request, PurchaseDelivery $purchaseDelivery)
-    {
-        abort_if(Gate::denies('confirm_purchase_deliveries'), 403);
-
-        $request->validate([
-            'confirm_note' => 'nullable|string|max:1000',
-
-            'items' => 'required|array|min:1',
-            'items.*.detail_id'     => 'required|integer',
-            'items.*.product_id'    => 'required|integer',
-            'items.*.expected'      => 'required|integer|min:0',
-            'items.*.qty_received'  => 'required|integer|min:0',
-            'items.*.qty_defect'    => 'required|integer|min:0',
-            'items.*.qty_damaged'   => 'required|integer|min:0',
-            'items.*.defects'       => 'nullable|array',
-            'items.*.damaged_items' => 'nullable|array',
-        ]);
-
-        DB::transaction(function () use ($request, $purchaseDelivery) {
-
-            $purchaseDelivery = PurchaseDelivery::withoutGlobalScopes()
-                ->lockForUpdate()
-                ->findOrFail($purchaseDelivery->id);
-
-            if (strtolower((string) $purchaseDelivery->status) !== 'pending') {
-                abort(422, 'This delivery has already been confirmed.');
-            }
-
-            $purchaseDelivery->loadMissing([
-                'purchaseOrder.purchaseOrderDetails',
-                'purchaseDeliveryDetails',
-                'warehouse',
-            ]);
-
-            // Guard active branch
-            $activeBranchId = $this->activeBranchIdOrFail('purchase-deliveries.index');
-            if ((int) $purchaseDelivery->branch_id !== (int) $activeBranchId) {
-                abort(403, 'Active branch mismatch for this Purchase Delivery.');
-            }
-
-            // Guard warehouse belongs to PD branch
-            $wh = Warehouse::findOrFail((int) $purchaseDelivery->warehouse_id);
-            if ((int) $wh->branch_id !== (int) $purchaseDelivery->branch_id) {
-                abort(403, 'Warehouse must belong to the same branch as this Purchase Delivery.');
-            }
-
-            $reference = 'PD-' . (int) $purchaseDelivery->id;
-
-            // Anti double mutation
-            $alreadyIn = Mutation::withoutGlobalScopes()
-                ->where('reference', $reference)
-                ->where('note', 'like', 'Purchase Delivery IN%')
-                ->exists();
-
-            if ($alreadyIn) {
-                abort(422, 'This delivery was already confirmed (stock movement exists).');
-            }
-
-            $isPartialDelivery = false;
-
-            foreach ($request->items as $idx => $row) {
-
-                $detailId  = (int) $row['detail_id'];
-                $productId = (int) $row['product_id'];
-                $expected  = (int) $row['expected'];
-
-                $received = (int) $row['qty_received'];
-                $defect   = (int) $row['qty_defect'];
-                $damaged  = (int) $row['qty_damaged'];
-
-                $totalConfirmed = $received + $defect + $damaged;
-
-                if ($totalConfirmed > $expected) {
-                    throw new \RuntimeException("Invalid qty: total > expected (detail_id={$detailId})");
-                }
-
-                // ✅ PD boleh partial, jadi ini hanya flag status (Bukan missing)
-                if ($totalConfirmed < $expected) {
-                    $isPartialDelivery = true;
-                }
-
-                $pdDetail = $purchaseDelivery->purchaseDeliveryDetails->firstWhere('id', $detailId);
-                if (!$pdDetail) {
-                    throw new \RuntimeException("PD Detail not found: {$detailId}");
-                }
-
-                // 1) update PD detail qty
-                $pdDetail->update([
-                    'qty_received' => $received,
-                    'qty_defect'   => $defect,
-                    'qty_damaged'  => $damaged,
-                ]);
-
-                // 2) update fulfilled qty di PO detail (+ total confirmed) hanya kalau PD berasal dari PO
-                if (!empty($purchaseDelivery->purchase_order_id) && $purchaseDelivery->purchaseOrder) {
-                    $po = $purchaseDelivery->purchaseOrder;
-                    $poDetail = $po->purchaseOrderDetails->firstWhere('product_id', $productId);
-
-                    if ($poDetail) {
-                        $newFulfilled = (int) $poDetail->fulfilled_quantity + $totalConfirmed;
-
-                        // clamp biar gak lewat ordered qty
-                        if ($newFulfilled > (int) $poDetail->quantity) {
-                            $newFulfilled = (int) $poDetail->quantity;
-                        }
-
-                        $poDetail->update(['fulfilled_quantity' => $newFulfilled]);
-                    }
-                }
-
-                if ($totalConfirmed <= 0) continue;
-
-                // 3) MUTATION IN (total)
-                $noteIn = "Purchase Delivery IN #{$reference} | WH {$purchaseDelivery->warehouse_id}";
-                $inId = $this->mutationController->applyInOutAndGetMutationId(
-                    (int) $purchaseDelivery->branch_id,
-                    (int) $purchaseDelivery->warehouse_id,
-                    $productId,
-                    'In',
-                    $totalConfirmed,
-                    $reference,
-                    $noteIn,
-                    (string) $purchaseDelivery->getRawOriginal('date')
-                );
-
-                // 4) DEFECT rows
-                if ($defect > 0) {
-                    $defRows = $row['defects'] ?? [];
-                    if (count($defRows) === 0) $defRows = array_fill(0, $defect, []);
-                    if (count($defRows) !== $defect) {
-                        throw new \RuntimeException("Defect detail mismatch: expected {$defect} rows, got " . count($defRows));
-                    }
-
-                    foreach ($defRows as $k => $d) {
-                        $photoPath = null;
-
-                        if (request()->hasFile("items.$idx.defects.$k.photo")) {
-                            $photoPath = request()->file("items.$idx.defects.$k.photo")
-                                ->store('defects', 'public');
-                        }
-
-                        ProductDefectItem::create([
-                            'branch_id'      => (int) $purchaseDelivery->branch_id,
-                            'warehouse_id'   => (int) $purchaseDelivery->warehouse_id,
-                            'product_id'     => $productId,
-                            'reference_id'   => (int) $purchaseDelivery->id,
-                            'reference_type' => PurchaseDelivery::class,
-                            'quantity'       => 1,
-                            'defect_type'    => $d['defect_type'] ?? null,
-                            'description'    => $d['defect_description'] ?? null,
-                            'photo_path'     => $photoPath,
-                            'created_by'     => auth()->id(),
-                        ]);
-                    }
-                }
-
-                // 5) DAMAGED rows
-                if ($damaged > 0) {
-                    $damRows = $row['damaged_items'] ?? [];
-                    if (count($damRows) === 0) $damRows = array_fill(0, $damaged, []);
-                    if (count($damRows) !== $damaged) {
-                        throw new \RuntimeException("Damaged detail mismatch: expected {$damaged} rows, got " . count($damRows));
-                    }
-
-                    foreach ($damRows as $k => $d) {
-                        $photoPath = null;
-
-                        if (request()->hasFile("items.$idx.damaged_items.$k.photo")) {
-                            $photoPath = request()->file("items.$idx.damaged_items.$k.photo")
-                                ->store('damaged', 'public');
-                        }
-
-                        ProductDamagedItem::create([
-                            'branch_id'       => (int) $purchaseDelivery->branch_id,
-                            'warehouse_id'    => (int) $purchaseDelivery->warehouse_id,
-                            'product_id'      => $productId,
-                            'reference_id'    => (int) $purchaseDelivery->id,
-                            'reference_type'  => PurchaseDelivery::class,
-                            'quantity'        => 1,
-                            'reason'          => $d['damaged_reason'] ?? null,
-                            'photo_path'      => $photoPath,
-                            'created_by'      => auth()->id(),
-                            'mutation_in_id'  => (int) $inId,
-                            'mutation_out_id' => null,
-                        ]);
-                    }
-                }
-            }
-
-            // ✅ simpan confirm note + meta
-            $confirmNote = $request->confirm_note ? (string) $request->confirm_note : null;
-
-            $purchaseDelivery->update([
-                'status' => $isPartialDelivery ? 'partial' : 'received',
-
-                'confirm_note'            => $confirmNote,
-                'confirm_note_updated_by' => $confirmNote ? auth()->id() : null,
-                'confirm_note_updated_role' => $confirmNote ? $this->roleString() : null,
-                'confirm_note_updated_at' => $confirmNote ? now() : null,
-            ]);
-
-            // ✅ Update PO status hanya kalau PD berasal dari PO
-            if (!empty($purchaseDelivery->purchase_order_id)) {
-                $po = PurchaseOrder::lockForUpdate()->findOrFail((int) $purchaseDelivery->purchase_order_id);
-                $po->calculateFulfilledQuantity();
-                $po->markAsCompleted();
-            }
-        });
-
-        toast('Purchase Delivery confirmed successfully', 'success');
-        return redirect()->route('purchase-deliveries.show', $purchaseDelivery->id);
     }
 }

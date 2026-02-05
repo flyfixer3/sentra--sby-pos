@@ -4,6 +4,7 @@ namespace Modules\PurchaseDelivery\Entities;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Modules\Inventory\Entities\Rack;
 
 class PurchaseDeliveryDetails extends Model
 {
@@ -16,6 +17,7 @@ class PurchaseDeliveryDetails extends Model
         'product_id',
         'product_name',
         'product_code',
+        'rack_id',          // ✅ NEW
         'quantity',
         'qty_received',
         'qty_defect',
@@ -27,6 +29,7 @@ class PurchaseDeliveryDetails extends Model
     protected $casts = [
         'purchase_delivery_id' => 'integer',
         'product_id'           => 'integer',
+        'rack_id'              => 'integer',   // ✅ NEW
         'quantity'             => 'integer',
         'qty_received'         => 'integer',
         'qty_defect'           => 'integer',
@@ -38,5 +41,11 @@ class PurchaseDeliveryDetails extends Model
     public function purchaseDelivery()
     {
         return $this->belongsTo(PurchaseDelivery::class, 'purchase_delivery_id');
+    }
+
+    // ✅ NEW
+    public function rack()
+    {
+        return $this->belongsTo(Rack::class, 'rack_id');
     }
 }
