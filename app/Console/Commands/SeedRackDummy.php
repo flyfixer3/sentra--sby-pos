@@ -8,20 +8,26 @@ use Illuminate\Support\Facades\Schema;
 
 class SeedRackDummy extends Command
 {
-    protected $signature = 'sentra:seed-rack-dummy {--warehouse_id=} {--limit=0}';
+    protected $signature = 'sentra:seed-rack-dummy {--warehouse_id=} {--limit=0} {--user_id=1}';
     protected $description = 'Create default racks and stock_racks based on existing stocks (dummy seeding)';
 
     public function handle()
     {
-        if (!Schema::hasTable('racks') || !Schema::hasTable('stock_racks') || !Schema::hasTable('stocks') || !Schema::hasTable('warehouses')) {
+        if (
+            !Schema::hasTable('racks') ||
+            !Schema::hasTable('stock_racks') ||
+            !Schema::hasTable('stocks') ||
+            !Schema::hasTable('warehouses')
+        ) {
             $this->error('Required tables not found: racks/stock_racks/stocks/warehouses');
             return 1;
         }
 
         $warehouseFilter = $this->option('warehouse_id');
         $limit = (int) $this->option('limit');
+        $userId = (int) $this->option('user_id') ?: 1;
 
-        DB::transaction(function () use ($warehouseFilter, $limit) {
+        DB::transaction(function () use ($warehouseFilter, $limit, $userId) {
 
             // 1) pastikan tiap warehouse ada rack default "DEF"
             $whQuery = DB::table('warehouses')->select('id', 'branch_id');
@@ -44,8 +50,8 @@ class SeedRackDummy extends Command
                         'code' => 'DEF',
                         'name' => 'Default Rack',
                         'description' => 'Auto seeded default rack',
-                        'created_by' => auth()->id(),
-                        'updated_by' => auth()->id(),
+                        'created_by' => $userId,
+                        'updated_by' => $userId,
                         'created_at' => now(),
                         'updated_at' => now(),
                     ]);
@@ -62,13 +68,20 @@ class SeedRackDummy extends Command
                 ->get()
                 ->groupBy('warehouse_id');
 
-            // 2) isi stock_racks dari stocks yang qty_available > 0
+            // 2) isi stock_racks dari stocks qty_available > 0
+            // ambil branch_id dari warehouses (karena stocks.branch_id banyak NULL)
             $stockQuery = DB::table('stocks')
-                ->select('product_id', 'branch_id', 'warehouse_id', 'qty_available')
-                ->where('qty_available', '>', 0);
+                ->join('warehouses', 'warehouses.id', '=', 'stocks.warehouse_id')
+                ->select(
+                    'stocks.product_id',
+                    'stocks.warehouse_id',
+                    'stocks.qty_available',
+                    DB::raw('warehouses.branch_id as branch_id')
+                )
+                ->where('stocks.qty_available', '>', 0);
 
             if ($warehouseFilter) {
-                $stockQuery->where('warehouse_id', (int) $warehouseFilter);
+                $stockQuery->where('stocks.warehouse_id', (int) $warehouseFilter);
             }
 
             if ($limit > 0) {
@@ -78,9 +91,12 @@ class SeedRackDummy extends Command
             $stocks = $stockQuery->get();
 
             $inserted = 0;
+
             foreach ($stocks as $s) {
                 $warehouseId = (int) ($s->warehouse_id ?? 0);
-                if ($warehouseId <= 0) continue;
+                $branchId = (int) ($s->branch_id ?? 0);
+
+                if ($warehouseId <= 0 || $branchId <= 0) continue;
 
                 $defRackId = 0;
                 if (isset($rackMap[$warehouseId]) && $rackMap[$warehouseId]->count() > 0) {
@@ -88,11 +104,10 @@ class SeedRackDummy extends Command
                 }
                 if ($defRackId <= 0) continue;
 
-                // kalau sudah ada row stock_racks untuk product+warehouse+branch+ rack DEF → skip
                 $exists = DB::table('stock_racks')
                     ->where('product_id', (int) $s->product_id)
                     ->where('warehouse_id', $warehouseId)
-                    ->where('branch_id', (int) ($s->branch_id ?? 0))
+                    ->where('branch_id', $branchId)
                     ->where('rack_id', $defRackId)
                     ->exists();
 
@@ -102,10 +117,10 @@ class SeedRackDummy extends Command
                     'product_id' => (int) $s->product_id,
                     'rack_id' => $defRackId,
                     'warehouse_id' => $warehouseId,
-                    'branch_id' => (int) ($s->branch_id ?? 0),
+                    'branch_id' => $branchId,
                     'qty_available' => (int) ($s->qty_available ?? 0),
-                    'created_by' => auth()->id(),
-                    'updated_by' => auth()->id(),
+                    'created_by' => $userId,
+                    'updated_by' => $userId,
                     'created_at' => now(),
                     'updated_at' => now(),
                 ]);

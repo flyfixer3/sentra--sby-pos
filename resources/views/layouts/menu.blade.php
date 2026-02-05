@@ -21,13 +21,13 @@
         </li>
         @endcan
 
-        @can('access_product_categories')
+        {{-- @can('access_product_categories')
         <li class="c-sidebar-nav-item">
             <a class="c-sidebar-nav-link {{ request()->routeIs('product-categories.*') ? 'c-active' : '' }}" href="{{ route('product-categories.index') }}">
                 <i class="c-sidebar-nav-icon bi bi-collection" style="line-height: 1;"></i> Racks
             </a>
         </li>
-        @endcan
+        @endcan --}}
 
         @can('access_warehouses')
         <li class="c-sidebar-nav-item">
@@ -86,6 +86,14 @@
                 <i class="c-sidebar-nav-icon bi bi-stack" style="line-height: 1;"></i> Stocks
             </a>
         </li>
+        @can('access_racks')
+            <li class="c-sidebar-nav-item">
+                <a class="c-sidebar-nav-link {{ request()->routeIs('inventory.racks.*') ? 'c-active' : '' }}"
+                href="{{ route('inventory.racks.index') }}">
+                    <i class="c-sidebar-nav-icon bi bi-grid-3x3-gap"></i> Racks
+                </a>
+            </li>
+        @endcan
         {{-- kalau nanti ada menu lain (Stock Opname, Stock Movement, dsb), tambahkan di sini --}}
     </ul>
 </li>

@@ -1,6 +1,7 @@
 <?php
 
 use Illuminate\Support\Facades\Route;
+use Modules\Inventory\Http\Controllers\RackController;
 use Modules\Inventory\Http\Controllers\StockController;
 use Modules\Inventory\Http\Controllers\StockQualityController;
 
@@ -25,6 +26,9 @@ Route::middleware(['auth'])
         Route::delete('/stocks/damaged/{id}', [StockQualityController::class, 'deleteDamaged'])
             ->name('stocks.damaged.delete');
 
+
+        Route::get('/racks/generate-code/{warehouseId}', [RackController::class, 'generateCode'])
+        ->name('racks.generate-code');
         Route::get('/racks', [RackController::class, 'index'])->name('racks.index');
         Route::get('/racks/create', [RackController::class, 'create'])->name('racks.create');
         Route::post('/racks', [RackController::class, 'store'])->name('racks.store');

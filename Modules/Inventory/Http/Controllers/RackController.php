@@ -112,6 +112,52 @@ class RackController extends Controller
         return redirect()->route('inventory.racks.index');
     }
 
+    public function generateCode($warehouseId)
+    {
+        abort_if(Gate::denies('create_racks'), 403);
+
+        $branchId = BranchContext::id();
+
+        $warehouse = Warehouse::findOrFail((int) $warehouseId);
+        if ($branchId !== 'all') {
+            abort_unless((int) $warehouse->branch_id === (int) $branchId, 403);
+        }
+
+        // Ambil semua code rack di warehouse ini
+        $codes = Rack::query()
+            ->where('warehouse_id', (int) $warehouse->id)
+            ->pluck('code')
+            ->map(fn($c) => strtoupper(trim((string) $c)))
+            ->toArray();
+
+        // format yang kita generate: R001, R002, ...
+        $max = 0;
+        foreach ($codes as $c) {
+            if (preg_match('/^R(\d{1,})$/', $c, $m)) {
+                $num = (int) $m[1];
+                if ($num > $max) $max = $num;
+            }
+        }
+
+        // cari yang kosong (kalau ada yang bolong)
+        // contoh: ada R001, R003 -> harusnya generate R002
+        $used = [];
+        foreach ($codes as $c) {
+            if (preg_match('/^R(\d{1,})$/', $c, $m)) {
+                $used[(int) $m[1]] = true;
+            }
+        }
+
+        $next = 1;
+        while (isset($used[$next])) $next++;
+
+        $code = 'R' . str_pad((string) $next, 3, '0', STR_PAD_LEFT);
+
+        return response()->json([
+            'code' => $code,
+        ]);
+    }
+
     public function edit(Rack $rack)
     {
         abort_if(Gate::denies('edit_racks'), 403);
