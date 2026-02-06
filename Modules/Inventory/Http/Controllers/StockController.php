@@ -22,15 +22,41 @@ class StockController extends Controller
 
     public function rackDetails($productId, $branchId, $warehouseId)
     {
-        $stockRacks = StockRack::with(['rack'])
-            ->where('product_id', (int) $productId)
-            ->where('branch_id', (int) $branchId)
-            ->where('warehouse_id', (int) $warehouseId)
-            ->get();
+        $productId  = (int) $productId;
+        $branchId   = (int) $branchId;
+        $warehouseId= (int) $warehouseId;
+
+        $rows = \Modules\Inventory\Entities\StockRack::query()
+            ->with(['rack:id,code,name'])
+            ->where('product_id', $productId)
+            ->where('branch_id', $branchId)
+            ->where('warehouse_id', $warehouseId)
+            ->orderBy('rack_id')
+            ->get()
+            ->map(function ($sr) {
+                // ✅ sesuaikan kalau nama kolom di stock_racks beda:
+                // aku asumsikan: qty / qty_good / qty_defect / qty_damaged
+                $total  = (int) ($sr->qty ?? 0);
+                $good   = (int) ($sr->qty_good ?? 0);
+                $defect = (int) ($sr->qty_defect ?? 0);
+                $damaged= (int) ($sr->qty_damaged ?? 0);
+
+                return [
+                    'rack_id'     => (int) ($sr->rack_id ?? 0),
+                    'rack_code'   => (string) ($sr->rack->code ?? '-'),
+                    'rack_name'   => (string) ($sr->rack->name ?? '-'),
+
+                    'qty_total'   => $total,
+                    'qty_good'    => $good,
+                    'qty_defect'  => $defect,
+                    'qty_damaged' => $damaged,
+                ];
+            })
+            ->values();
 
         return response()->json([
             'success' => true,
-            'data' => $stockRacks
+            'data' => $rows,
         ]);
     }
 

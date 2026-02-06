@@ -76,7 +76,6 @@
                             @csrf
                             @method('PUT')
 
-                            {{-- ✅ NEW: hidden flag untuk “complete with issue” --}}
                             <input type="hidden" name="confirm_issue" id="confirm_issue" value="0">
 
                             <div class="form-group mt-4">
@@ -122,8 +121,8 @@
                                         <div class="text-muted mt-2">
                                             <small>
                                                 - Jika <strong>total &lt; sent</strong>, maka sisanya dianggap <strong>Remaining/Missing</strong> dan butuh konfirmasi “Complete with issue”.<br>
-                                                - <strong>Defect</strong> tetap masuk stok, tapi dicatat sebagai defect (per unit).<br>
-                                                - <strong>Damaged/Pecah</strong> dicatat sebagai damaged (per unit).<br>
+                                                - <strong>GOOD</strong> bisa dibagi ke beberapa rack (split).<br>
+                                                - <strong>Defect/Damaged</strong> dicatat <strong>per unit</strong> dan tiap unit wajib pilih rack.<br>
                                                 - Foto opsional, tapi sangat disarankan untuk audit.
                                             </small>
                                         </div>
@@ -140,6 +139,8 @@
                                             <th class="text-center" style="width: 110px;">Good</th>
                                             <th class="text-center" style="width: 110px;">Defect</th>
                                             <th class="text-center" style="width: 110px;">Damaged</th>
+
+                                            <th class="text-center" style="width: 180px;">Rack Allocation</th>
                                             <th class="text-center" style="width: 170px;">Per-Unit Notes</th>
                                             <th class="text-center" style="width: 140px;">Status</th>
                                         </tr>
@@ -157,11 +158,10 @@
                                                 $oldReceived = old("items.$idx.qty_received", $defaultGood);
                                                 $oldDefect   = old("items.$idx.qty_defect", $defaultDef);
                                                 $oldDamaged  = old("items.$idx.qty_damaged", $defaultDam);
-                                            @endphp
 
-
-                                            @php
-                                                $cond = strtolower((string) ($item->condition ?? 'good'));
+                                                $oldGoodAlloc = old("items.$idx.good_allocations", []);
+                                                $oldDefects = old("items.$idx.defects", []);
+                                                $oldDamages = old("items.$idx.damaged_items", []);
                                             @endphp
 
                                             <tr class="receive-row"
@@ -179,6 +179,7 @@
                                                         </span>
                                                     </div>
 
+                                                    <input type="hidden" name="items[{{ $idx }}][item_id]" value="{{ (int) $item->id }}">
                                                     <input type="hidden" name="items[{{ $idx }}][product_id]" value="{{ (int) $item->product_id }}">
                                                     <input type="hidden" name="items[{{ $idx }}][condition]" value="{{ $cond }}">
                                                     <input type="hidden" name="items[{{ $idx }}][qty_sent]" value="{{ $sent }}">
@@ -224,9 +225,17 @@
                                                 <td class="text-center align-middle">
                                                     <button
                                                         type="button"
+                                                        class="btn btn-sm btn-outline-primary btn-good-rack"
+                                                        data-target="#goodAllocWrap-{{ $idx }}">
+                                                        Good Racks
+                                                    </button>
+                                                </td>
+
+                                                <td class="text-center align-middle">
+                                                    <button
+                                                        type="button"
                                                         class="btn btn-sm btn-notes"
-                                                        data-target="#perUnitWrap-{{ $idx }}"
-                                                    >
+                                                        data-target="#perUnitWrap-{{ $idx }}">
                                                         Notes
                                                         <span class="ml-2 badge badge-pill badge-defect badge-defect-count">0</span>
                                                         <span class="ml-1 badge badge-pill badge-damaged badge-damaged-count">0</span>
@@ -239,8 +248,75 @@
                                                 </td>
                                             </tr>
 
+                                            {{-- GOOD ALLOCATION --}}
+                                            <tr class="goodalloc-row" id="goodAllocWrap-{{ $idx }}" style="display:none;">
+                                                <td colspan="8" class="perunit-td">
+                                                    <div class="perunit-card">
+                                                        <div class="perunit-card-header">
+                                                            <div class="d-flex align-items-center justify-content-between">
+                                                                <div class="font-weight-bold">
+                                                                    Good Rack Allocation — {{ $item->product->product_name ?? '-' }}
+                                                                </div>
+                                                                <button type="button"
+                                                                        class="btn btn-sm btn-outline-secondary btn-close-goodalloc"
+                                                                        data-target="#goodAllocWrap-{{ $idx }}">
+                                                                    Close
+                                                                </button>
+                                                            </div>
+                                                            <div class="text-muted mt-1">
+                                                                <small>
+                                                                    Total qty pada tabel ini harus sama dengan nilai <b>Good</b>.
+                                                                    Kamu bisa split Good ke beberapa rack.
+                                                                </small>
+                                                            </div>
+                                                        </div>
+
+                                                        <div class="perunit-card-body">
+                                                            <div class="d-flex justify-content-between align-items-center mb-2">
+                                                                <div class="text-muted">
+                                                                    <small>Rack wajib dipilih hanya untuk baris yang qty &gt; 0.</small>
+                                                                </div>
+                                                                <button type="button"
+                                                                        class="btn btn-sm btn-primary btn-add-goodalloc"
+                                                                        data-idx="{{ $idx }}">
+                                                                    + Add Row
+                                                                </button>
+                                                            </div>
+
+                                                            <div class="table-responsive">
+                                                                <table class="table table-sm table-bordered mb-0 section-table">
+                                                                    <thead>
+                                                                        <tr>
+                                                                            <th class="text-center" style="width: 55px;">#</th>
+                                                                            <th style="width: 260px;">To Rack *</th>
+                                                                            <th class="text-center" style="width: 160px;">Qty</th>
+                                                                            <th class="text-center" style="width: 90px;">Action</th>
+                                                                        </tr>
+                                                                    </thead>
+                                                                    <tbody class="goodalloc-tbody" data-idx="{{ $idx }}">
+                                                                        {{-- built by JS --}}
+                                                                    </tbody>
+                                                                    <tfoot>
+                                                                        <tr>
+                                                                            <th colspan="2" class="text-right">Total</th>
+                                                                            <th class="text-center">
+                                                                                <span class="goodalloc-total" data-idx="{{ $idx }}">0</span>
+                                                                            </th>
+                                                                            <th></th>
+                                                                        </tr>
+                                                                    </tfoot>
+                                                                </table>
+                                                            </div>
+
+                                                            <textarea class="d-none old-goodalloc-json" data-idx="{{ $idx }}">{{ json_encode($oldGoodAlloc) }}</textarea>
+                                                        </div>
+                                                    </div>
+                                                </td>
+                                            </tr>
+
+                                            {{-- PER-UNIT NOTES --}}
                                             <tr class="perunit-row" id="perUnitWrap-{{ $idx }}" style="display:none;">
-                                                <td colspan="7" class="perunit-td">
+                                                <td colspan="8" class="perunit-td">
                                                     <div class="perunit-card">
                                                         <div class="perunit-card-header">
                                                             <div class="d-flex align-items-center justify-content-between">
@@ -253,7 +329,8 @@
                                                             </div>
                                                             <div class="text-muted mt-1">
                                                                 <small>
-                                                                    Defect/Damaged disimpan <b>per unit</b> (masing-masing baris qty = 1), jadi tiap unit bisa punya catatan + foto sendiri.
+                                                                    Defect/Damaged disimpan <b>per unit</b> (masing-masing baris qty = 1),
+                                                                    jadi tiap unit bisa punya catatan + foto + rack sendiri.
                                                                 </small>
                                                             </div>
                                                         </div>
@@ -269,6 +346,7 @@
                                                                             <thead>
                                                                                 <tr>
                                                                                     <th style="width: 55px;" class="text-center">#</th>
+                                                                                    <th style="width: 190px;">To Rack *</th>
                                                                                     <th style="min-width: 160px;">Defect Type *</th>
                                                                                     <th>Defect Description</th>
                                                                                     <th style="width: 190px;">Photo (optional)</th>
@@ -293,6 +371,7 @@
                                                                             <thead>
                                                                                 <tr>
                                                                                     <th style="width: 55px;" class="text-center">#</th>
+                                                                                    <th style="width: 190px;">To Rack *</th>
                                                                                     <th>Damaged Reason *</th>
                                                                                     <th style="width: 190px;">Photo (optional)</th>
                                                                                 </tr>
@@ -313,11 +392,6 @@
                                                                     Tips: kalau defect/damaged tidak ada, biarkan qty = 0 dan notes tidak perlu diisi.
                                                                 </small>
                                                             </div>
-
-                                                            @php
-                                                                $oldDefects = old("items.$idx.defects", []);
-                                                                $oldDamages = old("items.$idx.damaged_items", []);
-                                                            @endphp
 
                                                             <textarea class="d-none old-defects-json" data-idx="{{ $idx }}">{{ json_encode($oldDefects) }}</textarea>
                                                             <textarea class="d-none old-damages-json" data-idx="{{ $idx }}">{{ json_encode($oldDamages) }}</textarea>
@@ -346,6 +420,17 @@
                                 </button>
                             </div>
                         </form>
+
+                        <script>
+                            window.RACKS_BY_WAREHOUSE = @json(
+                                $racksByWarehouse->map(fn($rows) =>
+                                    $rows->map(fn($r) => [
+                                        'id'    => (int) $r->id,
+                                        'label' => trim(($r->code ? $r->code.' - ' : '').($r->name ?? 'Rack')),
+                                    ])->values()
+                                )
+                            );
+                        </script>
 
                     </div>
                 </div>
@@ -475,6 +560,403 @@
         }
     }
 
+    function getWarehouseId() {
+        const whSelect = document.querySelector('select[name="to_warehouse_id"]');
+        return whSelect ? whSelect.value : null;
+    }
+
+    function buildRackOptionsHtml(whId, selectedValue) {
+        let html = `<option value="">-- Select Rack --</option>`;
+        if (!whId || !window.RACKS_BY_WAREHOUSE || !window.RACKS_BY_WAREHOUSE[whId]) return html;
+
+        window.RACKS_BY_WAREHOUSE[whId].forEach(r => {
+            const sel = (selectedValue && String(selectedValue) === String(r.id)) ? 'selected' : '';
+            html += `<option value="${r.id}" ${sel}>${r.label}</option>`;
+        });
+
+        return html;
+    }
+
+    // ==========================
+    // GOOD ALLOCATION
+    // ==========================
+    function rebuildGoodAlloc(idx, keepOld = true) {
+        const whId = getWarehouseId();
+        const wrap = document.getElementById('goodAllocWrap-' + idx);
+        if (!wrap) return;
+
+        const tbody = wrap.querySelector('.goodalloc-tbody');
+        const totalSpan = wrap.querySelector('.goodalloc-total');
+
+        let allocations = [];
+
+        if (keepOld) {
+            const oldText = wrap.querySelector('.old-goodalloc-json')?.value || wrap.querySelector('.old-goodalloc-json')?.textContent || '';
+            allocations = safeJsonParse(oldText);
+        }
+
+        if (!Array.isArray(allocations) || allocations.length === 0) {
+            allocations = [
+                { to_rack_id: '', qty: 0 }
+            ];
+        }
+
+        tbody.innerHTML = '';
+
+        allocations.forEach((a, i) => {
+            const rackVal = a.to_rack_id ?? '';
+            const qtyVal = a.qty ?? 0;
+
+            const tr = document.createElement('tr');
+            tr.innerHTML = `
+                <td class="text-center align-middle">${i + 1}</td>
+                <td class="align-middle">
+                    <select class="form-control form-control-sm goodalloc-rack"
+                            name="items[${idx}][good_allocations][${i}][to_rack_id]">
+                        ${buildRackOptionsHtml(whId, rackVal)}
+                    </select>
+                </td>
+                <td class="align-middle">
+                    <input type="number"
+                           min="0"
+                           step="1"
+                           class="form-control form-control-sm text-center goodalloc-qty"
+                           name="items[${idx}][good_allocations][${i}][qty]"
+                           value="${asInt(qtyVal)}">
+                </td>
+                <td class="text-center align-middle">
+                    <button type="button" class="btn btn-sm btn-danger btn-remove-goodalloc" data-idx="${idx}" data-row="${i}">
+                        <i class="bi bi-trash"></i>
+                    </button>
+                </td>
+            `;
+            tbody.appendChild(tr);
+        });
+
+        tbody.querySelectorAll('select, input').forEach(el => {
+            el.addEventListener('change', () => syncGoodAllocTotal(idx));
+            el.addEventListener('input', () => syncGoodAllocTotal(idx));
+        });
+
+        tbody.querySelectorAll('.btn-remove-goodalloc').forEach(btn => {
+            btn.addEventListener('click', () => {
+                removeGoodAllocRow(idx, asInt(btn.getAttribute('data-row')));
+            });
+        });
+
+        syncGoodAllocTotal(idx);
+    }
+
+    function readGoodAllocations(idx) {
+        const wrap = document.getElementById('goodAllocWrap-' + idx);
+        if (!wrap) return [];
+
+        const rows = wrap.querySelectorAll('.goodalloc-tbody tr');
+        const result = [];
+
+        rows.forEach((tr) => {
+            const rack = tr.querySelector('select.goodalloc-rack')?.value || '';
+            const qty = asInt(tr.querySelector('input.goodalloc-qty')?.value || 0);
+            result.push({ to_rack_id: rack, qty: qty });
+        });
+
+        return result;
+    }
+
+    function syncGoodAllocTotal(idx) {
+        const wrap = document.getElementById('goodAllocWrap-' + idx);
+        if (!wrap) return;
+
+        const totalSpan = wrap.querySelector('.goodalloc-total');
+        const allocations = readGoodAllocations(idx);
+
+        let total = 0;
+        allocations.forEach(a => total += asInt(a.qty || 0));
+        if (totalSpan) totalSpan.textContent = String(total);
+
+        const row = document.querySelector(`.receive-row[data-index="${idx}"]`);
+        if (row) updateRowStatus(row);
+    }
+
+    function addGoodAllocRow(idx) {
+        const wrap = document.getElementById('goodAllocWrap-' + idx);
+        if (!wrap) return;
+
+        const tbody = wrap.querySelector('.goodalloc-tbody');
+        const rowCount = tbody.querySelectorAll('tr').length;
+
+        const whId = getWarehouseId();
+
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+            <td class="text-center align-middle">${rowCount + 1}</td>
+            <td class="align-middle">
+                <select class="form-control form-control-sm goodalloc-rack"
+                        name="items[${idx}][good_allocations][${rowCount}][to_rack_id]">
+                    ${buildRackOptionsHtml(whId, '')}
+                </select>
+            </td>
+            <td class="align-middle">
+                <input type="number"
+                       min="0"
+                       step="1"
+                       class="form-control form-control-sm text-center goodalloc-qty"
+                       name="items[${idx}][good_allocations][${rowCount}][qty]"
+                       value="0">
+            </td>
+            <td class="text-center align-middle">
+                <button type="button" class="btn btn-sm btn-danger btn-remove-goodalloc" data-idx="${idx}" data-row="${rowCount}">
+                    <i class="bi bi-trash"></i>
+                </button>
+            </td>
+        `;
+        tbody.appendChild(tr);
+
+        rebuildGoodAlloc(idx, false);
+    }
+
+    function removeGoodAllocRow(idx, rowIndex) {
+        const wrap = document.getElementById('goodAllocWrap-' + idx);
+        if (!wrap) return;
+
+        const tbody = wrap.querySelector('.goodalloc-tbody');
+        const rows = Array.from(tbody.querySelectorAll('tr'));
+        if (rows.length <= 1) return;
+
+        if (rows[rowIndex]) rows[rowIndex].remove();
+        rebuildGoodAlloc(idx, false);
+    }
+
+    // ==========================
+    // PER-UNIT TABLES (DEFECT/DAMAGED)
+    // ==========================
+    function ensurePerUnitTablesBuilt(row) {
+        const idx = row.dataset.index;
+        const perWrap = document.getElementById('perUnitWrap-' + idx);
+        if (!perWrap) return;
+
+        const whId = getWarehouseId();
+
+        const defectInput = row.querySelector('.qty-defect');
+        const damagedInput = row.querySelector('.qty-damaged');
+
+        const defectCount = asInt(defectInput.value);
+        const damagedCount = asInt(damagedInput.value);
+
+        const defectTbody = perWrap.querySelector('.defect-tbody');
+        const damagedTbody = perWrap.querySelector('.damaged-tbody');
+
+        const defectCountText = perWrap.querySelector('.defect-count-text');
+        const damagedCountText = perWrap.querySelector('.damaged-count-text');
+
+        // ============================================
+        // ✅ FIX 1: setiap kali dipanggil, snapshot dulu input terbaru dari DOM
+        // supaya kalau terjadi rebuild, data user tidak hilang
+        // ============================================
+        const snapshotCurrentDomToDataset = () => {
+            const currentDef = [];
+            perWrap.querySelectorAll('.defect-tbody tr').forEach((tr) => {
+                currentDef.push({
+                    to_rack_id: tr.querySelector('select.defect-rack-select')?.value || '',
+                    defect_type: tr.querySelector('input.defect-type-input')?.value || '',
+                    defect_description: tr.querySelector('textarea.defect-desc-input')?.value || ''
+                });
+            });
+
+            const currentDam = [];
+            perWrap.querySelectorAll('.damaged-tbody tr').forEach((tr) => {
+                currentDam.push({
+                    to_rack_id: tr.querySelector('select.damaged-rack-select')?.value || '',
+                    damaged_reason: tr.querySelector('textarea.damaged-reason-input')?.value || ''
+                });
+            });
+
+            perWrap.dataset.oldDefects = JSON.stringify(currentDef);
+            perWrap.dataset.oldDamages = JSON.stringify(currentDam);
+        };
+
+        // snapshot dulu supaya input terakhir tidak hilang
+        if (perWrap.dataset.hydrated === '1') {
+            snapshotCurrentDomToDataset();
+        }
+
+        // ============================================
+        // ✅ FIX 2: jangan rebuild kalau tidak perlu
+        // rebuild hanya jika:
+        // - belum pernah build
+        // - atau jumlah row sekarang mismatch dengan qty defect/damaged
+        // ============================================
+        const currentDefRows = defectTbody ? defectTbody.querySelectorAll('tr').length : 0;
+        const currentDamRows = damagedTbody ? damagedTbody.querySelectorAll('tr').length : 0;
+
+        const needRebuild =
+            (perWrap.dataset.hydrated !== '1') ||
+            (currentDefRows !== defectCount) ||
+            (currentDamRows !== damagedCount);
+
+        // kalau tidak perlu rebuild, cukup update counter/badge aja
+        if (!needRebuild) {
+            if (defectCountText) defectCountText.textContent = defectCount;
+            if (damagedCountText) damagedCountText.textContent = damagedCount;
+
+            const btn = row.querySelector('.btn-notes');
+            if (btn) {
+                const bd = btn.querySelector('.badge-defect-count');
+                const bm = btn.querySelector('.badge-damaged-count');
+                if (bd) bd.textContent = defectCount;
+                if (bm) bm.textContent = damagedCount;
+            }
+            return;
+        }
+
+        // ============================================
+        // first hydrate: ambil old JSON dari hidden textarea
+        // ============================================
+        if (perWrap.dataset.hydrated !== '1') {
+            const oldDefText = perWrap.querySelector('.old-defects-json')?.value || perWrap.querySelector('.old-defects-json')?.textContent || '';
+            const oldDamText = perWrap.querySelector('.old-damages-json')?.value || perWrap.querySelector('.old-damages-json')?.textContent || '';
+
+            const oldDef = safeJsonParse(oldDefText);
+            const oldDam = safeJsonParse(oldDamText);
+
+            perWrap.dataset.oldDefects = JSON.stringify(oldDef || []);
+            perWrap.dataset.oldDamages = JSON.stringify(oldDam || []);
+            perWrap.dataset.hydrated = '1';
+        }
+
+        const oldDefects = safeJsonParse(perWrap.dataset.oldDefects || '[]');
+        const oldDamages = safeJsonParse(perWrap.dataset.oldDamages || '[]');
+
+        // ============================================
+        // rebuild defect rows sesuai defectCount
+        // ============================================
+        defectTbody.innerHTML = '';
+        for (let i = 0; i < defectCount; i++) {
+            const prev = oldDefects[i] || {};
+            const tr = document.createElement('tr');
+
+            tr.innerHTML = `
+                <td class="text-center align-middle">${i + 1}</td>
+
+                <td class="align-middle">
+                    <select class="form-control form-control-sm defect-rack-select"
+                            name="items[${idx}][defects][${i}][to_rack_id]"
+                            required>
+                        ${buildRackOptionsHtml(whId, prev.to_rack_id || '')}
+                    </select>
+                </td>
+
+                <td class="align-middle">
+                    <input
+                        type="text"
+                        class="form-control form-control-sm defect-type-input"
+                        name="items[${idx}][defects][${i}][defect_type]"
+                        value="${String(prev.defect_type || '').replace(/"/g, '&quot;')}"
+                        placeholder="contoh: bubble / retak ringan"
+                        required
+                    >
+                </td>
+
+                <td class="align-middle">
+                    <textarea
+                        class="form-control form-control-sm defect-desc-input"
+                        name="items[${idx}][defects][${i}][defect_description]"
+                        rows="2"
+                        placeholder="keterangan defect (bagian mana / catatan)">${String(prev.defect_description || '')}</textarea>
+                </td>
+
+                <td class="align-middle">
+                    <input
+                        type="file"
+                        accept="image/*"
+                        class="photo-input"
+                        name="items[${idx}][defects][${i}][photo]"
+                    >
+                    <div class="text-muted mt-1"><small>jpg/png/webp (opsional)</small></div>
+                </td>
+            `;
+            defectTbody.appendChild(tr);
+        }
+
+        // ============================================
+        // rebuild damaged rows sesuai damagedCount
+        // ============================================
+        damagedTbody.innerHTML = '';
+        for (let i = 0; i < damagedCount; i++) {
+            const prev = oldDamages[i] || {};
+            const tr = document.createElement('tr');
+
+            tr.innerHTML = `
+                <td class="text-center align-middle">${i + 1}</td>
+
+                <td class="align-middle">
+                    <select class="form-control form-control-sm damaged-rack-select"
+                            name="items[${idx}][damaged_items][${i}][to_rack_id]"
+                            required>
+                        ${buildRackOptionsHtml(whId, prev.to_rack_id || '')}
+                    </select>
+                </td>
+
+                <td class="align-middle">
+                    <textarea
+                        class="form-control form-control-sm damaged-reason-input"
+                        name="items[${idx}][damaged_items][${i}][damaged_reason]"
+                        rows="2"
+                        placeholder="contoh: pecah di sudut kiri saat bongkar peti"
+                        required>${String(prev.damaged_reason || '')}</textarea>
+                </td>
+
+                <td class="align-middle">
+                    <input
+                        type="file"
+                        accept="image/*"
+                        class="photo-input"
+                        name="items[${idx}][damaged_items][${i}][photo]"
+                    >
+                    <div class="text-muted mt-1"><small>jpg/png/webp (opsional)</small></div>
+                </td>
+            `;
+            damagedTbody.appendChild(tr);
+        }
+
+        if (defectCountText) defectCountText.textContent = defectCount;
+        if (damagedCountText) damagedCountText.textContent = damagedCount;
+
+        const btn = row.querySelector('.btn-notes');
+        if (btn) {
+            const bd = btn.querySelector('.badge-defect-count');
+            const bm = btn.querySelector('.badge-damaged-count');
+            if (bd) bd.textContent = defectCount;
+            if (bm) bm.textContent = damagedCount;
+        }
+
+        // ============================================
+        // ✅ FIX 3: setiap input/change, update status & snapshot lagi
+        // ============================================
+        perWrap.querySelectorAll('input, textarea, select').forEach(el => {
+            el.addEventListener('input', () => {
+                snapshotCurrentDomToDataset();
+                updateRowStatus(row);
+            });
+            el.addEventListener('change', () => {
+                snapshotCurrentDomToDataset();
+                updateRowStatus(row);
+            });
+        });
+
+        // setelah rebuild, snapshot supaya dataset sinkron
+        snapshotCurrentDomToDataset();
+    }
+
+    function toggleSection(targetSelector, show) {
+        const el = document.querySelector(targetSelector);
+        if (!el) return;
+        el.style.display = show ? '' : 'none';
+    }
+
+    // ==========================
+    // VALIDATION STATUS
+    // ==========================
     function updateRowStatus(row) {
         const sent = asInt(row.dataset.sent);
         const cond = (row.dataset.condition || 'good').toLowerCase();
@@ -490,7 +972,6 @@
         const defect   = asInt(defectInput.value);
         const damaged  = asInt(damagedInput.value);
 
-        // basic negative guard
         if (received < 0 || defect < 0 || damaged < 0) {
             statusBadge.className = 'badge badge-danger row-status';
             statusBadge.textContent = 'INVALID';
@@ -498,7 +979,6 @@
             return false;
         }
 
-        // RULE: kalau item dikirim defect/damaged dari awal, penerimaan good/defect harus sesuai
         if (cond === 'defect' && received > 0) {
             statusBadge.className = 'badge badge-danger row-status';
             statusBadge.textContent = 'INVALID';
@@ -515,7 +995,6 @@
 
         const total = received + defect + damaged;
 
-        // RULE: total tidak boleh > sent
         if (total > sent) {
             statusBadge.className = 'badge badge-danger row-status';
             statusBadge.textContent = 'MISMATCH';
@@ -524,9 +1003,32 @@
         }
 
         const idx = row.dataset.index;
+
+        // ✅ jika ada GOOD > 0, wajib ada allocation & racknya valid
+        if (received > 0) {
+            const allocs = readGoodAllocations(idx);
+            let sumAlloc = 0;
+            for (const a of allocs) {
+                const q = asInt(a.qty);
+                sumAlloc += q;
+                if (q > 0 && (!a.to_rack_id || String(a.to_rack_id).trim() === '')) {
+                    statusBadge.className = 'badge badge-warning row-status';
+                    statusBadge.textContent = 'NEED INFO';
+                    hint.textContent = 'GOOD > 0: setiap baris allocation yang qty > 0 wajib pilih rack.';
+                    return false;
+                }
+            }
+            if (sumAlloc !== received) {
+                statusBadge.className = 'badge badge-warning row-status';
+                statusBadge.textContent = 'NEED INFO';
+                hint.textContent = `Total rack allocation (${sumAlloc}) harus sama dengan GOOD (${received}).`;
+                return false;
+            }
+        }
+
+        // ✅ DEFECT per unit: wajib rack + defect type
         const perWrap = document.getElementById('perUnitWrap-' + idx);
 
-        // VALIDASI per-unit defect (kalau defect > 0)
         if (defect > 0) {
             if (!perWrap) {
                 statusBadge.className = 'badge badge-warning row-status';
@@ -544,7 +1046,16 @@
             }
 
             for (let i = 0; i < defectRows.length; i++) {
+                const rackSel = defectRows[i].querySelector('select.defect-rack-select');
                 const typeInput = defectRows[i].querySelector('input.defect-type-input');
+
+                if (!rackSel || !rackSel.value) {
+                    statusBadge.className = 'badge badge-warning row-status';
+                    statusBadge.textContent = 'NEED INFO';
+                    hint.textContent = 'To Rack wajib dipilih untuk setiap defect unit.';
+                    return false;
+                }
+
                 if (!typeInput || !typeInput.value.trim()) {
                     statusBadge.className = 'badge badge-warning row-status';
                     statusBadge.textContent = 'NEED INFO';
@@ -554,7 +1065,7 @@
             }
         }
 
-        // VALIDASI per-unit damaged (kalau damaged > 0)
+        // ✅ DAMAGED per unit: wajib rack + reason
         if (damaged > 0) {
             if (!perWrap) {
                 statusBadge.className = 'badge badge-warning row-status';
@@ -572,7 +1083,16 @@
             }
 
             for (let i = 0; i < damagedRows.length; i++) {
+                const rackSel = damagedRows[i].querySelector('select.damaged-rack-select');
                 const reasonInput = damagedRows[i].querySelector('textarea.damaged-reason-input');
+
+                if (!rackSel || !rackSel.value) {
+                    statusBadge.className = 'badge badge-warning row-status';
+                    statusBadge.textContent = 'NEED INFO';
+                    hint.textContent = 'To Rack wajib dipilih untuk setiap damaged unit.';
+                    return false;
+                }
+
                 if (!reasonInput || !reasonInput.value.trim()) {
                     statusBadge.className = 'badge badge-warning row-status';
                     statusBadge.textContent = 'NEED INFO';
@@ -582,7 +1102,6 @@
             }
         }
 
-        // STATUS OK vs REMAINING
         if (total === sent) {
             statusBadge.className = 'badge badge-success row-status';
             statusBadge.textContent = 'OK';
@@ -600,182 +1119,13 @@
         const rows = document.querySelectorAll('.receive-row');
         let ok = true;
         rows.forEach(row => {
+            ensurePerUnitTablesBuilt(row);
             const rowOk = updateRowStatus(row);
             if (!rowOk) ok = false;
         });
         return ok;
     }
 
-    function ensurePerUnitTablesBuilt(row) {
-        const idx = row.dataset.index;
-        const perWrap = document.getElementById('perUnitWrap-' + idx);
-        if (!perWrap) return;
-
-        const defectInput = row.querySelector('.qty-defect');
-        const damagedInput = row.querySelector('.qty-damaged');
-
-        const defectCount = asInt(defectInput.value);
-        const damagedCount = asInt(damagedInput.value);
-
-        const defectTbody = perWrap.querySelector('.defect-tbody');
-        const damagedTbody = perWrap.querySelector('.damaged-tbody');
-
-        const defectCountText = perWrap.querySelector('.defect-count-text');
-        const damagedCountText = perWrap.querySelector('.damaged-count-text');
-
-        if (!perWrap.dataset.hydrated) {
-            const oldDefText = perWrap.querySelector('.old-defects-json')?.value || perWrap.querySelector('.old-defects-json')?.textContent || '';
-            const oldDamText = perWrap.querySelector('.old-damages-json')?.value || perWrap.querySelector('.old-damages-json')?.textContent || '';
-
-            const oldDef = safeJsonParse(oldDefText);
-            const oldDam = safeJsonParse(oldDamText);
-
-            perWrap.dataset.oldDefects = JSON.stringify(oldDef || []);
-            perWrap.dataset.oldDamages = JSON.stringify(oldDam || []);
-            perWrap.dataset.hydrated = '1';
-        }
-
-        const oldDefects = safeJsonParse(perWrap.dataset.oldDefects || '[]');
-        const oldDamages = safeJsonParse(perWrap.dataset.oldDamages || '[]');
-
-        defectTbody.innerHTML = '';
-        for (let i = 0; i < defectCount; i++) {
-            const prev = oldDefects[i] || {};
-            const tr = document.createElement('tr');
-
-            tr.innerHTML = `
-                <td class="text-center align-middle">${i + 1}</td>
-                <td class="align-middle">
-                    <input
-                        type="text"
-                        class="form-control form-control-sm defect-type-input"
-                        name="items[${idx}][defects][${i}][defect_type]"
-                        value="${(prev.defect_type || '').replace(/"/g, '&quot;')}"
-                        placeholder="contoh: bubble / retak ringan"
-                        required
-                    >
-                </td>
-                <td class="align-middle">
-                    <textarea
-                        class="form-control form-control-sm defect-desc-input"
-                        name="items[${idx}][defects][${i}][defect_description]"
-                        rows="2"
-                        placeholder="keterangan defect (bagian mana / catatan)">${(prev.defect_description || '')}</textarea>
-                </td>
-                <td class="align-middle">
-                    <input
-                        type="file"
-                        accept="image/*"
-                        class="photo-input"
-                        name="items[${idx}][defects][${i}][photo]"
-                    >
-                    <div class="text-muted mt-1"><small>jpg/png/webp (opsional)</small></div>
-                </td>
-            `;
-            defectTbody.appendChild(tr);
-        }
-
-        damagedTbody.innerHTML = '';
-        for (let i = 0; i < damagedCount; i++) {
-            const prev = oldDamages[i] || {};
-            const tr = document.createElement('tr');
-
-            tr.innerHTML = `
-                <td class="text-center align-middle">${i + 1}</td>
-                <td class="align-middle">
-                    <textarea
-                        class="form-control form-control-sm damaged-reason-input"
-                        name="items[${idx}][damaged_items][${i}][damaged_reason]"
-                        rows="2"
-                        placeholder="contoh: pecah di sudut kiri saat bongkar peti"
-                        required>${(prev.damaged_reason || '')}</textarea>
-                </td>
-                <td class="align-middle">
-                    <input
-                        type="file"
-                        accept="image/*"
-                        class="photo-input"
-                        name="items[${idx}][damaged_items][${i}][photo]"
-                    >
-                    <div class="text-muted mt-1"><small>jpg/png/webp (opsional)</small></div>
-                </td>
-            `;
-            damagedTbody.appendChild(tr);
-        }
-
-        defectCountText.textContent = defectCount;
-        damagedCountText.textContent = damagedCount;
-
-        const btn = row.querySelector('.btn-notes');
-        if (btn) {
-            const bd = btn.querySelector('.badge-defect-count');
-            const bm = btn.querySelector('.badge-damaged-count');
-            if (bd) bd.textContent = defectCount;
-            if (bm) bm.textContent = damagedCount;
-        }
-
-        perWrap.querySelectorAll('input, textarea').forEach(el => {
-            el.addEventListener('input', () => updateRowStatus(row));
-        });
-
-        const currentDef = [];
-        perWrap.querySelectorAll('.defect-tbody tr').forEach((tr) => {
-            currentDef.push({
-                defect_type: tr.querySelector('input.defect-type-input')?.value || '',
-                defect_description: tr.querySelector('textarea.defect-desc-input')?.value || ''
-            });
-        });
-
-        const currentDam = [];
-        perWrap.querySelectorAll('.damaged-tbody tr').forEach((tr) => {
-            currentDam.push({
-                damaged_reason: tr.querySelector('textarea.damaged-reason-input')?.value || ''
-            });
-        });
-
-        perWrap.dataset.oldDefects = JSON.stringify(currentDef);
-        perWrap.dataset.oldDamages = JSON.stringify(currentDam);
-    }
-
-    function togglePerUnit(targetSelector, show) {
-        const el = document.querySelector(targetSelector);
-        if (!el) return;
-        el.style.display = show ? '' : 'none';
-    }
-
-    function initRow(row) {
-        ensurePerUnitTablesBuilt(row);
-        updateRowStatus(row);
-
-        row.querySelectorAll('.qty-input').forEach(el => {
-            el.addEventListener('input', function () {
-                ensurePerUnitTablesBuilt(row);
-                updateRowStatus(row);
-            });
-        });
-
-        const btn = row.querySelector('.btn-notes');
-        if (btn) {
-            btn.addEventListener('click', () => {
-                const target = btn.getAttribute('data-target');
-                ensurePerUnitTablesBuilt(row);
-                togglePerUnit(target, true);
-            });
-        }
-    }
-
-    document.addEventListener('DOMContentLoaded', function () {
-        document.querySelectorAll('.receive-row').forEach(row => initRow(row));
-
-        document.querySelectorAll('.btn-close-notes').forEach(btn => {
-            btn.addEventListener('click', () => {
-                const target = btn.getAttribute('data-target');
-                togglePerUnit(target, false);
-            });
-        });
-    });
-
-    // ✅ NEW: hitung total missing (Remaining/Missing)
     function getTotalMissing() {
         const rows = document.querySelectorAll('.receive-row');
         let missing = 0;
@@ -792,13 +1142,96 @@
         return missing;
     }
 
-    function confirmSubmit() {
-        const isValid = validateAllRows();
+    function initRow(row) {
+        const idx = row.dataset.index;
 
+        rebuildGoodAlloc(idx, true);
+        syncGoodAllocTotal(idx);
+
+        ensurePerUnitTablesBuilt(row);
+        updateRowStatus(row);
+
+        row.querySelectorAll('.qty-input').forEach(el => {
+            el.addEventListener('input', function () {
+                ensurePerUnitTablesBuilt(row);
+                syncGoodAllocTotal(idx);
+                updateRowStatus(row);
+            });
+        });
+
+        const btnNotes = row.querySelector('.btn-notes');
+        if (btnNotes) {
+            btnNotes.addEventListener('click', () => {
+                const target = btnNotes.getAttribute('data-target');
+                ensurePerUnitTablesBuilt(row);
+                toggleSection(target, true);
+            });
+        }
+
+        const btnGood = row.querySelector('.btn-good-rack');
+        if (btnGood) {
+            btnGood.addEventListener('click', () => {
+                const target = btnGood.getAttribute('data-target');
+                rebuildGoodAlloc(idx, true);
+                toggleSection(target, true);
+            });
+        }
+    }
+
+    document.addEventListener('DOMContentLoaded', function () {
+        const whSelect = document.querySelector('select[name="to_warehouse_id"]');
+        if (whSelect) {
+            whSelect.addEventListener('change', () => {
+                // re-render all selects that depend on warehouse racks
+                document.querySelectorAll('.receive-row').forEach(row => {
+                    const idx = row.dataset.index;
+                    rebuildGoodAlloc(idx, false);
+                    ensurePerUnitTablesBuilt(row);
+                    updateRowStatus(row);
+                });
+            });
+        }
+
+        document.querySelectorAll('.receive-row').forEach(row => initRow(row));
+
+        document.querySelectorAll('.btn-close-notes').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const target = btn.getAttribute('data-target');
+                toggleSection(target, false);
+            });
+        });
+
+        document.querySelectorAll('.btn-close-goodalloc').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const target = btn.getAttribute('data-target');
+                toggleSection(target, false);
+            });
+        });
+
+        document.querySelectorAll('.btn-add-goodalloc').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const idx = asInt(btn.getAttribute('data-idx'));
+                addGoodAllocRow(idx);
+            });
+        });
+    });
+
+    function confirmSubmit() {
+        const whId = getWarehouseId();
+        if (!whId) {
+            Swal.fire({
+                title: 'Destination warehouse belum dipilih',
+                text: 'Silakan pilih Destination Warehouse dulu.',
+                icon: 'error',
+            });
+            return;
+        }
+
+        const isValid = validateAllRows();
         if (!isValid) {
             Swal.fire({
                 title: 'Ada data yang belum valid',
-                text: 'Periksa kembali input qty dan per-unit notes. Total tidak boleh lebih dari qty sent.',
+                text: 'Periksa kembali qty, good rack allocation, rack per defect/damaged, dan notes.',
                 icon: 'error',
             });
             return;

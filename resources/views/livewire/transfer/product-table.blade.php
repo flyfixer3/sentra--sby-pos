@@ -1,4 +1,3 @@
-{{-- resources/views/livewire/transfer/product-table.blade.php --}}
 <div>
     @if (session()->has('message'))
         <div class="alert alert-warning alert-dismissible fade show" role="alert">
@@ -25,11 +24,14 @@
                     <th class="align-middle">#</th>
                     <th class="align-middle">Product Name</th>
                     <th class="align-middle">Code</th>
+
                     <th class="align-middle text-center">Stock (From WH)</th>
 
-                    {{-- ✅ NEW --}}
-                    <th class="align-middle text-center" style="width: 160px;">Condition</th>
+                    {{-- ✅ NEW: Stock from selected rack (filtered) --}}
+                    <th class="align-middle text-center">Stock (From Rack)</th>
 
+                    <th class="align-middle text-center" style="width: 160px;">Condition</th>
+                    <th class="align-middle text-center" style="width: 220px;">From Rack</th>
                     <th class="align-middle" style="width: 160px;">Quantity</th>
                     <th class="align-middle text-center" style="width: 90px;">Action</th>
                 </tr>
@@ -43,12 +45,24 @@
                             $name      = $p['product_name'] ?? '-';
                             $code      = $p['product_code'] ?? '-';
                             $unit      = $p['product_unit'] ?? '';
-                            $stockQty  = (int)($p['stock_qty'] ?? 0);
+
+                            // stok dari WH (per condition)
+                            $stockWh = (int)($p['stock_qty_wh'] ?? 0);
+
+                            // stok dari rack terpilih (per condition)
+                            $stockRack = (int)($p['stock_qty_rack'] ?? 0);
+
+                            // stok efektif untuk batas qty (rack kalau dipilih, kalau tidak = WH)
+                            $stockEffective = (int)($p['stock_qty'] ?? 0);
+
                             $qtyInput  = (int)($p['quantity'] ?? 1);
                             if ($qtyInput < 1) $qtyInput = 1;
 
                             $cond = strtolower((string)($p['condition'] ?? 'good'));
                             if (!in_array($cond, ['good','defect','damaged'], true)) $cond = 'good';
+
+                            $rackOptions = $p['rack_options'] ?? [];
+                            $selectedRackId = (int)($p['from_rack_id'] ?? 0);
                         @endphp
 
                         <tr>
@@ -56,12 +70,12 @@
                             <td class="align-middle">{{ $name }}</td>
                             <td class="align-middle">{{ $code }}</td>
 
+                            {{-- Stock (From WH) --}}
                             <td class="align-middle text-center">
                                 <span class="badge badge-info">
-                                    {{ (int)$stockQty }} {{ $unit }}
+                                    {{ (int)$stockWh }} {{ $unit }}
                                 </span>
 
-                                {{-- optional: tampilkan breakdown kecil biar jelas --}}
                                 <div class="small text-muted mt-1">
                                     G: {{ (int)($p['stock_good'] ?? 0) }} |
                                     Df: {{ (int)($p['stock_defect'] ?? 0) }} |
@@ -69,10 +83,24 @@
                                 </div>
                             </td>
 
+                            {{-- Stock (From Rack) --}}
+                            <td class="align-middle text-center">
+                                @if($selectedRackId > 0)
+                                    <span class="badge badge-primary">
+                                        {{ (int)$stockRack }} {{ $unit }}
+                                    </span>
+                                    <div class="small text-muted mt-1">
+                                        Effective max uses rack stock
+                                    </div>
+                                @else
+                                    <span class="text-muted">-</span>
+                                @endif
+                            </td>
+
                             {{-- hidden product id --}}
                             <input type="hidden" name="product_ids[]" value="{{ $productId }}">
 
-                            {{-- ✅ NEW: condition select + hidden conditions[] for controller --}}
+                            {{-- condition --}}
                             <td class="align-middle text-center">
                                 <select
                                     class="form-control"
@@ -84,23 +112,56 @@
                                     <option value="damaged"{{ $cond==='damaged' ? 'selected' : '' }}>DAMAGED</option>
                                 </select>
 
-                                {{-- ini yang dibaca TransferController@store() --}}
                                 <input type="hidden" name="conditions[]" value="{{ $cond }}">
                             </td>
 
+                            {{-- From Rack --}}
+                            <td class="align-middle text-center">
+                                <select
+                                    class="form-control"
+                                    style="min-width:200px;"
+                                    wire:change="updateFromRack({{ $key }}, $event.target.value)"
+                                    {{ empty($rackOptions) ? 'disabled' : '' }}
+                                >
+                                    @if(empty($rackOptions))
+                                        <option value="">-- No Rack Stock --</option>
+                                    @else
+                                        @foreach($rackOptions as $opt)
+                                            @php
+                                                $rid = (int)($opt['id'] ?? 0);
+                                                $label = (string)($opt['label'] ?? ('Rack#'.$rid));
+                                            @endphp
+                                            <option value="{{ $rid }}" {{ $selectedRackId === $rid ? 'selected' : '' }}>
+                                                {{ $label }}
+                                            </option>
+                                        @endforeach
+                                    @endif
+                                </select>
+
+                                {{-- yang dibaca TransferController@store() --}}
+                                <input
+                                    type="hidden"
+                                    name="from_rack_ids[]"
+                                    value="{{ $selectedRackId > 0 ? $selectedRackId : '' }}"
+                                >
+                            </td>
+
+                            {{-- qty (pakai stock efektif) --}}
                             <td class="align-middle">
                                 <input
                                     type="number"
                                     name="quantities[]"
                                     min="1"
-                                    max="{{ max(0, (int)$stockQty) }}"
+                                    max="{{ max(0, (int)$stockEffective) }}"
                                     class="form-control"
                                     value="{{ $qtyInput }}">
+                                <div class="small text-muted mt-1">
+                                    Max: {{ (int)$stockEffective }} {{ $unit }}
+                                </div>
                             </td>
 
                             <td class="align-middle text-center">
                                 <div class="btn-group">
-                                    {{-- ✅ Split: tambah baris baru untuk produk yang sama (condition lain) --}}
                                     <button
                                         type="button"
                                         class="btn btn-outline-primary"
@@ -110,7 +171,6 @@
                                         <i class="bi bi-plus-lg"></i>
                                     </button>
 
-                                    {{-- remove --}}
                                     <button type="button" class="btn btn-danger" wire:click="removeProduct({{ $key }})">
                                         <i class="bi bi-trash"></i>
                                     </button>
@@ -120,7 +180,7 @@
                     @endforeach
                 @else
                     <tr>
-                        <td colspan="7" class="text-center">
+                        <td colspan="9" class="text-center">
                             <span class="text-danger">Please search & select products!</span>
                         </td>
                     </tr>
