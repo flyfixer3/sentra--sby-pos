@@ -293,17 +293,27 @@ class PurchaseDeliveryController extends Controller
      * =====================
      * CONFIRM FORM
      * =====================
+     * ✅ allow confirm multiple batches: Pending + Partial
      */
     public function confirm(PurchaseDelivery $purchaseDelivery)
     {
         abort_if(Gate::denies('confirm_purchase_deliveries'), 403);
 
-        // ✅ guard (UI page)
-        if (strtolower((string) $purchaseDelivery->status) !== 'pending') {
-            return redirect()->back()->with('error', 'This delivery has already been confirmed.');
+        $status = $this->normalizeStatus((string) ($purchaseDelivery->status ?? 'pending'));
+
+        // ✅ guard (UI page) — sekarang boleh confirm lagi selama masih ada remaining
+        if (!in_array($status, ['pending', 'partial'], true)) {
+            return redirect()
+                ->route('purchase-deliveries.show', $purchaseDelivery->id)
+                ->with('error', 'This delivery is already completed and can no longer be confirmed.');
         }
 
-        $purchaseDelivery->load(['purchaseOrder', 'purchase', 'purchaseDeliveryDetails', 'warehouse']);
+        $purchaseDelivery->load([
+            'purchaseOrder',
+            'purchase',
+            'purchaseDeliveryDetails',
+            'warehouse',
+        ]);
 
         $racks = Rack::query()
             ->where('warehouse_id', (int) $purchaseDelivery->warehouse_id)

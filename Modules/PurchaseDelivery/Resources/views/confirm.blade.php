@@ -6,33 +6,59 @@
     <ol class="breadcrumb border-0 m-0">
         <li class="breadcrumb-item"><a href="{{ route('home') }}">Home</a></li>
         <li class="breadcrumb-item"><a href="{{ route('purchase-deliveries.index') }}">Purchase Deliveries</a></li>
+        <li class="breadcrumb-item">
+            <a href="{{ route('purchase-deliveries.show', $purchaseDelivery) }}">Details</a>
+        </li>
         <li class="breadcrumb-item active">Confirm</li>
     </ol>
 @endsection
 
 @section('content')
+@php
+    $st = strtolower(trim((string)($purchaseDelivery->status ?? 'pending')));
+    $details = $purchaseDelivery->purchaseDeliveryDetails ?? collect();
+
+    // totals
+    $totalExpected = $details->sum(fn($d) => (int)($d->quantity ?? 0));
+    $totalAlreadyConfirmed = $details->sum(fn($d) => (int)($d->qty_received ?? 0) + (int)($d->qty_defect ?? 0) + (int)($d->qty_damaged ?? 0));
+    $totalRemaining = max(0, $totalExpected - $totalAlreadyConfirmed);
+@endphp
+
 <div class="container-fluid mb-4">
 
     <div class="card mb-3">
         <div class="card-body d-flex justify-content-between align-items-start">
             <div>
-                <h5 class="mb-1">Confirm Purchase Delivery #{{ $purchaseDelivery->id }}</h5>
+                <h5 class="mb-1">
+                    Confirm Purchase Delivery #{{ $purchaseDelivery->id }}
+                    @if($st === 'partial')
+                        <span class="badge badge-info text-uppercase ml-2">partial</span>
+                    @elseif($st === 'pending')
+                        <span class="badge badge-warning text-uppercase ml-2">pending</span>
+                    @else
+                        <span class="badge badge-secondary text-uppercase ml-2">{{ $st }}</span>
+                    @endif
+                </h5>
+
                 <div class="text-muted">
                     PO: <strong>{{ $purchaseDelivery->purchaseOrder->reference ?? '-' }}</strong>
-                    · Status: <span class="badge badge-warning text-dark">{{ $purchaseDelivery->status }}</span>
                     · WH: <strong>{{ $purchaseDelivery->warehouse->warehouse_name ?? '-' }}</strong>
                 </div>
-                <div class="text-muted mt-1">
+
+                <div class="text-muted mt-2">
                     <small>
-                        Mekanisme: Anda bisa confirm bertahap. Qty yang di-confirm sekarang akan <b>langsung masuk stock</b> dan <b>tidak bisa diubah</b>.
-                        Jika masih ada remaining, Anda bisa confirm lagi nanti sampai complete.
+                        Expected: <b>{{ (int)$totalExpected }}</b>
+                        · Already Confirmed: <b>{{ (int)$totalAlreadyConfirmed }}</b>
+                        · Remaining: <b>{{ (int)$totalRemaining }}</b>
                     </small>
                 </div>
             </div>
 
-            <button type="button" class="btn btn-sm btn-outline-primary" id="btn-fill-remaining">
-                Fill Remaining as Good (Batch Ini)
-            </button>
+            <div class="d-flex gap-2">
+                <button type="button" class="btn btn-sm btn-outline-primary" id="btn-fill-remaining">
+                    Fill Remaining as Good
+                </button>
+            </div>
         </div>
     </div>
 
@@ -45,9 +71,7 @@
             @php
                 $name = trim((string) ($rack->name ?? ''));
                 $code = trim((string) ($rack->code ?? ''));
-
                 if ($name === '') $name = 'Rack #' . (int) $rack->id;
-
                 $rackLabel = $code !== '' ? ($code . ' - ' . $name) : $name;
             @endphp
             <option value="{{ (int) $rack->id }}">{{ $rackLabel }}</option>
@@ -66,15 +90,16 @@
                 <div class="p-3 border-bottom bg-light">
                     <div class="font-weight-bold mb-1">Rule Validasi (Batch Confirm)</div>
                     <div class="text-muted">
-                        Untuk setiap item: <strong>Good + Defect + Damaged</strong> yang Anda input sekarang
-                        <strong>tidak boleh melebihi Remaining</strong>.
+                        Kamu mengunci <b>qty tambahan</b> (batch) hari ini:
+                        <b>Add Good + Add Defect + Add Damaged</b> boleh <b>kurang dari / sama dengan</b> Remaining,
+                        tapi <b>tidak boleh melebihi</b> Remaining.
                     </div>
                     <div class="text-muted mt-2">
                         <small>
-                            - <strong>Good</strong>: boleh dipecah ke beberapa rack via tabel Allocation.<br>
-                            - <strong>Defect</strong>: per unit (qty=1 per baris, wajib defect type).<br>
-                            - <strong>Damaged</strong>: per unit (qty=1 per baris, wajib reason).<br>
-                            - Rack wajib dipilih untuk setiap baris allocation/defect/damaged.
+                            - <strong>Add Good</strong>: wajib isi tabel Allocation (bisa split rack). Total allocation harus sama dengan Add Good.<br>
+                            - <strong>Add Defect</strong>: per unit (qty=1 per baris) + wajib defect type + wajib pilih rack.<br>
+                            - <strong>Add Damaged</strong>: per unit (qty=1 per baris) + wajib reason + wajib pilih rack.<br>
+                            - Setelah batch ini disubmit, batch <b>tidak bisa diubah</b>.
                         </small>
                     </div>
                 </div>
@@ -83,16 +108,17 @@
                     <table class="table table-bordered table-sm mb-0" id="receive-table">
                         <thead class="thead-light">
                             <tr>
-                                <th style="min-width: 340px;">Product</th>
+                                <th style="min-width: 320px;">Product</th>
                                 <th class="text-center" style="width: 120px;">Expected</th>
-                                <th class="text-center" style="width: 140px;">Already Confirmed</th>
+                                <th class="text-center" style="width: 150px;">Already Confirmed</th>
                                 <th class="text-center" style="width: 120px;">Remaining</th>
 
-                                <th class="text-center" style="width: 110px;">Good (Batch)</th>
-                                <th class="text-center" style="width: 110px;">Defect (Batch)</th>
-                                <th class="text-center" style="width: 110px;">Damaged (Batch)</th>
+                                <th class="text-center" style="width: 110px;">Add Good</th>
+                                <th class="text-center" style="width: 110px;">Add Defect</th>
+                                <th class="text-center" style="width: 110px;">Add Damaged</th>
 
-                                <th class="text-center" style="width: 160px;">Details</th>
+                                <th class="text-center" style="width: 140px;">New Remaining</th>
+                                <th class="text-center" style="width: 170px;">Details</th>
                                 <th class="text-center" style="width: 140px;">Status</th>
                             </tr>
                         </thead>
@@ -100,20 +126,14 @@
                         <tbody>
                         @foreach ($purchaseDelivery->purchaseDeliveryDetails as $idx => $detail)
                             @php
-                                $expected = (int) ($detail->quantity ?? 0);
+                                $expected = (int) $detail->quantity;
+                                $alreadyConfirmed = (int)($detail->qty_received ?? 0) + (int)($detail->qty_defect ?? 0) + (int)($detail->qty_damaged ?? 0);
+                                $remaining = max(0, $expected - $alreadyConfirmed);
 
-                                // ✅ cumulative yang sudah masuk stock dari confirm-confirm sebelumnya
-                                $confirmedGood    = (int) ($detail->qty_received ?? 0);
-                                $confirmedDefect  = (int) ($detail->qty_defect ?? 0);
-                                $confirmedDamaged = (int) ($detail->qty_damaged ?? 0);
-
-                                $confirmedTotal = $confirmedGood + $confirmedDefect + $confirmedDamaged;
-                                $remaining = max(0, $expected - $confirmedTotal);
-
-                                // batch input (default: 0), tapi kalau user gagal validasi -> old()
-                                $oldAddGood   = (int) old("items.$idx.add_good", 0);
-                                $oldAddDefect = (int) old("items.$idx.add_defect", 0);
-                                $oldAddDamaged= (int) old("items.$idx.add_damaged", 0);
+                                // default input: kosong (0) untuk batch berikutnya
+                                $oldAddGood    = (int) old("items.$idx.add_good", 0);
+                                $oldAddDefect  = (int) old("items.$idx.add_defect", 0);
+                                $oldAddDamaged = (int) old("items.$idx.add_damaged", 0);
 
                                 $oldGoodAlloc = old("items.$idx.good_allocations", []);
                                 $oldDefects   = old("items.$idx.defects", []);
@@ -123,7 +143,7 @@
                             <tr class="receive-row"
                                 data-index="{{ $idx }}"
                                 data-expected="{{ $expected }}"
-                                data-confirmed="{{ $confirmedTotal }}"
+                                data-already="{{ $alreadyConfirmed }}"
                                 data-remaining="{{ $remaining }}">
 
                                 <td class="align-middle">
@@ -139,63 +159,65 @@
 
                                     <input type="hidden" name="items[{{ $idx }}][detail_id]" value="{{ (int) $detail->id }}">
                                     <input type="hidden" name="items[{{ $idx }}][product_id]" value="{{ (int) $detail->product_id }}">
-                                    <input type="hidden" name="items[{{ $idx }}][expected]" value="{{ $expected }}">
-                                    <input type="hidden" name="items[{{ $idx }}][already_confirmed]" value="{{ $confirmedTotal }}">
-                                    <input type="hidden" name="items[{{ $idx }}][remaining]" value="{{ $remaining }}">
+
+                                    <input type="hidden" name="items[{{ $idx }}][expected]" value="{{ (int)$expected }}">
+                                    <input type="hidden" name="items[{{ $idx }}][already_confirmed]" value="{{ (int)$alreadyConfirmed }}">
+                                    <input type="hidden" name="items[{{ $idx }}][remaining]" value="{{ (int)$remaining }}">
                                 </td>
 
-                                {{-- Expected --}}
                                 <td class="text-center align-middle">
                                     <span class="badge badge-primary">{{ $expected }}</span>
                                 </td>
 
-                                {{-- Already Confirmed --}}
                                 <td class="text-center align-middle">
-                                    <span class="badge badge-success">{{ $confirmedTotal }}</span>
-                                    <div class="small text-muted mt-1">
-                                        G:{{ $confirmedGood }} · Df:{{ $confirmedDefect }} · Dm:{{ $confirmedDamaged }}
-                                    </div>
+                                    <span class="badge badge-success">{{ $alreadyConfirmed }}</span>
                                 </td>
 
-                                {{-- Remaining --}}
                                 <td class="text-center align-middle">
-                                    <span class="badge badge-secondary remaining-badge">{{ $remaining }}</span>
+                                    <span class="badge badge-secondary remaining-base-badge">{{ $remaining }}</span>
                                 </td>
 
-                                {{-- Good (Batch) --}}
+                                {{-- Add Good --}}
                                 <td class="text-center align-middle">
                                     <input type="number"
                                            min="0"
                                            step="1"
-                                           class="form-control form-control-sm text-center qty-input qty-add-good"
+                                           class="form-control form-control-sm text-center qty-input add-good"
                                            name="items[{{ $idx }}][add_good]"
                                            value="{{ $oldAddGood }}"
                                            {{ $remaining <= 0 ? 'readonly' : '' }}
                                            required>
                                 </td>
 
-                                {{-- Defect (Batch) --}}
+                                {{-- Add Defect --}}
                                 <td class="text-center align-middle">
                                     <input type="number"
                                            min="0"
                                            step="1"
-                                           class="form-control form-control-sm text-center qty-input qty-add-defect"
+                                           class="form-control form-control-sm text-center qty-input add-defect"
                                            name="items[{{ $idx }}][add_defect]"
                                            value="{{ $oldAddDefect }}"
                                            {{ $remaining <= 0 ? 'readonly' : '' }}
                                            required>
                                 </td>
 
-                                {{-- Damaged (Batch) --}}
+                                {{-- Add Damaged --}}
                                 <td class="text-center align-middle">
                                     <input type="number"
                                            min="0"
                                            step="1"
-                                           class="form-control form-control-sm text-center qty-input qty-add-damaged"
+                                           class="form-control form-control-sm text-center qty-input add-damaged"
                                            name="items[{{ $idx }}][add_damaged]"
                                            value="{{ $oldAddDamaged }}"
                                            {{ $remaining <= 0 ? 'readonly' : '' }}
                                            required>
+                                </td>
+
+                                {{-- New Remaining (dynamic) --}}
+                                <td class="text-center align-middle">
+                                    <span class="badge badge-secondary new-remaining-badge">
+                                        {{ max(0, $remaining - ($oldAddGood + $oldAddDefect + $oldAddDamaged)) }}
+                                    </span>
                                 </td>
 
                                 {{-- Details --}}
@@ -205,7 +227,6 @@
                                             data-target="#perUnitWrap-{{ $idx }}"
                                             {{ $remaining <= 0 ? 'disabled' : '' }}>
                                         Details
-                                        <br>
                                         <span class="ml-2 badge badge-pill badge-good badge-good-count">0</span>
                                         <span class="ml-1 badge badge-pill badge-defect badge-defect-count">0</span>
                                         <span class="ml-1 badge badge-pill badge-damaged badge-damaged-count">0</span>
@@ -220,11 +241,11 @@
                             </tr>
 
                             <tr class="perunit-row" id="perUnitWrap-{{ $idx }}" style="display:none;">
-                                <td colspan="9" class="p-3" style="background:#f1f5f9;">
+                                <td colspan="10" class="p-3" style="background:#f1f5f9;">
                                     <div class="bg-white border rounded p-3">
                                         <div class="d-flex align-items-center justify-content-between">
                                             <div class="font-weight-bold">
-                                                Placement & Quality (Batch Ini) — {{ $detail->product_name ?? '-' }}
+                                                Placement & Quality Details (Batch) — {{ $detail->product_name ?? '-' }}
                                             </div>
                                             <button type="button"
                                                     class="btn btn-sm btn-outline-secondary btn-close-notes"
@@ -235,8 +256,9 @@
 
                                         <div class="text-muted mt-1">
                                             <small>
-                                                <b>Good</b> = isi tabel Allocation (bisa split rack).<br>
-                                                <b>Defect/Damaged</b> = per unit (qty=1 per baris).
+                                                Ini khusus untuk <b>batch confirm sekarang</b>.<br>
+                                                <b>Add Good</b> = isi tabel Allocation (bisa split rack).<br>
+                                                <b>Add Defect/Damaged</b> = per unit (qty=1 per baris).
                                             </small>
                                         </div>
 
@@ -264,7 +286,7 @@
 
                                                 <div class="d-flex justify-content-between align-items-center mt-2">
                                                     <div class="text-muted">
-                                                        <small>Tips: kalau Good batch=10 dan semua masuk 1 rack, cukup 1 baris Qty=10.</small>
+                                                        <small>Kalau Add Good=10 dan semua masuk 1 rack, cukup 1 baris Qty=10.</small>
                                                     </div>
                                                     <button type="button"
                                                             class="btn btn-sm btn-outline-success btn-add-good-alloc"
@@ -294,9 +316,6 @@
                                                         <tbody class="defect-tbody"></tbody>
                                                     </table>
                                                 </div>
-                                                <div class="text-muted mt-2">
-                                                    <small>Contoh: bubble, baret, distorsi, retak ringan.</small>
-                                                </div>
                                             </div>
 
                                             {{-- DAMAGED --}}
@@ -318,13 +337,10 @@
                                                         <tbody class="damaged-tbody"></tbody>
                                                     </table>
                                                 </div>
-                                                <div class="text-muted mt-2">
-                                                    <small>Contoh: pecah sudut saat bongkar peti, kena paku peti.</small>
-                                                </div>
                                             </div>
                                         </div>
 
-                                        {{-- OLD VALUES for hydrate --}}
+                                        {{-- OLD VALUES for hydrate (validation fail) --}}
                                         <textarea class="d-none old-good-alloc-json" data-idx="{{ $idx }}">{{ json_encode($oldGoodAlloc) }}</textarea>
                                         <textarea class="d-none old-defects-json" data-idx="{{ $idx }}">{{ json_encode($oldDefects) }}</textarea>
                                         <textarea class="d-none old-damages-json" data-idx="{{ $idx }}">{{ json_encode($oldDamages) }}</textarea>
@@ -337,14 +353,14 @@
                 </div>
 
                 <div class="p-3 border-top">
-                    <label class="font-weight-bold mb-1">Confirmation Note (Batch Ini)</label>
+                    <label class="font-weight-bold mb-1">Confirmation Note (General)</label>
                     <textarea class="form-control"
                               name="confirm_note"
                               rows="3"
                               maxlength="1000"
-                              placeholder="Contoh: Hari ini baru datang partial, sisanya menyusul besok / minggu depan.">{{ old('confirm_note') }}</textarea>
+                              placeholder="contoh: supplier kirim partial dulu, sisanya menyusul besok">{{ old('confirm_note') }}</textarea>
                     <div class="text-muted mt-2">
-                        <small>Catatan ini tersimpan sebagai catatan confirm terakhir.</small>
+                        <small>Catatan ini akan overwrite confirm_note terakhir (sesuai controller kamu).</small>
                     </div>
                 </div>
 
@@ -352,7 +368,7 @@
 
             <div class="card-footer d-flex justify-content-between align-items-center">
                 <div class="text-muted">
-                    Tip: kalau item remaining=0, baris tersebut otomatis read-only.
+                    Tip: kalau batch hari ini nggak ada defect/damaged, isi Add Defect=0, Add Damaged=0, Add Good=Remaining.
                 </div>
 
                 <div>
@@ -360,7 +376,7 @@
                         Cancel
                     </a>
                     <button type="button" class="btn btn-primary" onclick="confirmSubmit()">
-                        Lock & Confirm (Batch Ini)
+                        Confirm & Lock This Batch
                     </button>
                 </div>
             </div>
@@ -435,6 +451,7 @@
 
     function capturePerUnit(perWrap){
         const out = { defect: [], damaged: [] };
+
         captureGoodAlloc(perWrap);
 
         perWrap.querySelectorAll('.defect-tbody tr').forEach(tr=>{
@@ -458,7 +475,7 @@
 
     function buildGoodAllocRow(idx, rowIndex, prev){
         const rackId = (prev && (prev.rack_id || prev.rackId)) ? String(prev.rack_id || prev.rackId) : '';
-        const qty = (prev && prev.qty) ? String(prev.qty) : '0';
+        const qty = (prev && prev.qty) ? String(prev.qty) : '1';
         const note = (prev && prev.note) ? String(prev.note) : '';
 
         const tr = document.createElement('tr');
@@ -502,14 +519,9 @@
         const rows = Array.from(tbody.querySelectorAll('tr'));
         rows.forEach((tr, i)=>{
             tr.querySelector('td:first-child').textContent = (i + 1);
-
-            const rackSel = tr.querySelector('.good-alloc-rack');
-            const qtyInp  = tr.querySelector('.good-alloc-qty');
-            const noteInp = tr.querySelector('.good-alloc-note');
-
-            rackSel.name = `items[${idx}][good_allocations][${i}][rack_id]`;
-            qtyInp.name  = `items[${idx}][good_allocations][${i}][qty]`;
-            noteInp.name = `items[${idx}][good_allocations][${i}][note]`;
+            tr.querySelector('.good-alloc-rack').name = `items[${idx}][good_allocations][${i}][rack_id]`;
+            tr.querySelector('.good-alloc-qty').name  = `items[${idx}][good_allocations][${i}][qty]`;
+            tr.querySelector('.good-alloc-note').name = `items[${idx}][good_allocations][${i}][note]`;
         });
     }
 
@@ -518,21 +530,12 @@
         const perWrap = document.getElementById('perUnitWrap-' + idx);
         if (!perWrap) return;
 
-        const remaining = asInt(row.dataset.remaining);
-        const addGood   = asInt(row.querySelector('.qty-add-good').value);
-        const addDefect = asInt(row.querySelector('.qty-add-defect').value);
-        const addDamaged= asInt(row.querySelector('.qty-add-damaged').value);
+        const addGood = asInt(row.querySelector('.add-good').value);
+        const addDefect = asInt(row.querySelector('.add-defect').value);
+        const addDamaged = asInt(row.querySelector('.add-damaged').value);
 
-        // kalau remaining=0, jangan bangun apapun
-        if (remaining <= 0){
-            capturePerUnit(perWrap);
-            return;
-        }
-
-        // capture before rebuild
         capturePerUnit(perWrap);
 
-        // hydrate once from old textareas
         if (!perWrap.dataset.hydrated){
             const oldGoodAllocText = (perWrap.querySelector('.old-good-alloc-json')?.value || perWrap.querySelector('.old-good-alloc-json')?.textContent || '');
             const oldDefText  = (perWrap.querySelector('.old-defects-json')?.value || perWrap.querySelector('.old-defects-json')?.textContent || '');
@@ -551,24 +554,23 @@
         // ===== GOOD allocation build =====
         const goodAllocTbody = perWrap.querySelector('.good-alloc-tbody');
         if (goodAllocTbody){
-            if (goodAllocTbody.querySelectorAll('tr').length === 0){
-                goodAllocTbody.innerHTML = '';
-                if (oldGoodAlloc.length > 0){
-                    oldGoodAlloc.forEach((prev, i)=>{
-                        goodAllocTbody.appendChild(buildGoodAllocRow(idx, i, prev));
-                    });
-                } else {
-                    if (addGood > 0){
-                        goodAllocTbody.appendChild(buildGoodAllocRow(idx, 0, { qty: String(addGood) }));
-                    }
+            goodAllocTbody.innerHTML = '';
+
+            if (oldGoodAlloc.length > 0){
+                oldGoodAlloc.forEach((prev, i)=>{
+                    goodAllocTbody.appendChild(buildGoodAllocRow(idx, i, prev));
+                });
+            } else {
+                if (addGood > 0){
+                    goodAllocTbody.appendChild(buildGoodAllocRow(idx, 0, { qty: String(addGood) }));
                 }
             }
+
             reindexGoodAlloc(perWrap, idx);
 
             goodAllocTbody.querySelectorAll('.btn-remove-alloc').forEach(btn=>{
                 btn.onclick = () => {
-                    const tr = btn.closest('tr');
-                    tr?.remove();
+                    btn.closest('tr')?.remove();
                     reindexGoodAlloc(perWrap, idx);
                     captureGoodAlloc(perWrap);
                     updateRowStatus(row);
@@ -581,7 +583,7 @@
             });
         }
 
-        // ===== DEFECT build (per-unit) =====
+        // ===== DEFECT build =====
         const defectTbody = perWrap.querySelector('.defect-tbody');
         defectTbody.innerHTML = '';
         for (let i=0;i<addDefect;i++){
@@ -607,7 +609,7 @@
                     <textarea class="form-control form-control-sm defect-desc-input"
                               name="items[${idx}][defects][${i}][defect_description]"
                               rows="2"
-                              placeholder="keterangan defect (opsional)">${(prev.defect_description || '')}</textarea>
+                              placeholder="opsional">${(prev.defect_description || '')}</textarea>
                 </td>
                 <td class="align-middle">
                     <input type="file"
@@ -625,7 +627,7 @@
             }
         }
 
-        // ===== DAMAGED build (per-unit) =====
+        // ===== DAMAGED build =====
         const damagedTbody = perWrap.querySelector('.damaged-tbody');
         damagedTbody.innerHTML = '';
         for (let i=0;i<addDamaged;i++){
@@ -662,7 +664,6 @@
             }
         }
 
-        // update header counts
         perWrap.querySelector('.good-count-text').textContent = addGood;
         perWrap.querySelector('.defect-count-text').textContent = addDefect;
         perWrap.querySelector('.damaged-count-text').textContent = addDamaged;
@@ -674,13 +675,12 @@
             btn.querySelector('.badge-damaged-count').textContent = addDamaged;
         }
 
-        // listeners for defect/damaged
-        perWrap.querySelectorAll('.defect-tbody input, .defect-tbody textarea, .defect-tbody select, .damaged-tbody input, .damaged-tbody textarea, .damaged-tbody select').forEach(el=>{
-            el.addEventListener('input', ()=> updateRowStatus(row));
-            el.addEventListener('change', ()=> updateRowStatus(row));
-        });
+        perWrap.querySelectorAll('.defect-tbody input, .defect-tbody textarea, .defect-tbody select, .damaged-tbody input, .damaged-tbody textarea, .damaged-tbody select')
+            .forEach(el=>{
+                el.addEventListener('input', ()=> updateRowStatus(row));
+                el.addEventListener('change', ()=> updateRowStatus(row));
+            });
 
-        // add allocation button
         perWrap.querySelectorAll('.btn-add-good-alloc').forEach(btnAdd=>{
             btnAdd.onclick = () => {
                 const tbody = perWrap.querySelector('.good-alloc-tbody');
@@ -690,8 +690,7 @@
 
                 tbody.querySelectorAll('.btn-remove-alloc').forEach(btn=>{
                     btn.onclick = () => {
-                        const tr = btn.closest('tr');
-                        tr?.remove();
+                        btn.closest('tr')?.remove();
                         reindexGoodAlloc(perWrap, idx);
                         captureGoodAlloc(perWrap);
                         updateRowStatus(row);
@@ -708,33 +707,33 @@
             };
         });
 
-        // cache after rebuild
         capturePerUnit(perWrap);
     }
 
     function sumGoodAlloc(perWrap){
         let sum = 0;
-        perWrap.querySelectorAll('.good-alloc-qty').forEach(inp=>{
-            sum += asInt(inp.value);
-        });
+        perWrap.querySelectorAll('.good-alloc-qty').forEach(inp=> sum += asInt(inp.value));
         return sum;
     }
 
+    // ✅ dynamic New Remaining + validation based on base remaining
     function updateRowStatus(row){
-        const remaining = asInt(row.dataset.remaining);
+        const remainingBase = asInt(row.dataset.remaining);
 
-        const addGood   = asInt(row.querySelector('.qty-add-good').value);
-        const addDefect = asInt(row.querySelector('.qty-add-defect').value);
-        const addDamaged= asInt(row.querySelector('.qty-add-damaged').value);
+        const addGood = asInt(row.querySelector('.add-good').value);
+        const addDefect = asInt(row.querySelector('.add-defect').value);
+        const addDamaged = asInt(row.querySelector('.add-damaged').value);
 
         const statusBadge = row.querySelector('.row-status');
         const hint = row.querySelector('.row-hint');
 
-        if (remaining <= 0){
-            statusBadge.className = 'badge badge-secondary row-status';
-            statusBadge.textContent = 'DONE';
-            hint.textContent = 'Tidak ada remaining.';
-            return true;
+        const newRemBadge = row.querySelector('.new-remaining-badge');
+        const batchTotal = addGood + addDefect + addDamaged;
+        const newRemaining = remainingBase - batchTotal;
+
+        if (newRemBadge){
+            newRemBadge.textContent = newRemaining >= 0 ? newRemaining : 'INVALID';
+            newRemBadge.className = newRemaining >= 0 ? 'badge badge-secondary new-remaining-badge' : 'badge badge-danger new-remaining-badge';
         }
 
         if (addGood < 0 || addDefect < 0 || addDamaged < 0){
@@ -744,19 +743,10 @@
             return false;
         }
 
-        const totalBatch = addGood + addDefect + addDamaged;
-
-        if (totalBatch > remaining){
+        if (batchTotal > remainingBase){
             statusBadge.className = 'badge badge-danger row-status';
             statusBadge.textContent = 'OVER';
-            hint.textContent = `Batch total (${totalBatch}) tidak boleh > Remaining (${remaining}).`;
-            return false;
-        }
-
-        if (totalBatch === 0){
-            statusBadge.className = 'badge badge-warning row-status';
-            statusBadge.textContent = 'EMPTY';
-            hint.textContent = 'Isi minimal 1 qty untuk batch ini (kalau mau lock).';
+            hint.textContent = `Batch total (${batchTotal}) tidak boleh > Remaining (${remainingBase}).`;
             return false;
         }
 
@@ -769,13 +759,13 @@
             return false;
         }
 
-        // ===== validate GOOD allocation sum =====
+        // GOOD allocation validation
         if (addGood > 0){
             const sumAlloc = sumGoodAlloc(perWrap);
             if (sumAlloc !== addGood){
                 statusBadge.className = 'badge badge-warning row-status';
                 statusBadge.textContent = 'NEED ALLOC';
-                hint.textContent = `Good batch = ${addGood}, total allocation = ${sumAlloc} (harus sama).`;
+                hint.textContent = `Add Good = ${addGood}, total allocation = ${sumAlloc} (harus sama).`;
                 return false;
             }
 
@@ -804,14 +794,17 @@
                     return false;
                 }
             }
+        } else {
+            // kalau addGood=0, kosongkan allocation (biar nggak misleading)
+            // (nggak wajib, tapi lebih rapih)
         }
 
-        // ===== validate DEFECT per-unit =====
+        // DEFECT per-unit validation
         const defectRows = perWrap.querySelectorAll('.defect-tbody tr');
         if (defectRows.length !== addDefect){
             statusBadge.className = 'badge badge-warning row-status';
             statusBadge.textContent = 'NEED INFO';
-            hint.textContent = `Defect batch=${addDefect}, detail defect belum lengkap.`;
+            hint.textContent = `Add Defect = ${addDefect}, detail defect belum lengkap.`;
             return false;
         }
 
@@ -833,12 +826,12 @@
             }
         }
 
-        // ===== validate DAMAGED per-unit =====
-        const damagedRows= perWrap.querySelectorAll('.damaged-tbody tr');
+        // DAMAGED per-unit validation
+        const damagedRows = perWrap.querySelectorAll('.damaged-tbody tr');
         if (damagedRows.length !== addDamaged){
             statusBadge.className = 'badge badge-warning row-status';
             statusBadge.textContent = 'NEED INFO';
-            hint.textContent = `Damaged batch=${addDamaged}, detail damaged belum lengkap.`;
+            hint.textContent = `Add Damaged = ${addDamaged}, detail damaged belum lengkap.`;
             return false;
         }
 
@@ -860,9 +853,22 @@
             }
         }
 
-        statusBadge.className = 'badge badge-success row-status';
-        statusBadge.textContent = 'OK';
-        hint.textContent = `Batch total = ${totalBatch} (<= remaining ${remaining})`;
+        if (batchTotal === 0){
+            statusBadge.className = 'badge badge-secondary row-status';
+            statusBadge.textContent = 'EMPTY';
+            hint.textContent = 'Tidak ada qty batch yang dikunci untuk item ini.';
+            return true;
+        }
+
+        if (newRemaining === 0){
+            statusBadge.className = 'badge badge-success row-status';
+            statusBadge.textContent = 'OK';
+            hint.textContent = `Batch total = ${batchTotal} (remaining habis)`;
+        } else {
+            statusBadge.className = 'badge badge-info row-status';
+            statusBadge.textContent = 'PARTIAL';
+            hint.textContent = `Batch total = ${batchTotal} (sisa ${newRemaining})`;
+        }
 
         return true;
     }
@@ -890,25 +896,23 @@
 
     function validateAllRows(){
         let ok = true;
-        let anyBatchQty = false;
-
         document.querySelectorAll('.receive-row').forEach(row=>{
             ensurePerUnitTablesBuilt(row);
-
-            const remaining = asInt(row.dataset.remaining);
-            if (remaining > 0){
-                const addGood = asInt(row.querySelector('.qty-add-good').value);
-                const addDef  = asInt(row.querySelector('.qty-add-defect').value);
-                const addDam  = asInt(row.querySelector('.qty-add-damaged').value);
-                if ((addGood + addDef + addDam) > 0) anyBatchQty = true;
-            }
-
             const rowOk = updateRowStatus(row);
             if (!rowOk) ok = false;
         });
-
-        if (!anyBatchQty) return false;
         return ok;
+    }
+
+    function hasAnyBatchQty(){
+        let any = false;
+        document.querySelectorAll('.receive-row').forEach(row=>{
+            const addGood = asInt(row.querySelector('.add-good').value);
+            const addDefect = asInt(row.querySelector('.add-defect').value);
+            const addDamaged = asInt(row.querySelector('.add-damaged').value);
+            if ((addGood + addDefect + addDamaged) > 0) any = true;
+        });
+        return any;
     }
 
     document.addEventListener('DOMContentLoaded', function(){
@@ -921,15 +925,13 @@
             });
         });
 
-        // Fill remaining as Good for this batch
+        // Fill Remaining as Good
         document.getElementById('btn-fill-remaining')?.addEventListener('click', () => {
             document.querySelectorAll('.receive-row').forEach(row => {
-                const remaining = asInt(row.dataset.remaining);
-                if (remaining <= 0) return;
-
-                row.querySelector('.qty-add-good').value = remaining;
-                row.querySelector('.qty-add-defect').value = 0;
-                row.querySelector('.qty-add-damaged').value = 0;
+                const rem = asInt(row.dataset.remaining);
+                row.querySelector('.add-good').value = rem;
+                row.querySelector('.add-defect').value = 0;
+                row.querySelector('.add-damaged').value = 0;
 
                 ensurePerUnitTablesBuilt(row);
                 updateRowStatus(row);
@@ -942,18 +944,27 @@
         if (!isValid){
             Swal.fire({
                 title: 'Ada data yang belum valid',
-                text: 'Pastikan batch qty tidak kosong, total batch <= remaining, Good allocation total = Good batch, serta defect/damaged detail lengkap.',
+                text: 'Periksa qty batch dan pastikan allocation/defect/damaged detail sesuai.',
                 icon: 'error',
             });
             return;
         }
 
+        if (!hasAnyBatchQty()){
+            Swal.fire({
+                title: 'Batch kosong',
+                text: 'Isi minimal 1 qty (Add Good/Defect/Damaged) untuk dikunci.',
+                icon: 'warning',
+            });
+            return;
+        }
+
         Swal.fire({
-            title: 'Lock & Confirm batch ini?',
-            text: "Qty yang dikonfirmasi sekarang akan masuk stock dan tidak bisa diubah. Jika masih ada remaining, Anda masih bisa confirm lagi nanti.",
+            title: 'Lock batch confirm ini?',
+            text: "Setelah dikunci, qty batch ini tidak dapat diubah. Jika masih ada remaining, kamu bisa confirm batch berikutnya nanti.",
             icon: 'warning',
             showCancelButton: true,
-            confirmButtonText: 'Ya, lock & confirm',
+            confirmButtonText: 'Ya, lock batch',
             cancelButtonText: 'Batal'
         }).then((result) => {
             if (result.isConfirmed) {

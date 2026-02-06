@@ -2,6 +2,14 @@
 
 @section('title', "Purchase Delivery #{$purchaseDelivery->id}")
 
+@section('breadcrumb')
+<ol class="breadcrumb border-0 m-0">
+    <li class="breadcrumb-item"><a href="{{ route('home') }}">Home</a></li>
+    <li class="breadcrumb-item"><a href="{{ route('purchase-deliveries.index') }}">Purchase Deliveries</a></li>
+    <li class="breadcrumb-item active">Details</li>
+</ol>
+@endsection
+
 @push('page_css')
 <style>
     .pd-wrap .pd-title{
@@ -142,17 +150,8 @@
         border:1px solid rgba(0,0,0,.10);
         background:rgba(0,0,0,.02);
     }
-    .pd-thumb-wrap{
-        display:flex;
-        align-items:center;
-        gap:8px;
-    }
-    .pd-muted{ color:#6c757d; font-size:12px; }
 
-    /* Per-unit wrapper row */
-    .perunit-row td{
-        background:#f1f5f9;
-    }
+    .perunit-row td{ background:#f1f5f9; }
     .perunit-card{
         background:#fff;
         border:1px solid rgba(0,0,0,.10);
@@ -186,13 +185,9 @@
     $po        = $purchaseDelivery->purchaseOrder;
     $warehouse = $purchaseDelivery->warehouse;
 
-    // ✅ branch fallback: dari PD dulu, kalau null baru dari PO, kalau masih null fallback dari warehouse->branch
     $branch = $purchaseDelivery->branch
         ?? $po?->branch
         ?? $warehouse?->branch;
-
-    // supplier tetap boleh, tapi vendor display sudah pakai $vendorName dari controller
-    $supplier = $po?->supplier;
 
     $details = $purchaseDelivery->purchaseDeliveryDetails ?? collect();
 
@@ -202,24 +197,24 @@
     $totalDamaged  = $details->sum(fn($d) => (int)($d->qty_damaged ?? 0));
     $totalConfirmed = $totalReceived + $totalDefect + $totalDamaged;
 
-    $isPending = in_array($rawStatus, ['pending','open'], true);
+    $totalRemaining = max(0, $totalExpected - $totalConfirmed);
 
-    // Group per product untuk per-unit view
+    $isConfirmableStatus = in_array($rawStatus, ['pending','partial'], true);
+    $hasRemaining = $totalRemaining > 0;
+
     $defectsByProduct = ($defects ?? collect())->groupBy('product_id');
     $damagedByProduct = ($damaged ?? collect())->groupBy('product_id');
 
-    // audit helper
     $createdByName = optional($purchaseDelivery->creator)->name ?? optional($purchaseDelivery->creator)->username ?? '-';
     $shipToAddress =
-    $po?->branch?->getRawOriginal('address')
-    ?? $purchaseDelivery->branch?->getRawOriginal('address')
-    ?? $warehouse?->branch?->getRawOriginal('address')
-    ?? '-';
+        $po?->branch?->getRawOriginal('address')
+        ?? $purchaseDelivery->branch?->getRawOriginal('address')
+        ?? $warehouse?->branch?->getRawOriginal('address')
+        ?? '-';
 
     $hasInvoice = $purchaseDelivery->relationLoaded('purchase')
-    ? !empty($purchaseDelivery->purchase)
-    : $purchaseDelivery->purchase()->exists();
-
+        ? !empty($purchaseDelivery->purchase)
+        : $purchaseDelivery->purchase()->exists();
 @endphp
 
 <div class="container-fluid pd-wrap">
@@ -230,6 +225,10 @@
                 <div class="pd-title">
                     <span>Purchase Delivery #{{ $purchaseDelivery->id }}</span>
                     <span class="{{ $badgeClass }}">{{ $rawStatus }}</span>
+
+                    @if($rawStatus === 'partial')
+                        <span class="pd-pill pd-pill--info">Remaining: {{ (int)$totalRemaining }}</span>
+                    @endif
                 </div>
                 <div class="pd-sub">
                     Created by: <strong>{{ $createdByName }}</strong>
@@ -238,7 +237,6 @@
             </div>
 
             <div class="d-flex align-items-center gap-2">
-                {{-- kalau nanti ada route jurnal, ganti href ini --}}
                 <a href="javascript:void(0)" class="pd-link">View journal entry</a>
             </div>
         </div>
@@ -253,9 +251,7 @@
                     <div class="pd-sub">
                         Expected: <strong>{{ (int)$totalExpected }}</strong>
                         • Confirmed: <strong>{{ (int)$totalConfirmed }}</strong>
-                        @if($isPending)
-                            • <span class="pd-muted">Not confirmed yet</span>
-                        @endif
+                        • Remaining: <strong>{{ (int)$totalRemaining }}</strong>
                     </div>
                 </div>
 
@@ -272,15 +268,13 @@
                 <div class="col-lg-4">
                     <div class="pd-box h-100">
                         <div class="pd-label">Vendor</div>
-                        <div class="pd-value">{{  $vendorName  ?? '-' }}</div>
+                        <div class="pd-value">{{ $vendorName ?? '-' }}</div>
 
                         <div class="mt-3 pd-label">Email</div>
                         <div class="pd-value" style="font-weight:600;">{{ $vendorEmail ?? '-' }}</div>
 
                         <div class="mt-3 pd-label">Ship-to (Delivery Destination)</div>
-                        <div class="pd-value" style="font-weight:600; white-space:pre-line;">
-                            {{ $shipToAddress }}
-                        </div>
+                        <div class="pd-value" style="font-weight:600; white-space:pre-line;">{{ $shipToAddress }}</div>
                         <div class="pd-sub mt-1">Destination address (branch address).</div>
                     </div>
                 </div>
@@ -337,6 +331,7 @@
                             <th class="text-center" style="width:90px;">Received</th>
                             <th class="text-center" style="width:80px;">Defect</th>
                             <th class="text-center" style="width:90px;">Damaged</th>
+                            <th class="text-center" style="width:95px;">Remaining</th>
                             <th class="text-center" style="width:120px;">Action</th>
                         </tr>
                         </thead>
@@ -349,11 +344,12 @@
                                 $defect   = (int)($detail->qty_defect ?? 0);
                                 $damagedQ = (int)($detail->qty_damaged ?? 0);
 
-                                $hasAny = ($defect + $damagedQ) > 0;
+                                $confirmed = $received + $defect + $damagedQ;
+                                $remaining = max(0, $expected - $confirmed);
 
+                                $hasAny = ($defect + $damagedQ) > 0;
                                 $defList = $defectsByProduct->get($pid, collect());
                                 $dmList  = $damagedByProduct->get($pid, collect());
-
                                 $rowKey = "pd-item-{$i}";
                             @endphp
 
@@ -368,14 +364,16 @@
                                 <td>{{ $detail->description ?: '-' }}</td>
 
                                 <td class="text-center">{{ $expected }}</td>
+                                <td class="text-center"><span class="pd-pill pd-pill--ok" style="padding:4px 10px;">{{ $received }}</span></td>
+                                <td class="text-center"><span class="pd-pill pd-pill--warn" style="padding:4px 10px;">{{ $defect }}</span></td>
+                                <td class="text-center"><span class="pd-pill pd-pill--danger" style="padding:4px 10px;">{{ $damagedQ }}</span></td>
+
                                 <td class="text-center">
-                                    <span class="pd-pill pd-pill--ok" style="padding:4px 10px;">{{ $received }}</span>
-                                </td>
-                                <td class="text-center">
-                                    <span class="pd-pill pd-pill--warn" style="padding:4px 10px;">{{ $defect }}</span>
-                                </td>
-                                <td class="text-center">
-                                    <span class="pd-pill pd-pill--danger" style="padding:4px 10px;">{{ $damagedQ }}</span>
+                                    @if($remaining > 0)
+                                        <span class="pd-pill pd-pill--info" style="padding:4px 10px;">{{ $remaining }}</span>
+                                    @else
+                                        <span class="pd-pill" style="padding:4px 10px;">0</span>
+                                    @endif
                                 </td>
 
                                 <td class="text-center">
@@ -397,10 +395,9 @@
                                 </td>
                             </tr>
 
-                            {{-- PER-UNIT EXPAND --}}
                             @if($hasAny)
                                 <tr class="perunit-row" id="{{ $rowKey }}" style="display:none;">
-                                    <td colspan="7" class="p-3">
+                                    <td colspan="8" class="p-3">
                                         <div class="perunit-card">
                                             <div class="perunit-title">
                                                 <div>
@@ -421,7 +418,6 @@
                                             </div>
 
                                             <div class="row mt-3">
-                                                {{-- DEFECT --}}
                                                 <div class="col-lg-6">
                                                     <div class="fw-bold mb-2" style="color:#1d4ed8;">
                                                         Defect Items ({{ $defList->count() }})
@@ -465,7 +461,6 @@
                                                     </div>
                                                 </div>
 
-                                                {{-- DAMAGED --}}
                                                 <div class="col-lg-6 mt-3 mt-lg-0">
                                                     <div class="fw-bold mb-2" style="color:#b91c1c;">
                                                         Damaged Items ({{ $dmList->count() }})
@@ -492,12 +487,8 @@
                                                                     <tr>
                                                                         <td class="text-center align-middle">{{ $k + 1 }}</td>
                                                                         <td class="align-middle">{{ $dm->reason ?? '-' }}</td>
-                                                                        <td class="text-center align-middle">
-                                                                            {{ !empty($dm->mutation_in_id) ? '#'.$dm->mutation_in_id : '-' }}
-                                                                        </td>
-                                                                        <td class="text-center align-middle">
-                                                                            {{ !empty($dm->mutation_out_id) ? '#'.$dm->mutation_out_id : '-' }}
-                                                                        </td>
+                                                                        <td class="text-center align-middle">{{ !empty($dm->mutation_in_id) ? '#'.$dm->mutation_in_id : '-' }}</td>
+                                                                        <td class="text-center align-middle">{{ !empty($dm->mutation_out_id) ? '#'.$dm->mutation_out_id : '-' }}</td>
                                                                         <td class="text-center align-middle">
                                                                             @if(!empty($dm->photo_path))
                                                                                 <a href="{{ asset('storage/'.$dm->photo_path) }}" target="_blank" class="pd-link">
@@ -523,16 +514,20 @@
 
                         @empty
                             <tr>
-                                <td colspan="7" class="text-center text-muted py-4">No items found.</td>
+                                <td colspan="8" class="text-center text-muted py-4">No items found.</td>
                             </tr>
                         @endforelse
                         </tbody>
                     </table>
                 </div>
 
-                @if($isPending)
+                @if($rawStatus === 'pending')
                     <div class="pd-sub mt-2">
                         This delivery is still <strong>Pending</strong>. Please confirm received items to update stock & fulfilled quantities.
+                    </div>
+                @elseif($rawStatus === 'partial')
+                    <div class="pd-sub mt-2">
+                        This delivery is <strong>Partial</strong>. You can confirm remaining items later.
                     </div>
                 @endif
             </div>
@@ -576,9 +571,9 @@
             {{-- ACTIONS --}}
             <div class="pd-footer">
                 <form action="{{ route('purchase-deliveries.destroy', $purchaseDelivery->id) }}"
-                    method="POST"
-                    class="d-inline-block"
-                    onsubmit="return confirm('Are you sure? It will delete the data permanently!');">
+                      method="POST"
+                      class="d-inline-block"
+                      onsubmit="return confirm('Are you sure? It will delete the data permanently!');">
                     @csrf
                     @method('DELETE')
                     <button type="submit" class="btn btn-outline-danger btn-sm">
@@ -593,24 +588,24 @@
                         </a>
                     @endif
 
-                    @if($isPending)
+                    {{-- ✅ Confirm button: pending/partial + masih ada remaining --}}
+                    @if($isConfirmableStatus && $hasRemaining)
                         <a href="{{ route('purchase-deliveries.confirm', $purchaseDelivery->id) }}" class="btn btn-primary btn-sm">
-                            Confirm Delivery
+                            {{ $rawStatus === 'partial' ? 'Confirm Remaining' : 'Confirm Delivery' }}
                         </a>
-                    @else
+                    @endif
+
+                    @if(!$isConfirmableStatus || !$hasRemaining)
                         @php
-                            // invoice exist check (punya kamu)
                             $hasInvoice = \Modules\Purchase\Entities\Purchase::whereNull('deleted_at')
                                 ->where(function($q) use ($purchaseDelivery){
                                     $q->where('purchase_delivery_id', (int) $purchaseDelivery->id);
-
                                     if (!empty($purchaseDelivery->purchase_order_id)) {
                                         $q->orWhere('purchase_order_id', (int) $purchaseDelivery->purchase_order_id);
                                     }
                                 })
                                 ->exists();
 
-                            // ✅ NEW: PO harus fully fulfilled agar tombol create invoice muncul
                             $poIsFullyFulfilled = false;
                             if (!empty($purchaseDelivery->purchaseOrder)) {
                                 $poIsFullyFulfilled = (bool) $purchaseDelivery->purchaseOrder->isFullyFulfilled();
@@ -618,10 +613,9 @@
                         @endphp
 
                         @if(!$hasInvoice)
-
                             @if($poIsFullyFulfilled)
                                 <a href="{{ route('purchases.createFromDelivery', ['purchase_delivery' => $purchaseDelivery]) }}"
-                                class="btn btn-primary btn-sm">
+                                   class="btn btn-primary btn-sm">
                                     Create Purchase (Invoice)
                                 </a>
                             @else
@@ -632,7 +626,6 @@
                                     Create Purchase (Invoice)
                                 </button>
                             @endif
-
                         @else
                             <span class="pd-muted">Invoice already created</span>
                         @endif
