@@ -14,6 +14,7 @@ class ProductDefectItem extends Model
     protected $fillable = [
         'branch_id',
         'warehouse_id',
+        'rack_id',        // ✅ FIX: allow mass-assign
         'product_id',
         'reference_id',
         'reference_type',
@@ -27,6 +28,7 @@ class ProductDefectItem extends Model
     protected $casts = [
         'branch_id'    => 'integer',
         'warehouse_id' => 'integer',
+        'rack_id'      => 'integer', // ✅ FIX
         'product_id'   => 'integer',
         'reference_id' => 'integer',
         'quantity'     => 'integer',
@@ -57,5 +59,4 @@ class ProductDefectItem extends Model
     {
         return $q->whereNull('moved_out_at');
     }
-
 }
