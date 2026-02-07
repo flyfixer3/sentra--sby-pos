@@ -213,7 +213,8 @@ class MutationController extends Controller
         int $qty,
         string $reference,
         string $note,
-        string $date
+        string $date,
+        ?int $rackId = null // ✅ NEW
     ): void
     {
         $this->applyInOutInternal(
@@ -224,7 +225,8 @@ class MutationController extends Controller
             $qty,
             $reference,
             $note,
-            $date
+            $date,
+            $rackId
         );
     }
 
@@ -240,7 +242,8 @@ class MutationController extends Controller
         int $qty,
         string $reference,
         string $note,
-        string $date
+        string $date,
+        ?int $rackId = null // ✅ NEW
     ): int
     {
         $mutation = $this->applyInOutInternal(
@@ -251,7 +254,8 @@ class MutationController extends Controller
             $qty,
             $reference,
             $note,
-            $date
+            $date,
+            $rackId
         );
 
         return (int) $mutation->id;
@@ -269,7 +273,8 @@ class MutationController extends Controller
         int $qty,
         string $reference,
         string $note,
-        string $date
+        string $date,
+        ?int $rackId = null
     ): Mutation
     {
         if (!in_array($mutationType, ['In', 'Out'], true)) {
@@ -320,6 +325,7 @@ class MutationController extends Controller
         $mutation = Mutation::create([
             'branch_id'     => $branchId,
             'warehouse_id'  => $warehouseId,
+            'rack_id'       => $rackId,      // ✅ NEW (boleh null)
             'product_id'    => $productId,
             'reference'     => $reference,
             'date'          => $date,

@@ -127,7 +127,6 @@
     <div class="card mb-4 shadow-sm">
         <div class="card-header bg-white">
             <strong>Audit Trail</strong>
-            <span class="text-muted small ms-2">Untuk tracking siapa yang melakukan aksi</span>
         </div>
 
         <div class="card-body">
@@ -187,6 +186,54 @@
                         {{ $transfer->cancel_note }}
                     </div>
                 </div>
+            @endif
+        </div>
+    </div>
+
+    {{-- ================= RACK MOVEMENT LOG ================= --}}
+    <div class="card mb-4 shadow-sm">
+        <div class="card-header bg-white">
+            <strong>Rack Movement Log</strong>
+        </div>
+
+        <div class="card-body">
+            @php
+                $activeBranch = session('active_branch');
+                $isAll = ($activeBranch === 'all' || $activeBranch === null || $activeBranch === '');
+                $isSender = (!$isAll && (int)$activeBranch === (int)$transfer->branch_id);
+                $isReceiver = (!$isAll && (int)$activeBranch === (int)$transfer->to_branch_id);
+            @endphp
+
+            @if($isSender)
+                <div class="fw-semibold mb-2">Outgoing (Pengirim)</div>
+                <ul class="mb-0">
+                    @forelse(($rackLogsOutgoing ?? []) as $line)
+                        <li>{{ $line }}</li>
+                    @empty
+                        <li class="text-muted">-</li>
+                    @endforelse
+                </ul>
+            @endif
+
+            @if($isReceiver)
+                <hr>
+                <div class="fw-semibold mb-2">Incoming (Penerima)</div>
+
+                @if(in_array($status, ['confirmed','issue']))
+                    <ul class="mb-0">
+                        @forelse(($rackLogsIncoming ?? []) as $line)
+                            <li>{{ $line }}</li>
+                        @empty
+                            <li class="text-muted">Belum ada data rack penerimaan.</li>
+                        @endforelse
+                    </ul>
+                @else
+                    <div class="text-muted">Belum ada log incoming karena transfer belum dikonfirmasi.</div>
+                @endif
+            @endif
+
+            @if(!$isSender && !$isReceiver)
+                <div class="text-muted">Pilih cabang pengirim/penerima untuk melihat log rack.</div>
             @endif
         </div>
     </div>

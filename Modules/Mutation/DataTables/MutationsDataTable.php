@@ -14,9 +14,25 @@ class MutationsDataTable extends DataTable
     {
         return datatables()
             ->eloquent($query)
+
             ->addColumn('warehouse_name', function ($row) {
                 return optional($row->warehouse)->warehouse_name ?? '-';
             })
+
+            // ✅ NEW: Rack Code/Name label
+            ->addColumn('rack_label', function ($row) {
+                $rack = $row->rack ?? null;
+                if (!$rack) return '-';
+
+                $code = trim((string) ($rack->code ?? ''));
+                if ($code !== '') return $code;
+
+                $name = trim((string) ($rack->name ?? ''));
+                if ($name !== '') return $name;
+
+                return 'Rack#' . (int) $rack->id;
+            })
+
             ->addColumn('product_code', function ($row) {
                 return optional($row->product)->product_code ?? '-';
             })
@@ -37,12 +53,12 @@ class MutationsDataTable extends DataTable
                 $items = [];
 
                 foreach ($parts as $p) {
-                    $p = trim($p);
+                    $p = trim((string) $p);
                     if ($p === '') continue;
 
                     // Deteksi item: "Item: xxx" (case-insensitive)
                     if (preg_match('/^item\s*:\s*(.+)$/i', $p, $m)) {
-                        $items[] = trim($m[1]);
+                        $items[] = trim((string) $m[1]);
                     } else {
                         $headerParts[] = $p;
                     }
@@ -76,6 +92,7 @@ class MutationsDataTable extends DataTable
             ->editColumn('created_at', function ($row) {
                 return $row->created_at ? Carbon::parse($row->created_at)->format('d-m-Y H:i:s') : '-';
             })
+
             // ✅ karena note sekarang HTML (ol/li)
             ->rawColumns(['note']);
     }
@@ -86,8 +103,9 @@ class MutationsDataTable extends DataTable
         $table  = $model->getTable();
 
         // base query + eager load
+        // ✅ NEW: include rack eager load
         $q = $model->newQuery()
-            ->with(['product', 'warehouse'])
+            ->with(['product', 'warehouse', 'rack'])
             ->orderByDesc($table.'.id');
 
         // kalau active_branch = 'all' => jangan pakai global scope branch
@@ -102,6 +120,7 @@ class MutationsDataTable extends DataTable
          * - mutation_type
          * - reference
          * - date_from, date_to
+         * - rack_id (optional kalau mau dipakai nanti)
          */
 
         if (request()->filled('warehouse_id')) {
@@ -118,6 +137,11 @@ class MutationsDataTable extends DataTable
         if (request()->filled('reference')) {
             $ref = trim((string) request('reference'));
             $q->where($table.'.reference', 'like', "%{$ref}%");
+        }
+
+        // optional rack filter (kalau UI nanti ditambah)
+        if (request()->filled('rack_id')) {
+            $q->where($table.'.rack_id', (int) request('rack_id'));
         }
 
         // date range pakai kolom mutations.date (karena ada di tabel)
@@ -155,7 +179,8 @@ class MutationsDataTable extends DataTable
             ->dom("<'row'<'col-md-3'l><'col-md-5 mb-2'B><'col-md-4'f>> .
                   'tr' .
                   <'row'<'col-md-5'i><'col-md-7 mt-2'p>>")
-            ->orderBy(10, 'desc') // created_at index kolom terakhir (cek getColumns)
+            // ✅ created_at sekarang index kolom terakhir (cek getColumns)
+            ->orderBy(11, 'desc')
             ->buttons(
                 Button::make('excel')->text('<i class="bi bi-file-earmark-excel-fill"></i> Excel'),
                 Button::make('print')->text('<i class="bi bi-printer-fill"></i> Print'),
@@ -168,6 +193,10 @@ class MutationsDataTable extends DataTable
     {
         return [
             Column::make('warehouse_name')->title('Warehouse')->orderable(false)->searchable(false)->className('text-center align-middle'),
+
+            // ✅ NEW column
+            Column::make('rack_label')->title('Rack')->orderable(false)->searchable(false)->className('text-center align-middle'),
+
             Column::make('product_code')->title('Code')->orderable(false)->searchable(false)->className('text-center align-middle'),
             Column::make('product_name')->title('Product / Mobil')->orderable(false)->searchable(false)->className('text-start align-middle'),
 

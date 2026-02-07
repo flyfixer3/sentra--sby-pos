@@ -319,14 +319,14 @@ class TransferController extends Controller
             ])
             ->findOrFail($id);
 
-        // Ambil defect utk transfer ini
+        // Ambil defect utk transfer ini (incoming side record)
         $defects = ProductDefectItem::query()
             ->where('reference_type', TransferRequest::class)
             ->where('reference_id', (int) $transfer->id)
             ->orderBy('id', 'asc')
             ->get();
 
-        // Ambil semua issue (damaged + missing) utk transfer ini
+        // Ambil semua issue (damaged + missing) utk transfer ini (incoming side record)
         $issues = ProductDamagedItem::query()
             ->where('reference_type', TransferRequest::class)
             ->where('reference_id', (int) $transfer->id)
@@ -365,9 +365,7 @@ class TransferController extends Controller
             $missingQty = (int) ($missingQtyByProduct[$pid] ?? 0);
 
             $receivedGood = $sent - $defectQty - $damagedQty - $missingQty;
-            if ($receivedGood < 0) {
-                $receivedGood = 0;
-            }
+            if ($receivedGood < 0) $receivedGood = 0;
 
             $totalDefect  += $defectQty;
             $totalDamaged += $damagedQty;
@@ -382,6 +380,129 @@ class TransferController extends Controller
             ];
         }
 
+        // ===========================
+        // ✅ RACK MOVEMENT LOGS
+        // ===========================
+        $rackLogsOutgoing = [];
+        $rackLogsIncoming = [];
+
+        // status normalized (biar konsisten dengan blade kamu)
+        $status = strtolower(trim((string) ($transfer->getRawOriginal('status') ?? $transfer->status ?? 'pending')));
+
+        // collect rack ids used
+        $rackIds = [];
+
+        foreach ($transfer->items as $it) {
+            if (!empty($it->from_rack_id)) $rackIds[] = (int) $it->from_rack_id;
+            if (!empty($it->to_rack_id))   $rackIds[] = (int) $it->to_rack_id;
+        }
+
+        foreach ($defects as $d) {
+            if (!empty($d->rack_id)) $rackIds[] = (int) $d->rack_id;
+        }
+
+        foreach ($issues as $is) {
+            if (!empty($is->rack_id)) $rackIds[] = (int) $is->rack_id;
+        }
+
+        $rackIds = array_values(array_unique(array_filter($rackIds)));
+
+        $rackMap = [];
+        if (!empty($rackIds)) {
+            $rackMap = Rack::withoutGlobalScopes()
+                ->whereIn('id', $rackIds)
+                ->get()
+                ->mapWithKeys(function ($r) {
+                    $label = trim((string) ($r->code ?? ''));
+                    if ($label === '') $label = trim((string) ($r->name ?? ''));
+                    if ($label === '') $label = 'Rack#' . (int) $r->id;
+                    return [(int) $r->id => $label];
+                })
+                ->toArray();
+        }
+
+        // outgoing logs (sender)
+        foreach ($transfer->items as $it) {
+            $pid = (int) $it->product_id;
+            $p = $it->product;
+            $pLabel = $p ? ($p->product_name . ' (' . $p->product_code . ')') : ('Product ID ' . $pid);
+
+            $cond = strtoupper(strtolower((string) ($it->condition ?? 'good')));
+
+            $qty = (int) $it->quantity;
+
+            $fromRackId = (int) ($it->from_rack_id ?? 0);
+            $fromRackLabel = $fromRackId > 0 ? ($rackMap[$fromRackId] ?? ('Rack#' . $fromRackId)) : '-';
+
+            $rackLogsOutgoing[] = "Ambil {$qty} {$pLabel} ({$cond}) dari Rack {$fromRackLabel}";
+        }
+
+        // incoming logs only when confirmed/issue (karena incoming rack ditentukan saat konfirmasi)
+        if (in_array($status, ['confirmed', 'issue'], true)) {
+
+            // GOOD allocations: baca dari transfer_receive_allocations
+            $allocs = \Modules\Transfer\Entities\TransferReceiveAllocation::withoutGlobalScopes()
+                ->where('transfer_request_id', (int) $transfer->id)
+                ->orderBy('id', 'asc')
+                ->get();
+
+            $goodGroups = $allocs
+                ->where('qty_good', '>', 0)
+                ->groupBy(function ($a) {
+                    return (int) $a->product_id . '|' . (int) $a->rack_id;
+                });
+
+            foreach ($goodGroups as $key => $rows) {
+                [$pid, $rid] = explode('|', $key);
+                $pid = (int) $pid; $rid = (int) $rid;
+
+                $p = $transfer->items->firstWhere('product_id', $pid)?->product;
+                $pLabel = $p ? ($p->product_name . ' (' . $p->product_code . ')') : ('Product ID ' . $pid);
+
+                $qty = (int) $rows->sum('qty_good');
+                $rackLabel = $rid > 0 ? ($rackMap[$rid] ?? ('Rack#' . $rid)) : '-';
+
+                $rackLogsIncoming[] = "Masukkan {$qty} {$pLabel} (GOOD) ke Rack {$rackLabel}";
+            }
+
+            // DEFECT groups from product_defect_items
+            $defectGroups = $defects->groupBy(function ($d) {
+                return (int) $d->product_id . '|' . (int) ($d->rack_id ?? 0);
+            });
+
+            foreach ($defectGroups as $key => $rows) {
+                [$pid, $rid] = explode('|', $key);
+                $pid = (int) $pid; $rid = (int) $rid;
+
+                $p = $transfer->items->firstWhere('product_id', $pid)?->product;
+                $pLabel = $p ? ($p->product_name . ' (' . $p->product_code . ')') : ('Product ID ' . $pid);
+
+                $qty = (int) $rows->sum('quantity');
+                $rackLabel = $rid > 0 ? ($rackMap[$rid] ?? ('Rack#' . $rid)) : '-';
+
+                $rackLogsIncoming[] = "Masukkan {$qty} {$pLabel} (DEFECT) ke Rack {$rackLabel}";
+            }
+
+            // DAMAGED groups from product_damaged_items where damage_type=damaged
+            $damagedOnly = $issues->where('damage_type', 'damaged')->values();
+            $damagedGroups = $damagedOnly->groupBy(function ($d) {
+                return (int) $d->product_id . '|' . (int) ($d->rack_id ?? 0);
+            });
+
+            foreach ($damagedGroups as $key => $rows) {
+                [$pid, $rid] = explode('|', $key);
+                $pid = (int) $pid; $rid = (int) $rid;
+
+                $p = $transfer->items->firstWhere('product_id', $pid)?->product;
+                $pLabel = $p ? ($p->product_name . ' (' . $p->product_code . ')') : ('Product ID ' . $pid);
+
+                $qty = (int) $rows->sum('quantity');
+                $rackLabel = $rid > 0 ? ($rackMap[$rid] ?? ('Rack#' . $rid)) : '-';
+
+                $rackLogsIncoming[] = "Masukkan {$qty} {$pLabel} (DAMAGED) ke Rack {$rackLabel}";
+            }
+        }
+
         return view('transfer::show', compact(
             'transfer',
             'defects',
@@ -391,7 +512,9 @@ class TransferController extends Controller
             'itemSummaries',
             'totalDefect',
             'totalDamaged',
-            'totalMissing'
+            'totalMissing',
+            'rackLogsOutgoing',
+            'rackLogsIncoming'
         ));
     }
 
@@ -467,7 +590,8 @@ class TransferController extends Controller
                             $qty,
                             (string) $transfer->reference,
                             $note,
-                            (string) $transfer->getRawOriginal('date')
+                            (string) $transfer->getRawOriginal('date'),
+                            $fromRackId // ✅ NEW
                         );
 
                         // ✅ StockRack OUT
@@ -1028,7 +1152,8 @@ class TransferController extends Controller
                             $allocQty,
                             $transfer->reference,
                             "{$noteBase} | To {$rackLabel} | GOOD",
-                            now()->toDateString()
+                            now()->toDateString(),
+                            $toRackId // ✅ NEW
                         );
 
                         // stock_racks per rack
@@ -1088,7 +1213,8 @@ class TransferController extends Controller
                             1,
                             $transfer->reference,
                             "{$noteBase} | To {$rackLabel} | DEFECT",
-                            now()->toDateString()
+                            now()->toDateString(),
+                            $toRackId // ✅ NEW
                         );
 
                         $this->adjustStockRack(
@@ -1159,7 +1285,8 @@ class TransferController extends Controller
                             1,
                             $transfer->reference,
                             "{$noteBase} | To {$rackLabel} | DAMAGED",
-                            now()->toDateString()
+                            now()->toDateString(),
+                            $toRackId // ✅ NEW
                         );
 
                         $this->adjustStockRack(
