@@ -262,19 +262,32 @@
                                 <tr>
                                     <th>Product</th>
                                     <th>Warehouse</th>
-                                    <th>Qty Out</th>
+                                    <th style="width:140px;">Rack</th> {{-- ✅ NEW --}}
+                                    <th class="text-center" style="width:90px;">Qty Out</th>
                                     <th>Note</th>
-                                    <th>Date</th>
+                                    <th style="width:130px;">Date</th>
                                 </tr>
                             </thead>
                             <tbody>
                                 @foreach($mutations as $m)
+                                    @php
+                                        $rackText = '-';
+                                        if (!empty($m->rack)) {
+                                            // coba beberapa field yang umum dipakai di table racks kamu
+                                            $rackText = $m->rack->code
+                                                ?? $m->rack->rack_code
+                                                ?? $m->rack->name
+                                                ?? $m->rack->rack_name
+                                                ?? '-';
+                                        }
+                                    @endphp
                                     <tr>
                                         <td>{{ $m->product?->product_name ?? ('Product#'.$m->product_id) }}</td>
                                         <td>{{ $m->warehouse?->warehouse_name ?? ('WH#'.$m->warehouse_id) }}</td>
+                                        <td><span class="badge bg-light text-dark border">{{ $rackText }}</span></td>
                                         <td class="text-center">{{ (int) $m->stock_out }}</td>
                                         <td>{{ $m->note }}</td>
-                                        <td>{{ \Carbon\Carbon::parse($m->date)->format('d M Y') }}</td>
+                                        <td>{{ $m->date ? \Carbon\Carbon::parse($m->date)->format('d M Y') : '-' }}</td>
                                     </tr>
                                 @endforeach
                             </tbody>
