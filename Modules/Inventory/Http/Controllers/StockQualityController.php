@@ -24,18 +24,36 @@ class StockQualityController extends Controller
     }
 
     /**
-     * Try resolve rack_id for defect/damaged item.
-     * For now, only reliable source: PurchaseDelivery detail (because we store rack_id in PD details).
+     * Resolve rack_id for defect/damaged item.
+     * Primary: item.rack_id (new schema)
+     * Fallback: legacy source reference (old data)
+     */
+    private function resolveRackId(object $item): ?int
+    {
+        // 1) NEW: directly from item
+        $direct = (int) ($item->rack_id ?? 0);
+        if ($direct > 0) {
+            return $direct;
+        }
+
+        // 2) LEGACY fallback
+        return $this->resolveRackIdFromSource($item);
+    }
+
+    /**
+     * LEGACY resolver (for old records that don't have rack_id yet)
+     * Source: PurchaseDeliveryDetails.rack_id by reference_id & product_id
+     *
+     * NOTE: not reliable for multi-rack scenarios, only for older data.
      */
     private function resolveRackIdFromSource(object $item): ?int
     {
-        $refType = (string) ($item->reference_type ?? '');
-        $refId   = (int) ($item->reference_id ?? 0);
+        $refType   = (string) ($item->reference_type ?? '');
+        $refId     = (int) ($item->reference_id ?? 0);
         $productId = (int) ($item->product_id ?? 0);
 
         if ($refId <= 0 || $productId <= 0) return null;
 
-        // Source: PurchaseDelivery
         if ($refType === PurchaseDelivery::class) {
             $pdDetail = PurchaseDeliveryDetails::withoutGlobalScopes()
                 ->where('purchase_delivery_id', $refId)
@@ -93,24 +111,31 @@ class StockQualityController extends Controller
         $row->save();
     }
 
-    /**
-     * HARD DELETE defect item (karena KEJUAL) + STOCK OUT
-     */
-    public function deleteDefect(int $id)
+   public function deleteDefect(int $id)
     {
         abort_if(Gate::denies('delete_inventory'), 403);
 
         $item = ProductDefectItem::withoutGlobalScopes()->findOrFail($id);
+
+        // ✅ blok biar gak double sold
+        if (!empty($item->moved_out_at)) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Defect item already moved out.'
+            ], 422);
+        }
 
         DB::transaction(function () use ($item) {
 
             $qty = (int) ($item->quantity ?? 0);
             if ($qty <= 0) $qty = 1;
 
-            // 1) stok keluar dulu (karena item kejual) => stok global
-            $ref  = 'DEF-SOLD-' . $item->id;
-            $note = "Defect SOLD (hard delete) | defect_item_id={$item->id}";
+            $rackId = $this->resolveRackId($item); // ✅ pakai item.rack_id dulu
 
+            $ref  = 'DEF-SOLD-' . $item->id;
+            $note = "Defect SOLD | defect_item_id={$item->id}";
+
+            // 1) stok global OUT + mutation log (sekalian simpan rack_id di mutation)
             $this->mutationController->applyInOut(
                 (int) $item->branch_id,
                 (int) $item->warehouse_id,
@@ -119,11 +144,11 @@ class StockQualityController extends Controller
                 $qty,
                 $ref,
                 $note,
-                now()->toDateString()
+                now()->toDateString(),
+                $rackId // ✅
             );
 
-            // 2) update stock_racks juga (kalau bisa resolve rack_id)
-            $rackId = $this->resolveRackIdFromSource($item);
+            // 2) stok rack OUT
             if ($rackId) {
                 $this->decreaseStockRack(
                     (int) $item->branch_id,
@@ -135,34 +160,42 @@ class StockQualityController extends Controller
                 );
             }
 
-            // 3) baru hapus record defect
-            $item->delete();
+            // 3) soft delete bisnis (move out marker)
+            $item->moved_out_at = now();
+            $item->moved_out_by = auth()->id();
+            $item->moved_out_reference_type = 'sold';
+            $item->moved_out_reference_id = null; // kalau ada invoice/sale id, isi di sini
+            $item->save();
         });
 
         return response()->json([
             'success' => true,
-            'message' => 'Defect item sold & deleted (stock OUT applied)'
+            'message' => 'Defect item moved out (sold) & stock updated'
         ]);
     }
 
-    /**
-     * HARD DELETE damaged item (karena KEJUAL) + STOCK OUT
-     * CATATAN: ini hanya valid kalau DAMAGED memang masuk ke Total (jadi stoknya ada).
-     */
     public function deleteDamaged(int $id)
     {
         abort_if(Gate::denies('delete_inventory'), 403);
 
         $item = ProductDamagedItem::withoutGlobalScopes()->findOrFail($id);
 
+        if (!empty($item->moved_out_at)) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Damaged item already moved out.'
+            ], 422);
+        }
+
         DB::transaction(function () use ($item) {
 
             $qty = (int) ($item->quantity ?? 0);
             if ($qty <= 0) $qty = 1;
 
-            // 1) stok keluar dulu (stok global)
+            $rackId = $this->resolveRackId($item);
+
             $ref  = 'DMG-SOLD-' . $item->id;
-            $note = "Damaged SOLD (hard delete) | damaged_item_id={$item->id}";
+            $note = "Damaged SOLD | damaged_item_id={$item->id}";
 
             $this->mutationController->applyInOut(
                 (int) $item->branch_id,
@@ -172,11 +205,10 @@ class StockQualityController extends Controller
                 $qty,
                 $ref,
                 $note,
-                now()->toDateString()
+                now()->toDateString(),
+                $rackId // ✅
             );
 
-            // 2) kurangi stock_racks juga (kalau bisa resolve rack_id)
-            $rackId = $this->resolveRackIdFromSource($item);
             if ($rackId) {
                 $this->decreaseStockRack(
                     (int) $item->branch_id,
@@ -188,13 +220,17 @@ class StockQualityController extends Controller
                 );
             }
 
-            // 3) baru hapus
-            $item->delete();
+            $item->moved_out_at = now();
+            $item->moved_out_by = auth()->id();
+            $item->moved_out_reference_type = 'sold';
+            $item->moved_out_reference_id = null;
+            $item->save();
         });
 
         return response()->json([
             'success' => true,
-            'message' => 'Damaged item sold & deleted (stock OUT applied)'
+            'message' => 'Damaged item moved out (sold) & stock updated'
         ]);
     }
+
 }

@@ -577,10 +577,8 @@ class TransferController extends Controller
 
                         $this->assertRackBelongsToWarehouse($fromRackId, $fromWarehouseId);
 
-                        $rackCode = Rack::withoutGlobalScopes()->where('id', $fromRackId)->value('code');
-                        $rackLabel = $rackCode ? "Rack {$rackCode}" : "Rack#{$fromRackId}";
-
-                        $note = "Transfer OUT #{$transfer->reference} | From WH {$fromWarehouseId} | From {$rackLabel}";
+                        // ✅ NOTE: sekarang tidak menyimpan rack di note, rack masuk ke kolom rack_id mutation.
+                        $note = "Transfer OUT #{$transfer->reference} | From WH {$fromWarehouseId}";
 
                         $this->mutationController->applyInOut(
                             $branchId,
@@ -591,7 +589,7 @@ class TransferController extends Controller
                             (string) $transfer->reference,
                             $note,
                             (string) $transfer->getRawOriginal('date'),
-                            $fromRackId // ✅ NEW
+                            $fromRackId // ✅ rack masuk kolom rack_id (Mutations index)
                         );
 
                         // ✅ StockRack OUT
@@ -952,25 +950,21 @@ class TransferController extends Controller
             'items.*.qty_defect'    => 'required|integer|min:0',
             'items.*.qty_damaged'   => 'required|integer|min:0',
 
-            // GOOD allocations (optional, tapi akan dicek manual kalau qty_received > 0)
             'items.*.good_allocations'               => 'nullable|array',
             'items.*.good_allocations.*.to_rack_id'  => 'nullable|integer|min:1',
             'items.*.good_allocations.*.qty'         => 'nullable|integer|min:0',
 
-            // DEFECT per unit
             'items.*.defects'                         => 'nullable|array',
             'items.*.defects.*.to_rack_id'            => 'nullable|integer|min:1',
             'items.*.defects.*.defect_type'           => 'nullable|string|max:255',
             'items.*.defects.*.defect_description'    => 'nullable|string|max:2000',
             'items.*.defects.*.photo'                 => 'nullable|image|mimes:jpg,jpeg,png,webp|max:2048',
 
-            // DAMAGED per unit
             'items.*.damaged_items'                   => 'nullable|array',
             'items.*.damaged_items.*.to_rack_id'      => 'nullable|integer|min:1',
             'items.*.damaged_items.*.damaged_reason'  => 'nullable|string|max:2000',
             'items.*.damaged_items.*.photo'           => 'nullable|image|mimes:jpg,jpeg,png,webp|max:2048',
 
-            // MISSING (tetap sama)
             'items.*.missing_items'                   => 'nullable|array',
             'items.*.missing_items.*.missing_reason'  => 'nullable|string|max:2000',
             'items.*.missing_items.*.photo'           => 'nullable|image|mimes:jpg,jpeg,png,webp|max:2048',
@@ -988,7 +982,6 @@ class TransferController extends Controller
 
         $itemsById = $transfer->items->keyBy('id');
 
-        // Kumpulkan semua rack_id yang dipakai (untuk divalidasi belong to warehouse)
         $rackIdsToValidate = [];
 
         foreach ($request->items as $rowIndex => $row) {
@@ -1112,11 +1105,11 @@ class TransferController extends Controller
                 if ($missingQty > 0) $hasIssue = true;
 
                 $toBranchId = (int) $transfer->to_branch_id;
+
+                // ✅ NOTE BASE: tidak memuat rack, karena rack ada di kolom rack_id mutation
                 $noteBase = "Transfer IN #{$transfer->reference} | To WH {$toWarehouseId}";
 
-                // =========================
-                // 1) GOOD allocations (split racks)
-                // =========================
+                // 1) GOOD allocations
                 $goodAllocs = $row['good_allocations'] ?? [];
                 if ($qtyReceived > 0) {
 
@@ -1124,12 +1117,8 @@ class TransferController extends Controller
                         $allocQty = (int) ($a['qty'] ?? 0);
                         $toRackId = (int) ($a['to_rack_id'] ?? 0);
 
-                        if ($allocQty <= 0) continue; // skip kosong
+                        if ($allocQty <= 0) continue;
 
-                        $rackCode  = Rack::withoutGlobalScopes()->where('id', $toRackId)->value('code');
-                        $rackLabel = $rackCode ? "Rack {$rackCode}" : "Rack#{$toRackId}";
-
-                        // log allocation (good)
                         \Modules\Transfer\Entities\TransferReceiveAllocation::create([
                             'transfer_request_id'      => (int) $transfer->id,
                             'transfer_request_item_id' => (int) $itemId,
@@ -1143,7 +1132,6 @@ class TransferController extends Controller
                             'created_by'               => auth()->id(),
                         ]);
 
-                        // mutation in per rack
                         $this->mutationController->applyInOut(
                             $toBranchId,
                             $toWarehouseId,
@@ -1151,12 +1139,11 @@ class TransferController extends Controller
                             'In',
                             $allocQty,
                             $transfer->reference,
-                            "{$noteBase} | To {$rackLabel} | GOOD",
+                            "{$noteBase} | GOOD",
                             now()->toDateString(),
-                            $toRackId // ✅ NEW
+                            $toRackId
                         );
 
-                        // stock_racks per rack
                         $this->adjustStockRack(
                             $toBranchId,
                             $toWarehouseId,
@@ -1170,9 +1157,7 @@ class TransferController extends Controller
                     }
                 }
 
-                // =========================
-                // 2) DEFECT per unit (rack per unit)
-                // =========================
+                // 2) DEFECT per unit
                 if ($qtyDefect > 0) {
                     $defectsPayload = $row['defects'] ?? [];
 
@@ -1187,10 +1172,6 @@ class TransferController extends Controller
                             }
                         }
 
-                        $rackCode  = Rack::withoutGlobalScopes()->where('id', $toRackId)->value('code');
-                        $rackLabel = $rackCode ? "Rack {$rackCode}" : "Rack#{$toRackId}";
-
-                        // allocation record (defect)
                         \Modules\Transfer\Entities\TransferReceiveAllocation::create([
                             'transfer_request_id'      => (int) $transfer->id,
                             'transfer_request_item_id' => (int) $itemId,
@@ -1204,7 +1185,6 @@ class TransferController extends Controller
                             'created_by'               => auth()->id(),
                         ]);
 
-                        // mutation in 1 unit
                         $this->mutationController->applyInOut(
                             $toBranchId,
                             $toWarehouseId,
@@ -1212,9 +1192,9 @@ class TransferController extends Controller
                             'In',
                             1,
                             $transfer->reference,
-                            "{$noteBase} | To {$rackLabel} | DEFECT",
+                            "{$noteBase} | DEFECT",
                             now()->toDateString(),
-                            $toRackId // ✅ NEW
+                            $toRackId
                         );
 
                         $this->adjustStockRack(
@@ -1231,7 +1211,7 @@ class TransferController extends Controller
                         ProductDefectItem::create([
                             'branch_id'      => $toBranchId,
                             'warehouse_id'   => $toWarehouseId,
-                            'rack_id'        => $toRackId, // ✅ NEW
+                            'rack_id'        => $toRackId,
                             'product_id'     => $productId,
                             'reference_id'   => (int) $transfer->id,
                             'reference_type' => TransferRequest::class,
@@ -1244,9 +1224,7 @@ class TransferController extends Controller
                     }
                 }
 
-                // =========================
-                // 3) DAMAGED per unit (rack per unit)
-                // =========================
+                // 3) DAMAGED per unit
                 if ($qtyDamaged > 0) {
                     $damagedPayload = $row['damaged_items'] ?? [];
 
@@ -1260,9 +1238,6 @@ class TransferController extends Controller
                                 $photoPath = $file->store('damages', 'public');
                             }
                         }
-
-                        $rackCode  = Rack::withoutGlobalScopes()->where('id', $toRackId)->value('code');
-                        $rackLabel = $rackCode ? "Rack {$rackCode}" : "Rack#{$toRackId}";
 
                         \Modules\Transfer\Entities\TransferReceiveAllocation::create([
                             'transfer_request_id'      => (int) $transfer->id,
@@ -1284,9 +1259,9 @@ class TransferController extends Controller
                             'In',
                             1,
                             $transfer->reference,
-                            "{$noteBase} | To {$rackLabel} | DAMAGED",
+                            "{$noteBase} | DAMAGED",
                             now()->toDateString(),
-                            $toRackId // ✅ NEW
+                            $toRackId
                         );
 
                         $this->adjustStockRack(
@@ -1303,7 +1278,7 @@ class TransferController extends Controller
                         ProductDamagedItem::create([
                             'branch_id'         => $toBranchId,
                             'warehouse_id'      => $toWarehouseId,
-                            'rack_id'           => $toRackId, // ✅ NEW
+                            'rack_id'           => $toRackId,
                             'product_id'        => $productId,
                             'reference_id'      => (int) $transfer->id,
                             'reference_type'    => TransferRequest::class,
@@ -1320,9 +1295,7 @@ class TransferController extends Controller
                     }
                 }
 
-                // =========================
-                // 4) MISSING per unit (no rack)
-                // =========================
+                // 4) MISSING (no rack)
                 if ($missingQty > 0) {
                     $missingDetails = $row['missing_items'] ?? [];
 

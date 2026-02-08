@@ -399,18 +399,15 @@ class PurchaseDeliveryController extends Controller
             'items.*.already_confirmed' => 'required|integer|min:0',
             'items.*.remaining'     => 'required|integer|min:0',
 
-            // ✅ batch qty (yang baru dikonfirmasi sekarang)
             'items.*.add_good'      => 'required|integer|min:0',
             'items.*.add_defect'    => 'required|integer|min:0',
             'items.*.add_damaged'   => 'required|integer|min:0',
 
-            // ✅ allocations untuk batch GOOD
             'items.*.good_allocations' => 'nullable|array',
             'items.*.good_allocations.*.rack_id' => 'required_with:items.*.good_allocations|integer|min:1',
             'items.*.good_allocations.*.qty'     => 'required_with:items.*.good_allocations|integer|min:1',
             'items.*.good_allocations.*.note'    => 'nullable|string|max:255',
 
-            // per-unit arrays tetap (batch)
             'items.*.defects'        => 'nullable|array',
             'items.*.damaged_items'  => 'nullable|array',
         ]);
@@ -442,7 +439,7 @@ class PurchaseDeliveryController extends Controller
                 abort(403, 'Warehouse must belong to the same branch as this Purchase Delivery.');
             }
 
-            // ✅ tentukan batch ke-N (biar reference mutation unik)
+            // ✅ batch ref
             $baseRef = 'PD-' . (int) $purchaseDelivery->id;
             $batchNo = (int) Mutation::withoutGlobalScopes()
                 ->where('reference', 'like', $baseRef . '-B%')
@@ -467,20 +464,17 @@ class PurchaseDeliveryController extends Controller
 
                 $batchTotal = $addGood + $addDefect + $addDamaged;
 
-                // skip kalau batch item ini 0 semua
                 if ($batchTotal <= 0) {
                     continue;
                 }
 
                 $anyConfirmedInThisBatch = true;
 
-                // ambil detail asli (DB)
                 $pdDetail = $purchaseDelivery->purchaseDeliveryDetails->firstWhere('id', $detailId);
                 if (!$pdDetail) {
                     throw new \RuntimeException("PD Detail not found: {$detailId}");
                 }
 
-                // hitung remaining real berdasarkan DB (anti manipulasi)
                 $dbConfirmed = (int) ($pdDetail->qty_received ?? 0)
                             + (int) ($pdDetail->qty_defect ?? 0)
                             + (int) ($pdDetail->qty_damaged ?? 0);
@@ -488,7 +482,6 @@ class PurchaseDeliveryController extends Controller
                 $dbRemaining = (int) $expected - (int) $dbConfirmed;
                 if ($dbRemaining < 0) $dbRemaining = 0;
 
-                // cross-check ringan (opsional tapi bagus)
                 if ($dbConfirmed !== $already) {
                     throw new \RuntimeException("Data changed, please reload page. (detail_id={$detailId})");
                 }
@@ -500,7 +493,7 @@ class PurchaseDeliveryController extends Controller
                     throw new \RuntimeException("Invalid qty: batch_total > remaining (detail_id={$detailId})");
                 }
 
-                // ✅ GOOD allocations (split by rack) untuk batch ini
+                // ✅ GOOD allocations check
                 $goodAlloc = $row['good_allocations'] ?? [];
                 $sumAlloc = 0;
                 foreach ($goodAlloc as $a) {
@@ -511,7 +504,6 @@ class PurchaseDeliveryController extends Controller
                     throw new \RuntimeException("Good allocation mismatch: Good={$addGood}, alloc_sum={$sumAlloc} (detail_id={$detailId})");
                 }
 
-                // per-unit detail defect/damaged untuk batch ini
                 $defRows = $row['defects'] ?? [];
                 $damRows = $row['damaged_items'] ?? [];
 
@@ -522,10 +514,10 @@ class PurchaseDeliveryController extends Controller
                     throw new \RuntimeException("Damaged detail mismatch: expected {$addDamaged} rows, got " . count($damRows) . " (detail_id={$detailId})");
                 }
 
+                // ✅ rackAgg untuk update StockRack + bikin mutation per rack
                 $rackAgg = []; // rackId => ['good'=>x,'defect'=>y,'damaged'=>z,'total'=>t]
                 $pickFirstRackId = null;
 
-                // GOOD allocations
                 foreach ($goodAlloc as $k => $a) {
                     $rackId = (int) ($a['rack_id'] ?? 0);
                     $qty    = (int) ($a['qty'] ?? 0);
@@ -542,7 +534,6 @@ class PurchaseDeliveryController extends Controller
                     $rackAgg[$rackId]['total'] += $qty;
                 }
 
-                // DEFECT per-unit
                 foreach ($defRows as $k => $d) {
                     $rackId = (int) ($d['rack_id'] ?? 0);
                     if ($rackId <= 0) throw new \RuntimeException("Defect rack is required (detail_id={$detailId}, row={$k}).");
@@ -558,7 +549,6 @@ class PurchaseDeliveryController extends Controller
                     }
                 }
 
-                // DAMAGED per-unit
                 foreach ($damRows as $k => $d) {
                     $rackId = (int) ($d['rack_id'] ?? 0);
                     if ($rackId <= 0) throw new \RuntimeException("Damaged rack is required (detail_id={$detailId}, row={$k}).");
@@ -574,19 +564,19 @@ class PurchaseDeliveryController extends Controller
                     }
                 }
 
-                // ✅ UPDATE PD DETAIL (cumulative add, bukan overwrite)
+                // ✅ update PD Detail (cumulative)
                 $newGood    = (int) ($pdDetail->qty_received ?? 0) + $addGood;
                 $newDefect  = (int) ($pdDetail->qty_defect ?? 0) + $addDefect;
                 $newDamaged = (int) ($pdDetail->qty_damaged ?? 0) + $addDamaged;
 
                 $pdDetail->update([
-                    'rack_id'      => $pickFirstRackId ?? $pdDetail->rack_id, // legacy default
+                    'rack_id'      => $pickFirstRackId ?? $pdDetail->rack_id,
                     'qty_received' => $newGood,
                     'qty_defect'   => $newDefect,
                     'qty_damaged'  => $newDamaged,
                 ]);
 
-                // ✅ Update fulfilled qty PO detail (add batchTotal)
+                // ✅ Update fulfilled qty PO detail
                 if (!empty($purchaseDelivery->purchase_order_id) && $purchaseDelivery->purchaseOrder) {
                     $po = $purchaseDelivery->purchaseOrder;
                     $poDetail = $po->purchaseOrderDetails->firstWhere('product_id', $productId);
@@ -600,20 +590,33 @@ class PurchaseDeliveryController extends Controller
                     }
                 }
 
-                // ✅ MUTATION IN (batch)
-                $noteIn = "Purchase Delivery IN #{$reference} | WH {$purchaseDelivery->warehouse_id}";
-                $inId = $this->mutationController->applyInOutAndGetMutationId(
-                    (int) $purchaseDelivery->branch_id,
-                    (int) $purchaseDelivery->warehouse_id,
-                    $productId,
-                    'In',
-                    $batchTotal,
-                    $reference,
-                    $noteIn,
-                    (string) $purchaseDelivery->getRawOriginal('date')
-                );
+                // =========================================================
+                // ✅ MUTATION IN: sekarang bikin PER RACK (rack_id terisi)
+                // NOTE: tidak menyimpan rack di note (biar selaras sama Transfer/SaleDelivery)
+                // =========================================================
+                $mutationInByRack = []; // rackId => mutation_id
+                foreach ($rackAgg as $rackId => $agg) {
+                    $qtyRackTotal = (int) ($agg['total'] ?? 0);
+                    if ($qtyRackTotal <= 0) continue;
 
-                // Defect Items (per unit, batch)
+                    $noteIn = "Purchase Delivery IN #{$reference} | WH {$purchaseDelivery->warehouse_id}";
+
+                    $mid = $this->mutationController->applyInOutAndGetMutationId(
+                        (int) $purchaseDelivery->branch_id,
+                        (int) $purchaseDelivery->warehouse_id,
+                        $productId,
+                        'In',
+                        $qtyRackTotal,
+                        $reference,
+                        $noteIn,
+                        (string) $purchaseDelivery->getRawOriginal('date'),
+                        (int) $rackId // ✅ penting: ini yang isi kolom Rack di Mutations index
+                    );
+
+                    $mutationInByRack[(int) $rackId] = (int) $mid;
+                }
+
+                // Defect Items (per unit)
                 if ($addDefect > 0) {
                     foreach ($defRows as $k => $d) {
                         $photoPath = null;
@@ -621,9 +624,12 @@ class PurchaseDeliveryController extends Controller
                             $photoPath = request()->file("items.$idx.defects.$k.photo")->store('defects', 'public');
                         }
 
+                        $rackId = (int) ($d['rack_id'] ?? 0);
+
                         ProductDefectItem::create([
                             'branch_id'      => (int) $purchaseDelivery->branch_id,
                             'warehouse_id'   => (int) $purchaseDelivery->warehouse_id,
+                            'rack_id'        => $rackId > 0 ? $rackId : null, // ✅ simpan rack juga
                             'product_id'     => $productId,
                             'reference_id'   => (int) $purchaseDelivery->id,
                             'reference_type' => PurchaseDelivery::class,
@@ -636,7 +642,7 @@ class PurchaseDeliveryController extends Controller
                     }
                 }
 
-                // Damaged Items (per unit, batch)
+                // Damaged Items (per unit)
                 if ($addDamaged > 0) {
                     foreach ($damRows as $k => $d) {
                         $photoPath = null;
@@ -644,9 +650,13 @@ class PurchaseDeliveryController extends Controller
                             $photoPath = request()->file("items.$idx.damaged_items.$k.photo")->store('damaged', 'public');
                         }
 
+                        $rackId = (int) ($d['rack_id'] ?? 0);
+                        $mutationInId = $rackId > 0 ? (int) ($mutationInByRack[$rackId] ?? 0) : 0;
+
                         ProductDamagedItem::create([
                             'branch_id'       => (int) $purchaseDelivery->branch_id,
                             'warehouse_id'    => (int) $purchaseDelivery->warehouse_id,
+                            'rack_id'         => $rackId > 0 ? $rackId : null, // ✅ simpan rack juga
                             'product_id'      => $productId,
                             'reference_id'    => (int) $purchaseDelivery->id,
                             'reference_type'  => PurchaseDelivery::class,
@@ -654,13 +664,13 @@ class PurchaseDeliveryController extends Controller
                             'reason'          => $d['damaged_reason'] ?? null,
                             'photo_path'      => $photoPath,
                             'created_by'      => auth()->id(),
-                            'mutation_in_id'  => (int) $inId,
+                            'mutation_in_id'  => $mutationInId > 0 ? $mutationInId : null, // ✅ sesuai rack
                             'mutation_out_id' => null,
                         ]);
                     }
                 }
 
-                // UPDATE stock_racks per rack (split) untuk batch ini
+                // UPDATE stock_racks per rack
                 foreach ($rackAgg as $rackId => $agg) {
                     $this->upsertStockRack(
                         (int) $purchaseDelivery->branch_id,
@@ -679,7 +689,7 @@ class PurchaseDeliveryController extends Controller
                 throw new \RuntimeException('Batch confirm kosong. Isi minimal 1 qty untuk dikunci.');
             }
 
-            // ✅ hitung apakah masih ada remaining setelah batch ini
+            // ✅ cek remaining
             $purchaseDelivery->refresh();
             $purchaseDelivery->loadMissing(['purchaseDeliveryDetails']);
 
@@ -755,12 +765,68 @@ class PurchaseDeliveryController extends Controller
             ->orderBy('id')
             ->get();
 
+        // =========================================================
+        // ✅ Rack Movement Summary (ambil dari mutation log)
+        // reference format: PD-{id}-B{n}
+        // =========================================================
+        $baseRef = 'PD-' . (int) $purchaseDelivery->id;
+
+        $mutations = Mutation::withoutGlobalScopes()
+            ->where('branch_id', (int) $purchaseDelivery->branch_id)
+            ->where('warehouse_id', (int) $purchaseDelivery->warehouse_id)
+            ->where('reference', 'like', $baseRef . '-B%')
+            ->where('mutation_type', 'In')
+            ->orderBy('id', 'asc')
+            ->get(['id','reference','product_id','rack_id','stock_in']);
+
+        $rackIds = $mutations->pluck('rack_id')->filter()->unique()->map(fn($x)=>(int)$x)->values()->toArray();
+
+        $rackMap = [];
+        if (!empty($rackIds)) {
+            $rackMap = Rack::withoutGlobalScopes()
+                ->whereIn('id', $rackIds)
+                ->get()
+                ->mapWithKeys(function ($r) {
+                    $label = trim((string) ($r->code ?? ''));
+                    if ($label === '') $label = trim((string) ($r->name ?? ''));
+                    if ($label === '') $label = 'Rack#' . (int) $r->id;
+                    return [(int) $r->id => $label];
+                })
+                ->toArray();
+        }
+
+        // Group: product_id -> list ringkas rack + qty
+        $rackInSummaryByProduct = [];
+        foreach ($mutations as $m) {
+            $pid = (int) $m->product_id;
+            $rid = (int) ($m->rack_id ?? 0);
+            $qty = (int) ($m->stock_in ?? 0);
+            if ($qty <= 0) continue;
+
+            $label = $rid > 0 ? ($rackMap[$rid] ?? ('Rack#'.$rid)) : '-';
+
+            if (!isset($rackInSummaryByProduct[$pid])) $rackInSummaryByProduct[$pid] = [];
+            if (!isset($rackInSummaryByProduct[$pid][$label])) $rackInSummaryByProduct[$pid][$label] = 0;
+
+            $rackInSummaryByProduct[$pid][$label] += $qty;
+        }
+
+        // convert assoc -> array (biar gampang di blade)
+        foreach ($rackInSummaryByProduct as $pid => $rows) {
+            $tmp = [];
+            foreach ($rows as $label => $qty) {
+                $tmp[] = ['rack' => $label, 'qty' => (int) $qty];
+            }
+            $rackInSummaryByProduct[$pid] = $tmp;
+        }
+
         return view('purchase-deliveries::show', [
             'purchaseDelivery' => $purchaseDelivery,
             'vendorName'       => $vendorName,
             'vendorEmail'      => $vendorEmail,
             'defects'          => $defects,
             'damaged'          => $damaged,
+            'rackInSummaryByProduct' => $rackInSummaryByProduct, // ✅ NEW
         ]);
     }
 }

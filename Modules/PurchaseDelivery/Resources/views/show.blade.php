@@ -171,6 +171,25 @@
         color:#6c757d;
         margin-top:4px;
     }
+
+    .pd-racklist{
+        display:flex;
+        flex-wrap:wrap;
+        gap:6px;
+    }
+    .pd-rackchip{
+        display:inline-flex;
+        align-items:center;
+        gap:6px;
+        padding:4px 10px;
+        border-radius:999px;
+        font-size:11px;
+        font-weight:800;
+        border:1px solid rgba(0,0,0,.08);
+        background:rgba(0,0,0,.02);
+        color:#212529;
+        white-space:nowrap;
+    }
 </style>
 @endpush
 
@@ -215,6 +234,8 @@
     $hasInvoice = $purchaseDelivery->relationLoaded('purchase')
         ? !empty($purchaseDelivery->purchase)
         : $purchaseDelivery->purchase()->exists();
+
+    $rackInSummaryByProduct = $rackInSummaryByProduct ?? [];
 @endphp
 
 <div class="container-fluid pd-wrap">
@@ -327,6 +348,7 @@
                         <tr>
                             <th style="min-width:320px;">Product</th>
                             <th>Description</th>
+                            <th style="min-width:220px;">Rack In</th>
                             <th class="text-center" style="width:90px;">Expected</th>
                             <th class="text-center" style="width:90px;">Received</th>
                             <th class="text-center" style="width:80px;">Defect</th>
@@ -351,6 +373,8 @@
                                 $defList = $defectsByProduct->get($pid, collect());
                                 $dmList  = $damagedByProduct->get($pid, collect());
                                 $rowKey = "pd-item-{$i}";
+
+                                $rackSummary = $rackInSummaryByProduct[$pid] ?? [];
                             @endphp
 
                             <tr>
@@ -362,6 +386,20 @@
                                 </td>
 
                                 <td>{{ $detail->description ?: '-' }}</td>
+
+                                <td>
+                                    @if(!empty($rackSummary))
+                                        <div class="pd-racklist">
+                                            @foreach($rackSummary as $rs)
+                                                <span class="pd-rackchip">
+                                                    {{ $rs['rack'] ?? '-' }}: {{ (int)($rs['qty'] ?? 0) }}
+                                                </span>
+                                            @endforeach
+                                        </div>
+                                    @else
+                                        <span class="text-muted">-</span>
+                                    @endif
+                                </td>
 
                                 <td class="text-center">{{ $expected }}</td>
                                 <td class="text-center"><span class="pd-pill pd-pill--ok" style="padding:4px 10px;">{{ $received }}</span></td>
@@ -397,7 +435,7 @@
 
                             @if($hasAny)
                                 <tr class="perunit-row" id="{{ $rowKey }}" style="display:none;">
-                                    <td colspan="8" class="p-3">
+                                    <td colspan="9" class="p-3">
                                         <div class="perunit-card">
                                             <div class="perunit-title">
                                                 <div>
@@ -514,7 +552,7 @@
 
                         @empty
                             <tr>
-                                <td colspan="8" class="text-center text-muted py-4">No items found.</td>
+                                <td colspan="9" class="text-center text-muted py-4">No items found.</td>
                             </tr>
                         @endforelse
                         </tbody>
@@ -588,7 +626,6 @@
                         </a>
                     @endif
 
-                    {{-- ✅ Confirm button: pending/partial + masih ada remaining --}}
                     @if($isConfirmableStatus && $hasRemaining)
                         <a href="{{ route('purchase-deliveries.confirm', $purchaseDelivery->id) }}" class="btn btn-primary btn-sm">
                             {{ $rawStatus === 'partial' ? 'Confirm Remaining' : 'Confirm Delivery' }}
