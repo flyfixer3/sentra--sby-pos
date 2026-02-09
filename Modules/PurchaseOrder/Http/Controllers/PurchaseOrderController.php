@@ -60,7 +60,6 @@ class PurchaseOrderController extends Controller
             'date'                 => 'required|date',
             'note'                 => 'nullable|string|max:1000',
 
-            // dari livewire product-cart
             'tax_percentage'       => 'required|numeric|min:0|max:100',
             'discount_percentage'  => 'required|numeric|min:0|max:100',
             'shipping_amount'      => 'required|numeric|min:0',
@@ -79,12 +78,32 @@ class PurchaseOrderController extends Controller
 
         DB::transaction(function () use ($request, $branchId, $cart) {
 
-            $supplier = Supplier::findOrFail((int)$request->supplier_id);
+            $supplier = Supplier::findOrFail((int) $request->supplier_id);
 
+            // ==========================
+            // ✅ AGGREGATE QTY PER PRODUCT FROM CART
+            // ==========================
+            $qtyByProduct = [];
+            foreach ($cart->content() as $item) {
+                $pid = (int) ($item->id ?? 0);
+                $qty = (int) ($item->qty ?? 0);
+                if ($pid <= 0 || $qty <= 0) continue;
+
+                if (!isset($qtyByProduct[$pid])) $qtyByProduct[$pid] = 0;
+                $qtyByProduct[$pid] += $qty;
+            }
+
+            if (empty($qtyByProduct)) {
+                throw new \RuntimeException('Cart items invalid.');
+            }
+
+            // ==========================
+            // ✅ CREATE PO (header)
+            // ==========================
             $purchaseOrder = PurchaseOrder::create([
                 'branch_id'            => $branchId,
                 'date'                 => $request->date,
-                'reference'            => $request->reference, // biasanya "PO"
+                'reference'            => $request->reference,
                 'supplier_id'          => (int) $request->supplier_id,
                 'supplier_name'        => $supplier->supplier_name,
 
@@ -93,15 +112,16 @@ class PurchaseOrderController extends Controller
                 'shipping_amount'      => (float) $request->shipping_amount,
                 'total_amount'         => (float) $request->total_amount,
 
-                // ✅ MODE 1: selalu mulai Pending
                 'status'               => 'Pending',
-
                 'note'                 => $request->note,
                 'tax_amount'           => (float) $cart->tax(),
                 'discount_amount'      => (float) $cart->discount(),
                 'created_by'           => auth()->id(),
             ]);
 
+            // ==========================
+            // ✅ CREATE PO DETAILS
+            // ==========================
             foreach ($cart->content() as $item) {
                 PurchaseOrderDetails::create([
                     'purchase_order_id'        => (int) $purchaseOrder->id,
@@ -109,10 +129,7 @@ class PurchaseOrderController extends Controller
                     'product_name'             => (string) $item->name,
                     'product_code'             => (string) $item->options->code,
                     'quantity'                 => (int) $item->qty,
-
-                    // ✅ awal selalu 0, fulfilled naiknya lewat PD confirm
                     'fulfilled_quantity'       => 0,
-
                     'price'                    => (float) $item->price,
                     'unit_price'               => (float) $item->options->unit_price,
                     'sub_total'                => (float) $item->options->sub_total,
@@ -120,6 +137,43 @@ class PurchaseOrderController extends Controller
                     'product_discount_type'    => (string) $item->options->product_discount_type,
                     'product_tax_amount'       => (float) $item->options->product_tax,
                 ]);
+            }
+
+            // ==========================
+            // ✅ STEP 2: INCREASE qty_incoming (stocks)
+            // - incoming at branch-level (warehouse_id NULL)
+            // ==========================
+            foreach ($qtyByProduct as $pid => $qty) {
+
+                $existing = DB::table('stocks')
+                    ->where('branch_id', (int) $branchId)
+                    ->whereNull('warehouse_id')
+                    ->where('product_id', (int) $pid)
+                    ->lockForUpdate()
+                    ->first();
+
+                if ($existing) {
+                    DB::table('stocks')
+                        ->where('id', (int) $existing->id)
+                        ->update([
+                            'qty_incoming' => (int) ($existing->qty_incoming ?? 0) + (int) $qty,
+                            'updated_at' => now(),
+                        ]);
+                } else {
+                    DB::table('stocks')->insert([
+                        'branch_id'    => (int) $branchId,
+                        'warehouse_id' => null,
+                        'product_id'   => (int) $pid,
+
+                        'qty_available' => 0,
+                        'qty_reserved'  => 0,
+                        'qty_incoming'  => (int) $qty,
+                        'min_stock'     => 0,
+
+                        'created_at' => now(),
+                        'updated_at' => now(),
+                    ]);
+                }
             }
 
             $cart->destroy();

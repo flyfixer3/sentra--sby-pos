@@ -145,7 +145,7 @@ class SaleOrderController extends Controller
                 'date' => 'required|date',
                 'customer_id' => 'required|integer',
 
-                // ✅ Saran kita: warehouse di SO jangan bikin bingung -> boleh nullable selalu
+                // ✅ SO warehouse tetap nullable (redundant)
                 'warehouse_id' => 'nullable|integer',
 
                 'note' => 'nullable|string|max:5000',
@@ -168,7 +168,7 @@ class SaleOrderController extends Controller
                     ->where('id', (int) $request->customer_id)
                     ->where(function ($q) use ($branchId) {
                         $q->whereNull('branch_id')
-                            ->orWhere('branch_id', $branchId);
+                        ->orWhere('branch_id', $branchId);
                     })
                     ->firstOrFail();
 
@@ -211,9 +211,33 @@ class SaleOrderController extends Controller
                     }
                 }
 
-                // ✅ warehouse di SO kita set NULL biar gak redundant
-                $warehouseId = null;
+                // ==========================
+                // ✅ AGGREGATE QTY PER PRODUCT
+                // ==========================
+                $qtyByProduct = [];
+                foreach ($request->items as $row) {
+                    $pid = (int) ($row['product_id'] ?? 0);
+                    $qty = (int) ($row['quantity'] ?? 0);
+                    if ($pid <= 0 || $qty <= 0) continue;
 
+                    if (!isset($qtyByProduct[$pid])) $qtyByProduct[$pid] = 0;
+                    $qtyByProduct[$pid] += $qty;
+                }
+
+                if (empty($qtyByProduct)) {
+                    abort(422, 'Items are empty.');
+                }
+
+                // ✅ Pastikan product_id valid
+                $productIds = array_keys($qtyByProduct);
+                $validCount = Product::query()->whereIn('id', $productIds)->count();
+                if ($validCount !== count($productIds)) {
+                    abort(422, 'Invalid product selected.');
+                }
+
+                // ==========================
+                // ✅ CREATE SALE ORDER (header)
+                // ==========================
                 $so = SaleOrder::create([
                     'branch_id' => $branchId,
                     'customer_id' => (int) $customer->id,
@@ -227,6 +251,9 @@ class SaleOrderController extends Controller
 
                 $saleOrderId = (int) $so->id;
 
+                // ==========================
+                // ✅ CREATE ITEMS
+                // ==========================
                 foreach ($request->items as $row) {
                     SaleOrderItem::create([
                         'sale_order_id' => $so->id,
@@ -236,6 +263,45 @@ class SaleOrderController extends Controller
                     ]);
                 }
 
+                // ==========================
+                // ✅ STEP 2: INCREASE qty_reserved (stocks)
+                // - reserve at branch-level (warehouse_id NULL)
+                // ==========================
+                foreach ($qtyByProduct as $pid => $qty) {
+                    // lock row if exists (avoid race)
+                    $existing = DB::table('stocks')
+                        ->where('branch_id', (int) $branchId)
+                        ->whereNull('warehouse_id')
+                        ->where('product_id', (int) $pid)
+                        ->lockForUpdate()
+                        ->first();
+
+                    if ($existing) {
+                        DB::table('stocks')
+                            ->where('id', (int) $existing->id)
+                            ->update([
+                                'qty_reserved' => (int) ($existing->qty_reserved ?? 0) + (int) $qty,
+                                'updated_at' => now(),
+                            ]);
+                    } else {
+                        // create minimal row for branch-level reservation
+                        DB::table('stocks')->insert([
+                            'branch_id'    => (int) $branchId,
+                            'warehouse_id' => null,
+                            'product_id'   => (int) $pid,
+
+                            'qty_available' => 0,
+                            'qty_reserved'  => (int) $qty,
+                            'qty_incoming'  => 0,
+                            'min_stock'     => 0,
+
+                            'created_at' => now(),
+                            'updated_at' => now(),
+                        ]);
+                    }
+                }
+
+                // mark quotation completed if needed (keep your rule)
                 $qid = (int) ($so->quotation_id ?? 0);
                 if ($qid > 0) {
                     $this->markQuotationCompletedIfHasChildren($qid, (int) $branchId);

@@ -27,6 +27,22 @@
 
             <div class="divider-soft mb-3"></div>
 
+            {{-- ✅ INFO: Reserved / Incoming pool --}}
+            <div class="alert alert-info alert-modern py-2 mb-3">
+                <div class="d-flex align-items-start" style="gap:10px;">
+                    <i class="bi bi-info-circle mt-1"></i>
+                    <div>
+                        <div class="font-weight-bold">Catatan Reserved & Incoming</div>
+                        <div class="small">
+                            Reserved dan Incoming dicatat pada baris
+                            <span class="badge badge-primary badge-pill px-3 py-1">All Warehouses</span>
+                            (pool level cabang), karena gudang & rack baru dipilih saat proses
+                            <b>Sale Delivery Confirm</b>. Baris per gudang menampilkan stok fisik gudang.
+                        </div>
+                    </div>
+                </div>
+            </div>
+
             <form method="GET" action="{{ route('inventory.stocks.index') }}" class="row g-2 align-items-end mb-3">
                 <div class="col-md-4">
                     <label class="small text-muted mb-1 d-block">Filter Gudang</label>
@@ -73,7 +89,7 @@
                     <span aria-hidden="true">&times;</span>
                 </button>
 
-                {{-- BS5 close (kalau suatu saat pindah bs5) --}}
+                {{-- BS5 close (optional) --}}
                 <button type="button" class="btn-close d-none" data-bs-dismiss="modal" aria-label="Close"></button>
             </div>
 
@@ -93,14 +109,14 @@
 
                 <div class="table-responsive">
                     <table class="table table-sm table-bordered mb-0">
-                        <thead class="table-light">
+                        <thead class="thead-light">
                             <tr>
                                 <th style="width:120px;">Kode Rak</th>
                                 <th>Nama Rak</th>
-                                <th class="text-end" style="width:110px;">Total</th>
-                                <th class="text-end" style="width:110px;">Good</th>
-                                <th class="text-end" style="width:110px;">Defect</th>
-                                <th class="text-end" style="width:110px;">Damaged</th>
+                                <th class="text-right" style="width:110px;">Total</th>
+                                <th class="text-right" style="width:110px;">Good</th>
+                                <th class="text-right" style="width:110px;">Defect</th>
+                                <th class="text-right" style="width:110px;">Damaged</th>
                             </tr>
                         </thead>
 
@@ -111,10 +127,10 @@
                         <tfoot>
                             <tr class="font-weight-bold bg-light">
                                 <td colspan="2" class="text-right">Grand Total</td>
-                                <td class="text-end" id="rackFootTotal">0</td>
-                                <td class="text-end" id="rackFootGood">0</td>
-                                <td class="text-end" id="rackFootDefect">0</td>
-                                <td class="text-end" id="rackFootDamaged">0</td>
+                                <td class="text-right" id="rackFootTotal">0</td>
+                                <td class="text-right" id="rackFootGood">0</td>
+                                <td class="text-right" id="rackFootDefect">0</td>
+                                <td class="text-right" id="rackFootDamaged">0</td>
                             </tr>
                         </tfoot>
                     </table>
@@ -140,7 +156,7 @@
                     <span aria-hidden="true">&times;</span>
                 </button>
 
-                {{-- BS5 close --}}
+                {{-- BS5 close (optional) --}}
                 <button type="button" class="btn-close d-none" data-bs-dismiss="modal" aria-label="Close"></button>
             </div>
 
@@ -151,12 +167,12 @@
 
                 <div class="table-responsive">
                     <table class="table table-sm table-bordered align-middle mb-0">
-                        <thead class="table-light">
+                        <thead class="thead-light">
                             <tr>
                                 <th style="width:60px;">#</th>
                                 <th style="width:180px;">Cabang</th>
                                 <th style="width:180px;">Gudang</th>
-                                <th style="width:90px;" class="text-end">Qty</th>
+                                <th style="width:90px;" class="text-right">Qty</th>
                                 <th id="qualityTypeCol" style="width:180px;">Type</th>
                                 <th>Desc / Reason</th>
                                 <th style="width:140px;" class="text-center">Photo</th>
@@ -222,6 +238,26 @@
     .table-modern td, .table-modern th{
         vertical-align: middle;
     }
+
+    .alert-modern{
+        border-radius: 12px;
+        border: 1px solid rgba(59, 130, 246, .25);
+        background: rgba(59, 130, 246, .08);
+    }
+
+    /* ✅ FIX: summary row (All Warehouses) soft highlight WITHOUT ugly border */
+    table.dataTable tbody tr.table-primary,
+    table.dataTable tbody tr.table-primary td,
+    table.dataTable tbody tr.table-primary th{
+        background: rgba(59, 130, 246, .06) !important;
+        border-color: #e2e8f0 !important;
+        box-shadow: none !important;
+        outline: none !important;
+    }
+    table.dataTable tbody tr.table-primary td{
+        border-top-color: #dbeafe !important;
+        border-bottom-color: #dbeafe !important;
+    }
 </style>
 @endpush
 
@@ -230,12 +266,12 @@
 
 <script>
 function openModal(modalId) {
-    const modalEl = document.getElementById(modalId);
+    var modalEl = document.getElementById(modalId);
 
     // 1) Bootstrap 5
     try {
         if (typeof bootstrap !== 'undefined' && bootstrap.Modal) {
-            const modal = bootstrap.Modal.getOrCreateInstance(modalEl);
+            var modal = bootstrap.Modal.getOrCreateInstance(modalEl);
             modal.show();
             return true;
         }
@@ -244,8 +280,8 @@ function openModal(modalId) {
     // 2) CoreUI
     try {
         if (typeof coreui !== 'undefined' && coreui.Modal) {
-            const modal = coreui.Modal.getOrCreateInstance(modalEl);
-            modal.show();
+            var modal2 = coreui.Modal.getOrCreateInstance(modalEl);
+            modal2.show();
             return true;
         }
     } catch(e) {}
@@ -262,25 +298,27 @@ function openModal(modalId) {
 }
 
 function asInt(v){
-    const n = parseInt(v, 10);
+    var n = parseInt(v, 10);
     return isNaN(n) ? 0 : n;
 }
+
 function escapeHtml(text) {
     if (text === null || text === undefined) return '';
     return String(text)
-        .replaceAll('&', '&amp;')
-        .replaceAll('<', '&lt;')
-        .replaceAll('>', '&gt;')
-        .replaceAll('"', '&quot;')
-        .replaceAll("'", '&#039;');
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
 }
+
 function resetRackTotals(){
-    const ids = [
+    var ids = [
         'rackGrandTotal','rackGrandGood','rackGrandDefect','rackGrandDamaged',
         'rackFootTotal','rackFootGood','rackFootDefect','rackFootDamaged'
     ];
-    ids.forEach(id => {
-        const el = document.getElementById(id);
+    ids.forEach(function(id){
+        var el = document.getElementById(id);
         if (el) el.textContent = '0';
     });
 }
@@ -292,25 +330,24 @@ function showRackDetails(productId, branchId, warehouseId) {
 
     resetRackTotals();
 
-    // hint kecil biar user paham lagi buka apa
-    const hintEl = document.getElementById('rackModalHint');
-    if (hintEl) hintEl.textContent = `PID: ${productId} | WH: ${warehouseId}`;
+    var hintEl = document.getElementById('rackModalHint');
+    if (hintEl) hintEl.textContent = 'PID: ' + productId + ' | WH: ' + warehouseId;
 
-    const opened = openModal('rackModal');
+    var opened = openModal('rackModal');
     if (!opened) {
         alert('Modal tidak bisa dibuka: JS modal (bootstrap/coreui) belum ke-load.');
         return;
     }
 
-    fetch(`/inventory/stocks/rack-details/${productId}/${branchId}/${warehouseId}`, {
+    fetch('/inventory/stocks/rack-details/' + productId + '/' + branchId + '/' + warehouseId, {
         headers: {
             'X-Requested-With': 'XMLHttpRequest',
             'Accept': 'application/json'
         }
     })
-    .then(r => r.json())
-    .then(res => {
-        const body = document.getElementById('rackDetailBody');
+    .then(function(r){ return r.json(); })
+    .then(function(res){
+        var body = document.getElementById('rackDetailBody');
         body.innerHTML = '';
 
         if (!res || !res.success || !Array.isArray(res.data) || res.data.length === 0) {
@@ -318,47 +355,44 @@ function showRackDetails(productId, branchId, warehouseId) {
             return;
         }
 
-        let grandTotal = 0, grandGood = 0, grandDefect = 0, grandDamaged = 0;
+        var grandTotal = 0, grandGood = 0, grandDefect = 0, grandDamaged = 0;
 
-        res.data.forEach(item => {
-            // ✅ sesuai response rackDetails() terbaru
-            const code = escapeHtml(item.rack_code ?? '-');
-            const name = escapeHtml(item.rack_name ?? '-');
+        res.data.forEach(function(item){
+            var code = escapeHtml(item.rack_code || '-');
+            var name = escapeHtml(item.rack_name || '-');
 
-            const qt = asInt(item.qty_total);
-            const qg = asInt(item.qty_good);
-            const qd = asInt(item.qty_defect);
-            const qx = asInt(item.qty_damaged);
+            var qt = asInt(item.qty_total);
+            var qg = asInt(item.qty_good);
+            var qd = asInt(item.qty_defect);
+            var qx = asInt(item.qty_damaged);
 
             grandTotal += qt;
             grandGood += qg;
             grandDefect += qd;
             grandDamaged += qx;
 
-            body.innerHTML += `
-                <tr>
-                    <td><span class="badge badge-dark">${code}</span></td>
-                    <td>${name}</td>
-                    <td class="text-end font-weight-bold">${qt}</td>
-                    <td class="text-end"><span class="badge badge-success">${qg}</span></td>
-                    <td class="text-end"><span class="badge badge-warning text-dark">${qd}</span></td>
-                    <td class="text-end"><span class="badge badge-danger">${qx}</span></td>
-                </tr>`;
+            body.innerHTML += ''
+                + '<tr>'
+                + '  <td><span class="badge badge-dark">' + code + '</span></td>'
+                + '  <td>' + name + '</td>'
+                + '  <td class="text-right font-weight-bold">' + qt + '</td>'
+                + '  <td class="text-right"><span class="badge badge-success">' + qg + '</span></td>'
+                + '  <td class="text-right"><span class="badge badge-warning text-dark">' + qd + '</span></td>'
+                + '  <td class="text-right"><span class="badge badge-danger">' + qx + '</span></td>'
+                + '</tr>';
         });
 
-        // header badges
         document.getElementById('rackGrandTotal').textContent  = String(grandTotal);
         document.getElementById('rackGrandGood').textContent   = String(grandGood);
         document.getElementById('rackGrandDefect').textContent = String(grandDefect);
         document.getElementById('rackGrandDamaged').textContent= String(grandDamaged);
 
-        // footer totals
         document.getElementById('rackFootTotal').textContent   = String(grandTotal);
         document.getElementById('rackFootGood').textContent    = String(grandGood);
         document.getElementById('rackFootDefect').textContent  = String(grandDefect);
         document.getElementById('rackFootDamaged').textContent = String(grandDamaged);
     })
-    .catch(err => {
+    .catch(function(err){
         console.error(err);
         document.getElementById('rackDetailBody').innerHTML =
             '<tr><td colspan="6" class="text-center text-danger">Gagal memuat data.</td></tr>';
@@ -366,39 +400,37 @@ function showRackDetails(productId, branchId, warehouseId) {
 }
 
 // ✅ Quality report (defect / damaged)
-function openQualityModal(type, productId, warehouseId, isAllBranchMode) {
-    const titleEl = document.getElementById('qualityModalTitle');
-    const bodyEl = document.getElementById('qualityBody');
-    const typeColEl = document.getElementById('qualityTypeCol');
+function openQualityModal(type, productId) {
+    var titleEl = document.getElementById('qualityModalTitle');
+    var bodyEl = document.getElementById('qualityBody');
+    var typeColEl = document.getElementById('qualityTypeCol');
 
-    const typeUpper = (type || '').toUpperCase();
+    var typeUpper = String(type || '').toUpperCase();
 
-    titleEl.textContent = `Quality Report - ${typeUpper}`;
+    titleEl.textContent = 'Quality Report - ' + typeUpper;
     bodyEl.innerHTML = '<tr><td colspan="8" class="text-center text-muted">Memuat data...</td></tr>';
 
-    // header kolom type
     if (type === 'defect') typeColEl.textContent = 'Defect Type';
     else typeColEl.textContent = 'Reason';
 
-    const opened = openModal('qualityModal');
+    var opened = openModal('qualityModal');
     if (!opened) {
         alert('Quality modal tidak bisa dibuka: JS modal (bootstrap/coreui) belum ke-load.');
         return;
     }
 
-    // ikut filter gudang yang dipilih di form
-    const whSelected = document.querySelector('select[name="warehouse_id"]')?.value || '';
-    const qs = new URLSearchParams();
+    var whSelected = (document.querySelector('select[name="warehouse_id"]') || {}).value || '';
+    var qs = new URLSearchParams();
     if (whSelected) qs.set('warehouse_id', whSelected);
 
-    fetch(`/inventory/stocks/quality-details/${type}/${productId}?` + qs.toString(), {
+    fetch('/inventory/stocks/quality-details/' + type + '/' + productId + '?' + qs.toString(), {
         headers: {
             'X-Requested-With': 'XMLHttpRequest',
             'Accept': 'application/json'
         }
     })
-    .then(r => r.json())
-    .then(res => {
+    .then(function(r){ return r.json(); })
+    .then(function(res){
         bodyEl.innerHTML = '';
 
         if (!res.success || !Array.isArray(res.data) || res.data.length === 0) {
@@ -406,45 +438,44 @@ function openQualityModal(type, productId, warehouseId, isAllBranchMode) {
             return;
         }
 
-        res.data.forEach((row, idx) => {
-            const branch = escapeHtml(row.branch_name ?? '-');
-            const wh = escapeHtml(row.warehouse_name ?? '-');
-            const qty = asInt(row.quantity ?? 0);
+        res.data.forEach(function(row, idx){
+            var branch = escapeHtml(row.branch_name || '-');
+            var wh = escapeHtml(row.warehouse_name || '-');
+            var qty = asInt(row.quantity || 0);
 
-            let typeText = '-';
-            let descText = '-';
+            var typeText = '-';
+            var descText = '-';
 
             if (type === 'defect') {
-                typeText = escapeHtml(row.defect_type ?? '-');
-                descText = escapeHtml(row.description ?? '-');
+                typeText = escapeHtml(row.defect_type || '-');
+                descText = escapeHtml(row.description || '-');
             } else {
-                typeText = escapeHtml(row.reason ?? '-');
-                descText = escapeHtml(row.reason ?? '-');
+                typeText = escapeHtml(row.reason || '-');
+                descText = escapeHtml(row.reason || '-');
             }
 
-            const photo = row.photo_url
-                ? `<a href="${row.photo_url}" target="_blank" title="Open Photo">
-                     <img src="${row.photo_url}" style="height:45px;width:auto;border-radius:8px;border:1px solid #e5e7eb;">
-                   </a>`
+            var photo = row.photo_url
+                ? '<a href="' + row.photo_url + '" target="_blank" title="Open Photo">'
+                    + '<img src="' + row.photo_url + '" style="height:45px;width:auto;border-radius:8px;border:1px solid #e5e7eb;">'
+                  + '</a>'
                 : '<span class="text-muted">-</span>';
 
-            const created = escapeHtml(row.created_at ?? '-');
+            var created = escapeHtml(row.created_at || '-');
 
-            bodyEl.innerHTML += `
-                <tr>
-                    <td>${idx+1}</td>
-                    <td>${branch}</td>
-                    <td>${wh}</td>
-                    <td class="text-end">${qty}</td>
-                    <td>${typeText}</td>
-                    <td>${descText}</td>
-                    <td class="text-center">${photo}</td>
-                    <td>${created}</td>
-                </tr>
-            `;
+            bodyEl.innerHTML += ''
+                + '<tr>'
+                + '  <td>' + (idx+1) + '</td>'
+                + '  <td>' + branch + '</td>'
+                + '  <td>' + wh + '</td>'
+                + '  <td class="text-right">' + qty + '</td>'
+                + '  <td>' + typeText + '</td>'
+                + '  <td>' + descText + '</td>'
+                + '  <td class="text-center">' + photo + '</td>'
+                + '  <td>' + created + '</td>'
+                + '</tr>';
         });
     })
-    .catch(err => {
+    .catch(function(err){
         console.error(err);
         bodyEl.innerHTML = '<tr><td colspan="8" class="text-center text-danger">Gagal memuat data.</td></tr>';
     });

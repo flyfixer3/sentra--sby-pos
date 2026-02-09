@@ -18,6 +18,8 @@
     $st = strtolower(trim((string)($purchaseDelivery->status ?? 'pending')));
     $details = $purchaseDelivery->purchaseDeliveryDetails ?? collect();
 
+    $warehouseSelected = !empty($purchaseDelivery->warehouse_id);
+
     // totals
     $totalExpected = $details->sum(fn($d) => (int)($d->quantity ?? 0));
     $totalAlreadyConfirmed = $details->sum(fn($d) => (int)($d->qty_received ?? 0) + (int)($d->qty_defect ?? 0) + (int)($d->qty_damaged ?? 0));
@@ -26,6 +28,7 @@
 
 <div class="container-fluid mb-4">
 
+    {{-- HEADER CARD --}}
     <div class="card mb-3">
         <div class="card-body d-flex justify-content-between align-items-start">
             <div>
@@ -52,10 +55,20 @@
                         · Remaining: <b>{{ (int)$totalRemaining }}</b>
                     </small>
                 </div>
+
+                @if(!$warehouseSelected)
+                    <div class="alert alert-warning mt-3 mb-0">
+                        <b>Warehouse belum dipilih.</b>
+                        Pilih warehouse dulu supaya sistem bisa filter rack dan alokasi placement.
+                    </div>
+                @endif
             </div>
 
             <div class="d-flex gap-2">
-                <button type="button" class="btn btn-sm btn-outline-primary" id="btn-fill-remaining">
+                <button type="button"
+                        class="btn btn-sm btn-outline-primary"
+                        id="btn-fill-remaining"
+                        {{ !$warehouseSelected ? 'disabled' : '' }}>
                     Fill Remaining as Good
                 </button>
             </div>
@@ -64,18 +77,51 @@
 
     @include('utils.alerts')
 
+    {{-- ✅ UPDATED: Warehouse Picker (AUTO APPLY via onchange) --}}
+    <div class="card mb-3">
+        <div class="card-body">
+            <div class="font-weight-bold mb-2">Warehouse Selection</div>
+
+            {{-- form tetap GET supaya controller confirm kamu bisa baca warehouse_id --}}
+            <form method="GET"
+                  action="{{ route('purchase-deliveries.confirm', $purchaseDelivery) }}"
+                  id="warehouse-form"
+                  class="row g-2 align-items-end">
+                <div class="col-md-6">
+                    <label class="mb-1"><b>Warehouse *</b></label>
+                    <select name="warehouse_id" class="form-control" id="warehouse_id_select" required>
+                        <option value="">-- Select Warehouse --</option>
+                        @foreach(($warehouses ?? []) as $wh)
+                            <option value="{{ (int)$wh->id }}" {{ (int)$purchaseDelivery->warehouse_id === (int)$wh->id ? 'selected' : '' }}>
+                                {{ $wh->warehouse_name ?? ('Warehouse#'.(int)$wh->id) }}
+                                @if(!empty($wh->is_main)) (MAIN) @endif
+                            </option>
+                        @endforeach
+                    </select>
+                    <div class="text-muted mt-1">
+                        <small>Warehouse ini akan dipakai untuk filter rack dan untuk mutation IN saat confirm batch.</small>
+                    </div>
+                </div>
+
+               
+            </form>
+        </div>
+    </div>
+
     {{-- master options for rack select (dipakai JS untuk render select) --}}
     <select id="rack-options-master" class="d-none">
         <option value="">-- Select Rack --</option>
-        @foreach(($racks ?? []) as $rack)
-            @php
-                $name = trim((string) ($rack->name ?? ''));
-                $code = trim((string) ($rack->code ?? ''));
-                if ($name === '') $name = 'Rack #' . (int) $rack->id;
-                $rackLabel = $code !== '' ? ($code . ' - ' . $name) : $name;
-            @endphp
-            <option value="{{ (int) $rack->id }}">{{ $rackLabel }}</option>
-        @endforeach
+        @if($warehouseSelected)
+            @foreach(($racks ?? []) as $rack)
+                @php
+                    $name = trim((string) ($rack->name ?? ''));
+                    $code = trim((string) ($rack->code ?? ''));
+                    if ($name === '') $name = 'Rack #' . (int) $rack->id;
+                    $rackLabel = $code !== '' ? ($code . ' - ' . $name) : $name;
+                @endphp
+                <option value="{{ (int) $rack->id }}">{{ $rackLabel }}</option>
+            @endforeach
+        @endif
     </select>
 
     <form method="POST"
@@ -130,7 +176,6 @@
                                 $alreadyConfirmed = (int)($detail->qty_received ?? 0) + (int)($detail->qty_defect ?? 0) + (int)($detail->qty_damaged ?? 0);
                                 $remaining = max(0, $expected - $alreadyConfirmed);
 
-                                // default input: kosong (0) untuk batch berikutnya
                                 $oldAddGood    = (int) old("items.$idx.add_good", 0);
                                 $oldAddDefect  = (int) old("items.$idx.add_defect", 0);
                                 $oldAddDamaged = (int) old("items.$idx.add_damaged", 0);
@@ -185,7 +230,7 @@
                                            class="form-control form-control-sm text-center qty-input add-good"
                                            name="items[{{ $idx }}][add_good]"
                                            value="{{ $oldAddGood }}"
-                                           {{ $remaining <= 0 ? 'readonly' : '' }}
+                                           {{ (!$warehouseSelected || $remaining <= 0) ? 'readonly' : '' }}
                                            required>
                                 </td>
 
@@ -197,7 +242,7 @@
                                            class="form-control form-control-sm text-center qty-input add-defect"
                                            name="items[{{ $idx }}][add_defect]"
                                            value="{{ $oldAddDefect }}"
-                                           {{ $remaining <= 0 ? 'readonly' : '' }}
+                                           {{ (!$warehouseSelected || $remaining <= 0) ? 'readonly' : '' }}
                                            required>
                                 </td>
 
@@ -209,11 +254,11 @@
                                            class="form-control form-control-sm text-center qty-input add-damaged"
                                            name="items[{{ $idx }}][add_damaged]"
                                            value="{{ $oldAddDamaged }}"
-                                           {{ $remaining <= 0 ? 'readonly' : '' }}
+                                           {{ (!$warehouseSelected || $remaining <= 0) ? 'readonly' : '' }}
                                            required>
                                 </td>
 
-                                {{-- New Remaining (dynamic) --}}
+                                {{-- New Remaining --}}
                                 <td class="text-center align-middle">
                                     <span class="badge badge-secondary new-remaining-badge">
                                         {{ max(0, $remaining - ($oldAddGood + $oldAddDefect + $oldAddDamaged)) }}
@@ -225,7 +270,7 @@
                                     <button type="button"
                                             class="btn btn-sm btn-notes"
                                             data-target="#perUnitWrap-{{ $idx }}"
-                                            {{ $remaining <= 0 ? 'disabled' : '' }}>
+                                            {{ (!$warehouseSelected || $remaining <= 0) ? 'disabled' : '' }}>
                                         Details
                                         <span class="ml-2 badge badge-pill badge-good badge-good-count">0</span>
                                         <span class="ml-1 badge badge-pill badge-defect badge-defect-count">0</span>
@@ -290,7 +335,8 @@
                                                     </div>
                                                     <button type="button"
                                                             class="btn btn-sm btn-outline-success btn-add-good-alloc"
-                                                            data-idx="{{ $idx }}">
+                                                            data-idx="{{ $idx }}"
+                                                            {{ !$warehouseSelected ? 'disabled' : '' }}>
                                                         + Add Allocation
                                                     </button>
                                                 </div>
@@ -340,7 +386,7 @@
                                             </div>
                                         </div>
 
-                                        {{-- OLD VALUES for hydrate (validation fail) --}}
+                                        {{-- OLD VALUES for hydrate --}}
                                         <textarea class="d-none old-good-alloc-json" data-idx="{{ $idx }}">{{ json_encode($oldGoodAlloc) }}</textarea>
                                         <textarea class="d-none old-defects-json" data-idx="{{ $idx }}">{{ json_encode($oldDefects) }}</textarea>
                                         <textarea class="d-none old-damages-json" data-idx="{{ $idx }}">{{ json_encode($oldDamages) }}</textarea>
@@ -358,7 +404,8 @@
                               name="confirm_note"
                               rows="3"
                               maxlength="1000"
-                              placeholder="contoh: supplier kirim partial dulu, sisanya menyusul besok">{{ old('confirm_note') }}</textarea>
+                              placeholder="contoh: supplier kirim partial dulu, sisanya menyusul besok"
+                              {{ !$warehouseSelected ? 'disabled' : '' }}>{{ old('confirm_note') }}</textarea>
                     <div class="text-muted mt-2">
                         <small>Catatan ini akan overwrite confirm_note terakhir (sesuai controller kamu).</small>
                     </div>
@@ -375,7 +422,10 @@
                     <a href="{{ route('purchase-deliveries.show', $purchaseDelivery) }}" class="btn btn-light">
                         Cancel
                     </a>
-                    <button type="button" class="btn btn-primary" onclick="confirmSubmit()">
+                    <button type="button"
+                            class="btn btn-primary"
+                            onclick="confirmSubmit()"
+                            {{ !$warehouseSelected ? 'disabled' : '' }}>
                         Confirm & Lock This Batch
                     </button>
                 </div>
@@ -423,6 +473,8 @@
 @push('page_scripts')
 <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
 <script>
+    const WAREHOUSE_READY = {{ $warehouseSelected ? 'true' : 'false' }};
+
     function asInt(val){ const n = parseInt(val,10); return isNaN(n)?0:n; }
     function safeJsonParse(text){ try{ if(!text) return []; return JSON.parse(text);}catch(e){ return []; } }
 
@@ -437,6 +489,34 @@
         el.style.display = show ? '' : 'none';
     }
 
+    // ✅ NEW: auto apply warehouse selection (no button)
+    document.addEventListener('DOMContentLoaded', function () {
+        const sel = document.getElementById('warehouse_id_select');
+        const form = document.getElementById('warehouse-form');
+        if (sel && form) {
+            sel.addEventListener('change', function () {
+                // langsung submit GET -> controller confirm akan filter rack sesuai warehouse_id
+                form.submit();
+            });
+        }
+    });
+
+    // === (SEMUA SCRIPT KAMU TETAP) ===
+    // guard kecil supaya kalau warehouse belum dipilih, JS tidak jalan aneh.
+    if (!WAREHOUSE_READY){
+        function confirmSubmit(){
+            Swal.fire({
+                title: 'Warehouse belum dipilih',
+                text: 'Pilih warehouse dulu. Halaman akan reload otomatis setelah kamu pilih.',
+                icon: 'warning',
+            });
+        }
+    }
+</script>
+
+{{-- ✅ jika warehouse sudah ready, baru load script besar kamu --}}
+@if($warehouseSelected)
+<script>
     function captureGoodAlloc(perWrap){
         const out = [];
         perWrap.querySelectorAll('.good-alloc-tbody tr').forEach(tr=>{
@@ -551,7 +631,6 @@
         const oldDefects = safeJsonParse(perWrap.dataset.oldDefects || '[]');
         const oldDamages = safeJsonParse(perWrap.dataset.oldDamages || '[]');
 
-        // ===== GOOD allocation build =====
         const goodAllocTbody = perWrap.querySelector('.good-alloc-tbody');
         if (goodAllocTbody){
             goodAllocTbody.innerHTML = '';
@@ -583,7 +662,6 @@
             });
         }
 
-        // ===== DEFECT build =====
         const defectTbody = perWrap.querySelector('.defect-tbody');
         defectTbody.innerHTML = '';
         for (let i=0;i<addDefect;i++){
@@ -627,7 +705,6 @@
             }
         }
 
-        // ===== DAMAGED build =====
         const damagedTbody = perWrap.querySelector('.damaged-tbody');
         damagedTbody.innerHTML = '';
         for (let i=0;i<addDamaged;i++){
@@ -716,7 +793,6 @@
         return sum;
     }
 
-    // ✅ dynamic New Remaining + validation based on base remaining
     function updateRowStatus(row){
         const remainingBase = asInt(row.dataset.remaining);
 
@@ -759,7 +835,6 @@
             return false;
         }
 
-        // GOOD allocation validation
         if (addGood > 0){
             const sumAlloc = sumGoodAlloc(perWrap);
             if (sumAlloc !== addGood){
@@ -794,12 +869,8 @@
                     return false;
                 }
             }
-        } else {
-            // kalau addGood=0, kosongkan allocation (biar nggak misleading)
-            // (nggak wajib, tapi lebih rapih)
         }
 
-        // DEFECT per-unit validation
         const defectRows = perWrap.querySelectorAll('.defect-tbody tr');
         if (defectRows.length !== addDefect){
             statusBadge.className = 'badge badge-warning row-status';
@@ -826,7 +897,6 @@
             }
         }
 
-        // DAMAGED per-unit validation
         const damagedRows = perWrap.querySelectorAll('.damaged-tbody tr');
         if (damagedRows.length !== addDamaged){
             statusBadge.className = 'badge badge-warning row-status';
@@ -925,7 +995,6 @@
             });
         });
 
-        // Fill Remaining as Good
         document.getElementById('btn-fill-remaining')?.addEventListener('click', () => {
             document.querySelectorAll('.receive-row').forEach(row => {
                 const rem = asInt(row.dataset.remaining);
@@ -973,4 +1042,5 @@
         });
     }
 </script>
+@endif
 @endpush

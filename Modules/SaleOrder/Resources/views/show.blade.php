@@ -154,9 +154,9 @@
                         @endif
                     @endcan
 
-                    <a href="{{ route('sale-orders.index') }}" class="btn btn-light">
+                    <!-- <a href="{{ route('sale-orders.index') }}" class="btn btn-light">
                         <i class="bi bi-arrow-left"></i> Back
-                    </a>
+                    </a> -->
                 </div>
             </div>
 

@@ -20,10 +20,11 @@
             ->orderBy('id')
             ->first();
 
-        $warehouses = \Modules\Product\Entities\Warehouse::query()
-            ->when($activeBranchId && $activeBranchId !== 'all', fn($q) => $q->where('branch_id', (int)$activeBranchId))
-            ->orderBy('warehouse_name')
-            ->get();
+        // NOTE:
+        // Warehouse dropdown sengaja dihapus sesuai flow baru:
+        // Warehouse dipilih hanya di Confirm Purchase Delivery.
+        // Di sini kita tetap passing loading_warehouse untuk kebutuhan komponen/cart yang mungkin butuh nilai gudang default.
+        $defaultWarehouseId = $defaultWarehouse ? (int) $defaultWarehouse->id : null;
     @endphp
 
     <div class="container-fluid mb-4">
@@ -79,39 +80,11 @@
                                 </div>
                             </div>
 
-                            {{-- Dropdown gudang tujuan penerimaan --}}
-                            <div class="form-row">
-                                <div class="col-lg-4">
-                                    <div class="form-group">
-                                        <label>Receive To Warehouse <span class="text-danger">*</span></label>
-
-                                        {{-- IMPORTANT: name harus konsisten dengan controller store --}}
-                                        {{-- Kita pakai name="warehouse_id" supaya store() baca dengan benar --}}
-                                        <select class="form-control"
-                                                name="warehouse_id"
-                                                id="warehouse_id"
-                                                required
-                                                wire:ignore
-                                                onchange="window.dispatchEvent(new CustomEvent('purchase-warehouse-changed', { detail: { warehouse_id: this.value } }));">
-                                            <option value="">— Select Warehouse —</option>
-                                            @foreach($warehouses as $wh)
-                                                <option value="{{ $wh->id }}"
-                                                    {{ $defaultWarehouse && $defaultWarehouse->id === $wh->id ? 'selected' : '' }}>
-                                                    {{ $wh->warehouse_name }}
-                                                </option>
-                                            @endforeach
-                                        </select>
-
-                                        <small class="text-muted">Barang hasil pembelian akan masuk ke gudang ini.</small>
-                                    </div>
-                                </div>
-                            </div>
-
                             {{-- Livewire Cart Purchase --}}
                             <livewire:product-cart-purchase
                                 :cartInstance="'purchase'"
                                 :data="null"
-                                :loading_warehouse="$defaultWarehouse ? $defaultWarehouse->id : null"
+                                :loading_warehouse="$defaultWarehouseId"
                             />
 
                             <div class="form-row">
@@ -119,17 +92,18 @@
                                     <div class="form-group">
                                         <label>Status <span class="text-danger">*</span></label>
 
-                                        {{-- TAMPILKAN readonly --}}
+                                        {{-- display readonly --}}
                                         <select class="form-control" id="status_display" disabled>
                                             <option value="Completed" selected>Completed</option>
                                         </select>
 
-                                        {{-- YANG TERKIRIM KE SERVER --}}
+                                        {{-- value yang dikirim --}}
                                         <input type="hidden" name="status" value="Completed">
-                                        <small class="text-muted">Walk-in purchase is automatically received and stock will be updated.</small>
+                                        <small class="text-muted">
+                                            Walk-in purchase will create PD (Pending). Stock akan masuk saat Confirm Purchase Delivery.
+                                        </small>
                                     </div>
                                 </div>
-
 
                                 <div class="col-lg-4" hidden>
                                     <div class="form-group">
@@ -183,35 +157,26 @@
 @endsection
 
 @push('page_scripts')
-    <script src="{{ asset('js/jquery-mask-money.js') }}"></script>
-    <script>
-        $(function () {
-            $('#paid_amount').maskMoney({
-                prefix:'{{ settings()->currency->symbol }}',
-                thousands:'{{ settings()->currency->thousand_separator }}',
-                decimal:'{{ settings()->currency->decimal_separator }}',
-                allowZero: true,
-                precision: 0,
-            });
+<script src="{{ asset('js/jquery-mask-money.js') }}"></script>
+<script>
+$(function () {
+    $('#paid_amount').maskMoney({
+        prefix:'{{ settings()->currency->symbol }}',
+        thousands:'{{ settings()->currency->thousand_separator }}',
+        decimal:'{{ settings()->currency->decimal_separator }}',
+        allowZero: true,
+        precision: 0,
+    });
 
-            $('#getTotalAmount').click(function () {
-                $('#paid_amount').maskMoney('mask', {{ Cart::instance('purchase')->total() }});
-            });
+    $('#getTotalAmount').click(function () {
+        $('#paid_amount').maskMoney('mask', {{ Cart::instance('purchase')->total() }});
+    });
 
-            $('#purchase-form').on('submit', function () {
-                var paid_amount = $('#paid_amount').maskMoney('destroy')[0];
-                var new_number = parseInt((paid_amount.value || '').toString().replaceAll(/[Rp.]/g, "")) || 0;
-                $('#paid_amount').val(new_number);
-            });
-
-            // Bridge dari dropdown HTML ke Livewire component
-            window.addEventListener('purchase-warehouse-changed', function(e) {
-                if (!e || !e.detail) return;
-                const wid = e.detail.warehouse_id || '';
-                if (window.Livewire) {
-                    window.Livewire.emit('purchaseWarehouseChanged', wid);
-                }
-            });
-        });
-    </script>
+    $('#purchase-form').on('submit', function () {
+        var paid_amount = $('#paid_amount').maskMoney('destroy')[0];
+        var new_number = parseInt((paid_amount.value || '').toString().replaceAll(/[Rp.]/g, "")) || 0;
+        $('#paid_amount').val(new_number);
+    });
+});
+</script>
 @endpush
