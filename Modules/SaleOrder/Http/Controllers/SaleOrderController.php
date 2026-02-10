@@ -34,101 +34,111 @@ class SaleOrderController extends Controller
     {
         abort_if(Gate::denies('create_sale_orders'), 403);
 
-        $branchId = BranchContext::id();
+        try {
+            // ✅ Block jika active_branch = "all" / kosong
+            $active = session('active_branch');
+            if ($active === 'all' || empty($active)) {
+                throw new \RuntimeException("Please choose a specific branch first (not 'All Branch').");
+            }
 
-        $customers = Customer::query()
-            ->where(function ($q) use ($branchId) {
-                $q->whereNull('branch_id')
-                  ->orWhere('branch_id', $branchId);
-            })
-            ->orderBy('customer_name')
-            ->get();
+            $branchId = BranchContext::id();
 
-        $warehouses = Warehouse::query()
-            ->where('branch_id', $branchId)
-            ->orderBy('warehouse_name')
-            ->get();
+            $customers = Customer::query()
+                ->where(function ($q) use ($branchId) {
+                    $q->whereNull('branch_id')
+                    ->orWhere('branch_id', $branchId);
+                })
+                ->orderBy('customer_name')
+                ->get();
 
-        $source = (string) $request->get('source', 'manual');
-        abort_unless(in_array($source, ['manual', 'quotation', 'sale'], true), 403);
-
-        $prefillCustomerId = null;
-        $prefillWarehouseId = null; // (opsional, tapi nanti kita bisa set NULL)
-        $prefillDate = date('Y-m-d');
-        $prefillNote = null;
-        $prefillItems = [];
-        $prefillRefText = null;
-
-        if ($source === 'quotation') {
-            $quotationId = (int) $request->get('quotation_id', 0);
-            if ($quotationId <= 0) abort(422, 'quotation_id is required');
-
-            $quotation = Quotation::query()
-                ->where('id', $quotationId)
+            $warehouses = Warehouse::query()
                 ->where('branch_id', $branchId)
-                ->with(['quotationDetails'])
-                ->firstOrFail();
+                ->orderBy('warehouse_name')
+                ->get();
 
-            $prefillCustomerId = (int) $quotation->customer_id;
-            $prefillDate = (string) $quotation->getRawOriginal('date');
-            $prefillNote = 'Created from Quotation #' . ($quotation->reference ?? $quotation->id);
-            $prefillRefText = 'Quotation: ' . ($quotation->reference ?? $quotation->id);
+            $source = (string) $request->get('source', 'manual');
+            abort_unless(in_array($source, ['manual', 'quotation', 'sale'], true), 403);
 
-            foreach ($quotation->quotationDetails as $d) {
-                $prefillItems[] = [
-                    'product_id' => (int) $d->product_id,
-                    'quantity' => (int) $d->quantity,
-                    'price' => (int) $d->price,
-                ];
+            $prefillCustomerId = null;
+            $prefillWarehouseId = null; // (opsional, tapi nanti kita bisa set NULL)
+            $prefillDate = date('Y-m-d');
+            $prefillNote = null;
+            $prefillItems = [];
+            $prefillRefText = null;
+
+            if ($source === 'quotation') {
+                $quotationId = (int) $request->get('quotation_id', 0);
+                if ($quotationId <= 0) abort(422, 'quotation_id is required');
+
+                $quotation = Quotation::query()
+                    ->where('id', $quotationId)
+                    ->where('branch_id', $branchId)
+                    ->with(['quotationDetails'])
+                    ->firstOrFail();
+
+                $prefillCustomerId = (int) $quotation->customer_id;
+                $prefillDate = (string) $quotation->getRawOriginal('date');
+                $prefillNote = 'Created from Quotation #' . ($quotation->reference ?? $quotation->id);
+                $prefillRefText = 'Quotation: ' . ($quotation->reference ?? $quotation->id);
+
+                foreach ($quotation->quotationDetails as $d) {
+                    $prefillItems[] = [
+                        'product_id' => (int) $d->product_id,
+                        'quantity' => (int) $d->quantity,
+                        'price' => (int) $d->price,
+                    ];
+                }
             }
+
+            if ($source === 'sale') {
+                $saleId = (int) $request->get('sale_id', 0);
+                if ($saleId <= 0) abort(422, 'sale_id is required');
+
+                $sale = Sale::query()
+                    ->where('id', $saleId)
+                    ->where('branch_id', $branchId)
+                    ->with(['saleDetails'])
+                    ->firstOrFail();
+
+                $prefillCustomerId = (int) $sale->customer_id;
+                $prefillDate = (string) $sale->getRawOriginal('date');
+                $prefillNote = 'Created from Invoice #' . ($sale->reference ?? $sale->id);
+                $prefillRefText = 'Invoice: ' . ($sale->reference ?? $sale->id);
+
+                foreach ($sale->saleDetails as $d) {
+                    $prefillItems[] = [
+                        'product_id' => (int) $d->product_id,
+                        'quantity' => (int) $d->quantity,
+                        'price' => (int) $d->price,
+                    ];
+                }
+
+                $whIds = $sale->saleDetails->pluck('warehouse_id')->filter()->unique()->values();
+                if ($whIds->count() === 1) {
+                    $prefillWarehouseId = (int) $whIds->first();
+                }
+            }
+
+            $products = Product::query()
+                ->orderBy('product_name')
+                ->limit(500)
+                ->get();
+
+            return view('saleorder::create', compact(
+                'customers',
+                'warehouses',
+                'products',
+                'source',
+                'prefillCustomerId',
+                'prefillWarehouseId',
+                'prefillDate',
+                'prefillNote',
+                'prefillItems',
+                'prefillRefText'
+            ));
+        } catch (\Throwable $e) {
+            return $this->failBack($e->getMessage(), 422);
         }
-
-        if ($source === 'sale') {
-            $saleId = (int) $request->get('sale_id', 0);
-            if ($saleId <= 0) abort(422, 'sale_id is required');
-
-            $sale = Sale::query()
-                ->where('id', $saleId)
-                ->where('branch_id', $branchId)
-                ->with(['saleDetails'])
-                ->firstOrFail();
-
-            $prefillCustomerId = (int) $sale->customer_id;
-            $prefillDate = (string) $sale->getRawOriginal('date');
-            $prefillNote = 'Created from Invoice #' . ($sale->reference ?? $sale->id);
-            $prefillRefText = 'Invoice: ' . ($sale->reference ?? $sale->id);
-
-            foreach ($sale->saleDetails as $d) {
-                $prefillItems[] = [
-                    'product_id' => (int) $d->product_id,
-                    'quantity' => (int) $d->quantity,
-                    'price' => (int) $d->price,
-                ];
-            }
-
-            $whIds = $sale->saleDetails->pluck('warehouse_id')->filter()->unique()->values();
-            if ($whIds->count() === 1) {
-                $prefillWarehouseId = (int) $whIds->first();
-            }
-        }
-
-        $products = Product::query()
-            ->orderBy('product_name')
-            ->limit(500)
-            ->get();
-
-        return view('saleorder::create', compact(
-            'customers',
-            'warehouses',
-            'products',
-            'source',
-            'prefillCustomerId',
-            'prefillWarehouseId',
-            'prefillDate',
-            'prefillNote',
-            'prefillItems',
-            'prefillRefText'
-        ));
     }
 
     public function store(Request $request)
