@@ -92,6 +92,50 @@ class SaleDeliveryConfirmController extends Controller
         }
     }
 
+    /**
+     * ✅ STRICT: pastikan TOTAL stock di rack cukup untuk diambil.
+     * (total = qty_good + qty_defect + qty_damaged)
+     * Wajib jalan di dalam DB::transaction (karena pakai lockForUpdate).
+     */
+    private function assertRackTotalStockEnough(
+        int $branchId,
+        int $warehouseId,
+        int $productId,
+        array $allocations,
+        string $reference
+    ): void {
+        foreach ($allocations as $a) {
+            $rackId = (int) ($a['from_rack_id'] ?? 0);
+            $qty    = (int) ($a['qty'] ?? 0);
+
+            if ($rackId <= 0 || $qty <= 0) continue;
+
+            // lock row stock per rack
+            $row = DB::table('stock_racks')
+                ->where('branch_id', (int) $branchId)
+                ->where('warehouse_id', (int) $warehouseId)
+                ->where('product_id', (int) $productId)
+                ->where('rack_id', (int) $rackId)
+                ->lockForUpdate()
+                ->first();
+
+            $good   = (int) ($row->qty_good ?? 0);
+            $defect = (int) ($row->qty_defect ?? 0);
+            $damaged= (int) ($row->qty_damaged ?? 0);
+
+            $total = $good + $defect + $damaged;
+
+            if ($total < $qty) {
+                throw new \RuntimeException(
+                    "Not enough stock on selected rack. " .
+                    "Product ID {$productId}, WH {$warehouseId}, Rack {$rackId}. " .
+                    "Need {$qty}, available TOTAL {$total} (G{$good}/D{$defect}/DM{$damaged}). Ref: {$reference}"
+                );
+            }
+        }
+    }
+
+
     private function roleString(): string
     {
         $user = auth()->user();
@@ -362,6 +406,7 @@ class SaleDeliveryConfirmController extends Controller
                         if (empty($alloc)) {
                             throw new \RuntimeException("GOOD allocation is required when GOOD > 0 (item ID {$itemId}).");
                         }
+
                         $sumAlloc = 0;
                         foreach ($alloc as $a) {
                             $rid = (int) ($a['from_rack_id'] ?? 0);
@@ -371,9 +416,24 @@ class SaleDeliveryConfirmController extends Controller
                             }
                             $sumAlloc += $qty;
                         }
+
                         if ($sumAlloc !== $good) {
                             throw new \RuntimeException("GOOD allocation qty mismatch (item ID {$itemId}). Sum allocation must equal GOOD={$good}.");
                         }
+
+                        // ✅ NEW: STRICT validate TOTAL stock in selected racks is enough
+                        $warehouseIdForAlloc = (int) ($inputById[$itemId]['warehouse_id'] ?? 0);
+                        if ($warehouseIdForAlloc <= 0) {
+                            throw new \RuntimeException("Warehouse is required for item_id {$itemId}.");
+                        }
+
+                        $this->assertRackTotalStockEnough(
+                            (int) $branchId,
+                            (int) $warehouseIdForAlloc,
+                            (int) $it->product_id,
+                            (array) $alloc,
+                            (string) $reference
+                        );
                     }
 
                     $selDef = $inputById[$itemId]['selected_defect_ids'] ?? [];
