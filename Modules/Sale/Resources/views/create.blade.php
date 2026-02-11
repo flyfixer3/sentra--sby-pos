@@ -11,6 +11,16 @@
 @endsection
 
 @section('content')
+@php
+    // ✅ Detect create-from-delivery context
+    $saleDeliveryId = (int) request()->get('sale_delivery_id', (int) old('sale_delivery_id', 0));
+    $fromDelivery = $saleDeliveryId > 0;
+
+    // Optional: kalau controller create() nanti kamu set $prefillCustomerId / $prefill
+    // Tapi UI ini tetap bisa jalan walau variabel itu belum ada.
+    $prefillCustomerId = (int) ($prefillCustomerId ?? old('customer_id', 0));
+@endphp
+
     <div class="container-fluid mb-4">
         <div class="row">
             <div class="col-12">
@@ -23,8 +33,34 @@
                 <div class="card">
                     <div class="card-body">
                         @include('utils.alerts')
+
+                        {{-- ✅ Info banner when creating sale from delivery --}}
+                        @if($fromDelivery)
+                            <div class="alert alert-info">
+                                <div class="d-flex align-items-start justify-content-between">
+                                    <div>
+                                        <div class="font-weight-bold mb-1">
+                                            Create Invoice from Sale Delivery
+                                        </div>
+                                        <div class="small">
+                                            Items & quantities are prefilled from the delivery.
+                                            Please complete invoice fields (discount, shipping, payment, etc.) then submit.
+                                        </div>
+                                    </div>
+                                    <div class="small text-muted">
+                                        Ref: SDO#{{ $saleDeliveryId }}
+                                    </div>
+                                </div>
+                            </div>
+                        @endif
+
                         <form id="sale-form" action="{{ route('sales.store') }}" method="POST">
                             @csrf
+
+                            {{-- ✅ carry context to store() --}}
+                            @if($fromDelivery)
+                                <input type="hidden" name="sale_delivery_id" value="{{ $saleDeliveryId }}">
+                            @endif
 
                             <div class="form-row">
                                 <div class="col-lg-2">
@@ -33,25 +69,40 @@
                                         <input type="text" class="form-control" name="reference" readonly value="AUTO">
                                     </div>
                                 </div>
+
                                 <div class="col-lg-2">
                                     <div class="form-group">
                                         <label for="reference">Car Plate<span class="text-danger">*</span></label>
-                                        <input type="text" class="form-control" name="car_number_plate" id="car_number_plate" required >
+                                        <input type="text" class="form-control" name="car_number_plate" id="car_number_plate" required>
                                     </div>
                                 </div>
+
                                 <div class="col-lg-4">
                                     <div class="from-group">
                                         <div class="form-group">
                                             <label for="customer_id">Customer <span class="text-danger">*</span></label>
-                                            <select class="form-control" name="customer_id" id="customer_id" required>
+
+                                            {{-- ✅ If from delivery, we prefer locking customer to avoid mismatch --}}
+                                            <select class="form-control" name="customer_id" id="customer_id" required @if($fromDelivery) disabled @endif>
                                                 @foreach($customers as $customer)
-                                                    <option value="{{ $customer->id }}">{{ $customer->customer_name }}</option>
+                                                    @php
+                                                        $selected = (int) old('customer_id', $prefillCustomerId ?: (int)$customers->first()->id) === (int)$customer->id;
+                                                    @endphp
+                                                    <option value="{{ $customer->id }}" @if($selected) selected @endif>
+                                                        {{ $customer->customer_name }}
+                                                    </option>
                                                 @endforeach
                                             </select>
+
+                                            {{-- disabled select won't be submitted --}}
+                                            @if($fromDelivery)
+                                                <input type="hidden" name="customer_id" value="{{ (int) old('customer_id', $prefillCustomerId ?: (int)($customers->first()->id ?? 0)) }}">
+                                            @endif
                                         </div>
                                     </div>
                                 </div>
-                                 <div class="col-lg-2">
+
+                                <div class="col-lg-2">
                                     <div class="form-group">
                                         <label for="sale_form">Sales From <span class="text-danger">*</span></label>
                                         <select class="form-control" name="sale_from" id="sale_from" required>
@@ -65,6 +116,7 @@
                                         </select>
                                     </div>
                                 </div>
+
                                 <div class="col-lg-2">
                                     <div class="from-group">
                                         <div class="form-group">
@@ -88,6 +140,7 @@
                                         </select>
                                     </div>
                                 </div>
+
                                 <div class="col-lg-3">
                                     <div class="form-group">
                                         <label for="deposit_code">Deposit To <span class="text-danger">*</span></label>
@@ -101,6 +154,7 @@
                                         </select>
                                     </div>
                                 </div>
+
                                 <div class="col-lg-3">
                                     <div class="form-group">
                                         <label for="payment_method">Payment Method <span class="text-danger">*</span></label>
@@ -113,6 +167,7 @@
                                         </select>
                                     </div>
                                 </div>
+
                                 <div class="col-lg-3">
                                     <div class="form-group">
                                         <label for="paid_amount">Amount Received <span class="text-danger">*</span></label>
@@ -137,6 +192,12 @@
                                 <button type="submit" class="btn btn-primary">
                                     Create Sale <i class="bi bi-check"></i>
                                 </button>
+
+                                @if($fromDelivery)
+                                    <a href="{{ route('sale-deliveries.show', $saleDeliveryId) }}" class="btn btn-outline-secondary ml-2">
+                                        Back to Delivery
+                                    </a>
+                                @endif
                             </div>
                         </form>
                     </div>
@@ -165,10 +226,7 @@
         });
 
         $('#getTotalAmount').click(function () {
-            // Ambil dari hidden input total_amount yang dikirim dari livewire/cart component
             var $total = $('input[name="total_amount"]');
-
-            // fallback kalau ternyata id-nya beda
             if ($total.length === 0) $total = $('#total_amount');
 
             var totalVal = $total.length ? $total.val() : '0';

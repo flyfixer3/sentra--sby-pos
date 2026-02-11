@@ -23,10 +23,7 @@
 
     $dateText = $saleOrder->date ? \Carbon\Carbon::parse($saleOrder->date)->format('d M Y') : '-';
 
-    // ✅ RemainingMap (confirmed-based) masih boleh kamu pakai untuk tampilan status
     $remainingConfirmedMap = $remainingMap ?? [];
-
-    // ✅ Kalau kamu sudah implement planned map di controller:
     $plannedRemainingMap = $plannedRemainingMap ?? $remainingConfirmedMap;
 
     $hasPlannedRemaining = false;
@@ -34,14 +31,8 @@
         if ((int)$rem > 0) { $hasPlannedRemaining = true; break; }
     }
 
-    // ✅ Link Quotation + Sale (Invoice)
     $quotationId = $saleOrder->quotation_id ? (int) $saleOrder->quotation_id : null;
     $saleId      = $saleOrder->sale_id ? (int) $saleOrder->sale_id : null;
-
-    // route names yang mungkin dipakai project:
-    // - Quotation: quotations.show / quotation.show / sale-quotations.show / etc
-    // - Sale Invoice: sales.show / sale.show / invoices.show / etc
-    // Kita pakai route() hanya kalau route exists, supaya tidak error.
 
     $quotationUrl = null;
     if ($quotationId) {
@@ -84,7 +75,6 @@
                         • Customer: <strong>{{ $saleOrder->customer?->customer_name ?? '-' }}</strong>
                     </div>
 
-                    {{-- ✅ LINKABLE Quotation + Invoice --}}
                     <div class="text-muted small mt-1">
                         Quotation:
                         <strong>
@@ -132,7 +122,6 @@
                         @endif
                     @endcan
 
-                    {{-- ✅ Edit/Delete only when pending --}}
                     @can('edit_sale_orders')
                         @if($status === 'pending')
                             <a href="{{ route('sale-orders.edit', $saleOrder->id) }}" class="btn btn-outline-primary">
@@ -153,10 +142,6 @@
                             </form>
                         @endif
                     @endcan
-
-                    <!-- <a href="{{ route('sale-orders.index') }}" class="btn btn-light">
-                        <i class="bi bi-arrow-left"></i> Back
-                    </a> -->
                 </div>
             </div>
 
@@ -208,11 +193,19 @@
 
                             if ($deliveredPct > 100) $deliveredPct = 100;
                             if ($plannedPct > 100) $plannedPct = 100;
+
+                            $pName = $it->product?->product_name ?? ('Product ID '.$pid);
+                            $pCode = $it->product?->product_code ?? null;
                         @endphp
                         <tr>
                             <td>
-                                <div class="fw-semibold">{{ $it->product?->product_name ?? ('Product ID '.$pid) }}</div>
-                                <div class="text-muted small">product_id: {{ $pid }}</div>
+                                <div class="fw-semibold">{{ $pName }}</div>
+                                <div class="text-muted small">
+                                    @if(!empty($pCode))
+                                        <span class="badge bg-light text-dark border">{{ $pCode }}</span>
+                                    @endif
+                                    <span class="ms-1">product_id: {{ $pid }}</span>
+                                </div>
                             </td>
 
                             <td class="text-end">

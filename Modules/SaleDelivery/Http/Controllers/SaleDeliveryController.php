@@ -258,18 +258,27 @@ class SaleDeliveryController extends Controller
                     'date'          => (string) $request->date,
 
                     'warehouse_id'  => null,
-
                     'status'        => 'pending',
                     'note'          => $request->note ? (string) $request->note : null,
                     'created_by'    => auth()->id(),
                 ]);
 
                 foreach ($request->items as $row) {
+
+                    // ✅ FIX: 0 / negatif dianggap "tidak diisi" => NULL
+                    $price = array_key_exists('price', $row) && $row['price'] !== null
+                        ? (int) $row['price']
+                        : null;
+
+                    if ($price !== null && $price <= 0) {
+                        $price = null;
+                    }
+
                     SaleDeliveryItem::create([
                         'sale_delivery_id' => (int) $saleDelivery->id,
                         'product_id'       => (int) $row['product_id'],
                         'quantity'         => (int) $row['quantity'],
-                        'price'            => (int) ($row['price'] ?? 0),
+                        'price'            => $price,
                         'qty_good'         => 0,
                         'qty_defect'       => 0,
                         'qty_damaged'      => 0,
@@ -369,11 +378,21 @@ class SaleDeliveryController extends Controller
                 SaleDeliveryItem::where('sale_delivery_id', (int) $saleDelivery->id)->delete();
 
                 foreach ($request->items as $row) {
+
+                    // ✅ FIX: 0 / negatif dianggap "tidak diisi" => NULL
+                    $price = array_key_exists('price', $row) && $row['price'] !== null
+                        ? (int) $row['price']
+                        : null;
+
+                    if ($price !== null && $price <= 0) {
+                        $price = null;
+                    }
+
                     SaleDeliveryItem::create([
                         'sale_delivery_id' => (int) $saleDelivery->id,
                         'product_id' => (int) $row['product_id'],
                         'quantity' => (int) $row['quantity'],
-                        'price' => array_key_exists('price', $row) && $row['price'] !== null ? (int) $row['price'] : null,
+                        'price' => $price,
                     ]);
                 }
             });
@@ -389,168 +408,36 @@ class SaleDeliveryController extends Controller
     {
         abort_if(Gate::denies('create_sales'), 403);
 
+        // boleh tetap POST (lebih aman), tapi tugasnya cuma redirect ke page create
+        if (!request()->isMethod('post')) {
+            abort(405);
+        }
+
         try {
             $this->ensureSpecificBranchSelected();
-
             $branchId = BranchContext::id();
-            $saleId = null;
 
-            DB::transaction(function () use ($saleDelivery, $branchId, &$saleId) {
+            // pastikan branch bener
+            if ((int) $saleDelivery->branch_id !== (int) $branchId) {
+                throw new \RuntimeException('Wrong branch context.');
+            }
 
-                $saleDelivery = SaleDelivery::withoutGlobalScopes()
-                    ->lockForUpdate()
-                    ->with(['items.product', 'customer'])
-                    ->findOrFail((int) $saleDelivery->id);
+            // wajib confirmed
+            $st = strtolower(trim((string) ($saleDelivery->getRawOriginal('status') ?? $saleDelivery->status ?? 'pending')));
+            if ($st !== 'confirmed') {
+                throw new \RuntimeException('Invoice can be created only when Sale Delivery is CONFIRMED.');
+            }
 
-                if ((int) $saleDelivery->branch_id !== (int) $branchId) {
-                    throw new \RuntimeException('Wrong branch context.');
-                }
+            // kalau sudah ada invoice, langsung arahkan ke invoice
+            if (!empty($saleDelivery->sale_id)) {
+                toast('Invoice already created for this Sale Delivery.', 'info');
+                return redirect()->route('sales.show', (int) $saleDelivery->sale_id);
+            }
 
-                $st = strtolower(trim((string) ($saleDelivery->getRawOriginal('status') ?? $saleDelivery->status ?? 'pending')));
-                if ($st !== 'confirmed') {
-                    throw new \RuntimeException('Invoice can be created only when Sale Delivery is CONFIRMED.');
-                }
-
-                if (!empty($saleDelivery->sale_id)) {
-                    $exists = \Modules\Sale\Entities\Sale::query()
-                        ->where('id', (int) $saleDelivery->sale_id)
-                        ->when(\Illuminate\Support\Facades\Schema::hasColumn('sales', 'branch_id'), function ($q) use ($branchId) {
-                            $q->where('branch_id', (int) $branchId);
-                        })
-                        ->exists();
-
-                    if ($exists) {
-                        $saleId = (int) $saleDelivery->sale_id;
-                        return;
-                    }
-                }
-
-                if (empty($saleDelivery->warehouse_id)) {
-                    throw new \RuntimeException('Cannot create invoice because Sale Delivery has no warehouse.');
-                }
-
-                $totalQty = 0;
-                $totalAmount = 0;
-
-                foreach ($saleDelivery->items as $it) {
-                    $qty = (int) ($it->quantity ?? 0);
-
-                    $price = $it->price !== null
-                        ? (int) $it->price
-                        : (int) ($it->product?->product_price ?? 0);
-
-                    if ($qty <= 0) continue;
-
-                    $totalQty += $qty;
-                    $totalAmount += ($qty * $price);
-                }
-
-                if ($totalQty <= 0) {
-                    throw new \RuntimeException('Cannot create invoice because delivery has no items.');
-                }
-
-                $dateRaw = (string) $saleDelivery->getRawOriginal('date');
-                if (trim($dateRaw) === '') $dateRaw = date('Y-m-d');
-
-                $saleData = [
-                    'customer_id'         => (int) $saleDelivery->customer_id,
-                    'customer_name'       => (string) ($saleDelivery->customer_name ?? ($saleDelivery->customer?->customer_name ?? '')),
-                    'date'                => $dateRaw,
-                    'tax_percentage'      => 0,
-                    'discount_percentage' => 0,
-                    'shipping_amount'     => 0,
-                    'total_amount'        => (int) $totalAmount,
-                    'paid_amount'         => 0,
-                    'due_amount'          => (int) $totalAmount,
-                    'payment_status'      => 'Unpaid',
-                    'note'                => 'Auto created from Sale Delivery #' . ($saleDelivery->reference ?? $saleDelivery->id),
-                ];
-
-                if (\Illuminate\Support\Facades\Schema::hasColumn('sales', 'branch_id')) {
-                    $saleData['branch_id'] = (int) $branchId;
-                }
-
-                if (\Illuminate\Support\Facades\Schema::hasColumn('sales', 'warehouse_id')) {
-                    $saleData['warehouse_id'] = (int) $saleDelivery->warehouse_id;
-                }
-
-                if (\Illuminate\Support\Facades\Schema::hasColumn('sales', 'total_quantity')) {
-                    $saleData['total_quantity'] = (int) $totalQty;
-                }
-
-                if (\Illuminate\Support\Facades\Schema::hasColumn('sales', 'tax_amount')) {
-                    $saleData['tax_amount'] = 0;
-                }
-                if (\Illuminate\Support\Facades\Schema::hasColumn('sales', 'discount_amount')) {
-                    $saleData['discount_amount'] = 0;
-                }
-
-                if (\Illuminate\Support\Facades\Schema::hasColumn('sales', 'created_by')) {
-                    $saleData['created_by'] = (int) auth()->id();
-                }
-                if (\Illuminate\Support\Facades\Schema::hasColumn('sales', 'updated_by')) {
-                    $saleData['updated_by'] = (int) auth()->id();
-                }
-
-                if (\Illuminate\Support\Facades\Schema::hasColumn('sales', 'status')) {
-                    $saleData['status'] = 'Completed';
-                } elseif (\Illuminate\Support\Facades\Schema::hasColumn('sales', 'sale_status')) {
-                    $saleData['sale_status'] = 'Completed';
-                }
-
-                $sale = \Modules\Sale\Entities\Sale::create($saleData);
-
-                if (\Illuminate\Support\Facades\Schema::hasColumn('sales', 'reference')) {
-                    $ref = (string) ($sale->reference ?? '');
-                    if (trim($ref) === '') {
-                        $sale->update([
-                            'reference' => make_reference_id('INV', (int) $sale->id),
-                        ]);
-                    }
-                }
-
-                foreach ($saleDelivery->items as $it) {
-                    $qty = (int) ($it->quantity ?? 0);
-                    if ($qty <= 0) continue;
-
-                    $product = $it->product;
-                    $price = $it->price !== null ? (int) $it->price : (int) ($product?->product_price ?? 0);
-
-                    $detailData = [
-                        'sale_id'      => (int) $sale->id,
-                        'product_id'   => (int) $it->product_id,
-                        'product_name' => (string) ($product?->product_name ?? ''),
-                        'product_code' => (string) ($product?->product_code ?? ''),
-                        'quantity'     => (int) $qty,
-                        'price'        => (int) $price,
-                        'unit_price'   => (int) $price,
-                        'sub_total'    => (int) ($qty * $price),
-                        'product_discount_amount' => 0,
-                        'product_discount_type'   => 'fixed',
-                        'product_tax_amount'      => 0,
-                    ];
-
-                    if (\Illuminate\Support\Facades\Schema::hasColumn('sale_details', 'warehouse_id')) {
-                        $detailData['warehouse_id'] = (int) $saleDelivery->warehouse_id;
-                    }
-
-                    if (\Illuminate\Support\Facades\Schema::hasColumn('sale_details', 'branch_id')) {
-                        $detailData['branch_id'] = (int) $branchId;
-                    }
-
-                    \Modules\Sale\Entities\SaleDetails::create($detailData);
-                }
-
-                $saleDelivery->update([
-                    'sale_id'    => (int) $sale->id,
-                    'updated_by' => auth()->id(),
-                ]);
-
-                $saleId = (int) $sale->id;
-            });
-
-            toast('Invoice created from Sale Delivery!', 'success');
-            return redirect()->route('sales.show', $saleId);
+            // ✅ inti: redirect ke Sale Create (prefill)
+            return redirect()->route('sales.create', [
+                'sale_delivery_id' => (int) $saleDelivery->id,
+            ]);
 
         } catch (\Throwable $e) {
             return $this->failBack($e->getMessage(), 422);

@@ -3,6 +3,7 @@
 namespace Modules\SaleOrder\Http\Livewire;
 
 use Livewire\Component;
+use Modules\Product\Entities\Product;
 
 class ProductTable extends Component
 {
@@ -18,7 +19,6 @@ class ProductTable extends Component
      */
     public array $items = [];
 
-    // ✅ Kita listen beberapa kemungkinan event biar robust
     protected $listeners = [
         'productSelected' => 'onProductSelected',
         'selectProduct'   => 'onProductSelected',
@@ -42,8 +42,53 @@ class ProductTable extends Component
             ];
         }
 
+        // ✅ Kalau kosong, tetap ada 1 row
         if (count($this->items) === 0) {
             $this->addEmptyRow();
+            return;
+        }
+
+        // ✅ FIX UTAMA: kalau ada pid tapi name/code kosong, lookup dari master Product
+        $needIds = collect($this->items)
+            ->filter(function ($row) {
+                $pid = (int)($row['product_id'] ?? 0);
+                if ($pid <= 0) return false;
+
+                $nameEmpty = empty($row['product_name']);
+                $codeEmpty = empty($row['product_code']);
+
+                return $nameEmpty || $codeEmpty;
+            })
+            ->pluck('product_id')
+            ->unique()
+            ->values();
+
+        if ($needIds->count() > 0) {
+            $map = Product::query()
+                ->select('id', 'product_name', 'product_code', 'product_price')
+                ->whereIn('id', $needIds->all())
+                ->get()
+                ->keyBy('id');
+
+            foreach ($this->items as $idx => $row) {
+                $pid = (int)($row['product_id'] ?? 0);
+                if ($pid <= 0) continue;
+
+                $p = $map->get($pid);
+                if (!$p) continue;
+
+                if (empty($this->items[$idx]['product_name'])) {
+                    $this->items[$idx]['product_name'] = (string) ($p->product_name ?? '');
+                }
+                if (empty($this->items[$idx]['product_code'])) {
+                    $this->items[$idx]['product_code'] = (string) ($p->product_code ?? '');
+                }
+
+                // OPTIONAL: kalau price 0 dan product punya price, isi otomatis
+                if ((int)($this->items[$idx]['price'] ?? 0) <= 0 && $p->product_price !== null) {
+                    $this->items[$idx]['price'] = (int) $p->product_price;
+                }
+            }
         }
     }
 
@@ -58,13 +103,8 @@ class ProductTable extends Component
         ];
     }
 
-    /**
-     * Payload dari search-product biasanya Eloquent model (di blade kamu: selectProduct({{ $result }}))
-     * jadi di Livewire akan masuk sebagai array/obj.
-     */
     public function onProductSelected($product): void
     {
-        // coba normalize
         $pid = (int) data_get($product, 'id', 0);
         if ($pid <= 0) return;
 
@@ -101,7 +141,6 @@ class ProductTable extends Component
     public function removeRow(int $index): void
     {
         if (count($this->items) <= 1) {
-            // minimal 1 row
             $this->items = [[
                 'product_id' => 0,
                 'product_name' => null,

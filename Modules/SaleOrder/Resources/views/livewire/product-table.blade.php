@@ -17,47 +17,54 @@
             @foreach($items as $i => $row)
                 @php
                     $pid = (int)($row['product_id'] ?? 0);
-                    $pname = (string)($row['product_name'] ?? '');
-                    $pcode = (string)($row['product_code'] ?? '');
+                    $pname = trim((string)($row['product_name'] ?? ''));
+                    $pcode = trim((string)($row['product_code'] ?? ''));
+                    $qty = (int)($row['quantity'] ?? 1);
+                    $price = (int)($row['price'] ?? 0);
                 @endphp
 
                 <tr>
                     <td>
                         @if($pid > 0)
-                            <div class="fw-semibold">{{ $pname ?: ('Product #' . $pid) }}</div>
-                            @if(!empty($pcode))
-                                <div class="text-muted small">{{ $pcode }}</div>
-                            @endif
+                            <div class="fw-semibold">{{ $pname !== '' ? $pname : ('Product #' . $pid) }}</div>
+                            <div class="text-muted small">
+                                @if($pcode !== '')
+                                    <span class="badge bg-light text-dark border">{{ $pcode }}</span>
+                                @endif
+                                <span class="ms-1">ID: {{ $pid }}</span>
+                            </div>
                         @else
                             <div class="text-muted small">Belum ada produk. Cari via search bar di atas.</div>
                         @endif
 
-                        {{-- ✅ input yang akan dikirim ke controller --}}
+                        {{-- ✅ yang dikirim ke controller --}}
                         <input type="hidden" name="items[{{ $i }}][product_id]" value="{{ $pid }}">
                     </td>
 
                     <td>
+                        {{-- ✅ FIX: input ini yang dikirim (punya name) --}}
                         <input
                             type="number"
                             class="form-control"
                             min="1"
                             wire:model.lazy="items.{{ $i }}.quantity"
-                            value="{{ (int)($row['quantity'] ?? 1) }}"
+                            name="items[{{ $i }}][quantity]"
+                            value="{{ $qty }}"
                             @if($pid <= 0) disabled @endif
                         >
-                        <input type="hidden" name="items[{{ $i }}][quantity]" value="{{ (int)($row['quantity'] ?? 1) }}">
                     </td>
 
                     <td>
+                        {{-- ✅ FIX: input ini yang dikirim (punya name) --}}
                         <input
                             type="number"
                             class="form-control"
                             min="0"
                             wire:model.lazy="items.{{ $i }}.price"
-                            value="{{ (int)($row['price'] ?? 0) }}"
+                            name="items[{{ $i }}][price]"
+                            value="{{ $price }}"
                             @if($pid <= 0) disabled @endif
                         >
-                        <input type="hidden" name="items[{{ $i }}][price]" value="{{ (int)($row['price'] ?? 0) }}">
                     </td>
 
                     <td class="text-center">

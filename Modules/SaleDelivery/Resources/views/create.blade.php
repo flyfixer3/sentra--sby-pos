@@ -108,13 +108,6 @@
                             {{ $isSaleOrder ? 'Items are prefilled from Sale Order (remaining qty).' : 'Add products and quantities.' }}
                         </small>
                     </div>
-
-                    <button type="button"
-                            class="btn btn-sm btn-outline-primary"
-                            id="add-row"
-                            {{ $isSaleOrder ? 'disabled' : '' }}>
-                        Add Item <i class="bi bi-plus-lg"></i>
-                    </button>
                 </div>
 
                 <div class="table-responsive">

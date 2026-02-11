@@ -12,7 +12,14 @@
 
 @section('content')
     @php
-        $activeBranchId = session('active_branch_id') ?? session('active_branch') ?? null;
+        $activeBranchId = $activeBranchId ?? (session('active_branch_id') ?? session('active_branch') ?? null);
+
+        $prefill = $prefill ?? [];
+        $prefillSupplierId = isset($prefill['supplier_id']) ? (int) $prefill['supplier_id'] : null;
+        $prefillDate = $prefill['date'] ?? now()->format('Y-m-d');
+        $prefillRefSupplier = $prefill['reference_supplier'] ?? '';
+        $prefillPurchaseOrderId = $prefill['purchase_order_id'] ?? null;
+        $prefillPurchaseDeliveryId = $prefill['purchase_delivery_id'] ?? null;
 
         $defaultWarehouse = \Modules\Product\Entities\Warehouse::query()
             ->when($activeBranchId && $activeBranchId !== 'all', fn($q) => $q->where('branch_id', (int)$activeBranchId))
@@ -20,11 +27,7 @@
             ->orderBy('id')
             ->first();
 
-        // NOTE:
-        // Warehouse dropdown sengaja dihapus sesuai flow baru:
-        // Warehouse dipilih hanya di Confirm Purchase Delivery.
-        // Di sini kita tetap passing loading_warehouse untuk kebutuhan komponen/cart yang mungkin butuh nilai gudang default.
-        $defaultWarehouseId = $defaultWarehouse ? (int) $defaultWarehouse->id : null;
+        $defaultWarehouseId = $defaultWarehouse ? (int) $defaultWarehouse->id : ($defaultWarehouseId ?? null);
     @endphp
 
     <div class="container-fluid mb-4">
@@ -43,6 +46,15 @@
                         <form id="purchase-form" action="{{ route('purchases.store') }}" method="POST">
                             @csrf
 
+                            {{-- ✅ hidden link: supaya store() tau ini invoice dari delivery/PO --}}
+                            @if(!empty($prefillPurchaseOrderId))
+                                <input type="hidden" name="purchase_order_id" value="{{ (int) $prefillPurchaseOrderId }}">
+                            @endif
+
+                            @if(!empty($prefillPurchaseDeliveryId))
+                                <input type="hidden" name="purchase_delivery_id" value="{{ (int) $prefillPurchaseDeliveryId }}">
+                            @endif
+
                             <div class="form-row">
                                 <div class="col-lg-2">
                                     <div class="form-group">
@@ -50,37 +62,59 @@
                                         <input type="text" class="form-control" name="reference" required readonly value="PR">
                                     </div>
                                 </div>
+
                                 <div class="col-lg-2">
                                     <div class="form-group">
                                         <label>Supplier Invoice <span class="text-danger">*</span></label>
-                                        <input type="text" class="form-control" name="reference_supplier">
+                                        <input
+                                            type="text"
+                                            class="form-control"
+                                            name="reference_supplier"
+                                            value="{{ old('reference_supplier', $prefillRefSupplier) }}"
+                                        >
                                     </div>
                                 </div>
+
                                 <div class="col-lg-3">
                                     <div class="form-group">
                                         <label>Supplier <span class="text-danger">*</span></label>
                                         <select class="form-control" name="supplier_id" id="supplier_id" required>
                                             @foreach(\Modules\People\Entities\Supplier::orderBy('supplier_name')->get() as $supplier)
-                                                <option value="{{ $supplier->id }}">{{ $supplier->supplier_name }}</option>
+                                                @php
+                                                    $selected = old('supplier_id')
+                                                        ? ((int)old('supplier_id') === (int)$supplier->id)
+                                                        : ($prefillSupplierId ? ((int)$prefillSupplierId === (int)$supplier->id) : false);
+                                                @endphp
+                                                <option value="{{ $supplier->id }}" {{ $selected ? 'selected' : '' }}>
+                                                    {{ $supplier->supplier_name }}
+                                                </option>
                                             @endforeach
                                         </select>
                                     </div>
                                 </div>
+
                                 <div class="col-lg-3">
                                     <div class="form-group">
                                         <label>Date <span class="text-danger">*</span></label>
-                                        <input type="date" class="form-control" name="date" required value="{{ now()->format('Y-m-d') }}">
+                                        <input
+                                            type="date"
+                                            class="form-control"
+                                            name="date"
+                                            required
+                                            value="{{ old('date', $prefillDate) }}"
+                                        >
                                     </div>
                                 </div>
+
                                 <div class="col-lg-2">
                                     <div class="form-group">
                                         <label>Due Date (Days) <span class="text-danger">*</span></label>
-                                        <input type="number" class="form-control" name="due_date" required placeholder="0">
+                                        <input type="number" class="form-control" name="due_date" required placeholder="0" value="{{ old('due_date') }}">
                                     </div>
                                 </div>
                             </div>
 
-                            {{-- Livewire Cart Purchase --}}
+                            {{-- ✅ Cart sudah diisi di controller (createFromDelivery), jadi qty default otomatis muncul --}}
                             <livewire:product-cart-purchase
                                 :cartInstance="'purchase'"
                                 :data="null"
@@ -92,12 +126,10 @@
                                     <div class="form-group">
                                         <label>Status <span class="text-danger">*</span></label>
 
-                                        {{-- display readonly --}}
                                         <select class="form-control" id="status_display" disabled>
                                             <option value="Completed" selected>Completed</option>
                                         </select>
 
-                                        {{-- value yang dikirim --}}
                                         <input type="hidden" name="status" value="Completed">
                                         <small class="text-muted">
                                             Walk-in purchase will create PD (Pending). Stock akan masuk saat Confirm Purchase Delivery.
@@ -127,7 +159,7 @@
                                     <div class="form-group">
                                         <label>Amount Paid <span class="text-danger">*</span></label>
                                         <div class="input-group">
-                                            <input id="paid_amount" type="text" class="form-control" name="paid_amount" value="0" required>
+                                            <input id="paid_amount" type="text" class="form-control" name="paid_amount" value="{{ old('paid_amount', 0) }}" required>
                                             <div class="input-group-append">
                                                 <button id="getTotalAmount" class="btn btn-primary" type="button">
                                                     <i class="bi bi-check-square"></i>
@@ -140,7 +172,7 @@
 
                             <div class="form-group">
                                 <label>Note (If Needed)</label>
-                                <textarea name="note" id="note" rows="5" class="form-control"></textarea>
+                                <textarea name="note" id="note" rows="5" class="form-control">{{ old('note') }}</textarea>
                             </div>
 
                             <div class="mt-3">

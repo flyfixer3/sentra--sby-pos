@@ -16,6 +16,7 @@ use Modules\Quotation\Entities\Quotation;
 use Modules\Sale\Entities\SaleDetails;
 use App\Helpers\Helper;
 use App\Support\BranchContext;
+use Modules\Product\Entities\Product;
 use Modules\Purchase\Entities\Purchase;
 use Modules\Purchase\Entities\PurchaseDetail;
 use Modules\Sale\Entities\SalePayment;
@@ -55,9 +56,109 @@ class SaleController extends Controller
             ->orderBy('customer_name')
             ->get();
 
+        // ✅ detect create-from-delivery context
+        $saleDeliveryId = (int) request()->get('sale_delivery_id', 0);
+
+        // selalu reset cart biar bersih
         Cart::instance('sale')->destroy();
 
-        return view('sale::create', compact('warehouses', 'customers'));
+        // default
+        $prefillCustomerId = null;
+
+        // ======================================================
+        // ✅ If create sale from Sale Delivery => prefill cart
+        // ======================================================
+        if ($saleDeliveryId > 0) {
+            $saleDelivery = SaleDelivery::withoutGlobalScopes()
+                ->with(['items', 'customer'])
+                ->where('id', $saleDeliveryId)
+                ->where('branch_id', $branchId)
+                ->firstOrFail();
+
+            $st = strtolower(trim((string) ($saleDelivery->getRawOriginal('status') ?? $saleDelivery->status ?? 'pending')));
+            if ($st !== 'confirmed') {
+                throw new \RuntimeException('Sale Delivery must be CONFIRMED to create invoice.');
+            }
+
+            if (!empty($saleDelivery->sale_id)) {
+                throw new \RuntimeException('Invoice already exists for this Sale Delivery.');
+            }
+
+            $prefillCustomerId = (int) ($saleDelivery->customer_id ?? 0);
+            if ($prefillCustomerId <= 0) {
+                throw new \RuntimeException('Sale Delivery has no customer.');
+            }
+
+            // ✅ Ensure customer is allowed (global / active branch)
+            $customerAllowed = Customer::query()
+                ->where('id', $prefillCustomerId)
+                ->where(function ($q) use ($branchId) {
+                    $q->whereNull('branch_id')->orWhere('branch_id', $branchId);
+                })
+                ->exists();
+
+            if (!$customerAllowed) {
+                throw new \RuntimeException('Customer is not available in current branch context.');
+            }
+
+            // Prefill cart from delivery items
+            $cart = Cart::instance('sale');
+
+            $productIds = collect($saleDelivery->items)->pluck('product_id')->filter()->unique()->values();
+            $productsMap = Product::query()
+                ->whereIn('id', $productIds)
+                ->get()
+                ->keyBy('id');
+
+            foreach ($saleDelivery->items as $it) {
+                $pid = (int) ($it->product_id ?? 0);
+                $qty = (int) ($it->quantity ?? 0);
+                if ($pid <= 0 || $qty <= 0) continue;
+
+                $p = $productsMap->get($pid);
+
+                // ✅ price fallback
+                $price = $it->price !== null ? (int) $it->price : 0;
+                if ($price <= 0) {
+                    $price = (int) ($p?->product_price ?? 0);
+                }
+
+                $name = (string) ($p?->product_name ?? 'Product');
+                $code = (string) ($p?->product_code ?? '');
+
+                // opsional: cost untuk accounting
+                $cost = (int) ($p?->product_cost ?? 0);
+
+                // NOTE: product-cart-sale livewire biasanya pakai options ini:
+                $unitPrice = $price; // sederhana, karena di delivery kita cuma punya price
+                $subTotal = $qty * $price;
+
+                $cart->add([
+                    'id'      => $pid,
+                    'name'    => $name,
+                    'qty'     => $qty,
+                    'price'   => $price,
+                    'weight'  => 1,
+                    'options' => [
+                        'product_discount' => 0,
+                        'product_discount_type' => 'fixed',
+                        'sub_total'   => $subTotal,
+                        'code'        => $code,
+                        'stock'       => 0,
+
+                        // ✅ invoice flow baru: warehouse null
+                        'warehouse_id'=> null,
+
+                        'product_cost'=> $cost,
+                        'product_tax' => 0,
+                        'unit_price'  => $unitPrice,
+                    ]
+                ]);
+            }
+        }
+
+        // ✅ pass $prefillCustomerId to view (UI will select/lock)
+        return view('sale::create', compact('warehouses', 'customers', 'prefillCustomerId'));
     }
 
     public function store(StoreSaleRequest $request) {
@@ -96,6 +197,36 @@ class SaleController extends Controller
                 if ($request->quotation_id) {
                     $quotation = Quotation::findOrFail($request->quotation_id);
                     $quotation->update(['status' => 'Sent']);
+                }
+
+                // ======================================================
+                // ✅ NEW: if invoice is created FROM SaleDelivery
+                // ======================================================
+                $saleDeliveryId = (int) $request->get('sale_delivery_id', 0);
+                $fromDelivery = $saleDeliveryId > 0;
+                $lockedDelivery = null;
+
+                if ($fromDelivery) {
+                    $lockedDelivery = SaleDelivery::withoutGlobalScopes()
+                        ->lockForUpdate()
+                        ->with(['items']) // optional, not required here
+                        ->where('id', $saleDeliveryId)
+                        ->where('branch_id', $branchId)
+                        ->firstOrFail();
+
+                    $st = strtolower(trim((string) ($lockedDelivery->getRawOriginal('status') ?? $lockedDelivery->status ?? 'pending')));
+                    if ($st !== 'confirmed') {
+                        throw new \RuntimeException('Sale Delivery must be CONFIRMED to create invoice.');
+                    }
+
+                    if (!empty($lockedDelivery->sale_id)) {
+                        throw new \RuntimeException('Invoice already exists for this Sale Delivery.');
+                    }
+
+                    // safety: customer must match delivery
+                    if ((int)($lockedDelivery->customer_id ?? 0) !== (int)$customer->id) {
+                        throw new \RuntimeException('Customer mismatch with Sale Delivery.');
+                    }
                 }
 
                 $total_cost = 0;
@@ -152,7 +283,6 @@ class SaleController extends Controller
                         'product_cost' => (int) ($cart_item->options->product_cost ?? 0),
 
                         // ✅ sesuai flow baru: invoice tidak menyimpan warehouse
-                        // wajib null supaya tidak kena FK
                         'warehouse_id' => null,
 
                         'quantity' => (int) $cart_item->qty,
@@ -169,72 +299,26 @@ class SaleController extends Controller
                     }
 
                     SaleDetails::create($saleDetailData);
-
-                    // ==========================================
-                    // ❗Konsinyasi KS (sementara ON HOLD)
-                    // Karena sekarang invoice tidak simpan warehouse per item,
-                    // maka penentuan KS tidak bisa dilakukan saat invoice dibuat.
-                    //
-                    // Nanti kita pindahkan logic KS ini ke:
-                    // SaleDelivery Confirm (karena di confirm per item user pilih warehouse stock-out)
-                    // ==========================================
-                    /*
-                    $isKS = $warehouseKS && ((int) $warehouseKS->id === (int) ($cart_item->options->warehouse_id ?? 0));
-                    if ($isKS) {
-                        $supplierKs = Supplier::query()->where('supplier_name', 'MJD-KS')->first();
-                        if ($supplierKs) {
-                            $purchase = Purchase::create([
-                                'date' => $request->date,
-                                'due_date' => 0,
-                                'supplier_id' => $supplierKs->id,
-                                'supplier_name' => $supplierKs->supplier_name,
-                                'tax_percentage' => 0,
-                                'discount_percentage' => 0,
-                                'shipping_amount' => 0,
-                                'paid_amount' => 0,
-                                'total_amount' => (int) (($cart_item->options->product_cost ?? 0) * $cart_item->qty),
-                                'due_amount' => (int) (($cart_item->options->product_cost ?? 0) * $cart_item->qty),
-                                'total_quantity' => (int) $request->total_quantity,
-                                'payment_status' => "Unpaid",
-                                'payment_method' => "Bank Transfer",
-                                'note' => "Penjualan Konsyinasi, referensi nota sale: " . $sale->reference,
-                                'tax_amount' => (int) Cart::instance('sale')->tax(),
-                                'discount_amount' => 0,
-                            ]);
-
-                            PurchaseDetail::create([
-                                'purchase_id' => $purchase->id,
-                                'product_id' => $cart_item->id,
-                                'product_name' => $cart_item->name,
-                                'product_code' => $cart_item->options->code,
-                                'quantity' => (int) $cart_item->qty,
-                                'price' => (int) ($cart_item->options->product_cost ?? 0),
-                                'unit_price' => (int) ($cart_item->options->unit_price ?? 0),
-                                'sub_total' => (int) (($cart_item->options->product_cost ?? 0) * $cart_item->qty),
-
-                                // ❗ dulu pakai warehouse_id, sekarang null
-                                'warehouse_id' => null,
-
-                                'product_discount_amount' => (int) (($cart_item->options->unit_price ?? 0) - ($cart_item->options->product_cost ?? 0)),
-                                'product_discount_type' => "fixed",
-                                'product_tax_amount' => 0,
-                            ]);
-                        }
-                    }
-                    */
                 }
 
-                // ==========================================
-                // ✅ AUTO CREATE SALE DELIVERY (WAJIB)
-                // - flow baru: 1 sale => 1 sale delivery (tanpa warehouse)
-                // - warehouse dipilih saat CONFIRM per item
-                // ==========================================
-                $this->autoCreateSaleDeliveryFromSale(
-                    $sale,
-                    $branchId,
-                    $request->quotation_id ? (int) $request->quotation_id : null,
-                    null // ✅ NO saleOrderId
-                );
+                // ======================================================
+                // ✅ NEW: If from SaleDelivery => link, NOT auto-create new delivery
+                // ======================================================
+                if ($fromDelivery && $lockedDelivery) {
+                    $lockedDelivery->update([
+                        'sale_id' => (int) $sale->id,
+                    ]);
+                } else {
+                    // ==========================================
+                    // ✅ AUTO CREATE SALE DELIVERY (tetap WAJIB untuk flow invoice-first)
+                    // ==========================================
+                    $this->autoCreateSaleDeliveryFromSale(
+                        $sale,
+                        $branchId,
+                        $request->quotation_id ? (int) $request->quotation_id : null,
+                        null // ✅ NO saleOrderId
+                    );
+                }
 
                 Cart::instance('sale')->destroy();
 

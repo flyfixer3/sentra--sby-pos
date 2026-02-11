@@ -60,7 +60,7 @@ class SaleOrderController extends Controller
             abort_unless(in_array($source, ['manual', 'quotation', 'sale'], true), 403);
 
             $prefillCustomerId = null;
-            $prefillWarehouseId = null; // (opsional, tapi nanti kita bisa set NULL)
+            $prefillWarehouseId = null; // tetap nullable
             $prefillDate = date('Y-m-d');
             $prefillNote = null;
             $prefillItems = [];
@@ -84,8 +84,12 @@ class SaleOrderController extends Controller
                 foreach ($quotation->quotationDetails as $d) {
                     $prefillItems[] = [
                         'product_id' => (int) $d->product_id,
-                        'quantity' => (int) $d->quantity,
-                        'price' => (int) $d->price,
+                        'quantity'   => (int) $d->quantity,
+                        'price'      => (int) $d->price,
+
+                        // ✅ nanti di-inject dari master product
+                        'product_name' => null,
+                        'product_code' => null,
                     ];
                 }
             }
@@ -108,21 +112,48 @@ class SaleOrderController extends Controller
                 foreach ($sale->saleDetails as $d) {
                     $prefillItems[] = [
                         'product_id' => (int) $d->product_id,
-                        'quantity' => (int) $d->quantity,
-                        'price' => (int) $d->price,
+                        'quantity'   => (int) $d->quantity,
+                        'price'      => (int) $d->price,
+
+                        // ✅ nanti di-inject dari master product
+                        'product_name' => null,
+                        'product_code' => null,
                     ];
                 }
 
+                // kalau invoice lama punya warehouse per item & cuma 1 warehouse, keep (opsional)
                 $whIds = $sale->saleDetails->pluck('warehouse_id')->filter()->unique()->values();
                 if ($whIds->count() === 1) {
                     $prefillWarehouseId = (int) $whIds->first();
                 }
             }
 
+            // ✅ Master product untuk dropdown + untuk inject label ke prefillItems
             $products = Product::query()
+                ->select('id', 'product_name', 'product_code')
                 ->orderBy('product_name')
                 ->limit(500)
                 ->get();
+
+            // ✅ inject product_name + product_code ke prefillItems (biar Livewire ga fallback "Product #id")
+            if (!empty($prefillItems)) {
+                $neededIds = collect($prefillItems)->pluck('product_id')->filter()->unique()->values();
+                if ($neededIds->count() > 0) {
+                    $map = Product::query()
+                        ->select('id', 'product_name', 'product_code')
+                        ->whereIn('id', $neededIds->all())
+                        ->get()
+                        ->keyBy('id');
+
+                    foreach ($prefillItems as $i => $row) {
+                        $pid = (int) ($row['product_id'] ?? 0);
+                        $p = $pid > 0 ? ($map[$pid] ?? null) : null;
+
+                        $prefillItems[$i]['product_name'] = $p?->product_name;
+                        $prefillItems[$i]['product_code'] = $p?->product_code;
+                    }
+                }
+            }
 
             return view('saleorder::create', compact(
                 'customers',

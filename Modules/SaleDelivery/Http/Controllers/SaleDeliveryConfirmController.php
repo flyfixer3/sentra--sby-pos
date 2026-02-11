@@ -348,7 +348,9 @@ class SaleDeliveryConfirmController extends Controller
                     ];
                 }
 
+                // ✅ VALIDASI warehouse harus valid + belong to branch
                 $warehouseIds = array_values(array_unique(array_map(fn($x) => (int) $x['warehouse_id'], $inputById)));
+
                 $countValidWh = Warehouse::query()
                     ->where('branch_id', (int) $branchId)
                     ->whereIn('id', $warehouseIds)
@@ -358,6 +360,13 @@ class SaleDeliveryConfirmController extends Controller
                     throw new \RuntimeException('Invalid warehouse selection (must belong to active branch).');
                 }
 
+                // ✅ FIX UTAMA: 1 Sale Delivery = 1 Warehouse (biar header warehouse_id meaningful & invoice aman)
+                if (count($warehouseIds) !== 1) {
+                    throw new \RuntimeException('All items in one Sale Delivery must use the same Warehouse.');
+                }
+                $deliveryWarehouseId = (int) $warehouseIds[0];
+
+                // ✅ VALIDASI rack harus belong ke warehouse yang dipilih
                 $allRackIds = [];
                 foreach ($inputById as $row) {
                     foreach (($row['good_allocations'] ?? []) as $a) {
@@ -383,6 +392,7 @@ class SaleDeliveryConfirmController extends Controller
                 $totalConfirmedAll = 0;
                 $reservedReduceByProduct = [];
 
+                // ✅ validate qty breakdown & allocations
                 foreach ($saleDelivery->items as $it) {
                     $itemId = (int) $it->id;
                     $expected = (int) ($it->quantity ?? 0);
@@ -422,14 +432,9 @@ class SaleDeliveryConfirmController extends Controller
                         }
 
                         // ✅ NEW: STRICT validate TOTAL stock in selected racks is enough
-                        $warehouseIdForAlloc = (int) ($inputById[$itemId]['warehouse_id'] ?? 0);
-                        if ($warehouseIdForAlloc <= 0) {
-                            throw new \RuntimeException("Warehouse is required for item_id {$itemId}.");
-                        }
-
                         $this->assertRackTotalStockEnough(
                             (int) $branchId,
-                            (int) $warehouseIdForAlloc,
+                            (int) $deliveryWarehouseId,
                             (int) $it->product_id,
                             (array) $alloc,
                             (string) $reference
@@ -464,6 +469,7 @@ class SaleDeliveryConfirmController extends Controller
                     throw new \RuntimeException('Nothing to confirm. Please input at least 1 quantity.');
                 }
 
+                // ✅ create mutation OUT (GOOD / DEFECT / DAMAGED)
                 foreach ($saleDelivery->items as $it) {
                     $productId = (int) $it->product_id;
 
@@ -475,10 +481,9 @@ class SaleDeliveryConfirmController extends Controller
                     if ($confirmed <= 0) continue;
 
                     $input = $inputById[(int) $it->id] ?? [];
-                    $warehouseId = (int) ($input['warehouse_id'] ?? 0);
-                    if ($warehouseId <= 0) {
-                        throw new \RuntimeException("Warehouse is required for item_id {$it->id}.");
-                    }
+
+                    // warehouse sudah diset 1 delivery 1 warehouse, pakai header value
+                    $warehouseId = (int) $deliveryWarehouseId;
 
                     if ($good > 0) {
                         $alloc = $input['good_allocations'] ?? [];
@@ -654,6 +659,7 @@ class SaleDeliveryConfirmController extends Controller
                     }
                 }
 
+                // ✅ reserved pool decrement
                 $this->decrementReservedPoolStock(
                     (int) $branchId,
                     $reservedReduceByProduct,
@@ -662,7 +668,10 @@ class SaleDeliveryConfirmController extends Controller
 
                 $confirmNote = $request->confirm_note ? (string) $request->confirm_note : null;
 
+                // ✅ FIX UTAMA: simpan warehouse_id ke header sale_deliveries
                 $saleDelivery->update([
+                    'warehouse_id' => (int) $deliveryWarehouseId,
+
                     'status' => 'confirmed',
                     'confirmed_by' => auth()->id(),
                     'confirmed_at' => now(),
@@ -673,6 +682,7 @@ class SaleDeliveryConfirmController extends Controller
                     'updated_by' => auth()->id(),
                 ]);
 
+                // update SO fulfillment
                 $saleOrderId = (int) ($saleDelivery->sale_order_id ?? 0);
                 if ($saleOrderId <= 0 && !empty($saleDelivery->sale_id)) {
                     $found = SaleOrder::query()

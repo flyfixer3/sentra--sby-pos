@@ -34,6 +34,10 @@
     $canPrint = ($st === 'confirmed');
 
     $canCreateInvoice = ($st === 'confirmed' && empty($saleDelivery->sale_id));
+
+    // ✅ NEW: tampilkan warehouse
+    $warehouseName = $saleDelivery->warehouse?->warehouse_name
+        ?? (!empty($saleDelivery->warehouse_id) ? ('WH#' . (int)$saleDelivery->warehouse_id) : null);
 @endphp
 
 <div class="container-fluid">
@@ -47,6 +51,14 @@
                     <div class="d-flex align-items-center gap-2 flex-wrap">
                         <h4 class="mb-0">{{ $saleDelivery->reference }}</h4>
                         <span class="badge {{ $badgeClass }}">{{ strtoupper($st) }}</span>
+
+                        {{-- ✅ NEW: badge warehouse ketika confirmed --}}
+                        @if($st === 'confirmed')
+                            <span class="badge bg-light text-dark border">
+                                <i class="bi bi-building me-1"></i>
+                                Warehouse: <strong>{{ $warehouseName ?? '-' }}</strong>
+                            </span>
+                        @endif
                     </div>
 
                     <div class="text-muted small mt-1">
@@ -165,6 +177,19 @@
                                 Confirmed by:
                                 <strong>{{ $saleDelivery->confirmed_at ? ($saleDelivery->confirmer?->name ?? '-') : '-' }}</strong>
                             </div>
+
+                            {{-- ✅ NEW: tampilkan Warehouse yg dipakai confirm --}}
+                            <div class="mt-1">
+                                Warehouse:
+                                <strong>
+                                    @if($st === 'confirmed')
+                                        {{ $warehouseName ?? '-' }}
+                                    @else
+                                        -
+                                    @endif
+                                </strong>
+                            </div>
+
                             <div class="mt-1">
                                 Confirmation Note: <strong>{{ $saleDelivery->confirm_note ?: '-' }}</strong>
                             </div>
@@ -262,7 +287,7 @@
                                 <tr>
                                     <th>Product</th>
                                     <th>Warehouse</th>
-                                    <th style="width:140px;">Rack</th> {{-- ✅ NEW --}}
+                                    <th style="width:140px;">Rack</th>
                                     <th class="text-center" style="width:90px;">Qty Out</th>
                                     <th>Note</th>
                                     <th style="width:130px;">Date</th>
@@ -273,7 +298,6 @@
                                     @php
                                         $rackText = '-';
                                         if (!empty($m->rack)) {
-                                            // coba beberapa field yang umum dipakai di table racks kamu
                                             $rackText = $m->rack->code
                                                 ?? $m->rack->rack_code
                                                 ?? $m->rack->name

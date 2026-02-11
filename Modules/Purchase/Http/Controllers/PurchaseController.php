@@ -83,36 +83,24 @@ class PurchaseController extends Controller
 
         $purchaseDelivery->loadMissing([
             'purchaseOrder',
-            'purchaseOrder.purchases',
+            'purchaseOrder.supplier',
             'purchaseOrder.purchaseOrderDetails',
             'purchaseDeliveryDetails',
+            'warehouse',
         ]);
 
-        /**
-         * ======================================================
-         * ✅ NEW GUARD: PO HARUS FULLY FULFILLED (NO PARTIAL INVOICE)
-         * ======================================================
-         * Rule bisnis kamu: invoice hanya boleh dibuat kalau seluruh qty PO sudah diterima.
-         * Kita pakai helper yang sudah ada di model PurchaseOrder: isFullyFulfilled()
-         */
         $purchaseOrder = $purchaseDelivery->purchaseOrder;
 
-        if ($purchaseOrder) {
-            if (!$purchaseOrder->isFullyFulfilled()) {
-                return redirect()
-                    ->route('purchase-deliveries.show', $purchaseDelivery->id)
-                    ->with('error', 'Invoice cannot be created because this Purchase Order is still PARTIAL. Please complete all deliveries first.');
-            }
+        // ✅ RULE: invoice hanya boleh kalau PO fully fulfilled
+        if ($purchaseOrder && !$purchaseOrder->isFullyFulfilled()) {
+            return redirect()
+                ->route('purchase-deliveries.show', $purchaseDelivery->id)
+                ->with('error', 'Invoice cannot be created because this Purchase Order is still PARTIAL. Please complete all deliveries first.');
         }
 
-        /**
-         * ======================================================
-         * 🚫 HARD GUARD: 1 PO = 1 INVOICE (PURCHASE)
-         * ======================================================
-         */
+        // ✅ HARD GUARD: 1 PO = 1 INVOICE
         if ($purchaseDelivery->purchase_order_id) {
-
-            $existingPurchase = Purchase::where('purchase_order_id', $purchaseDelivery->purchase_order_id)
+            $existingPurchase = Purchase::where('purchase_order_id', (int) $purchaseDelivery->purchase_order_id)
                 ->whereNull('deleted_at')
                 ->first();
 
@@ -123,42 +111,35 @@ class PurchaseController extends Controller
             }
         }
 
-        // guard lama
+        // guard lama: PD sudah punya invoice
         if ($purchaseDelivery->purchase) {
             return redirect()->back()
                 ->with('error', 'This Purchase Delivery already has an invoice.');
         }
 
-        /**
-         * ======================================================
-         * PREPARE CART (FOLLOW PO TOTAL)
-         * ======================================================
-         */
+        // =========================
+        // PREPARE CART (DEFAULT QTY)
+        // =========================
         Cart::instance('purchase')->destroy();
         $cart = Cart::instance('purchase');
 
-        $branchId    = $this->getActiveBranchId();
-        $warehouseId = $this->resolveDefaultWarehouseId($branchId);
+        $branchId = $this->getActiveBranchId();
 
-        // ✅ kalau PD punya warehouse dan masih satu branch, kamu bisa prefer ini
-        // (biar stockLast nyari warehouse yang sesuai delivery)
+        // warehouse untuk kebutuhan stockLast (walaupun dropdown warehouse di UI dihapus)
+        $warehouseId = $this->resolveDefaultWarehouseId($branchId);
         if (!empty($purchaseDelivery->warehouse_id)) {
             $warehouseId = (int) $purchaseDelivery->warehouse_id;
         }
 
-        // ✅ INVOICE SOURCE:
-        // - kalau ada PO: ambil PO details (TOTAL PO)
-        // - kalau tidak ada PO: fallback pakai PD confirmed qty (legacy edge case)
+        // ✅ Isi cart dari PO (total PO) = default qty di form invoice
         if ($purchaseOrder) {
 
-            $poDetails = $purchaseOrder->purchaseOrderDetails;
-
-            foreach ($poDetails as $d) {
-                $qty = (int) $d->quantity; // ✅ TOTAL PO
+            foreach ($purchaseOrder->purchaseOrderDetails as $d) {
+                $qty = (int) ($d->quantity ?? 0);
                 if ($qty <= 0) continue;
 
                 $product = Product::select('id', 'product_code', 'product_name', 'product_unit')
-                    ->find($d->product_id);
+                    ->find((int) $d->product_id);
 
                 $productCode = $d->product_code ?: ($product?->product_code ?? 'UNKNOWN');
                 $productName = $d->product_name ?: ($product?->product_name ?? '-');
@@ -167,26 +148,24 @@ class PurchaseController extends Controller
 
                 $stockLast = 0;
                 $mutation = Mutation::where('product_id', (int) $d->product_id)
-                    ->where('warehouse_id', $warehouseId)
+                    ->where('warehouse_id', (int) $warehouseId)
                     ->latest()
                     ->first();
 
-                if ($mutation) {
-                    $stockLast = (int) $mutation->stock_last;
-                }
+                if ($mutation) $stockLast = (int) $mutation->stock_last;
 
                 $cart->add([
-                    'id'    => (int) $d->product_id,
-                    'name'  => (string) $productName,
-                    'qty'   => $qty,
-                    'price' => $price,
-                    'weight'=> 1,
+                    'id'     => (int) $d->product_id,
+                    'name'   => (string) $productName,
+                    'qty'    => $qty,                 // ✅ default qty dari PO
+                    'price'  => $price,
+                    'weight' => 1,
                     'options' => [
                         'sub_total'   => $qty * $price,
                         'code'        => (string) $productCode,
                         'unit_price'  => (int) ($d->unit_price ?? 0),
-                        'warehouse_id'=> $warehouseId,
-                        'branch_id'   => $branchId,
+                        'warehouse_id'=> (int) $warehouseId,
+                        'branch_id'   => (int) $branchId,
                         'stock'       => $stockLast,
                         'unit'        => $product?->product_unit,
                         'product_discount' => (float) ($d->product_discount_amount ?? 0),
@@ -197,54 +176,42 @@ class PurchaseController extends Controller
             }
 
         } else {
-
-            // fallback: tidak ada PO (harusnya jarang)
+            // fallback: tidak ada PO => pakai PD confirmed qty
             foreach ($purchaseDelivery->purchaseDeliveryDetails as $item) {
 
                 $confirmedQty =
-                    (int) $item->qty_received +
-                    (int) $item->qty_defect +
-                    (int) $item->qty_damaged;
+                    (int) ($item->qty_received ?? 0) +
+                    (int) ($item->qty_defect ?? 0) +
+                    (int) ($item->qty_damaged ?? 0);
 
                 if ($confirmedQty <= 0) continue;
 
-                $price = 0;
-
                 $product = Product::select('id', 'product_code', 'product_name', 'product_unit')
-                    ->find($item->product_id);
+                    ->find((int) $item->product_id);
 
-                $productCode =
-                    $product?->product_code
-                    ?? $item->product_code
-                    ?? 'UNKNOWN';
-
-                $productName =
-                    $item->product_name
-                    ?: $product?->product_name
-                    ?: '-';
+                $productCode = $item->product_code ?: ($product?->product_code ?? 'UNKNOWN');
+                $productName = $item->product_name ?: ($product?->product_name ?? '-');
 
                 $stockLast = 0;
-                $mutation = Mutation::where('product_id', $item->product_id)
-                    ->where('warehouse_id', $warehouseId)
+                $mutation = Mutation::where('product_id', (int) $item->product_id)
+                    ->where('warehouse_id', (int) $warehouseId)
                     ->latest()
                     ->first();
 
-                if ($mutation) {
-                    $stockLast = (int) $mutation->stock_last;
-                }
+                if ($mutation) $stockLast = (int) $mutation->stock_last;
 
                 $cart->add([
-                    'id'    => $item->product_id,
-                    'name'  => $productName,
-                    'qty'   => $confirmedQty,
-                    'price' => $price,
-                    'weight'=> 1,
+                    'id'     => (int) $item->product_id,
+                    'name'   => (string) $productName,
+                    'qty'    => $confirmedQty,       // ✅ default qty dari PD confirm
+                    'price'  => 0,
+                    'weight' => 1,
                     'options' => [
-                        'sub_total'   => $confirmedQty * $price,
-                        'code'        => $productCode,
-                        'unit_price'  => $price,
-                        'warehouse_id'=> $warehouseId,
-                        'branch_id'   => $branchId,
+                        'sub_total'   => 0,
+                        'code'        => (string) $productCode,
+                        'unit_price'  => 0,
+                        'warehouse_id'=> (int) $warehouseId,
+                        'branch_id'   => (int) $branchId,
                         'stock'       => $stockLast,
                         'unit'        => $product?->product_unit,
                         'product_discount' => 0,
@@ -255,9 +222,28 @@ class PurchaseController extends Controller
             }
         }
 
-        return view('purchase-orders::purchase-order-purchases.create', [
-            'purchaseOrder'    => $purchaseOrder,
-            'purchaseDelivery' => $purchaseDelivery,
+        // =========================
+        // PREFILL HEADER FORM
+        // =========================
+        $prefillSupplierId = 0;
+        if ($purchaseOrder && $purchaseOrder->supplier_id) {
+            $prefillSupplierId = (int) $purchaseOrder->supplier_id;
+        }
+
+        $prefillDate = (string) ($purchaseDelivery->getRawOriginal('date') ?? now()->format('Y-m-d'));
+
+        return view('purchase::create', [
+            'activeBranchId'        => $branchId,
+            'defaultWarehouseId'    => $warehouseId,
+
+            // ✅ supaya form header keisi otomatis
+            'prefill' => [
+                'purchase_order_id'    => $purchaseOrder ? (int) $purchaseOrder->id : null,
+                'purchase_delivery_id' => (int) $purchaseDelivery->id,
+                'supplier_id'          => $prefillSupplierId > 0 ? $prefillSupplierId : null,
+                'date'                 => $prefillDate,
+                'reference_supplier'   => (string) ($purchaseOrder->reference_supplier ?? ''),
+            ],
         ]);
     }
 
