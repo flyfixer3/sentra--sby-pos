@@ -6,72 +6,289 @@ use Illuminate\Routing\Controller;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
+
 use Modules\Inventory\DataTables\StocksDataTable;
-use Modules\Inventory\Entities\StockRack;
+use Modules\Branch\Entities\Branch;
 use Modules\Product\Entities\Warehouse;
 
 class StockController extends Controller
 {
     public function index(Request $request, StocksDataTable $dataTable)
     {
-        $warehouses = Warehouse::orderBy('warehouse_name')->get();
         $isAllBranchMode = (session('active_branch') === 'all');
 
-        return $dataTable->render('inventory::stocks.index', compact('warehouses', 'isAllBranchMode'));
+        $branches = collect();
+        if ($isAllBranchMode) {
+            $branches = Branch::query()->orderBy('name')->get();
+        }
+
+        // NOTE: warehouses tidak dipakai lagi di filter utama.
+        // warehouses justru dipakai di modal (via endpoint detailOptions & qualityOptions).
+        return $dataTable->render('inventory::stocks.index', compact('isAllBranchMode', 'branches'));
     }
 
-    public function rackDetails($productId, $branchId, $warehouseId)
+    /**
+     * Dropdown options untuk Stock Detail modal:
+     * - warehouses by branch scope
+     * - racks by branch scope (+ optional warehouse_id)
+     */
+    public function detailOptions(Request $request)
     {
-        $productId  = (int) $productId;
-        $branchId   = (int) $branchId;
-        $warehouseId= (int) $warehouseId;
+        $productId = (int) $request->get('product_id');
+        $branchId = (int) $request->get('branch_id');
 
-        $rows = \Modules\Inventory\Entities\StockRack::query()
-            ->with(['rack:id,code,name'])
-            ->where('product_id', $productId)
-            ->where('branch_id', $branchId)
-            ->where('warehouse_id', $warehouseId)
-            ->orderBy('rack_id')
-            ->get()
-            ->map(function ($sr) {
-                // ✅ sesuaikan kalau nama kolom di stock_racks beda:
-                // aku asumsikan: qty / qty_good / qty_defect / qty_damaged
-                $total  = (int) ($sr->qty ?? 0);
-                $good   = (int) ($sr->qty_good ?? 0);
-                $defect = (int) ($sr->qty_defect ?? 0);
-                $damaged= (int) ($sr->qty_damaged ?? 0);
+        if ($productId <= 0) {
+            return response()->json(['success' => false, 'message' => 'Invalid product_id'], 422);
+        }
 
-                return [
-                    'rack_id'     => (int) ($sr->rack_id ?? 0),
-                    'rack_code'   => (string) ($sr->rack->code ?? '-'),
-                    'rack_name'   => (string) ($sr->rack->name ?? '-'),
+        $activeBranch = session('active_branch');
+        $isAllBranchMode = ($activeBranch === 'all');
 
-                    'qty_total'   => $total,
-                    'qty_good'    => $good,
-                    'qty_defect'  => $defect,
-                    'qty_damaged' => $damaged,
-                ];
-            })
-            ->values();
+        // branch enforcement:
+        // - kalau all branch mode, branch_id wajib valid
+        // - kalau branch mode spesifik, pakai active_branch saja (ignore branch_id dari client)
+        if (!$isAllBranchMode && is_numeric($activeBranch)) {
+            $branchId = (int) $activeBranch;
+        }
+        if ($branchId <= 0) {
+            return response()->json(['success' => false, 'message' => 'Invalid branch_id'], 422);
+        }
+
+        // Warehouses list dari stock_racks yg punya qty > 0 untuk product ini
+        $warehouseRows = DB::table('stock_racks as sr')
+            ->leftJoin('warehouses as w', 'w.id', '=', 'sr.warehouse_id')
+            ->where('sr.product_id', $productId)
+            ->where('sr.branch_id', $branchId)
+            ->selectRaw('sr.warehouse_id, MAX(w.warehouse_name) as warehouse_name')
+            ->groupBy('sr.warehouse_id')
+            ->orderByRaw('MAX(w.warehouse_name) asc')
+            ->get();
+
+        $warehouses = $warehouseRows->map(function ($r) {
+            return [
+                'value' => (string) ($r->warehouse_id ?? ''),
+                'label' => (string) ($r->warehouse_name ?? ('Warehouse #' . ($r->warehouse_id ?? 0))),
+            ];
+        })->values();
+
+        // Racks list dari stock_racks untuk product ini
+        $rackRows = DB::table('stock_racks as sr')
+            ->leftJoin('racks as r', 'r.id', '=', 'sr.rack_id')
+            ->where('sr.product_id', $productId)
+            ->where('sr.branch_id', $branchId)
+            ->selectRaw('sr.rack_id, MAX(r.name) as rack_name, MAX(r.code) as rack_code')
+            ->groupBy('sr.rack_id')
+            ->orderByRaw('MAX(r.code) asc')
+            ->get();
+
+        $racks = $rackRows->map(function ($r) {
+            $label = trim((string) ($r->rack_code ?? '')) !== ''
+                ? (($r->rack_code ?? '-') . ' - ' . ($r->rack_name ?? '-'))
+                : (string) ($r->rack_name ?? '-');
+
+            return [
+                'value' => (string) ($r->rack_id ?? ''),
+                'label' => $label,
+            ];
+        })->values();
 
         return response()->json([
             'success' => true,
-            'data' => $rows,
+            'warehouses' => $warehouses,
+            'racks' => $racks,
         ]);
     }
 
     /**
-     * ✅ Quality Details:
-     * type: defect | damaged
-     * productId: product id
-     * mode:
-     * - kalau session active_branch = all => tampilkan semua branch
-     * - kalau bukan all => otomatis terfilter branch itu (by HasBranchScope biasanya),
-     *   tapi di sini kita explicit filter juga supaya jelas.
+     * Data untuk tabel Stock Detail modal.
+     * Filter:
+     * - warehouse_id (optional)
+     * - rack_id (optional)
+     * - condition: good|defect|damaged (optional)
      *
-     * ✅ FIX penting:
-     * - modal harus exclude data yang sudah moved_out_at (biar match dengan badge qty di StocksDataTable)
-     * - damaged tetap hanya pending + exclude moved_out_at
+     * Output: rows list (warehouse_name, rack_name, condition_label, qty)
+     */
+    public function detailData(Request $request)
+    {
+        $productId = (int) $request->get('product_id');
+        $branchId  = (int) $request->get('branch_id');
+
+        $warehouseId = $request->filled('warehouse_id') ? (int) $request->get('warehouse_id') : null;
+        $rackId      = $request->filled('rack_id') ? (int) $request->get('rack_id') : null;
+        $condition   = $request->filled('condition') ? strtolower((string) $request->get('condition')) : null;
+
+        if ($productId <= 0) {
+            return response()->json(['success' => false, 'message' => 'Invalid product_id'], 422);
+        }
+
+        $activeBranch = session('active_branch');
+        $isAllBranchMode = ($activeBranch === 'all');
+
+        if (!$isAllBranchMode && is_numeric($activeBranch)) {
+            $branchId = (int) $activeBranch;
+        }
+        if ($branchId <= 0) {
+            return response()->json(['success' => false, 'message' => 'Invalid branch_id'], 422);
+        }
+
+        if (!empty($condition) && !in_array($condition, ['good', 'defect', 'damaged'], true)) {
+            return response()->json(['success' => false, 'message' => 'Invalid condition'], 422);
+        }
+
+        /**
+         * Kita pakai stock_racks sebagai sumber “fisik gudang/rak”.
+         * Asumsi kolom stock_racks:
+         * - qty_good, qty_defect, qty_damaged
+         *
+         * Kalau di project kamu namanya beda, bilang ya, nanti aku sesuaikan.
+         */
+        $q = DB::table('stock_racks as sr')
+            ->leftJoin('warehouses as w', 'w.id', '=', 'sr.warehouse_id')
+            ->leftJoin('racks as r', 'r.id', '=', 'sr.rack_id')
+            ->where('sr.product_id', $productId)
+            ->where('sr.branch_id', $branchId);
+
+        if (!empty($warehouseId)) $q->where('sr.warehouse_id', $warehouseId);
+        if (!empty($rackId)) $q->where('sr.rack_id', $rackId);
+
+        // build rows by condition
+        $rows = [];
+
+        $base = $q->select([
+            'sr.warehouse_id',
+            DB::raw('COALESCE(w.warehouse_name, "-") as warehouse_name'),
+            'sr.rack_id',
+            DB::raw('COALESCE(r.code, "") as rack_code'),
+            DB::raw('COALESCE(r.name, "-") as rack_name'),
+            DB::raw('COALESCE(sr.qty_good, 0) as qty_good'),
+            DB::raw('COALESCE(sr.qty_defect, 0) as qty_defect'),
+            DB::raw('COALESCE(sr.qty_damaged, 0) as qty_damaged'),
+        ])->get();
+
+        foreach ($base as $r) {
+            $rackLabel = trim((string) ($r->rack_code ?? '')) !== ''
+                ? (($r->rack_code ?? '-') . ' - ' . ($r->rack_name ?? '-'))
+                : (string) ($r->rack_name ?? '-');
+
+            $map = [
+                'good' => (int) ($r->qty_good ?? 0),
+                'defect' => (int) ($r->qty_defect ?? 0),
+                'damaged' => (int) ($r->qty_damaged ?? 0),
+            ];
+
+            foreach ($map as $cond => $qty) {
+                if (!empty($condition) && $cond !== $condition) continue;
+                if ($qty <= 0) continue;
+
+                $rows[] = [
+                    'warehouse_name' => (string) ($r->warehouse_name ?? '-'),
+                    'rack_name' => $rackLabel,
+                    'condition' => $cond,
+                    'condition_label' => strtoupper($cond),
+                    'qty' => $qty,
+                ];
+            }
+        }
+
+        // sort biar enak dibaca
+        usort($rows, function ($a, $b) {
+            $w = strcmp($a['warehouse_name'], $b['warehouse_name']);
+            if ($w !== 0) return $w;
+            $r = strcmp($a['rack_name'], $b['rack_name']);
+            if ($r !== 0) return $r;
+            return strcmp($a['condition'], $b['condition']);
+        });
+
+        return response()->json([
+            'success' => true,
+            'data' => array_values($rows),
+        ]);
+    }
+
+    /**
+     * Options untuk Quality modal:
+     * - warehouses, racks yang relevan untuk product+branch
+     */
+    public function qualityOptions(Request $request)
+    {
+        $type = strtolower((string) $request->get('type'));
+        $productId = (int) $request->get('product_id');
+        $branchId = (int) $request->get('branch_id');
+
+        if (!in_array($type, ['defect', 'damaged'], true)) {
+            return response()->json(['success' => false, 'message' => 'Invalid type'], 422);
+        }
+        if ($productId <= 0) {
+            return response()->json(['success' => false, 'message' => 'Invalid product_id'], 422);
+        }
+
+        $activeBranch = session('active_branch');
+        $isAllBranchMode = ($activeBranch === 'all');
+
+        if (!$isAllBranchMode && is_numeric($activeBranch)) {
+            $branchId = (int) $activeBranch;
+        }
+        if ($branchId <= 0) {
+            return response()->json(['success' => false, 'message' => 'Invalid branch_id'], 422);
+        }
+
+        // warehouses & racks dari item quality table
+        $table = ($type === 'defect') ? 'product_defect_items' : 'product_damaged_items';
+
+        $whRows = DB::table($table . ' as i')
+            ->leftJoin('warehouses as w', 'w.id', '=', 'i.warehouse_id')
+            ->where('i.product_id', $productId)
+            ->where('i.branch_id', $branchId)
+            ->whereNull('i.moved_out_at')
+            ->when($type === 'damaged', function ($q) {
+                $q->where('i.resolution_status', 'pending');
+            })
+            ->selectRaw('i.warehouse_id, MAX(w.warehouse_name) as warehouse_name')
+            ->groupBy('i.warehouse_id')
+            ->orderByRaw('MAX(w.warehouse_name) asc')
+            ->get();
+
+        $warehouses = $whRows->map(function ($r) {
+            return [
+                'value' => (string) ($r->warehouse_id ?? ''),
+                'label' => (string) ($r->warehouse_name ?? ('Warehouse #' . ($r->warehouse_id ?? 0))),
+            ];
+        })->values();
+
+        $rackRows = DB::table($table . ' as i')
+            ->leftJoin('racks as r', 'r.id', '=', 'i.rack_id')
+            ->where('i.product_id', $productId)
+            ->where('i.branch_id', $branchId)
+            ->whereNull('i.moved_out_at')
+            ->when($type === 'damaged', function ($q) {
+                $q->where('i.resolution_status', 'pending');
+            })
+            ->selectRaw('i.rack_id, MAX(r.code) as rack_code, MAX(r.name) as rack_name')
+            ->groupBy('i.rack_id')
+            ->orderByRaw('MAX(r.code) asc')
+            ->get();
+
+        $racks = $rackRows->map(function ($r) {
+            $label = trim((string) ($r->rack_code ?? '')) !== ''
+                ? (($r->rack_code ?? '-') . ' - ' . ($r->rack_name ?? '-'))
+                : (string) ($r->rack_name ?? '-');
+
+            return [
+                'value' => (string) ($r->rack_id ?? ''),
+                'label' => $label,
+            ];
+        })->values();
+
+        return response()->json([
+            'success' => true,
+            'warehouses' => $warehouses,
+            'racks' => $racks,
+        ]);
+    }
+
+    /**
+     * Quality Details (defect/damaged)
+     * Support filter: branch_id, warehouse_id, rack_id
      */
     public function qualityDetails($type, $productId, Request $request)
     {
@@ -88,18 +305,33 @@ class StockController extends Controller
         $activeBranch = session('active_branch');
         $isAllBranchMode = ($activeBranch === 'all');
 
-        // optional filter from UI (kalau nanti kamu mau filter gudang)
+        // branch source:
+        // - all branch mode: branch_id dari querystring wajib dipakai supaya sesuai row datatable
+        // - branch mode spesifik: pakai active_branch
+        $branchId = $request->filled('branch_id') ? (int) $request->branch_id : 0;
+        if (!$isAllBranchMode && is_numeric($activeBranch)) {
+            $branchId = (int) $activeBranch;
+        }
+        if ($branchId <= 0) {
+            return response()->json(['success' => false, 'message' => 'Invalid branch_id'], 422);
+        }
+
         $warehouseId = $request->filled('warehouse_id') ? (int) $request->warehouse_id : null;
+        $rackId = $request->filled('rack_id') ? (int) $request->rack_id : null;
 
         if ($type === 'defect') {
             $q = DB::table('product_defect_items as i')
                 ->leftJoin('branches as b', 'b.id', '=', 'i.branch_id')
                 ->leftJoin('warehouses as w', 'w.id', '=', 'i.warehouse_id')
+                ->leftJoin('racks as r', 'r.id', '=', 'i.rack_id')
                 ->where('i.product_id', $productId)
+                ->where('i.branch_id', $branchId)
+                ->whereNull('i.moved_out_at')
                 ->select([
                     'i.id',
                     'i.branch_id',
                     'i.warehouse_id',
+                    'i.rack_id',
                     'i.quantity',
                     'i.defect_type',
                     'i.description',
@@ -109,21 +341,15 @@ class StockController extends Controller
                     'i.created_at',
                     DB::raw('COALESCE(b.name, "-") as branch_name'),
                     DB::raw('COALESCE(w.warehouse_name, "-") as warehouse_name'),
+                    DB::raw("CASE
+                        WHEN COALESCE(r.code,'') <> '' THEN CONCAT(r.code,' - ',COALESCE(r.name,'-'))
+                        ELSE COALESCE(r.name,'-')
+                    END as rack_name"),
                 ])
                 ->orderByDesc('i.id');
 
-            // ✅ exclude moved out (kalau kolomnya ada)
-            if (Schema::hasColumn('product_defect_items', 'moved_out_at')) {
-                $q->whereNull('i.moved_out_at');
-            }
-
-            if (!$isAllBranchMode && is_numeric($activeBranch)) {
-                $q->where('i.branch_id', (int) $activeBranch);
-            }
-
-            if (!empty($warehouseId)) {
-                $q->where('i.warehouse_id', $warehouseId);
-            }
+            if (!empty($warehouseId)) $q->where('i.warehouse_id', $warehouseId);
+            if (!empty($rackId)) $q->where('i.rack_id', $rackId);
 
             $rows = $q->get()->map(function ($r) {
                 $r->photo_url = !empty($r->photo_path) ? asset('storage/' . ltrim($r->photo_path, '/')) : null;
@@ -141,12 +367,16 @@ class StockController extends Controller
         $q = DB::table('product_damaged_items as i')
             ->leftJoin('branches as b', 'b.id', '=', 'i.branch_id')
             ->leftJoin('warehouses as w', 'w.id', '=', 'i.warehouse_id')
+            ->leftJoin('racks as r', 'r.id', '=', 'i.rack_id')
             ->where('i.product_id', $productId)
+            ->where('i.branch_id', $branchId)
             ->where('i.resolution_status', 'pending')
+            ->whereNull('i.moved_out_at')
             ->select([
                 'i.id',
                 'i.branch_id',
                 'i.warehouse_id',
+                'i.rack_id',
                 'i.quantity',
                 'i.reason',
                 'i.photo_path',
@@ -157,21 +387,15 @@ class StockController extends Controller
                 'i.created_at',
                 DB::raw('COALESCE(b.name, "-") as branch_name'),
                 DB::raw('COALESCE(w.warehouse_name, "-") as warehouse_name'),
+                DB::raw("CASE
+                    WHEN COALESCE(r.code,'') <> '' THEN CONCAT(r.code,' - ',COALESCE(r.name,'-'))
+                    ELSE COALESCE(r.name,'-')
+                END as rack_name"),
             ])
             ->orderByDesc('i.id');
 
-        // ✅ exclude moved out (kalau kolomnya ada)
-        if (Schema::hasColumn('product_damaged_items', 'moved_out_at')) {
-            $q->whereNull('i.moved_out_at');
-        }
-
-        if (!$isAllBranchMode && is_numeric($activeBranch)) {
-            $q->where('i.branch_id', (int) $activeBranch);
-        }
-
-        if (!empty($warehouseId)) {
-            $q->where('i.warehouse_id', $warehouseId);
-        }
+        if (!empty($warehouseId)) $q->where('i.warehouse_id', $warehouseId);
+        if (!empty($rackId)) $q->where('i.rack_id', $rackId);
 
         $rows = $q->get()->map(function ($r) {
             $r->photo_url = !empty($r->photo_path) ? asset('storage/' . ltrim($r->photo_path, '/')) : null;

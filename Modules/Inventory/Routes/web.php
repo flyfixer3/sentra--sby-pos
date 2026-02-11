@@ -13,11 +13,33 @@ Route::middleware(['auth'])
         Route::get('/stocks', [StockController::class, 'index'])
             ->name('stocks.index');
 
-        Route::get('/stocks/rack-details/{productId}/{branchId}/{warehouseId}', [StockController::class, 'rackDetails'])
-            ->name('stocks.rack-details');
+        /**
+         * ✅ NEW: Stock Detail Modal (options + data)
+         */
+        Route::get('/stocks/detail/options', [StockController::class, 'detailOptions'])
+            ->name('stocks.detail.options');
 
+        Route::get('/stocks/detail/data', [StockController::class, 'detailData'])
+            ->name('stocks.detail.data');
+
+        /**
+         * ✅ NEW: Quality Modal Options (warehouse/rack filter)
+         */
+        Route::get('/stocks/quality/options', [StockController::class, 'qualityOptions'])
+            ->name('stocks.quality.options');
+
+        /**
+         * ✅ Existing: Quality Details (defect/damaged)
+         */
         Route::get('/stocks/quality-details/{type}/{productId}', [StockController::class, 'qualityDetails'])
             ->name('stocks.quality-details');
+
+        /**
+         * (Optional) Existing old rack detail endpoint
+         * Kalau UI baru sudah pakai Stock Detail modal, ini bisa kamu hapus nanti.
+         */
+        Route::get('/stocks/rack-details/{productId}/{branchId}/{warehouseId}', [StockController::class, 'rackDetails'])
+            ->name('stocks.rack-details');
 
         // ✅ DELETE endpoint (jual defect/damaged)
         Route::delete('/stocks/defect/{id}', [StockQualityController::class, 'deleteDefect'])
@@ -26,13 +48,13 @@ Route::middleware(['auth'])
         Route::delete('/stocks/damaged/{id}', [StockQualityController::class, 'deleteDamaged'])
             ->name('stocks.damaged.delete');
 
-
         Route::get('/racks/generate-code/{warehouseId}', [RackController::class, 'generateCode'])
-        ->name('racks.generate-code');
+            ->name('racks.generate-code');
+
         Route::get('/racks', [RackController::class, 'index'])->name('racks.index');
         Route::get('/racks/create', [RackController::class, 'create'])->name('racks.create');
         Route::post('/racks', [RackController::class, 'store'])->name('racks.store');
         Route::get('/racks/{rack}/edit', [RackController::class, 'edit'])->name('racks.edit');
         Route::put('/racks/{rack}', [RackController::class, 'update'])->name('racks.update');
         Route::delete('/racks/{rack}', [RackController::class, 'destroy'])->name('racks.destroy');
-});
+    });
