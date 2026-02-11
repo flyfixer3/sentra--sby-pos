@@ -23,7 +23,7 @@
             </div>
 
             <div>
-                <h6>Total Quantity: {{ $global_qty }} Unit</h6>
+                <h6>Total Quantity: {{ (int)($global_qty ?? 0) }} Unit</h6>
             </div>
 
             <table class="table table-bordered">
@@ -41,25 +41,36 @@
                 </thead>
 
                 <tbody>
-                    @if($cart_items->isNotEmpty())
+                    @if(isset($cart_items) && $cart_items->isNotEmpty())
                         @foreach($cart_items as $cart_item)
+                            @php
+                                $scope = (string)($cart_item->options->stock_scope ?? 'warehouse'); // warehouse | branch
+                                $whName = (string)($cart_item->options->warehouse_name ?? '');
+                                $scopeNote = $scope === 'branch'
+                                    ? 'Stock shown is total from ALL warehouses (active branch).'
+                                    : ('Stock shown is from warehouse' . ($whName ? (': ' . $whName) : '.') );
+                            @endphp
+
                             <tr>
                                 <td class="align-middle">
                                     {{ $cart_item->name }} <br>
                                     <span class="badge badge-success">
-                                        {{ $cart_item->options->code }}
+                                        {{ $cart_item->options->code ?? '-' }}
                                     </span>
                                     @include('livewire.includes.product-cart-modal-sale')
                                 </td>
 
                                 <td class="align-middle">
-                                    {{ format_currency($cart_item->options->unit_price) }}
+                                    {{ format_currency((float)($cart_item->options->unit_price ?? 0)) }}
                                 </td>
 
                                 <td class="align-middle text-center">
                                     <span class="badge badge-info">
-                                        {{ $cart_item->options->stock . ' ' . $cart_item->options->unit }}
+                                        {{ (int)($cart_item->options->stock ?? 0) . ' ' . (string)($cart_item->options->unit ?? '') }}
                                     </span>
+                                    <div class="mt-1">
+                                        <small class="text-muted">{{ $scopeNote }}</small>
+                                    </div>
                                 </td>
 
                                 <td class="align-middle">
@@ -67,15 +78,15 @@
                                 </td>
 
                                 <td class="align-middle">
-                                    {{ format_currency($cart_item->options->product_discount) }}
+                                    {{ format_currency((float)($cart_item->options->product_discount ?? 0)) }}
                                 </td>
 
                                 <td class="align-middle">
-                                    {{ format_currency($cart_item->options->product_tax) }}
+                                    {{ format_currency((float)($cart_item->options->product_tax ?? 0)) }}
                                 </td>
 
                                 <td class="align-middle">
-                                    {{ format_currency($cart_item->options->sub_total) }}
+                                    {{ format_currency((float)($cart_item->options->sub_total ?? 0)) }}
                                 </td>
 
                                 <td class="align-middle text-center">
@@ -106,31 +117,31 @@
                     @if($cart_instance == 'sale')
                         <tr>
                             <th>Platform Fee</th>
-                            <td>(+) {{ format_currency($platform_fee) }}</td>
+                            <td>(+) {{ format_currency((float)($platform_fee ?? 0)) }}</td>
                         </tr>
                     @endif
 
                     <tr>
-                        <th>Order Tax ({{ $global_tax }}%)</th>
+                        <th>Order Tax ({{ (float)($global_tax ?? 0) }}%)</th>
                         <td>(+) {{ format_currency(Cart::instance($cart_instance)->tax()) }}</td>
                     </tr>
 
                     <tr>
-                        <th>Discount ({{ $global_discount }}%)</th>
+                        <th>Discount ({{ (float)($global_discount ?? 0) }}%)</th>
                         <td>(-) {{ format_currency(Cart::instance($cart_instance)->discount()) }}</td>
                     </tr>
 
                     <tr>
                         <th>Shipping</th>
-                        <td>(+) {{ format_currency($shipping) }}</td>
+                        <td>(+) {{ format_currency((float)($shipping ?? 0)) }}</td>
                     </tr>
 
                     <tr>
                         <th>Grand Total</th>
                         @php
                             $total_with_shipping = (float) Cart::instance($cart_instance)->total()
-                                + (float) $shipping
-                                + (float) ($cart_instance == 'sale' ? $platform_fee : 0);
+                                + (float) ($shipping ?? 0)
+                                + (float) ($cart_instance == 'sale' ? ($platform_fee ?? 0) : 0);
                         @endphp
                         <th>(=) {{ format_currency($total_with_shipping) }}</th>
                     </tr>
@@ -139,9 +150,8 @@
         </div>
     </div>
 
-    {{-- Yang dikirim ke backend (hindari field dobel) --}}
     <input type="hidden" name="total_amount" value="{{ $total_with_shipping }}">
-    <input type="hidden" name="total_quantity" value="{{ $global_qty }}">
+    <input type="hidden" name="total_quantity" value="{{ (int)($global_qty ?? 0) }}">
 
     <div class="form-row">
         <div class="{{ $cart_instance == 'sale' ? 'col-lg-3' : 'col-lg-4' }}">
@@ -154,7 +164,7 @@
                     name="tax_percentage"
                     min="0"
                     max="100"
-                    value="{{ $global_tax }}"
+                    value="{{ (float)($global_tax ?? 0) }}"
                     required
                 >
             </div>
@@ -170,7 +180,7 @@
                     name="discount_percentage"
                     min="0"
                     max="100"
-                    value="{{ $global_discount }}"
+                    value="{{ (float)($global_discount ?? 0) }}"
                     required
                 >
             </div>
@@ -186,7 +196,7 @@
                         class="form-control"
                         name="fee_amount"
                         min="0"
-                        value="{{ $platform_fee }}"
+                        value="{{ (float)($platform_fee ?? 0) }}"
                         required
                     >
                 </div>
@@ -202,7 +212,7 @@
                     class="form-control"
                     name="shipping_amount"
                     min="0"
-                    value="{{ $shipping }}"
+                    value="{{ (float)($shipping ?? 0) }}"
                     required
                     step="0.01"
                 >

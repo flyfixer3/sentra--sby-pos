@@ -57,14 +57,14 @@ class ProductCartSale extends Component
                 $this->check_quantity[$cart_item->id] = (int) ($cart_item->options->stock ?? 0);
                 $this->quantity[$cart_item->id] = (int) $cart_item->qty;
                 $this->discount_type[$cart_item->id] = (string) ($cart_item->options->product_discount_type ?? 'fixed');
-                $this->item_cost_konsyinasi[$cart_item->id] = (int) ($cart_item->options->product_cost ?? 0);
+                $this->item_cost_konsyinasi[$cart_item->id] = (float) ($cart_item->options->product_cost ?? 0);
 
                 if (($cart_item->options->product_discount_type ?? 'fixed') === 'fixed') {
                     $this->item_discount[$cart_item->id] = (float) ($cart_item->options->product_discount ?? 0);
                 } else {
-                    $price = (float) ($cart_item->price ?? 0);
+                    $priceBase = ((float)$cart_item->price > 0) ? (float)$cart_item->price : 1;
                     $disc = (float) ($cart_item->options->product_discount ?? 0);
-                    $this->item_discount[$cart_item->id] = $price > 0 ? round(100 * ($disc / $price)) : 0;
+                    $this->item_discount[$cart_item->id] = round(100 * ($disc / $priceBase));
                 }
             }
         } else {
@@ -80,10 +80,20 @@ class ProductCartSale extends Component
             $this->item_discount = [];
             $this->item_cost_konsyinasi = [];
         }
+
+        // ✅ FIX UTAMA: kalau cart sudah terisi dari controller (create-from-delivery),
+        // state qty wajib disync dari cart biar tidak "muncul sesaat lalu hilang".
+        $this->syncQuantityDefaults();
     }
 
     public function render()
     {
+        // ✅ setiap render, pastikan qty state tetap kebaca
+        $this->syncQuantityDefaults();
+
+        // keep global_qty konsisten
+        $this->global_qty = Cart::instance($this->cart_instance)->count();
+
         $cart_items = Cart::instance($this->cart_instance)->content();
 
         return view('livewire.product-cart-sale', [
@@ -172,18 +182,49 @@ class ProductCartSale extends Component
     {
         $product_id = (int) $product_id;
 
-        $stockTotal = $this->getTotalStockByBranch($product_id);
-        $this->check_quantity[$product_id] = $stockTotal;
+        // ✅ fallback kalau state qty kosong (penyebab utama blank)
+        $qty = (int) ($this->quantity[$product_id] ?? 0);
+        if ($qty <= 0) {
+            $row = Cart::instance($this->cart_instance)->get($row_id);
+            $qty = $row ? (int) $row->qty : 1;
+            $this->quantity[$product_id] = $qty;
+        }
+
+        // ambil cart row terbaru
+        $cart_item = Cart::instance($this->cart_instance)->get($row_id);
+
+        // ✅ preserve warehouse context dari cart options (kalau create from delivery)
+        $warehouseId   = (int) ($cart_item->options->warehouse_id ?? 0);
+        $warehouseName = (string) ($cart_item->options->warehouse_name ?? '');
+        $stockScope    = (string) ($cart_item->options->stock_scope ?? '');
+
+        // hitung stock sesuai mode:
+        // - kalau ada warehouse_id -> warehouse stock
+        // - kalau tidak -> branch total
+        if ($warehouseId > 0) {
+            $stock = (int) Mutation::where('product_id', $product_id)
+                ->where('warehouse_id', $warehouseId)
+                ->latest()
+                ->value('stock_last') ?? 0;
+
+            $stockScope = $stockScope ?: 'warehouse';
+        } else {
+            $stock = $this->getTotalStockByBranch($product_id);
+            $stockScope = $stockScope ?: 'branch';
+        }
+
+        $this->check_quantity[$product_id] = (int) $stock;
 
         if ($this->cart_instance === 'sale' || $this->cart_instance === 'purchase_return') {
-            if ((int) $stockTotal < (int) ($this->quantity[$product_id] ?? 0)) {
-                session()->flash('message', 'The requested quantity is not available in stock (Branch Total Stock).');
+            if ((int) $stock < (int) $qty) {
+                session()->flash('message', 'The requested quantity is not available in stock.');
                 return;
             }
         }
 
-        Cart::instance($this->cart_instance)->update($row_id, (int) $this->quantity[$product_id]);
+        Cart::instance($this->cart_instance)->update($row_id, $qty);
 
+        // refresh row after update
         $cart_item = Cart::instance($this->cart_instance)->get($row_id);
         $this->global_qty = Cart::instance($this->cart_instance)->count();
 
@@ -191,9 +232,14 @@ class ProductCartSale extends Component
             'options' => [
                 'sub_total'             => $cart_item->price * $cart_item->qty,
                 'code'                  => $cart_item->options->code,
-                'stock'                 => (int) $stockTotal,
+                'stock'                 => (int) $stock,
+                'stock_scope'           => $stockScope,
                 'unit'                  => $cart_item->options->unit,
-                'warehouse_id'          => null,
+
+                // ✅ jangan di-null lagi, preserve
+                'warehouse_id'          => $warehouseId ?: null,
+                'warehouse_name'        => $warehouseName,
+
                 'product_tax'           => $cart_item->options->product_tax,
                 'product_cost'          => $cart_item->options->product_cost,
                 'unit_price'            => $cart_item->options->unit_price,
@@ -201,6 +247,9 @@ class ProductCartSale extends Component
                 'product_discount_type' => $cart_item->options->product_discount_type,
             ]
         ]);
+
+        // ✅ keep state konsisten
+        $this->syncQuantityDefaults();
     }
 
     private function calculate($product): array
@@ -219,4 +268,43 @@ class ProductCartSale extends Component
             'unit_price' => $unit_price,
         ];
     }
+
+    private function syncQuantityDefaults(): void
+    {
+        $cart_items = Cart::instance($this->cart_instance)->content();
+
+        foreach ($cart_items as $row) {
+            $pid = (int) $row->id;
+            if ($pid <= 0) continue;
+
+            // ✅ inti fix: kalau state qty belum ada, isi dari cart qty
+            if (!isset($this->quantity[$pid]) || $this->quantity[$pid] === null || $this->quantity[$pid] === '') {
+                $this->quantity[$pid] = (int) $row->qty;
+            }
+
+            // safety: stock state
+            if (!isset($this->check_quantity[$pid])) {
+                $this->check_quantity[$pid] = (int) ($row->options->stock ?? 0);
+            }
+
+            // safety: discount type
+            if (!isset($this->discount_type[$pid]) || !$this->discount_type[$pid]) {
+                $this->discount_type[$pid] = (string) ($row->options->product_discount_type ?? 'fixed');
+            }
+
+            if (!isset($this->item_discount[$pid])) {
+                if (($row->options->product_discount_type ?? 'fixed') === 'fixed') {
+                    $this->item_discount[$pid] = (float) ($row->options->product_discount ?? 0);
+                } else {
+                    $priceBase = ((float)$row->price > 0) ? (float)$row->price : 1;
+                    $this->item_discount[$pid] = round(100 * (((float)($row->options->product_discount ?? 0)) / $priceBase));
+                }
+            }
+
+            if (!isset($this->item_cost_konsyinasi[$pid])) {
+                $this->item_cost_konsyinasi[$pid] = (float) ($row->options->product_cost ?? 0);
+            }
+        }
+    }
+
 }

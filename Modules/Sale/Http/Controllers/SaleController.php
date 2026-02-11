@@ -36,129 +36,137 @@ class SaleController extends Controller
         return $dataTable->render('sale::index');
     }
 
-    public function create() {
+   public function create()
+    {
         abort_if(Gate::denies('create_sales'), 403);
 
-        $branchId = BranchContext::id();
-
-        // NOTE: warehouses masih boleh di-load kalau view masih butuh,
-        // tapi setelah flow baru invoice tidak pakai warehouse, view create bisa dihapus dropdownnya.
-        $warehouses = Warehouse::query()
-            ->where('branch_id', $branchId)
-            ->orderBy('warehouse_name')
-            ->get();
-
-        $customers = Customer::query()
-            ->where(function ($q) use ($branchId) {
-                $q->whereNull('branch_id')
-                    ->orWhere('branch_id', $branchId);
+        $customers  = \Modules\People\Entities\Customer::all();
+        $warehouses = \Modules\Product\Entities\Warehouse::query()
+            ->when(session('active_branch') && session('active_branch') !== 'all', function ($q) {
+                $q->where('branch_id', (int) session('active_branch'));
             })
-            ->orderBy('customer_name')
             ->get();
 
-        // ✅ detect create-from-delivery context
+        // ✅ detect create-from-delivery
         $saleDeliveryId = (int) request()->get('sale_delivery_id', 0);
+        $prefillCustomerId = 0;
 
-        // selalu reset cart biar bersih
+        // ✅ reset cart
         Cart::instance('sale')->destroy();
+        $cart = Cart::instance('sale');
 
-        // default
-        $prefillCustomerId = null;
+        // helper: stock by warehouse
+        $getStockLastByWarehouse = function (int $productId, int $warehouseId): int {
+            $mutation = \Modules\Mutation\Entities\Mutation::where('product_id', $productId)
+                ->where('warehouse_id', $warehouseId)
+                ->latest()
+                ->first();
 
-        // ======================================================
-        // ✅ If create sale from Sale Delivery => prefill cart
-        // ======================================================
+            return $mutation ? (int) $mutation->stock_last : 0;
+        };
+
+        // helper: stock all warehouses in active branch
+        $getStockLastAllWarehousesInActiveBranch = function (int $productId) use ($getStockLastByWarehouse): int {
+            $branchId = session('active_branch');
+
+            if (empty($branchId) || $branchId === 'all') {
+                // sesuai rule multi-branch kamu: kalau branch belum dipilih, jangan menipu
+                return 0;
+            }
+
+            $warehouseIds = \Modules\Product\Entities\Warehouse::where('branch_id', (int) $branchId)
+                ->pluck('id')
+                ->toArray();
+
+            if (empty($warehouseIds)) return 0;
+
+            $sum = 0;
+            foreach ($warehouseIds as $wid) {
+                $sum += $getStockLastByWarehouse($productId, (int) $wid);
+            }
+            return (int) $sum;
+        };
+
+        // ✅ if from delivery → prefill cart items + qty
         if ($saleDeliveryId > 0) {
-            $saleDelivery = SaleDelivery::withoutGlobalScopes()
-                ->with(['items', 'customer'])
-                ->where('id', $saleDeliveryId)
-                ->where('branch_id', $branchId)
-                ->firstOrFail();
+            $delivery = \Modules\SaleDelivery\Entities\SaleDelivery::with(['items'])->find($saleDeliveryId);
 
-            $st = strtolower(trim((string) ($saleDelivery->getRawOriginal('status') ?? $saleDelivery->status ?? 'pending')));
-            if ($st !== 'confirmed') {
-                throw new \RuntimeException('Sale Delivery must be CONFIRMED to create invoice.');
-            }
+            if ($delivery) {
+                $prefillCustomerId = (int) ($delivery->customer_id ?? 0);
 
-            if (!empty($saleDelivery->sale_id)) {
-                throw new \RuntimeException('Invoice already exists for this Sale Delivery.');
-            }
+                // warehouse context dari delivery (boleh null)
+                $deliveryWarehouseId = (int) ($delivery->warehouse_id ?? 0);
+                $deliveryWarehouseName = null;
 
-            $prefillCustomerId = (int) ($saleDelivery->customer_id ?? 0);
-            if ($prefillCustomerId <= 0) {
-                throw new \RuntimeException('Sale Delivery has no customer.');
-            }
-
-            // ✅ Ensure customer is allowed (global / active branch)
-            $customerAllowed = Customer::query()
-                ->where('id', $prefillCustomerId)
-                ->where(function ($q) use ($branchId) {
-                    $q->whereNull('branch_id')->orWhere('branch_id', $branchId);
-                })
-                ->exists();
-
-            if (!$customerAllowed) {
-                throw new \RuntimeException('Customer is not available in current branch context.');
-            }
-
-            // Prefill cart from delivery items
-            $cart = Cart::instance('sale');
-
-            $productIds = collect($saleDelivery->items)->pluck('product_id')->filter()->unique()->values();
-            $productsMap = Product::query()
-                ->whereIn('id', $productIds)
-                ->get()
-                ->keyBy('id');
-
-            foreach ($saleDelivery->items as $it) {
-                $pid = (int) ($it->product_id ?? 0);
-                $qty = (int) ($it->quantity ?? 0);
-                if ($pid <= 0 || $qty <= 0) continue;
-
-                $p = $productsMap->get($pid);
-
-                // ✅ price fallback
-                $price = $it->price !== null ? (int) $it->price : 0;
-                if ($price <= 0) {
-                    $price = (int) ($p?->product_price ?? 0);
+                if ($deliveryWarehouseId > 0) {
+                    $wh = \Modules\Product\Entities\Warehouse::find($deliveryWarehouseId);
+                    $deliveryWarehouseName = $wh?->warehouse_name;
                 }
 
-                $name = (string) ($p?->product_name ?? 'Product');
-                $code = (string) ($p?->product_code ?? '');
+                foreach (($delivery->items ?? []) as $it) {
+                    $productId = (int) ($it->product_id ?? 0);
+                    if ($productId <= 0) continue;
 
-                // opsional: cost untuk accounting
-                $cost = (int) ($p?->product_cost ?? 0);
+                    $qty = (int) ($it->quantity ?? 0);
+                    if ($qty <= 0) continue;
 
-                // NOTE: product-cart-sale livewire biasanya pakai options ini:
-                $unitPrice = $price; // sederhana, karena di delivery kita cuma punya price
-                $subTotal = $qty * $price;
+                    // ambil product untuk fallback unit/code dll
+                    $p = \Modules\Product\Entities\Product::find($productId);
 
-                $cart->add([
-                    'id'      => $pid,
-                    'name'    => $name,
-                    'qty'     => $qty,
-                    'price'   => $price,
-                    'weight'  => 1,
-                    'options' => [
-                        'product_discount' => 0,
-                        'product_discount_type' => 'fixed',
-                        'sub_total'   => $subTotal,
-                        'code'        => $code,
-                        'stock'       => 0,
+                    // unit price / price
+                    $unitPrice = (float) ($it->unit_price ?? ($p->product_price ?? 0));
+                    $priceShown = (float) ($it->price ?? $unitPrice); // price in cart = after discount if any (optional)
 
-                        // ✅ invoice flow baru: warehouse null
-                        'warehouse_id'=> null,
+                    // tax/discount (pakai yang ada di item, fallback 0)
+                    $productTax = (float) ($it->product_tax_amount ?? 0);
+                    $discAmt    = (float) ($it->product_discount_amount ?? 0);
+                    $discType   = (string) ($it->product_discount_type ?? 'fixed');
 
-                        'product_cost'=> $cost,
-                        'product_tax' => 0,
-                        'unit_price'  => $unitPrice,
-                    ]
-                ]);
+                    // ✅ stock scope
+                    if ($deliveryWarehouseId > 0) {
+                        $stock = $getStockLastByWarehouse($productId, $deliveryWarehouseId);
+                        $stockScope = 'warehouse';
+                    } else {
+                        $stock = $getStockLastAllWarehousesInActiveBranch($productId);
+                        $stockScope = 'branch';
+                    }
+
+                    $subTotal = (float) ($priceShown * $qty);
+
+                    $cart->add([
+                        'id'      => $productId,
+                        'name'    => (string) ($it->product_name ?? ($p->product_name ?? '-')),
+                        'qty'     => $qty,
+                        'price'   => $priceShown,
+                        'weight'  => 1,
+                        'options' => [
+                            'sub_total'             => $subTotal,
+                            'code'                  => (string) ($it->product_code ?? ($p->product_code ?? 'UNKNOWN')),
+                            'unit'                  => (string) ($it->product_unit ?? ($p->product_unit ?? '')),
+                            'stock'                 => (int) $stock,
+                            'stock_scope'           => $stockScope, // ✅ UI note
+
+                            // placement context (boleh 0 kalau delivery belum assign)
+                            'warehouse_id'          => $deliveryWarehouseId,
+                            'warehouse_name'        => $deliveryWarehouseName,
+
+                            'product_tax'           => $productTax,
+                            'unit_price'            => $unitPrice,
+                            'product_discount'      => $discAmt,
+                            'product_discount_type' => $discType,
+                            // optional kalau kamu pakai di modal/detail
+                            'product_cost'          => (float) ($it->product_cost ?? ($p->product_cost ?? 0)),
+                        ],
+                    ]);
+                }
             }
         }
 
-        // ✅ pass $prefillCustomerId to view (UI will select/lock)
-        return view('sale::create', compact('warehouses', 'customers', 'prefillCustomerId'));
+        return view('sale::create', [
+            'customers'         => $customers,
+            'warehouses'        => $warehouses,
+            'prefillCustomerId' => $prefillCustomerId,
+        ]);
     }
 
     public function store(StoreSaleRequest $request) {
