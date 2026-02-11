@@ -4,7 +4,6 @@
 
 @push('page_css')
     <style>
-        /* Sentra modern page shell */
         .sa-page { padding-bottom: 24px; }
         .sa-card { border: 1px solid rgba(0,0,0,.06); border-radius: 14px; box-shadow: 0 6px 18px rgba(0,0,0,.04); }
         .sa-card-header {
@@ -22,12 +21,8 @@
             border: 1px solid rgba(13,110,253,.18);
             white-space: nowrap;
         }
-        .sa-section {
-            padding: 16px;
-        }
-        .sa-section + .sa-section {
-            border-top: 1px dashed rgba(0,0,0,.10);
-        }
+        .sa-section { padding: 16px; }
+        .sa-section + .sa-section { border-top: 1px dashed rgba(0,0,0,.10); }
         .sa-section-title {
             font-weight:700;
             font-size:13px;
@@ -52,7 +47,6 @@
         .sa-actions .right { display:flex; gap:8px; align-items:center; }
         .sa-note { resize: vertical; min-height: 90px; }
         .sa-input-readonly { background: #f8f9fa; }
-        .sa-tight { margin-bottom: 10px; }
     </style>
 @endpush
 
@@ -67,14 +61,12 @@
 @section('content')
     <div class="container-fluid sa-page mb-4">
 
-        {{-- Search --}}
         <div class="row">
             <div class="col-12">
                 <livewire:search-product/>
             </div>
         </div>
 
-        {{-- Main --}}
         <div class="row mt-4">
             <div class="col-12">
                 <div class="card sa-card">
@@ -82,7 +74,7 @@
                         <div>
                             <h3 class="sa-title">Create Purchase</h3>
                             <p class="sa-subtitle">
-                                Create a Purchase record from Purchase Order for payment tracking and stock mutation (when Completed).
+                                This page pre-fills items from the selected Purchase Order. Stock is shown as total from all warehouses in the active branch.
                             </p>
                         </div>
 
@@ -97,19 +89,12 @@
 
                         <form id="purchase-form" action="{{ route('purchases.store') }}" method="POST">
                             @csrf
-                            {{-- ✅ WAJIB: kalau halaman ini dibuka dari Purchase Delivery (Create Purchase Invoice) --}}
-                            @if(isset($purchaseDelivery) && $purchaseDelivery)
-                                <input type="hidden" name="purchase_delivery_id" value="{{ $purchaseDelivery->id }}">
-                            @elseif(isset($purchase_delivery_id) && $purchase_delivery_id)
-                                <input type="hidden" name="purchase_delivery_id" value="{{ $purchase_delivery_id }}">
-                            @endif
 
-                            {{-- Section: Document Info --}}
                             <div class="sa-section">
                                 <div class="sa-section-title">
                                     <i class="bi bi-file-earmark-text"></i> Document Info
                                 </div>
-                                <p class="sa-help">Fill the purchase document details below. Some fields are auto-filled from the selected PO.</p>
+                                <p class="sa-help">Some fields are auto-selected from the PO. You can adjust payment and notes before saving.</p>
 
                                 <div class="row g-3">
                                     <div class="col-12 col-lg-2">
@@ -153,18 +138,16 @@
                                 </div>
                             </div>
 
-                            {{-- Section: Items (Livewire Cart) --}}
                             <div class="sa-section">
                                 <div class="sa-section-title">
                                     <i class="bi bi-cart3"></i> Items
                                 </div>
-                                <p class="sa-help">Items are taken from the cart instance <b>purchase</b>. Add items via search above.</p>
+                                <p class="sa-help">Items are taken from cart instance <b>purchase</b>. You can add/remove items using the search above.</p>
 
-                                {{-- ✅ IMPORTANT: do not pass $purchase (undefined) --}}
-                                <livewire:product-cart :cartInstance="'purchase'" :data="null"/>
+                                {{-- ✅ pakai komponen yang benar --}}
+                                <livewire:product-cart-purchase :cartInstance="'purchase'" :data="null" />
                             </div>
 
-                            {{-- Section: Payment & Status --}}
                             <div class="sa-section">
                                 <div class="sa-section-title">
                                     <i class="bi bi-credit-card"></i> Payment & Status
@@ -172,9 +155,13 @@
                                 <div class="row g-3">
                                     <div class="col-12 col-lg-4">
                                         <label class="sa-form-label">Status</label>
-                                            <input type="text" class="form-control sa-input-readonly" value="Completed" readonly>
-                                            <input type="hidden" name="status" value="Completed">
-                                            <small class="text-muted">This invoice is created from Delivery confirmation, so it is always <b>Completed</b>.</small>
+                                        <select class="form-control" name="status" required>
+                                            <option value="Pending">Pending</option>
+                                            <option value="Completed">Completed</option>
+                                        </select>
+                                        <small class="text-muted">
+                                            If you set <b>Completed</b>, the invoice can affect stock mutation (depending on your current rules).
+                                        </small>
                                     </div>
 
                                     <div class="col-12 col-lg-4">
@@ -208,10 +195,9 @@
 
                             <input type="hidden" name="purchase_order_id" value="{{ $purchaseOrder->id }}">
 
-                            {{-- Actions --}}
                             <div class="sa-actions">
                                 <div class="left">
-                                    Make sure branch & warehouse settings are correct before marking as <b>Completed</b>.
+                                    Current Stock uses active branch total (ALL warehouses). Placement will be assigned to your default warehouse on save.
                                 </div>
                                 <div class="right">
                                     <a href="{{ route('purchase-orders.show', $purchaseOrder->id) }}" class="btn btn-light">
@@ -231,6 +217,7 @@
 
     </div>
 @endsection
+
 @push('page_scripts')
 <script src="{{ asset('js/jquery-mask-money.js') }}"></script>
 <script>
@@ -247,21 +234,15 @@
         });
     }
 
-    // delegasi click biar gak mati walau Livewire rerender
     $(document).on('click', '#getTotalAmount', function () {
-        // ambil dari hidden input yg di-render livewire
         const raw = $('input[name="total_amount"]').val() || '0';
-
-        // pastikan numeric (hapus Rp, titik, koma, spasi)
         const num = parseInt(raw.toString().replace(/[^\d]/g, ''), 10) || 0;
-
         $('#paid_amount').maskMoney('mask', num);
     });
 
     $(function () {
         initPaidAmountMask();
 
-        // saat submit, convert ke angka murni
         $('#purchase-form').on('submit', function () {
             const paid_amount = $('#paid_amount').maskMoney('destroy')[0];
             const new_number = parseInt((paid_amount.value || '').toString().replace(/[^\d]/g, ''), 10) || 0;
@@ -269,7 +250,6 @@
         });
     });
 
-    // kalau halaman ini ada Livewire render ulang, mask perlu di-init ulang
     document.addEventListener("livewire:load", function () {
         initPaidAmountMask();
         if (window.Livewire) {
@@ -280,5 +260,3 @@
     });
 </script>
 @endpush
-
-

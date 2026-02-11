@@ -119,107 +119,73 @@ class PurchaseController extends Controller
 
         // =========================
         // PREPARE CART (DEFAULT QTY)
+        // ✅ SUMBER QTY: PurchaseDeliveryDetails.quantity (yang user input di PD)
         // =========================
         Cart::instance('purchase')->destroy();
         $cart = Cart::instance('purchase');
 
         $branchId = $this->getActiveBranchId();
 
-        // warehouse untuk kebutuhan stockLast (walaupun dropdown warehouse di UI dihapus)
+        // warehouse untuk kebutuhan stock display (kalau PD sudah pilih warehouse, pakai itu)
         $warehouseId = $this->resolveDefaultWarehouseId($branchId);
         if (!empty($purchaseDelivery->warehouse_id)) {
             $warehouseId = (int) $purchaseDelivery->warehouse_id;
         }
 
-        // ✅ Isi cart dari PO (total PO) = default qty di form invoice
+        // map PO detail by product_id (buat ambil price/diskon/tax)
+        $poDetailMap = [];
         if ($purchaseOrder) {
-
             foreach ($purchaseOrder->purchaseOrderDetails as $d) {
-                $qty = (int) ($d->quantity ?? 0);
-                if ($qty <= 0) continue;
-
-                $product = Product::select('id', 'product_code', 'product_name', 'product_unit')
-                    ->find((int) $d->product_id);
-
-                $productCode = $d->product_code ?: ($product?->product_code ?? 'UNKNOWN');
-                $productName = $d->product_name ?: ($product?->product_name ?? '-');
-
-                $price = (int) ($d->price ?? 0);
-
-                $stockLast = 0;
-                $mutation = Mutation::where('product_id', (int) $d->product_id)
-                    ->where('warehouse_id', (int) $warehouseId)
-                    ->latest()
-                    ->first();
-
-                if ($mutation) $stockLast = (int) $mutation->stock_last;
-
-                $cart->add([
-                    'id'     => (int) $d->product_id,
-                    'name'   => (string) $productName,
-                    'qty'    => $qty,                 // ✅ default qty dari PO
-                    'price'  => $price,
-                    'weight' => 1,
-                    'options' => [
-                        'sub_total'   => $qty * $price,
-                        'code'        => (string) $productCode,
-                        'unit_price'  => (int) ($d->unit_price ?? 0),
-                        'warehouse_id'=> (int) $warehouseId,
-                        'branch_id'   => (int) $branchId,
-                        'stock'       => $stockLast,
-                        'unit'        => $product?->product_unit,
-                        'product_discount' => (float) ($d->product_discount_amount ?? 0),
-                        'product_discount_type' => (string) ($d->product_discount_type ?? 'fixed'),
-                        'product_tax' => (float) ($d->product_tax_amount ?? 0),
-                    ]
-                ]);
+                $poDetailMap[(int) $d->product_id] = $d;
             }
+        }
 
-        } else {
-            // fallback: tidak ada PO => pakai PD confirmed qty
-            foreach ($purchaseDelivery->purchaseDeliveryDetails as $item) {
+        foreach ($purchaseDelivery->purchaseDeliveryDetails as $pdItem) {
 
-                $confirmedQty =
-                    (int) ($item->qty_received ?? 0) +
-                    (int) ($item->qty_defect ?? 0) +
-                    (int) ($item->qty_damaged ?? 0);
+            // ✅ qty default = yang diinput pada PD (expected)
+            $qty = (int) ($pdItem->quantity ?? 0);
+            if ($qty <= 0) continue;
 
-                if ($confirmedQty <= 0) continue;
+            $product = Product::select('id', 'product_code', 'product_name', 'product_unit')
+                ->find((int) $pdItem->product_id);
 
-                $product = Product::select('id', 'product_code', 'product_name', 'product_unit')
-                    ->find((int) $item->product_id);
+            $productCode = $pdItem->product_code ?: ($product?->product_code ?? 'UNKNOWN');
+            $productName = $pdItem->product_name ?: ($product?->product_name ?? '-');
 
-                $productCode = $item->product_code ?: ($product?->product_code ?? 'UNKNOWN');
-                $productName = $item->product_name ?: ($product?->product_name ?? '-');
+            // pricing dari PO kalau ada (biar invoice keisi harga/diskon/tax)
+            $poD = $poDetailMap[(int) $pdItem->product_id] ?? null;
 
-                $stockLast = 0;
-                $mutation = Mutation::where('product_id', (int) $item->product_id)
-                    ->where('warehouse_id', (int) $warehouseId)
-                    ->latest()
-                    ->first();
+            $price     = (int) ($poD->price ?? 0);
+            $unitPrice = (int) ($poD->unit_price ?? 0);
 
-                if ($mutation) $stockLast = (int) $mutation->stock_last;
+            // stock display: per warehouse PD (kalau ada)
+            $stockLast = 0;
+            $mutation = Mutation::where('product_id', (int) $pdItem->product_id)
+                ->where('warehouse_id', (int) $warehouseId)
+                ->latest()
+                ->first();
 
-                $cart->add([
-                    'id'     => (int) $item->product_id,
-                    'name'   => (string) $productName,
-                    'qty'    => $confirmedQty,       // ✅ default qty dari PD confirm
-                    'price'  => 0,
-                    'weight' => 1,
-                    'options' => [
-                        'sub_total'   => 0,
-                        'code'        => (string) $productCode,
-                        'unit_price'  => 0,
-                        'warehouse_id'=> (int) $warehouseId,
-                        'branch_id'   => (int) $branchId,
-                        'stock'       => $stockLast,
-                        'unit'        => $product?->product_unit,
-                        'product_discount' => 0,
-                        'product_discount_type' => 'fixed',
-                        'product_tax' => 0,
-                    ]
-                ]);
-            }
+            if ($mutation) $stockLast = (int) $mutation->stock_last;
+
+            $cart->add([
+                'id'     => (int) $pdItem->product_id,
+                'name'   => (string) $productName,
+                'qty'    => $qty,
+                'price'  => $price,
+                'weight' => 1,
+                'options' => [
+                    'sub_total'   => $qty * $price,
+                    'code'        => (string) $productCode,
+                    'unit_price'  => $unitPrice,
+                    'warehouse_id'=> (int) $warehouseId,
+                    'branch_id'   => (int) $branchId,
+                    'stock'       => $stockLast,
+                    'unit'        => $product?->product_unit,
+                    'product_discount'      => (float) ($poD->product_discount_amount ?? 0),
+                    'product_discount_type' => (string) ($poD->product_discount_type ?? 'fixed'),
+                    'product_tax'           => (float) ($poD->product_tax_amount ?? 0),
+                ]
+            ]);
         }
 
         // =========================
@@ -236,7 +202,6 @@ class PurchaseController extends Controller
             'activeBranchId'        => $branchId,
             'defaultWarehouseId'    => $warehouseId,
 
-            // ✅ supaya form header keisi otomatis
             'prefill' => [
                 'purchase_order_id'    => $purchaseOrder ? (int) $purchaseOrder->id : null,
                 'purchase_delivery_id' => (int) $purchaseDelivery->id,

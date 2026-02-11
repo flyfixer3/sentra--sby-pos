@@ -77,7 +77,7 @@ class ProductCartPurchase extends Component
                 $this->check_quantity[$cart_item->id] = (int)($cart_item->options->stock ?? 0);
                 $this->quantity[$cart_item->id] = (int)$cart_item->qty;
 
-                $this->warehouse_id[$cart_item->id] = (int)($cart_item->options->warehouse_id ?? $this->loading_warehouse->id);
+                $this->warehouse_id[$cart_item->id] = (int)($cart_item->options->warehouse_id ?? ($this->loading_warehouse->id ?? 0));
 
                 $this->discount_type[$cart_item->id] = $cart_item->options->product_discount_type ?? 'fixed';
                 $this->item_cost_konsyinasi[$cart_item->id] = $cart_item->options->product_cost ?? 0;
@@ -104,13 +104,72 @@ class ProductCartPurchase extends Component
             $this->item_cost_konsyinasi = [];
         }
 
-        // Pastikan cart yang sudah ada (kalau reload) ikut pakai warehouse current
+        // ✅ sync stock options (branch scope) + warehouse_id default
         $this->syncCartToCurrentWarehouse();
+
+        // ✅ FIX: prefill qty dari cart, walaupun $data=null
+        $this->syncQuantityDefaults();
+    }
+
+    /**
+     * ✅ sync default quantity[] dari cart qty
+     * - kalau state quantity kosong / null / '' maka isi dari cart->qty
+     * - tidak mengganggu kalau quantity sudah diisi user
+     */
+    private function syncQuantityDefaults(): void
+    {
+        $cart_items = Cart::instance($this->cart_instance)->content();
+
+        foreach ($cart_items as $row) {
+            $pid = (int) $row->id;
+            if ($pid <= 0) continue;
+
+            // ✅ ini inti prefill qty biar gak blank
+            if (!isset($this->quantity[$pid]) || $this->quantity[$pid] === null || $this->quantity[$pid] === '') {
+                $this->quantity[$pid] = (int) $row->qty;
+            }
+
+            // safety: kalau check_quantity belum ada, set dari options->stock
+            if (!isset($this->check_quantity[$pid])) {
+                $this->check_quantity[$pid] = (int) ($row->options->stock ?? 0);
+            }
+
+            // safety: warehouse_id state biar consistent
+            if (!isset($this->warehouse_id[$pid]) || !(int)$this->warehouse_id[$pid]) {
+                $this->warehouse_id[$pid] = (int) ($row->options->warehouse_id ?? ($this->loading_warehouse->id ?? 0));
+            }
+
+            // safety: discount type
+            if (!isset($this->discount_type[$pid]) || !$this->discount_type[$pid]) {
+                $this->discount_type[$pid] = (string) ($row->options->product_discount_type ?? 'fixed');
+            }
+
+            // safety: item_discount
+            if (!isset($this->item_discount[$pid])) {
+                if (($row->options->product_discount_type ?? 'fixed') === 'fixed') {
+                    $this->item_discount[$pid] = (float) ($row->options->product_discount ?? 0);
+                } else {
+                    $priceBase = ((float)$row->price > 0) ? (float)$row->price : 1;
+                    $this->item_discount[$pid] = round(100 * (((float)($row->options->product_discount ?? 0)) / $priceBase));
+                }
+            }
+
+            // safety: item_cost_konsyinasi
+            if (!isset($this->item_cost_konsyinasi[$pid])) {
+                $this->item_cost_konsyinasi[$pid] = (float) ($row->options->product_cost ?? 0);
+            }
+        }
     }
 
     public function render()
     {
+        // ✅ jaga-jaga: kalau state quantity kebuang setelah rerender
+        $this->syncQuantityDefaults();
+
         $cart_items = Cart::instance($this->cart_instance)->content();
+
+        // keep global_qty konsisten
+        $this->global_qty = Cart::instance($this->cart_instance)->count();
 
         return view('livewire.product-cart-purchase', [
             'cart_items' => $cart_items
@@ -148,23 +207,32 @@ class ProductCartPurchase extends Component
     private function syncCartToCurrentWarehouse(): void
     {
         $warehouseId = (int)($this->loading_warehouse ? $this->loading_warehouse->id : 0);
-        if ($warehouseId <= 0) return;
+
+        // fallback: kalau gak ada default warehouse sama sekali, stop (tetap aman)
+        if ($warehouseId <= 0) {
+            return;
+        }
 
         $cart = Cart::instance($this->cart_instance);
         $items = $cart->content();
 
         foreach ($items as $row) {
-            $productId = (int)$row->id;
+            $productId = (int) $row->id;
 
-            $stockLast = $this->getStockLastByWarehouse($productId, $warehouseId);
+            // ✅ Stock selalu dari ALL warehouses (active branch)
+            $stockLast = $this->getStockLastAllWarehousesInActiveBranch($productId);
 
             $cart->update($row->rowId, [
                 'options' => [
                     'sub_total'             => $row->price * $row->qty,
                     'code'                  => $row->options->code,
                     'stock'                 => $stockLast,
+                    'stock_scope'           => 'branch', // ✅ untuk UI note
                     'unit'                  => $row->options->unit,
+
+                    // ✅ placement/default warehouse tetap disimpan
                     'warehouse_id'          => $warehouseId,
+
                     'product_tax'           => $row->options->product_tax,
                     'product_cost'          => $row->options->product_cost,
                     'unit_price'            => $row->options->unit_price,
@@ -196,11 +264,12 @@ class ProductCartPurchase extends Component
 
         $warehouseId = (int)($this->loading_warehouse ? $this->loading_warehouse->id : 0);
         if ($warehouseId <= 0) {
-            session()->flash('message', 'Warehouse is not set. Please select a warehouse first.');
+            session()->flash('message', 'Default warehouse is not set. Please create/select a warehouse for this branch first.');
             return;
         }
 
-        $stockLast = $this->getStockLastByWarehouse((int)$product['id'], $warehouseId);
+        // ✅ Stock selalu dari ALL warehouses (active branch)
+        $stockLast = $this->getStockLastAllWarehousesInActiveBranch((int) $product['id']);
 
         $calc = $this->calculate($product);
 
@@ -215,9 +284,15 @@ class ProductCartPurchase extends Component
                 'product_discount_type' => 'fixed',
                 'sub_total'             => $calc['sub_total'],
                 'code'                  => $product['product_code'],
+
                 'stock'                 => $stockLast,
+                'stock_scope'           => 'branch', // ✅ untuk UI note
+
                 'unit'                  => $product['product_unit'],
+
+                // ✅ placement/default warehouse tetap disimpan
                 'warehouse_id'          => $warehouseId,
+
                 'product_tax'           => $calc['product_tax'],
                 'product_cost'          => $calc['product_cost'],
                 'unit_price'            => $calc['unit_price'],
@@ -370,6 +445,29 @@ class ProductCartPurchase extends Component
             'product_cost' => $product_cost,
             'sub_total' => $sub_total
         ];
+    }
+
+    private function getStockLastAllWarehousesInActiveBranch(int $productId): int
+    {
+        $branchId = session('active_branch');
+
+        // purchase wajib pilih cabang dulu → kalau belum valid, jangan menipu (return 0)
+        if (empty($branchId) || $branchId === 'all') {
+            return 0;
+        }
+
+        $warehouseIds = Warehouse::where('branch_id', (int) $branchId)->pluck('id')->toArray();
+        if (empty($warehouseIds)) {
+            return 0;
+        }
+
+        // SUM stock_last terakhir per warehouse
+        $sum = 0;
+        foreach ($warehouseIds as $wid) {
+            $sum += $this->getStockLastByWarehouse((int) $productId, (int) $wid);
+        }
+
+        return (int) $sum;
     }
 
     public function updateCartOptions($row_id, $product_id, $cart_item, $discount_amount, $item_cost_konsyinasi, $warehouse_id)
