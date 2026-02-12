@@ -224,22 +224,68 @@ class SaleDeliveryConfirmController extends Controller
                 }
             }
 
-            $warehouseIds = $warehouses->pluck('id')->map(fn($x) => (int)$x)->all();
+            $warehouseIds = $warehouses->pluck('id')->map(fn($x) => (int) $x)->all();
 
+            // ✅ racks: JSON friendly
             $racksByWarehouse = DB::table('racks')
                 ->whereIn('warehouse_id', $warehouseIds)
                 ->orderBy('warehouse_id')
                 ->orderBy('code')
                 ->orderBy('name')
-                ->get()
-                ->groupBy('warehouse_id');
+                ->get(['id', 'warehouse_id', 'code', 'name'])
+                ->groupBy('warehouse_id')
+                ->map(function ($rows) {
+                    return $rows->map(function ($r) {
+                        return [
+                            'id' => (int) $r->id,
+                            'code' => (string) ($r->code ?? ''),
+                            'name' => (string) ($r->name ?? ''),
+                        ];
+                    })->values()->all();
+                })
+                ->all();
+
+            /**
+             * ✅ NEW: Stock per rack (TOTAL + breakdown) untuk UI GOOD rows.
+             * Map: stockRackData[product_id][warehouse_id][rack_id] = [total, good, defect, damaged]
+             */
+            $stockRackData = [];
+            if (!empty($productIds) && !empty($warehouseIds)) {
+                $srRows = DB::table('stock_racks')
+                    ->where('branch_id', (int) $branchId)
+                    ->whereIn('product_id', $productIds)
+                    ->whereIn('warehouse_id', $warehouseIds)
+                    ->get(['product_id', 'warehouse_id', 'rack_id', 'qty_good', 'qty_defect', 'qty_damaged']);
+
+                foreach ($srRows as $r) {
+                    $pid = (int) $r->product_id;
+                    $wid = (int) $r->warehouse_id;
+                    $rid = (int) $r->rack_id;
+
+                    $good = (int) ($r->qty_good ?? 0);
+                    $def  = (int) ($r->qty_defect ?? 0);
+                    $dam  = (int) ($r->qty_damaged ?? 0);
+                    $total = $good + $def + $dam;
+
+                    if (!isset($stockRackData[$pid])) $stockRackData[$pid] = [];
+                    if (!isset($stockRackData[$pid][$wid])) $stockRackData[$pid][$wid] = [];
+
+                    $stockRackData[$pid][$wid][$rid] = [
+                        'total' => $total,
+                        'good' => $good,
+                        'defect' => $def,
+                        'damaged' => $dam,
+                    ];
+                }
+            }
 
             return view('saledelivery::confirm', compact(
                 'saleDelivery',
                 'warehouses',
                 'defectData',
                 'damagedData',
-                'racksByWarehouse'
+                'racksByWarehouse',
+                'stockRackData'
             ));
 
         } catch (\Throwable $e) {
@@ -263,6 +309,7 @@ class SaleDeliveryConfirmController extends Controller
                 'items.*.id' => 'required|integer',
                 'items.*.warehouse_id' => 'required|integer|min:1',
 
+                // hidden (auto from JS)
                 'items.*.good' => 'required|integer|min:0',
                 'items.*.defect' => 'required|integer|min:0',
                 'items.*.damaged' => 'required|integer|min:0',
@@ -311,10 +358,14 @@ class SaleDeliveryConfirmController extends Controller
                     throw new \RuntimeException('This sale delivery was already confirmed (stock movement exists).');
                 }
 
+                // ------------------------------------------------------------------
+                // 1) Normalize input by item_id
+                // ------------------------------------------------------------------
                 $inputById = [];
 
                 foreach ($request->items as $row) {
-                    $itemId = (int) $row['id'];
+                    $itemId = (int) ($row['id'] ?? 0);
+                    if ($itemId <= 0) continue;
 
                     $selectedDefectIds = [];
                     if (isset($row['selected_defect_ids']) && is_array($row['selected_defect_ids'])) {
@@ -332,24 +383,37 @@ class SaleDeliveryConfirmController extends Controller
                             if (!is_array($a)) continue;
                             $goodAlloc[] = [
                                 'from_rack_id' => (int) ($a['from_rack_id'] ?? 0),
-                                'qty' => (int) ($a['qty'] ?? 0),
+                                'qty'          => (int) ($a['qty'] ?? 0),
                             ];
                         }
                     }
 
                     $inputById[$itemId] = [
-                        'warehouse_id' => (int) $row['warehouse_id'],
-                        'good' => (int) $row['good'],
-                        'defect' => (int) $row['defect'],
-                        'damaged' => (int) $row['damaged'],
-                        'good_allocations' => $goodAlloc,
-                        'selected_defect_ids' => $selectedDefectIds,
+                        'warehouse_id'         => (int) ($row['warehouse_id'] ?? 0),
+
+                        // these are hidden values set by JS
+                        'good'                 => (int) ($row['good'] ?? 0),
+                        'defect'               => (int) ($row['defect'] ?? 0),
+                        'damaged'              => (int) ($row['damaged'] ?? 0),
+
+                        'good_allocations'     => $goodAlloc,
+                        'selected_defect_ids'  => $selectedDefectIds,
                         'selected_damaged_ids' => $selectedDamagedIds,
                     ];
                 }
 
-                // ✅ VALIDASI warehouse harus valid + belong to branch
-                $warehouseIds = array_values(array_unique(array_map(fn($x) => (int) $x['warehouse_id'], $inputById)));
+                // ------------------------------------------------------------------
+                // 2) Validate warehouses belong to branch
+                // ------------------------------------------------------------------
+                $warehouseIds = array_values(array_unique(array_map(
+                    fn ($x) => (int) ($x['warehouse_id'] ?? 0),
+                    $inputById
+                )));
+                $warehouseIds = array_values(array_filter($warehouseIds, fn ($x) => $x > 0));
+
+                if (empty($warehouseIds)) {
+                    throw new \RuntimeException('Warehouse selection is required.');
+                }
 
                 $countValidWh = Warehouse::query()
                     ->where('branch_id', (int) $branchId)
@@ -360,39 +424,62 @@ class SaleDeliveryConfirmController extends Controller
                     throw new \RuntimeException('Invalid warehouse selection (must belong to active branch).');
                 }
 
-                // ✅ FIX UTAMA: 1 Sale Delivery = 1 Warehouse (biar header warehouse_id meaningful & invoice aman)
-                if (count($warehouseIds) !== 1) {
-                    throw new \RuntimeException('All items in one Sale Delivery must use the same Warehouse.');
-                }
-                $deliveryWarehouseId = (int) $warehouseIds[0];
-
-                // ✅ VALIDASI rack harus belong ke warehouse yang dipilih
-                $allRackIds = [];
+                // ------------------------------------------------------------------
+                // 3) Validate racks belong to EACH item warehouse (per item)
+                // ------------------------------------------------------------------
+                $rackToWarehouseMap = [];
                 foreach ($inputById as $row) {
+                    $wid = (int) ($row['warehouse_id'] ?? 0);
                     foreach (($row['good_allocations'] ?? []) as $a) {
                         $rid = (int) ($a['from_rack_id'] ?? 0);
-                        if ($rid > 0) $allRackIds[] = $rid;
-                    }
-                }
-                $allRackIds = array_values(array_unique($allRackIds));
-
-                if (!empty($allRackIds)) {
-                    $validRackCount = DB::table('racks as r')
-                        ->join('warehouses as w', 'w.id', '=', 'r.warehouse_id')
-                        ->where('w.branch_id', (int) $branchId)
-                        ->whereIn('r.id', $allRackIds)
-                        ->whereIn('r.warehouse_id', $warehouseIds)
-                        ->count();
-
-                    if ($validRackCount !== count($allRackIds)) {
-                        throw new \RuntimeException('Invalid rack selection (rack must belong to selected warehouse and active branch).');
+                        if ($rid > 0 && $wid > 0) {
+                            $rackToWarehouseMap[$rid] = $wid;
+                        }
                     }
                 }
 
+                if (!empty($rackToWarehouseMap)) {
+                    $rackIds = array_keys($rackToWarehouseMap);
+
+                    $rows = DB::table('racks')
+                        ->whereIn('id', $rackIds)
+                        ->get(['id', 'warehouse_id']);
+
+                    $actual = [];
+                    foreach ($rows as $r) {
+                        $actual[(int) $r->id] = (int) $r->warehouse_id;
+                    }
+
+                    foreach ($rackToWarehouseMap as $rackId => $expectedWid) {
+                        $rackId = (int) $rackId;
+                        $expectedWid = (int) $expectedWid;
+
+                        $actualWid = (int) ($actual[$rackId] ?? 0);
+                        if ($actualWid <= 0) {
+                            throw new \RuntimeException("Invalid rack selection. Rack ID {$rackId} not found.");
+                        }
+
+                        if ($actualWid !== $expectedWid) {
+                            throw new \RuntimeException("Invalid rack selection. Rack ID {$rackId} does not belong to selected warehouse (expected WH {$expectedWid}).");
+                        }
+
+                        $whBranchCheck = Warehouse::query()
+                            ->where('id', (int) $actualWid)
+                            ->where('branch_id', (int) $branchId)
+                            ->exists();
+
+                        if (!$whBranchCheck) {
+                            throw new \RuntimeException("Invalid rack selection. Rack's warehouse does not belong to active branch.");
+                        }
+                    }
+                }
+
+                // ------------------------------------------------------------------
+                // 4) Validate qty breakdown, allocations, and STRICT rack total stock check
+                // ------------------------------------------------------------------
                 $totalConfirmedAll = 0;
                 $reservedReduceByProduct = [];
 
-                // ✅ validate qty breakdown & allocations
                 foreach ($saleDelivery->items as $it) {
                     $itemId = (int) $it->id;
                     $expected = (int) ($it->quantity ?? 0);
@@ -401,16 +488,22 @@ class SaleDeliveryConfirmController extends Controller
                         throw new \RuntimeException("Missing input for item ID {$itemId}.");
                     }
 
-                    $good = (int) ($inputById[$itemId]['good'] ?? 0);
+                    $wid = (int) ($inputById[$itemId]['warehouse_id'] ?? 0);
+                    if ($wid <= 0) {
+                        throw new \RuntimeException("Warehouse is required for item ID {$itemId}.");
+                    }
+
+                    $good   = (int) ($inputById[$itemId]['good'] ?? 0);
                     $defect = (int) ($inputById[$itemId]['defect'] ?? 0);
-                    $damaged = (int) ($inputById[$itemId]['damaged'] ?? 0);
+                    $damaged= (int) ($inputById[$itemId]['damaged'] ?? 0);
 
                     $confirmed = $good + $defect + $damaged;
 
                     if ($confirmed !== $expected) {
-                        throw new \RuntimeException("Qty mismatch for item ID {$itemId}. Good + Defect + Damaged must equal {$expected}.");
+                        throw new \RuntimeException("Qty mismatch for item ID {$itemId}. Total selected must equal {$expected}.");
                     }
 
+                    // GOOD allocations validation
                     $alloc = $inputById[$itemId]['good_allocations'] ?? [];
                     if ($good > 0) {
                         if (empty($alloc)) {
@@ -431,10 +524,10 @@ class SaleDeliveryConfirmController extends Controller
                             throw new \RuntimeException("GOOD allocation qty mismatch (item ID {$itemId}). Sum allocation must equal GOOD={$good}.");
                         }
 
-                        // ✅ NEW: STRICT validate TOTAL stock in selected racks is enough
+                        // STRICT rack stock check (TOTAL = good+defect+damaged per rack)
                         $this->assertRackTotalStockEnough(
                             (int) $branchId,
-                            (int) $deliveryWarehouseId,
+                            (int) $wid,
                             (int) $it->product_id,
                             (array) $alloc,
                             (string) $reference
@@ -444,10 +537,10 @@ class SaleDeliveryConfirmController extends Controller
                     $selDef = $inputById[$itemId]['selected_defect_ids'] ?? [];
                     $selDam = $inputById[$itemId]['selected_damaged_ids'] ?? [];
 
-                    if ($defect > 0 && !empty($selDef) && count($selDef) !== $defect) {
+                    if ($defect > 0 && count($selDef) !== $defect) {
                         throw new \RuntimeException("Selected DEFECT IDs count must equal defect qty for item ID {$itemId}.");
                     }
-                    if ($damaged > 0 && !empty($selDam) && count($selDam) !== $damaged) {
+                    if ($damaged > 0 && count($selDam) !== $damaged) {
                         throw new \RuntimeException("Selected DAMAGED IDs count must equal damaged qty for item ID {$itemId}.");
                     }
 
@@ -458,38 +551,45 @@ class SaleDeliveryConfirmController extends Controller
                         $reservedReduceByProduct[$pid] = (int) ($reservedReduceByProduct[$pid] ?? 0) + $confirmed;
                     }
 
+                    // save confirm result per item
                     $it->update([
-                        'qty_good' => $good,
-                        'qty_defect' => $defect,
-                        'qty_damaged' => $damaged,
+                        'warehouse_id' => (int) $wid,
+                        'qty_good'     => $good,
+                        'qty_defect'   => $defect,
+                        'qty_damaged'  => $damaged,
                     ]);
                 }
 
                 if ($totalConfirmedAll <= 0) {
-                    throw new \RuntimeException('Nothing to confirm. Please input at least 1 quantity.');
+                    throw new \RuntimeException('Nothing to confirm.');
                 }
 
-                // ✅ create mutation OUT (GOOD / DEFECT / DAMAGED)
+                // ------------------------------------------------------------------
+                // 5) Create mutation OUT per item warehouse
+                // ------------------------------------------------------------------
                 foreach ($saleDelivery->items as $it) {
                     $productId = (int) $it->product_id;
 
-                    $good = (int) ($it->qty_good ?? 0);
+                    $warehouseId = (int) ($it->warehouse_id ?? 0);
+                    if ($warehouseId <= 0) {
+                        throw new \RuntimeException("Warehouse is missing on confirmed item. Item ID {$it->id}.");
+                    }
+
+                    $good   = (int) ($it->qty_good ?? 0);
                     $defect = (int) ($it->qty_defect ?? 0);
-                    $damaged = (int) ($it->qty_damaged ?? 0);
+                    $damaged= (int) ($it->qty_damaged ?? 0);
 
                     $confirmed = $good + $defect + $damaged;
                     if ($confirmed <= 0) continue;
 
                     $input = $inputById[(int) $it->id] ?? [];
 
-                    // warehouse sudah diset 1 delivery 1 warehouse, pakai header value
-                    $warehouseId = (int) $deliveryWarehouseId;
-
+                    // GOOD mutation (per rack allocations)
                     if ($good > 0) {
                         $alloc = $input['good_allocations'] ?? [];
                         foreach ($alloc as $a) {
                             $rackId = (int) ($a['from_rack_id'] ?? 0);
-                            $qtyA  = (int) ($a['qty'] ?? 0);
+                            $qtyA   = (int) ($a['qty'] ?? 0);
                             if ($rackId <= 0 || $qtyA <= 0) continue;
 
                             $noteOut = "Sales Delivery OUT #{$reference} | GOOD";
@@ -507,52 +607,29 @@ class SaleDeliveryConfirmController extends Controller
                         }
                     }
 
+                    // DEFECT mutation (IDs)
                     $selectedDefectIds = $input['selected_defect_ids'] ?? [];
-                    $selectedDamagedIds = $input['selected_damaged_ids'] ?? [];
-
                     if ($defect > 0) {
-                        $ids = [];
+                        $ids = $selectedDefectIds;
 
-                        if (!empty($selectedDefectIds)) {
-                            $ids = $selectedDefectIds;
+                        $countValid = DB::table('product_defect_items')
+                            ->whereIn('id', $ids)
+                            ->where('branch_id', (int) $saleDelivery->branch_id)
+                            ->where('warehouse_id', (int) $warehouseId)
+                            ->where('product_id', $productId)
+                            ->whereNull('moved_out_at')
+                            ->count();
 
-                            $countValid = DB::table('product_defect_items')
-                                ->whereIn('id', $ids)
-                                ->where('branch_id', (int) $saleDelivery->branch_id)
-                                ->where('warehouse_id', (int) $warehouseId)
-                                ->where('product_id', $productId)
-                                ->whereNull('moved_out_at')
-                                ->count();
-
-                            if ($countValid !== count($ids)) {
-                                throw new \RuntimeException("Some selected DEFECT IDs are invalid/unavailable for product_id {$productId} (WH {$warehouseId}).");
-                            }
-
-                            if (count($ids) !== $defect) {
-                                throw new \RuntimeException("Selected DEFECT IDs count mismatch for product_id {$productId}.");
-                            }
-                        } else {
-                            $ids = DB::table('product_defect_items')
-                                ->where('branch_id', (int) $saleDelivery->branch_id)
-                                ->where('warehouse_id', (int) $warehouseId)
-                                ->where('product_id', $productId)
-                                ->whereNull('moved_out_at')
-                                ->orderBy('id', 'asc')
-                                ->limit($defect)
-                                ->pluck('id')
-                                ->all();
-
-                            if (count($ids) !== $defect) {
-                                throw new \RuntimeException("Not enough DEFECT stock for product_id {$productId} (WH {$warehouseId}). Needed {$defect}, available " . count($ids) . ".");
-                            }
+                        if ($countValid !== count($ids)) {
+                            throw new \RuntimeException("Some selected DEFECT IDs are invalid/unavailable for product_id {$productId} (WH {$warehouseId}).");
                         }
 
                         $rows = ProductDefectItem::query()
                             ->whereIn('id', $ids)
                             ->lockForUpdate()
-                            ->get(['id','rack_id']);
+                            ->get(['id', 'rack_id']);
 
-                        if ($rows->contains(fn($r) => empty($r->rack_id))) {
+                        if ($rows->contains(fn ($r) => empty($r->rack_id))) {
                             throw new \RuntimeException("Some DEFECT items have no rack_id. Please assign rack first before confirming.");
                         }
 
@@ -574,60 +651,38 @@ class SaleDeliveryConfirmController extends Controller
                         DB::table('product_defect_items')
                             ->whereIn('id', $ids)
                             ->update([
-                                'moved_out_at' => now(),
-                                'moved_out_by' => auth()->id(),
+                                'moved_out_at'             => now(),
+                                'moved_out_by'             => auth()->id(),
                                 'moved_out_reference_type' => SaleDelivery::class,
-                                'moved_out_reference_id' => (int) $saleDelivery->id,
+                                'moved_out_reference_id'   => (int) $saleDelivery->id,
                             ]);
                     }
 
+                    // DAMAGED mutation (IDs)
+                    $selectedDamagedIds = $input['selected_damaged_ids'] ?? [];
                     if ($damaged > 0) {
-                        $ids = [];
+                        $ids = $selectedDamagedIds;
 
-                        if (!empty($selectedDamagedIds)) {
-                            $ids = $selectedDamagedIds;
+                        $countValid = DB::table('product_damaged_items')
+                            ->whereIn('id', $ids)
+                            ->where('branch_id', (int) $saleDelivery->branch_id)
+                            ->where('warehouse_id', (int) $warehouseId)
+                            ->where('product_id', $productId)
+                            ->where('damage_type', 'damaged')
+                            ->where('resolution_status', 'pending')
+                            ->whereNull('moved_out_at')
+                            ->count();
 
-                            $countValid = DB::table('product_damaged_items')
-                                ->whereIn('id', $ids)
-                                ->where('branch_id', (int) $saleDelivery->branch_id)
-                                ->where('warehouse_id', (int) $warehouseId)
-                                ->where('product_id', $productId)
-                                ->where('damage_type', 'damaged')
-                                ->where('resolution_status', 'pending')
-                                ->whereNull('moved_out_at')
-                                ->count();
-
-                            if ($countValid !== count($ids)) {
-                                throw new \RuntimeException("Some selected DAMAGED IDs are invalid/unavailable for product_id {$productId} (WH {$warehouseId}).");
-                            }
-
-                            if (count($ids) !== $damaged) {
-                                throw new \RuntimeException("Selected DAMAGED IDs count mismatch for product_id {$productId}.");
-                            }
-                        } else {
-                            $ids = DB::table('product_damaged_items')
-                                ->where('branch_id', (int) $saleDelivery->branch_id)
-                                ->where('warehouse_id', (int) $warehouseId)
-                                ->where('product_id', $productId)
-                                ->where('damage_type', 'damaged')
-                                ->where('resolution_status', 'pending')
-                                ->whereNull('moved_out_at')
-                                ->orderBy('id', 'asc')
-                                ->limit($damaged)
-                                ->pluck('id')
-                                ->all();
-
-                            if (count($ids) !== $damaged) {
-                                throw new \RuntimeException("Not enough DAMAGED stock for product_id {$productId} (WH {$warehouseId}). Needed {$damaged}, available " . count($ids) . ".");
-                            }
+                        if ($countValid !== count($ids)) {
+                            throw new \RuntimeException("Some selected DAMAGED IDs are invalid/unavailable for product_id {$productId} (WH {$warehouseId}).");
                         }
 
                         $rows = ProductDamagedItem::query()
                             ->whereIn('id', $ids)
                             ->lockForUpdate()
-                            ->get(['id','rack_id']);
+                            ->get(['id', 'rack_id']);
 
-                        if ($rows->contains(fn($r) => empty($r->rack_id))) {
+                        if ($rows->contains(fn ($r) => empty($r->rack_id))) {
                             throw new \RuntimeException("Some DAMAGED items have no rack_id. Please assign rack first before confirming.");
                         }
 
@@ -649,17 +704,19 @@ class SaleDeliveryConfirmController extends Controller
                             DB::table('product_damaged_items')
                                 ->whereIn('id', $group->pluck('id')->all())
                                 ->update([
-                                    'moved_out_at' => now(),
-                                    'moved_out_by' => auth()->id(),
+                                    'moved_out_at'             => now(),
+                                    'moved_out_by'             => auth()->id(),
                                     'moved_out_reference_type' => SaleDelivery::class,
-                                    'moved_out_reference_id' => (int) $saleDelivery->id,
-                                    'mutation_out_id' => (int) $outId,
+                                    'moved_out_reference_id'   => (int) $saleDelivery->id,
+                                    'mutation_out_id'          => (int) $outId,
                                 ]);
                         }
                     }
                 }
 
-                // ✅ reserved pool decrement
+                // ------------------------------------------------------------------
+                // 6) reserved pool decrement
+                // ------------------------------------------------------------------
                 $this->decrementReservedPoolStock(
                     (int) $branchId,
                     $reservedReduceByProduct,
@@ -668,9 +725,11 @@ class SaleDeliveryConfirmController extends Controller
 
                 $confirmNote = $request->confirm_note ? (string) $request->confirm_note : null;
 
-                // ✅ FIX UTAMA: simpan warehouse_id ke header sale_deliveries
+                // ------------------------------------------------------------------
+                // 7) Header update (warehouse per item)
+                // ------------------------------------------------------------------
                 $saleDelivery->update([
-                    'warehouse_id' => (int) $deliveryWarehouseId,
+                    'warehouse_id' => null,
 
                     'status' => 'confirmed',
                     'confirmed_by' => auth()->id(),

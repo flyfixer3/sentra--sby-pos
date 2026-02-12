@@ -8,7 +8,7 @@ use Modules\Branch\Entities\Branch;
 use Modules\Product\Entities\Warehouse;
 use Modules\Purchase\Entities\Purchase;
 
-class PurchaseDelivery extends Model
+class PurchaseDelivery extends BaseModel
 {
     use HasFactory;
 

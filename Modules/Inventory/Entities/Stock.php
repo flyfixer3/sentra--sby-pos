@@ -3,12 +3,10 @@
 namespace Modules\Inventory\Entities;
 
 use App\Models\BaseModel;
-use App\Traits\HasBranchScope;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class Stock extends BaseModel
 {
-    use HasBranchScope;
 
     protected $table = 'stocks';
 

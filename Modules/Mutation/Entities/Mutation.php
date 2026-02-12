@@ -3,7 +3,6 @@
 namespace Modules\Mutation\Entities;
 
 use App\Models\BaseModel;
-use App\Traits\HasBranchScope;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Modules\Inventory\Entities\Rack;
 use Modules\Product\Entities\Product;

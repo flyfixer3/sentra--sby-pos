@@ -5,14 +5,12 @@ namespace Modules\Inventory\Entities;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use App\Models\BaseModel;
-use App\Traits\HasBranchScope;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Modules\Branch\Entities\Branch;
 use Modules\Product\Entities\Warehouse;
 
 class StockRack extends BaseModel
 {
-    use HasBranchScope;
 
     protected $table = 'stock_racks';
 

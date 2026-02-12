@@ -2,6 +2,7 @@
 
 namespace Modules\PurchaseOrder\Entities;
 
+use App\Models\BaseModel;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Support\Carbon;
@@ -10,7 +11,7 @@ use Modules\Purchase\Entities\Purchase;
 use Modules\People\Entities\Supplier;
 use Modules\PurchaseDelivery\Entities\PurchaseDelivery;
 
-class PurchaseOrder extends Model
+class PurchaseOrder extends BaseModel
 {
     use HasFactory;
 
