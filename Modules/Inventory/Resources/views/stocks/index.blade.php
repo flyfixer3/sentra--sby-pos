@@ -87,7 +87,7 @@
     </div>
 </div>
 
-{{-- ✅ Stock Detail Modal (warehouse/rack/condition) --}}
+{{-- ✅ Stock Detail Modal --}}
 <div class="modal fade" id="stockDetailModal" tabindex="-1" role="dialog" aria-hidden="true">
     <div class="modal-dialog modal-xl modal-dialog-scrollable" role="document">
         <div class="modal-content">
@@ -189,7 +189,7 @@
     </div>
 </div>
 
-{{-- ✅ Quality Modal (Defect/Damaged) --}}
+{{-- ✅ Quality Modal --}}
 <div class="modal fade" id="qualityModal" tabindex="-1" role="dialog" aria-hidden="true">
     <div class="modal-dialog modal-xl modal-dialog-scrollable" role="document">
         <div class="modal-content">
@@ -366,6 +366,7 @@ function escapeHtml(text) {
 
 var sdProductId = 0;
 var sdBranchId = 0;
+
 var qType = '';
 var qProductId = 0;
 var qBranchId = 0;
@@ -378,7 +379,6 @@ function resetStockDetailUI(){
     document.getElementById('stockDetailFootTotal').textContent = '0';
     document.getElementById('modalTotalQty').textContent = '0';
 
-    // dropdown reset
     document.getElementById('sdWarehouse').innerHTML = '<option value="">All Warehouses</option>';
     document.getElementById('sdRack').innerHTML = '<option value="">All Racks</option>';
     document.getElementById('sdCondition').value = '';
@@ -425,7 +425,6 @@ function showStockDetail(productId, branchId, reserved, incoming){
         return;
     }
 
-    // load options + data
     loadStockDetailOptionsAndData();
 }
 
@@ -444,7 +443,6 @@ function loadStockDetailOptionsAndData(){
         fillOptions(document.getElementById('sdWarehouse'), res.warehouses, 'All Warehouses');
         fillOptions(document.getElementById('sdRack'), res.racks, 'All Racks');
 
-        // after options ready, load table
         reloadStockDetailTable();
     })
     .catch(function(e){
@@ -521,7 +519,6 @@ function openQualityModal(type, productId, branchId, isAll){
     qIsAll = asInt(isAll);
 
     var titleEl = document.getElementById('qualityModalTitle');
-    var bodyEl = document.getElementById('qualityBody');
     var typeColEl = document.getElementById('qualityTypeCol');
 
     var typeUpper = qType.toUpperCase();
@@ -538,7 +535,6 @@ function openQualityModal(type, productId, branchId, isAll){
         return;
     }
 
-    // load options first, then data
     loadQualityOptionsAndData();
 }
 
