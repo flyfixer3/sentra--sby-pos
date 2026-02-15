@@ -13,9 +13,7 @@
 @section('content')
 @php
     $items = old('items', $prefillItems ?? []);
-    if (!is_array($items) || count($items) === 0) {
-        $items = [];
-    }
+    if (!is_array($items) || count($items) === 0) $items = [];
 
     $oldTax = old('tax_percentage', 0);
     $oldDiscount = old('discount_percentage', 0);
@@ -26,6 +24,10 @@
     $oldDepositAmt = old('deposit_amount', '');
     $oldDepositMethod = old('deposit_payment_method', '');
     $oldDepositCode = old('deposit_code', '');
+
+    // ✅ NEW
+    $oldDpReceived = old('deposit_received_amount', '');
+    $oldUseMaxDpReceived = old('deposit_received_use_max', '');
 
     $oldAutoDiscount = old('auto_discount', '1'); // default ON
 @endphp
@@ -121,7 +123,9 @@
                                     </label>
                                 </div>
 
-                                <input type="number" min="0" max="100" step="0.01"
+                                <input type="text"
+                                       inputmode="decimal"
+                                       placeholder="0"
                                        name="discount_percentage" id="so_discount_percentage"
                                        class="form-control" value="{{ $oldDiscount }}" required>
 
@@ -188,9 +192,13 @@
                         <div class="row">
                             <div class="col-lg-3 mb-3">
                                 <label class="form-label">Deposit (%) (optional)</label>
-                                <input type="number" min="0" max="100" step="0.01"
+
+                                <input type="text"
+                                       inputmode="decimal"
+                                       placeholder="0"
                                        name="deposit_percentage" id="so_deposit_percentage"
                                        class="form-control" value="{{ $oldDepositPct }}">
+
                                 <div class="small text-muted">Kalau diisi, Deposit Amount otomatis ikut Grand Total.</div>
                             </div>
 
@@ -202,6 +210,24 @@
                                 <div class="small text-muted">Kalau diisi manual, akan override persen.</div>
                             </div>
 
+                            {{-- ✅ NEW: DP RECEIVED --}}
+                            <div class="col-lg-3 mb-3">
+                                <label class="form-label">DP Received Amount (optional)</label>
+                                <div class="d-flex gap-2">
+                                    <input type="number" min="0" step="1"
+                                           name="deposit_received_amount" id="so_deposit_received_amount"
+                                           class="form-control" value="{{ $oldDpReceived }}">
+                                    <label class="d-flex align-items-center gap-2 small mb-0" style="white-space:nowrap;">
+                                        <input type="checkbox" name="deposit_received_use_max" id="so_deposit_received_use_max" value="1"
+                                            {{ (string)$oldUseMaxDpReceived === '1' ? 'checked' : '' }}>
+                                        Use Max
+                                    </label>
+                                </div>
+                                <div class="small text-muted">
+                                    Jika dicentang, DP Received otomatis = Deposit Amount.
+                                </div>
+                            </div>
+
                             <div class="col-lg-3 mb-3">
                                 <label class="form-label">Deposit Payment Method (optional)</label>
                                 <select class="form-control" name="deposit_payment_method" id="so_deposit_payment_method">
@@ -211,9 +237,11 @@
                                     <option value="Credit Card" {{ $oldDepositMethod === 'Credit Card' ? 'selected' : '' }}>Credit Card</option>
                                     <option value="Other" {{ $oldDepositMethod === 'Other' ? 'selected' : '' }}>Other</option>
                                 </select>
-                                <div class="small text-muted">Wajib diisi hanya jika Deposit > 0.</div>
+                                <div class="small text-muted">Wajib diisi hanya jika DP (planned/received) > 0.</div>
                             </div>
+                        </div>
 
+                        <div class="row">
                             <div class="col-lg-3 mb-3">
                                 <label class="form-label">Deposit To (optional)</label>
                                 <select class="form-control" name="deposit_code" id="so_deposit_code">
@@ -228,14 +256,16 @@
                                         </option>
                                     @endforeach
                                 </select>
-                                <div class="small text-muted">Wajib diisi hanya jika Deposit > 0.</div>
+                                <div class="small text-muted">Wajib diisi hanya jika DP (planned/received) > 0.</div>
                             </div>
                         </div>
 
                         <div class="alert alert-info">
                             <div class="small">
-                                <strong>Catatan DP:</strong> DP yang dicatat di Sale Order <strong>tidak masuk ke tabel Payments pada Invoice</strong>.
-                                Saat Invoice dibuat dari Sale Delivery, sistem akan menampilkan DP sebagai <strong>keterangan (allocated pro-rata)</strong>.
+                                <strong>Catatan DP:</strong>
+                                DP Planned = rencana / maksimal DP.
+                                DP Received = DP yang benar-benar diterima (yang masuk accounting via SalePayment).
+                                Saat Invoice dibuat dari Sale Delivery, sistem menampilkan DP sebagai <strong>keterangan (allocated pro-rata)</strong>.
                             </div>
                         </div>
 
@@ -266,30 +296,28 @@
     // Helpers
     // =========================
     function soFormatRupiah(num) {
-        try {
-            const n = Math.round(Number(num) || 0);
-            return 'Rp' + n.toString().replace(/\B(?=(\d{3})+(?!\d))/g, '.');
-        } catch (e) {
-            return 'Rp0';
-        }
+        const n = Math.round(Number(num) || 0);
+        return 'Rp' + n.toString().replace(/\B(?=(\d{3})+(?!\d))/g, '.');
     }
-
     function soParseInt(v) {
         const n = parseInt((v ?? '').toString().replace(/[^\d-]/g, ''), 10);
         return Number.isFinite(n) ? n : 0;
     }
-
+    function soNormalizeDecimalString(v) {
+        let s = (v ?? '').toString().trim();
+        s = s.replace(',', '.');
+        s = s.replace(/[^\d.\-]/g, '');
+        const parts = s.split('.');
+        if (parts.length > 2) s = parts.shift() + '.' + parts.join('');
+        return s;
+    }
     function soParseFloat(v) {
-        // support "12,85" or "12.85"
-        const s = (v ?? '').toString().trim().replace(',', '.');
-        const n = parseFloat(s);
+        const n = parseFloat(soNormalizeDecimalString(v));
         return Number.isFinite(n) ? n : 0;
     }
-
     function soClamp(num, min, max) {
         return Math.max(min, Math.min(max, num));
     }
-
     function soToFixed2(n) {
         return (Math.round((Number(n) || 0) * 100) / 100).toFixed(2);
     }
@@ -302,7 +330,7 @@
         const rows = [];
 
         productInputs.forEach((pidInput) => {
-            const name = pidInput.getAttribute('name');
+            const name = pidInput.getAttribute('name') || '';
             const idxMatch = name.match(/items\[(\d+)\]\[product_id\]/);
             if (!idxMatch) return;
 
@@ -310,12 +338,12 @@
             const pid = soParseInt(pidInput.value);
             if (!pid || pid <= 0) return;
 
-            const qtyInput = document.querySelector(`input[name="items[${idx}][quantity]"]`);
-            const priceInput = document.querySelector(`input[name="items[${idx}][price]"]`);
+            const qtyInput  = document.querySelector(`input[name="items[${idx}][quantity]"]`);
+            const priceInput= document.querySelector(`input[name="items[${idx}][price]"]`);
             const origInput = document.querySelector(`input[name="items[${idx}][original_price]"]`);
 
-            const qty = qtyInput ? soParseInt(qtyInput.value) : 0;
-            const price = priceInput ? soParseInt(priceInput.value) : 0;
+            const qty  = qtyInput ? soParseInt(qtyInput.value) : 0;
+            const price= priceInput ? soParseInt(priceInput.value) : 0;
             const orig = origInput ? soParseInt(origInput.value) : 0;
 
             if (qty > 0) rows.push({ pid, qty, price: Math.max(0, price), orig: Math.max(0, orig) });
@@ -327,18 +355,15 @@
     function soComputeSubtotalSell(rows) {
         return rows.reduce((sum, r) => sum + (r.qty * r.price), 0);
     }
-
+    function soComputeOriginalSubtotal(rows) {
+        return rows.reduce((sum, r) => sum + (r.qty * (r.orig > 0 ? r.orig : r.price)), 0);
+    }
     function soComputeDiffDiscount(rows) {
-        // Σ qty * max(0, master - sell)
         return rows.reduce((sum, r) => {
             const base = r.orig > 0 ? r.orig : r.price;
             const diff = Math.max(0, base - r.price);
             return sum + (r.qty * diff);
         }, 0);
-    }
-
-    function soComputeOriginalSubtotal(rows) {
-        return rows.reduce((sum, r) => sum + (r.qty * (r.orig > 0 ? r.orig : r.price)), 0);
     }
 
     // =========================
@@ -361,16 +386,11 @@
         const diffDiscount = soComputeDiffDiscount(rows);
         let pct = (diffDiscount / originalSubtotal) * 100;
         pct = soClamp(pct, 0, 100);
-
         discEl.value = soToFixed2(pct);
     }
 
     // =========================
-    // Deposit logic (FIXED)
-    // Two-way sync:
-    // - if user changes % -> amount recalculated
-    // - if user changes amount -> % recalculated
-    // No more "kadang ga update"
+    // Deposit sync (robust for Livewire re-render)
     // =========================
     window.__soDpMode = window.__soDpMode || 'pct'; // 'pct' or 'amt'
     window.__soDpSyncing = false;
@@ -379,7 +399,6 @@
         const pctEl = document.getElementById('so_deposit_percentage');
         const amtEl = document.getElementById('so_deposit_amount');
         if (!pctEl || !amtEl) return;
-
         if (window.__soDpSyncing) return;
 
         const grand = Math.max(0, soParseInt(grandTotal));
@@ -388,9 +407,7 @@
         try {
             if (window.__soDpMode === 'amt') {
                 const amt = Math.max(0, soParseInt(amtEl.value));
-
                 if (grand <= 0) {
-                    // avoid NaN / division by 0
                     pctEl.value = '';
                 } else {
                     let pct = (amt / grand) * 100;
@@ -398,12 +415,10 @@
                     pctEl.value = soToFixed2(pct);
                 }
             } else {
-                // mode pct
                 let pct = soParseFloat(pctEl.value);
                 pct = soClamp(pct, 0, 100);
 
                 if (pct <= 0 || grand <= 0) {
-                    // allow empty when 0
                     amtEl.value = '';
                 } else {
                     const amt = Math.round(grand * (pct / 100));
@@ -416,6 +431,29 @@
     }
 
     // =========================
+    // DP Received logic
+    // =========================
+    window.__soDpReceivedSyncing = false;
+
+    function soSyncDpReceived() {
+        const recEl = document.getElementById('so_deposit_received_amount');
+        const useEl = document.getElementById('so_deposit_received_use_max');
+        const depAmtEl = document.getElementById('so_deposit_amount');
+        if (!recEl || !useEl || !depAmtEl) return;
+        if (window.__soDpReceivedSyncing) return;
+
+        if (useEl.checked) {
+            window.__soDpReceivedSyncing = true;
+            try {
+                const depAmt = Math.max(0, soParseInt(depAmtEl.value));
+                recEl.value = depAmt > 0 ? String(depAmt) : '';
+            } finally {
+                window.__soDpReceivedSyncing = false;
+            }
+        }
+    }
+
+    // =========================
     // Recalc summary
     // =========================
     function soRecalc() {
@@ -424,28 +462,21 @@
         const subtotalSell = soComputeSubtotalSell(rows);
         const diffDiscount = soComputeDiffDiscount(rows);
 
-        // Discount percent behavior
         if (soIsAutoDiscount()) {
             soApplyAutoDiscountPercentFromPriceDiff(rows);
         }
 
-        const taxPct = soClamp(soParseInt(document.getElementById('so_tax_percentage')?.value), 0, 100);
+        const taxPct  = soClamp(soParseFloat(document.getElementById('so_tax_percentage')?.value), 0, 100);
         const discPct = soClamp(soParseFloat(document.getElementById('so_discount_percentage')?.value), 0, 100);
 
-        const fee = Math.max(0, soParseInt(document.getElementById('so_fee_amount')?.value));
+        const fee      = Math.max(0, soParseInt(document.getElementById('so_fee_amount')?.value));
         const shipping = Math.max(0, soParseInt(document.getElementById('so_shipping_amount')?.value));
 
         const taxAmt = Math.round(subtotalSell * (taxPct / 100));
 
-        // IMPORTANT:
-        // - Auto ON: discount is INFORMATION ONLY (selisih master vs sell), NOT reducing again.
-        // - Auto OFF: discount is real percentage reduction from sell subtotal.
         let discAmt = 0;
-        if (soIsAutoDiscount()) {
-            discAmt = Math.round(diffDiscount);
-        } else {
-            discAmt = Math.round(subtotalSell * (discPct / 100));
-        }
+        if (soIsAutoDiscount()) discAmt = Math.round(diffDiscount);
+        else discAmt = Math.round(subtotalSell * (discPct / 100));
 
         const grand = Math.round(subtotalSell + taxAmt + fee + shipping - (soIsAutoDiscount() ? 0 : discAmt));
 
@@ -456,30 +487,34 @@
         document.getElementById('so_shipping_text').innerText = soFormatRupiah(shipping);
         document.getElementById('so_grand_text').innerText = soFormatRupiah(grand);
 
-        // ✅ FIX: always sync DP after grand updates
         soSyncDeposit(grand);
+        soSyncDpReceived();
     }
 
-    document.addEventListener('DOMContentLoaded', function () {
-        // mark DP mode when user types
-        const dpPctEl = document.getElementById('so_deposit_percentage');
-        const dpAmtEl = document.getElementById('so_deposit_amount');
-
-        dpPctEl?.addEventListener('input', function () {
-            if (window.__soDpSyncing) return;
-            window.__soDpMode = 'pct';
-            soRecalc();
-        });
-
-        dpAmtEl?.addEventListener('input', function () {
-            if (window.__soDpSyncing) return;
-            window.__soDpMode = 'amt';
-            soRecalc();
-        });
+    // =========================
+    // Bind events (safe)
+    // =========================
+    function soBindEventsOnce() {
+        if (window.__soBoundOnce) return;
+        window.__soBoundOnce = true;
 
         document.addEventListener('input', function (e) {
             const id = e.target?.id || '';
-            const n = e.target?.getAttribute('name') || '';
+            const n  = e.target?.getAttribute('name') || '';
+
+            if (id === 'so_discount_percentage') {
+                const el = document.getElementById('so_discount_percentage');
+                if (el) el.value = soNormalizeDecimalString(el.value);
+
+                const chk = document.getElementById('so_auto_discount');
+                if (chk && chk.checked) chk.checked = false;
+            }
+
+            if (id === 'so_deposit_percentage') {
+                const el = document.getElementById('so_deposit_percentage');
+                if (el) el.value = soNormalizeDecimalString(el.value);
+                window.__soDpMode = 'pct';
+            }
 
             if (
                 n.includes('[quantity]') ||
@@ -488,26 +523,88 @@
                 id === 'so_discount_percentage' ||
                 id === 'so_fee_amount' ||
                 id === 'so_shipping_amount' ||
-                id === 'so_auto_discount'
+                id === 'so_deposit_percentage' ||
+                id === 'so_deposit_amount'
             ) {
-                // if user edits discount% manually, switch to manual mode
-                if (id === 'so_discount_percentage') {
-                    const chk = document.getElementById('so_auto_discount');
-                    if (chk && chk.checked) chk.checked = false;
-                }
                 soRecalc();
             }
         });
 
-        // first load
-        // detect initial dp mode (if old deposit_amount has value, treat as amt mode)
+        document.addEventListener('change', function (e) {
+            const id = e.target?.id || '';
+            if (id === 'so_auto_discount') soRecalc();
+            if (id === 'so_deposit_received_use_max') soRecalc();
+        });
+    }
+
+    function soBindDepositInputs() {
+        const dpPctEl = document.getElementById('so_deposit_percentage');
+        const dpAmtEl = document.getElementById('so_deposit_amount');
+
+        if (dpPctEl && !dpPctEl.__bound) {
+            dpPctEl.__bound = true;
+            dpPctEl.addEventListener('input', function () {
+                if (window.__soDpSyncing) return;
+                window.__soDpMode = 'pct';
+                soRecalc();
+            });
+        }
+
+        if (dpAmtEl && !dpAmtEl.__bound) {
+            dpAmtEl.__bound = true;
+            dpAmtEl.addEventListener('input', function () {
+                if (window.__soDpSyncing) return;
+                window.__soDpMode = 'amt';
+                soRecalc();
+            });
+        }
+    }
+
+    function soBindDpReceivedInputs() {
+        const recEl = document.getElementById('so_deposit_received_amount');
+        const useEl = document.getElementById('so_deposit_received_use_max');
+
+        if (useEl && !useEl.__bound) {
+            useEl.__bound = true;
+            useEl.addEventListener('change', function () {
+                soRecalc();
+            });
+        }
+
+        if (recEl && !recEl.__bound) {
+            recEl.__bound = true;
+            recEl.addEventListener('input', function () {
+                const u = document.getElementById('so_deposit_received_use_max');
+                if (u && u.checked) u.checked = false;
+            });
+        }
+    }
+
+    function soInitDpMode() {
+        const dpPctEl = document.getElementById('so_deposit_percentage');
+        const dpAmtEl = document.getElementById('so_deposit_amount');
         if (dpAmtEl && soParseInt(dpAmtEl.value) > 0 && (!dpPctEl || dpPctEl.value === '' || soParseFloat(dpPctEl.value) === 0)) {
             window.__soDpMode = 'amt';
         } else {
             window.__soDpMode = 'pct';
         }
+    }
 
+    document.addEventListener('DOMContentLoaded', function () {
+        soBindEventsOnce();
+        soBindDepositInputs();
+        soBindDpReceivedInputs();
+        soInitDpMode();
         soRecalc();
+
+        // ✅ Livewire re-render safe hook
+        if (window.Livewire && typeof window.Livewire.hook === 'function') {
+            window.Livewire.hook('message.processed', () => {
+                soBindDepositInputs();
+                soBindDpReceivedInputs();
+                soRecalc();
+            });
+        }
     });
 </script>
 @endpush

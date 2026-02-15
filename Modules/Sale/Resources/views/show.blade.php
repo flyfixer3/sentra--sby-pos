@@ -1,3 +1,5 @@
+{{-- ... file lain tetap sama, aku tulis FULL section yang kamu kirim + update totals ... --}}
+
 @extends('layouts.app')
 
 @section('title', 'Sales Details')
@@ -53,7 +55,7 @@
                                     Payment Status: <strong>{{ $sale->payment_status }}</strong>
                                 </div>
 
-                                {{-- ✅ NEW: Deposit from Sale Order (Pro-rata note) --}}
+                                {{-- ✅ Deposit from Sale Order --}}
                                 @if(!empty($saleOrderDepositInfo) && isset($saleOrderDepositInfo['deposit_total']) && (int)$saleOrderDepositInfo['deposit_total'] > 0)
                                     <div class="mt-2 p-2" style="border:1px solid rgba(0,0,0,.08); border-radius:8px;">
                                         <div class="text-muted" style="font-size: 12px;">Deposit (From Sale Order)</div>
@@ -168,6 +170,14 @@
                             </div>
 
                             <div class="col-lg-4 col-sm-5 ml-md-auto">
+                                @php
+                                    $allocatedDp = 0;
+                                    if(!empty($saleOrderDepositInfo) && isset($saleOrderDepositInfo['allocated'])) {
+                                        $allocatedDp = (int)$saleOrderDepositInfo['allocated'];
+                                    }
+                                    $balanceDue = max(0, (int)$sale->total_amount - $allocatedDp);
+                                @endphp
+
                                 <table class="table">
                                     <tbody>
                                     <tr>
@@ -186,6 +196,17 @@
                                         <td class="left"><strong>Grand Total</strong></td>
                                         <td class="right"><strong>{{ format_currency($sale->total_amount) }}</strong></td>
                                     </tr>
+
+                                    @if($allocatedDp > 0)
+                                        <tr>
+                                            <td class="left"><strong>Less: DP Allocated (SO)</strong></td>
+                                            <td class="right">- {{ format_currency($allocatedDp) }}</td>
+                                        </tr>
+                                        <tr>
+                                            <td class="left"><strong>Balance Due</strong></td>
+                                            <td class="right"><strong>{{ format_currency($balanceDue) }}</strong></td>
+                                        </tr>
+                                    @endif
                                     </tbody>
                                 </table>
                             </div>

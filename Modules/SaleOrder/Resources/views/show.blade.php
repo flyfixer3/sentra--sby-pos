@@ -57,6 +57,18 @@
             $saleUrl = route('sale-invoices.show', $saleId);
         }
     }
+
+    // ✅ Financial Summary
+    $subtotal = (int)($saleOrder->subtotal_amount ?? 0);
+    $taxAmt   = (int)($saleOrder->tax_amount ?? 0);
+    $fee      = (int)($saleOrder->fee_amount ?? 0);
+    $ship     = (int)($saleOrder->shipping_amount ?? 0);
+    $total    = (int)($saleOrder->total_amount ?? 0);
+
+    $discInfo = (int)($saleOrder->discount_amount ?? 0); // informational diff
+    $dpMax    = (int)($saleOrder->deposit_amount ?? 0);
+    $dpRec    = (int)($saleOrder->deposit_received_amount ?? 0);
+    $remainingAfterDp = max(0, $total - $dpRec);
 @endphp
 
 <div class="container-fluid">
@@ -152,6 +164,54 @@
                     <div>{{ $saleOrder->note }}</div>
                 </div>
             @endif
+        </div>
+    </div>
+
+    {{-- ✅ NEW: Financial Summary --}}
+    <div class="card mb-3 shadow-sm">
+        <div class="card-body">
+            <h6 class="mb-3">Financial Summary</h6>
+
+            <div class="row">
+                <div class="col-lg-5">
+                    <table class="table table-sm">
+                        <tr><td>Items Subtotal (Sell)</td><td class="text-end">{{ format_currency($subtotal) }}</td></tr>
+                        <tr><td>Tax</td><td class="text-end">{{ format_currency($taxAmt) }}</td></tr>
+                        <tr><td>Platform Fee</td><td class="text-end">{{ format_currency($fee) }}</td></tr>
+                        <tr><td>Shipping</td><td class="text-end">{{ format_currency($ship) }}</td></tr>
+                        <tr><td><strong>Grand Total</strong></td><td class="text-end"><strong>{{ format_currency($total) }}</strong></td></tr>
+                    </table>
+                    <div class="text-muted small">
+                        Discount di SO adalah <strong>informasi</strong> (selisih Master vs Sell), bukan pengurangan kedua kali.
+                    </div>
+                </div>
+
+                <div class="col-lg-7">
+                    <div class="p-3 border rounded-3 bg-light">
+                        <div class="row">
+                            <div class="col-md-6">
+                                <div class="text-muted small">Discount Info (Diff)</div>
+                                <div class="fw-semibold">{{ format_currency($discInfo) }}</div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="text-muted small">DP Planned (Max)</div>
+                                <div class="fw-semibold">{{ format_currency($dpMax) }}</div>
+                            </div>
+                            <div class="col-md-6 mt-2">
+                                <div class="text-muted small">DP Received</div>
+                                <div class="fw-semibold">{{ format_currency($dpRec) }}</div>
+                            </div>
+                            <div class="col-md-6 mt-2">
+                                <div class="text-muted small">Remaining (after DP)</div>
+                                <div class="fw-semibold">{{ format_currency($remainingAfterDp) }}</div>
+                            </div>
+                        </div>
+                        <div class="text-muted small mt-2">
+                            DP Received akan dipakai sebagai catatan pengurang tagihan saat Invoice dibuat (allocated pro-rata).
+                        </div>
+                    </div>
+                </div>
+            </div>
         </div>
     </div>
 

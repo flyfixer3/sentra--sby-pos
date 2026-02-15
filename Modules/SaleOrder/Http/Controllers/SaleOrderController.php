@@ -190,22 +190,27 @@ class SaleOrderController extends Controller
                 'note' => 'nullable|string|max:5000',
 
                 'tax_percentage' => 'required|numeric|min:0|max:100',
-                'discount_percentage' => 'required|numeric|min:0|max:100', // input boleh 2 desimal
+                'discount_percentage' => 'required|numeric|min:0|max:100',
                 'auto_discount' => 'nullable|in:1',
 
                 'shipping_amount' => 'required|integer|min:0',
                 'fee_amount' => 'required|integer|min:0',
 
-                'deposit_percentage' => 'nullable|integer|min:0|max:100',
+                // ✅ allow decimal deposit %
+                'deposit_percentage' => 'nullable|numeric|min:0|max:100',
                 'deposit_amount' => 'nullable|integer|min:0',
                 'deposit_payment_method' => 'nullable|string|max:255',
                 'deposit_code' => 'nullable|string|max:255',
+
+                // ✅ NEW: DP Received
+                'deposit_received_amount' => 'nullable|integer|min:0',
+                'deposit_received_use_max' => 'nullable|in:1',
 
                 'items' => 'required|array|min:1',
                 'items.*.product_id' => 'required|integer',
                 'items.*.quantity' => 'required|integer|min:1',
                 'items.*.price' => 'nullable|integer|min:0',
-                'items.*.original_price' => 'nullable|integer|min:0', // ✅ baseline dari Livewire (optional)
+                'items.*.original_price' => 'nullable|integer|min:0',
             ];
 
             if ($source === 'quotation') $rules['quotation_id'] = 'required|integer';
@@ -260,7 +265,7 @@ class SaleOrderController extends Controller
                 }
 
                 // ==========================
-                // ✅ AGGREGATE + VALIDATE
+                // qty + sell subtotal
                 // ==========================
                 $qtyByProduct = [];
                 $sellSubtotal = 0;
@@ -282,7 +287,6 @@ class SaleOrderController extends Controller
 
                 $productIds = array_keys($qtyByProduct);
 
-                // master price map
                 $productMap = Product::query()
                     ->select('id', 'product_price')
                     ->whereIn('id', $productIds)
@@ -293,32 +297,21 @@ class SaleOrderController extends Controller
                     abort(422, 'Invalid product selected.');
                 }
 
-                // ==========================
-                // ✅ MASTER SUBTOTAL (server truth)
-                // ==========================
+                // master subtotal (truth)
                 $masterSubtotal = 0;
                 foreach ($qtyByProduct as $pid => $qty) {
                     $master = (int) ($productMap[$pid]->product_price ?? 0);
                     $masterSubtotal += ((int)$qty * max(0, $master));
                 }
 
-                // ==========================
-                // ✅ DISCOUNT (informational, not subtracted again)
-                // discount_amount = max(0, masterSubtotal - sellSubtotal)
-                // discount_percentage = discount_amount/masterSubtotal * 100 (2 decimals)
-                // ==========================
-                $discountAmount = max(0, (int) $masterSubtotal - (int) $sellSubtotal);
+                $discountAmount = max(0, (int)$masterSubtotal - (int)$sellSubtotal);
 
                 $discountPct = 0.0;
                 if ($masterSubtotal > 0 && $discountAmount > 0) {
                     $discountPct = round(($discountAmount / $masterSubtotal) * 100, 2);
                 }
 
-                // ==========================
-                // ✅ FINANCIAL TOTAL
-                // tax dihitung dari sellSubtotal
-                // grandTotal = sellSubtotal + tax + fee + shipping  (NO - discount again)
-                // ==========================
+                // totals
                 $taxPct = (float) $request->tax_percentage;
                 $shipping = (int) $request->shipping_amount;
                 $fee = (int) $request->fee_amount;
@@ -327,9 +320,11 @@ class SaleOrderController extends Controller
                 $grandTotal = (int) round($sellSubtotal + $taxAmount + $shipping + $fee);
 
                 // ==========================
-                // ✅ Deposit
+                // Deposit planned (max)
                 // ==========================
-                $depositPct = (int) ($request->deposit_percentage ?? 0);
+                $depositPct = (float) ($request->deposit_percentage ?? 0);
+                $depositPct = max(0, min(100, $depositPct));
+
                 $depositAmountInput = $request->deposit_amount;
                 $depositAmount = (int) (is_numeric($depositAmountInput) ? $depositAmountInput : 0);
 
@@ -340,17 +335,38 @@ class SaleOrderController extends Controller
                 if ($depositAmount < 0) $depositAmount = 0;
                 if ($depositAmount > $grandTotal) abort(422, 'Deposit amount cannot be greater than Grand Total.');
 
+                // ==========================
+                // ✅ Deposit received (actual)
+                // ==========================
+                $useMaxReceived = (string)$request->deposit_received_use_max === '1';
+                $receivedInput  = $request->deposit_received_amount;
+                $depositReceived = (int) (is_numeric($receivedInput) ? $receivedInput : 0);
+
+                if ($depositReceived < 0) $depositReceived = 0;
+
+                // kalau Use Max ON -> received = planned
+                if ($useMaxReceived) {
+                    $depositReceived = (int) $depositAmount;
+                }
+
+                // kalau user isi received tapi planned masih 0, kita naikin planned biar konsisten
+                if ($depositReceived > 0 && $depositAmount <= 0) {
+                    $depositAmount = $depositReceived;
+                }
+
+                if ($depositAmount > $grandTotal) abort(422, 'Deposit amount cannot be greater than Grand Total.');
+                if ($depositReceived > $grandTotal) abort(422, 'DP Received cannot be greater than Grand Total.');
+                if ($depositReceived > $depositAmount) abort(422, 'DP Received cannot be greater than Deposit Amount.');
+
                 $depositCode = $request->deposit_code ? (string) $request->deposit_code : null;
                 $depositPaymentMethod = $request->deposit_payment_method ? (string) $request->deposit_payment_method : null;
 
-                if ($depositAmount > 0) {
-                    if (empty($depositCode)) abort(422, 'Deposit To is required when Deposit > 0.');
-                    if (empty($depositPaymentMethod)) abort(422, 'Deposit Payment Method is required when Deposit > 0.');
+                // wajib isi akun & method kalau planned>0 atau received>0
+                if ($depositAmount > 0 || $depositReceived > 0) {
+                    if (empty($depositCode)) abort(422, 'Deposit To is required when DP (planned/received) > 0.');
+                    if (empty($depositPaymentMethod)) abort(422, 'Deposit Payment Method is required when DP (planned/received) > 0.');
                 }
 
-                // ==========================
-                // ✅ CREATE SALE ORDER
-                // ==========================
                 $so = SaleOrder::create([
                     'branch_id' => $branchId,
                     'customer_id' => (int) $customer->id,
@@ -364,19 +380,22 @@ class SaleOrderController extends Controller
                     'tax_percentage' => $taxPct,
                     'tax_amount' => $taxAmount,
 
-                    // ✅ we store the computed truth (server)
                     'discount_percentage' => (float) $discountPct,
                     'discount_amount' => (int) $discountAmount,
 
                     'shipping_amount' => $shipping,
                     'fee_amount' => $fee,
-                    'subtotal_amount' => (int) $sellSubtotal,   // subtotal sell (final)
-                    'total_amount' => (int) $grandTotal,        // total without double discount
+                    'subtotal_amount' => (int) $sellSubtotal,
+                    'total_amount' => (int) $grandTotal,
 
-                    'deposit_percentage' => $depositPct,
+                    // dp planned
+                    'deposit_percentage' => (float) $depositPct,
                     'deposit_amount' => (int) $depositAmount,
                     'deposit_payment_method' => $depositPaymentMethod,
                     'deposit_code' => $depositCode,
+
+                    // ✅ dp received
+                    'deposit_received_amount' => (int) $depositReceived,
                 ]);
 
                 $saleOrderId = (int) $so->id;
@@ -390,7 +409,7 @@ class SaleOrderController extends Controller
                     ]);
                 }
 
-                // reserve stock (existing logic)
+                // reserve stock (existing)
                 foreach ($qtyByProduct as $pid => $qty) {
                     $existing = DB::table('stocks')
                         ->where('branch_id', (int) $branchId)
@@ -411,28 +430,26 @@ class SaleOrderController extends Controller
                             'branch_id'    => (int) $branchId,
                             'warehouse_id' => null,
                             'product_id'   => (int) $pid,
-
                             'qty_available' => 0,
                             'qty_reserved'  => (int) $qty,
                             'qty_incoming'  => 0,
                             'min_stock'     => 0,
-
                             'created_at' => now(),
                             'updated_at' => now(),
                         ]);
                     }
                 }
 
-                // create DP payment (unchanged)
-                if ((int) $depositAmount > 0) {
+                // ✅ DP payment record: pakai DP Received
+                if ((int) $depositReceived > 0) {
                     $salePayment = \Modules\Sale\Entities\SalePayment::create([
                         'sale_id' => null,
                         'sale_order_id' => (int) $so->id,
-                        'amount' => (int) $depositAmount,
+                        'amount' => (int) $depositReceived,
                         'date' => (string) $request->date,
                         'reference' => 'SO/' . (string) ($so->reference ?? ('SO-' . $so->id)),
                         'payment_method' => (string) $depositPaymentMethod,
-                        'note' => 'Deposit (DP) from Sale Order',
+                        'note' => 'Deposit (DP) RECEIVED from Sale Order',
                         'deposit_code' => (string) $depositCode,
                     ]);
 
@@ -451,12 +468,12 @@ class SaleOrderController extends Controller
                     ], [
                         [
                             'subaccount_number' => (string) $depositCode,
-                            'amount' => (int) $depositAmount,
+                            'amount' => (int) $depositReceived,
                             'type' => 'debit'
                         ],
                         [
                             'subaccount_number' => '1-10100',
-                            'amount' => (int) $depositAmount,
+                            'amount' => (int) $depositReceived,
                             'type' => 'credit'
                         ],
                     ]);

@@ -600,20 +600,15 @@ class SaleController extends Controller
             })
             ->firstOrFail();
 
-        // ✅ ambil sale deliveries yang terhubung ke invoice ini
         $saleDeliveries = SaleDelivery::query()
             ->where('branch_id', $branchId)
             ->where('sale_id', (int) $sale->id)
             ->orderByDesc('id')
             ->get();
 
-        // =========================================================
-        // ✅ NEW: DP PRO-RATA NOTE (basis A: subtotal items only)
-        // =========================================================
         $saleOrderDepositInfo = null;
 
         try {
-            // ambil sale_order_id dari delivery yang terkait invoice ini
             $saleOrderId = (int) ($saleDeliveries->pluck('sale_order_id')->filter()->first() ?? 0);
 
             if ($saleOrderId > 0) {
@@ -623,10 +618,11 @@ class SaleController extends Controller
                     ->first();
 
                 if ($saleOrder) {
-                    $dpTotal = (int) ($saleOrder->deposit_amount ?? 0);
+                    // ✅ pakai DP Received (actual)
+                    $dpTotal = (int) ($saleOrder->deposit_received_amount ?? 0);
 
                     if ($dpTotal > 0) {
-                        // subtotal invoice = sum(qty * price) dari sale_details (basis A)
+                        // invoiceSubtotal = sum(qty * price) dari sale_details
                         $invoiceSubtotal = 0;
                         foreach ($sale->saleDetails as $d) {
                             $qty = (int) ($d->quantity ?? 0);
@@ -636,7 +632,7 @@ class SaleController extends Controller
                             }
                         }
 
-                        // subtotal sale order = sum(qty * price) dari sale_order_items (basis A)
+                        // soSubtotal = sum(qty * price) dari sale_order_items
                         $soSubtotal = (int) \Illuminate\Support\Facades\DB::table('sale_order_items')
                             ->where('sale_order_id', (int) $saleOrder->id)
                             ->selectRaw('SUM(COALESCE(quantity,0) * COALESCE(price,0)) as s')
@@ -645,7 +641,6 @@ class SaleController extends Controller
                         if ($soSubtotal > 0 && $invoiceSubtotal > 0) {
                             $allocated = (int) round($dpTotal * ($invoiceSubtotal / $soSubtotal));
 
-                            // safety clamp
                             if ($allocated < 0) $allocated = 0;
                             if ($allocated > $dpTotal) $allocated = $dpTotal;
 
@@ -658,7 +653,6 @@ class SaleController extends Controller
                                 'ratio_percent' => $pct,
                             ];
                         } else {
-                            // kalau subtotal tidak bisa dihitung (misal price kosong), tetap tampilkan dp total saja
                             $saleOrderDepositInfo = [
                                 'sale_order_reference' => (string) ($saleOrder->reference ?? ('SO-'.$saleOrder->id)),
                                 'deposit_total' => $dpTotal,
@@ -670,7 +664,6 @@ class SaleController extends Controller
                 }
             }
         } catch (\Throwable $e) {
-            // kalau ada error, jangan ngeblok view invoice
             $saleOrderDepositInfo = null;
         }
 

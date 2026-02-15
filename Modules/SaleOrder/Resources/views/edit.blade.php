@@ -16,21 +16,23 @@
     $items = old('items', $items ?? []);
     if (!is_array($items)) $items = [];
 
-    // financial old values
-    $oldTax = (int) old('tax_percentage', (int)($saleOrder->tax_percentage ?? 0));
-    $oldDiscount = (int) old('discount_percentage', (int)($saleOrder->discount_percentage ?? 0));
-    $oldShipping = (int) old('shipping_amount', (int)($saleOrder->shipping_amount ?? 0));
-    $oldFee = (int) old('fee_amount', (int)($saleOrder->fee_amount ?? 0));
+    $oldTax = old('tax_percentage', (float)($saleOrder->tax_percentage ?? 0));
+    $oldDiscount = old('discount_percentage', (float)($saleOrder->discount_percentage ?? 0));
+    $oldShipping = old('shipping_amount', (int)($saleOrder->shipping_amount ?? 0));
+    $oldFee = old('fee_amount', (int)($saleOrder->fee_amount ?? 0));
+
+    $oldAutoDiscount = old('auto_discount', '1');
 
     // deposit readonly display
-    $dpPct = (int)($saleOrder->deposit_percentage ?? 0);
+    $dpPct = (float)($saleOrder->deposit_percentage ?? 0);
     $dpAmt = (int)($saleOrder->deposit_amount ?? 0);
+    $dpRec = (int)($saleOrder->deposit_received_amount ?? 0);
+
     $dpMethod = (string)($saleOrder->deposit_payment_method ?? '');
     $dpCode = (string)($saleOrder->deposit_code ?? '');
 @endphp
 
 <div class="container-fluid mb-4">
-    {{-- ✅ search bar (komponen yang sama seperti Transfer / Create) --}}
     <div class="row">
         <div class="col-12">
             <livewire:search-product />
@@ -51,41 +53,37 @@
                     </div>
 
                     <div class="mfs-auto d-flex gap-2">
-                        <a href="{{ route('sale-orders.show', $saleOrder->id) }}" class="btn btn-sm btn-light">
-                            Back
-                        </a>
+                        <a href="{{ route('sale-orders.show', $saleOrder->id) }}" class="btn btn-sm btn-light">Back</a>
                     </div>
                 </div>
 
                 <div class="card-body">
                     @include('utils.alerts')
 
-                    {{-- ✅ DP readonly info --}}
                     <div class="alert alert-info">
                         <div class="small">
                             <strong>Deposit (DP) terkunci.</strong>
                             DP hanya bisa diinput saat Create Sale Order untuk menjaga audit & accounting tetap rapi.
-                            <br>
-                            @if($dpAmt > 0)
-                                DP saat ini:
-                                <strong>{{ format_currency($dpAmt) }}</strong>
-                                @if($dpPct > 0)
-                                    ({{ $dpPct }}%)
-                                @endif
-                                @if(!empty($dpMethod))
-                                    • Method: <strong>{{ $dpMethod }}</strong>
-                                @endif
-                                @if(!empty($dpCode))
-                                    • Deposit To: <strong>{{ $dpCode }}</strong>
-                                @endif
-                                <br>
-                                <span class="text-muted">
-                                    DP ini tidak masuk ke tabel Payments pada Invoice. Saat invoice dibuat dari Sale Delivery,
-                                    DP hanya ditampilkan sebagai keterangan (allocated pro-rata).
-                                </span>
-                            @else
-                                DP saat ini: <strong>Rp0</strong>
+                            <br><br>
+
+                            DP Planned (Max): <strong>{{ format_currency($dpAmt) }}</strong>
+                            @if($dpPct > 0)
+                                ({{ number_format($dpPct, 2) }}%)
                             @endif
+                            <br>
+                            DP Received: <strong>{{ format_currency($dpRec) }}</strong>
+
+                            @if(!empty($dpMethod))
+                                <br>Method: <strong>{{ $dpMethod }}</strong>
+                            @endif
+                            @if(!empty($dpCode))
+                                <br>Deposit To: <strong>{{ $dpCode }}</strong>
+                            @endif
+
+                            <br>
+                            <span class="text-muted">
+                                DP Received inilah yang dipakai untuk catatan DP di Invoice (allocated pro-rata).
+                            </span>
                         </div>
                     </div>
 
@@ -124,43 +122,57 @@
 
                         <hr>
 
-                        {{-- ✅ Items table: Livewire (selaras dengan Create) --}}
                         <div class="mt-2">
                             <livewire:sale-order.product-table :prefillItems="$items" />
                         </div>
 
                         <hr>
 
-                        {{-- =========================
-                             Financial (mirip Create)
-                             ========================= --}}
                         <div class="row">
                             <div class="col-lg-3 mb-3">
                                 <label class="form-label">Order Tax (%)</label>
-                                <input type="number" min="0" max="100" name="tax_percentage" id="so_tax_percentage"
+                                <input type="number" min="0" max="100" step="1"
+                                       name="tax_percentage" id="so_tax_percentage"
                                        class="form-control" value="{{ $oldTax }}" required>
                             </div>
 
-                            <div class="col-lg-3 mb-3">
-                                <label class="form-label">Discount (%)</label>
-                                <input type="number" min="0" max="100" name="discount_percentage" id="so_discount_percentage"
+                            <div class="col-lg-4 mb-3">
+                                <div class="d-flex align-items-center justify-content-between">
+                                    <label class="form-label mb-0">Discount (%)</label>
+
+                                    <label class="mb-0 small d-flex align-items-center gap-2">
+                                        <input type="checkbox" name="auto_discount" id="so_auto_discount" value="1"
+                                            {{ (string)$oldAutoDiscount === '1' ? 'checked' : '' }}>
+                                        Auto (from price diff)
+                                    </label>
+                                </div>
+
+                                <input type="text"
+                                       inputmode="decimal"
+                                       placeholder="0"
+                                       name="discount_percentage" id="so_discount_percentage"
                                        class="form-control" value="{{ $oldDiscount }}" required>
+
+                                <div class="small text-muted">
+                                    Auto: % dihitung dari (Master - Sell). Manual: % akan mengubah Sell Price.
+                                </div>
                             </div>
 
-                            <div class="col-lg-3 mb-3">
+                            <div class="col-lg-2 mb-3">
                                 <label class="form-label">Platform Fee</label>
-                                <input type="number" min="0" name="fee_amount" id="so_fee_amount"
+                                <input type="number" min="0" step="1"
+                                       name="fee_amount" id="so_fee_amount"
                                        class="form-control" value="{{ $oldFee }}" required>
                             </div>
 
                             <div class="col-lg-3 mb-3">
                                 <label class="form-label">Shipping</label>
-                                <input type="number" min="0" name="shipping_amount" id="so_shipping_amount"
+                                <input type="number" min="0" step="1"
+                                       name="shipping_amount" id="so_shipping_amount"
                                        class="form-control" value="{{ $oldShipping }}" required>
                             </div>
                         </div>
 
-                        {{-- Summary --}}
                         <div class="row justify-content-end">
                             <div class="col-lg-4">
                                 <table class="table table-striped">
@@ -191,8 +203,10 @@
                                         </tr>
                                     </tbody>
                                 </table>
+
                                 <div class="small text-muted">
-                                    Grand Total dihitung dari item (qty × price) + tax - discount + fee + shipping.
+                                    Grand Total dihitung dari item (qty × sell price) + tax + fee + shipping.<br>
+                                    Discount hanya informasi (selisih Master vs Sell), tidak mengurangi lagi saat Auto ON.
                                 </div>
                             </div>
                         </div>
@@ -222,194 +236,148 @@
 @push('page_scripts')
 <script>
     function soFormatRupiah(num) {
-        try {
-            const n = Math.round(Number(num) || 0);
-            return 'Rp' + n.toString().replace(/\B(?=(\d{3})+(?!\d))/g, '.');
-        } catch (e) {
-            return 'Rp0';
-        }
+        const n = Math.round(Number(num) || 0);
+        return 'Rp' + n.toString().replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+    }
+    function soParseInt(v) {
+        const n = parseInt((v ?? '').toString().replace(/[^\d-]/g, ''), 10);
+        return Number.isFinite(n) ? n : 0;
+    }
+    function soNormalizeDecimalString(v) {
+        let s = (v ?? '').toString().trim();
+        s = s.replace(',', '.');
+        s = s.replace(/[^\d.\-]/g, '');
+        const parts = s.split('.');
+        if (parts.length > 2) s = parts.shift() + '.' + parts.join('');
+        return s;
+    }
+    function soParseFloat(v) {
+        const n = parseFloat(soNormalizeDecimalString(v));
+        return Number.isFinite(n) ? n : 0;
+    }
+    function soClamp(num, min, max) {
+        return Math.max(min, Math.min(max, num));
+    }
+    function soToFixed2(n) {
+        return (Math.round((Number(n) || 0) * 100) / 100).toFixed(2);
     }
 
-    function soGetRowMeta() {
-        const pidInputs = document.querySelectorAll('input[name^="items"][name$="[product_id]"]');
+    function soGetRows() {
+        const productInputs = document.querySelectorAll('input[name^="items"][name$="[product_id]"]');
         const rows = [];
 
-        pidInputs.forEach((pidInput) => {
+        productInputs.forEach((pidInput) => {
             const name = pidInput.getAttribute('name') || '';
             const idxMatch = name.match(/items\[(\d+)\]\[product_id\]/);
             if (!idxMatch) return;
 
             const idx = idxMatch[1];
-            const pid = parseInt(pidInput.value || '0', 10);
+            const pid = soParseInt(pidInput.value);
             if (!pid || pid <= 0) return;
 
-            const qtyInput = document.querySelector(`input[name="items[${idx}][quantity]"]`);
-            const priceInput = document.querySelector(`input[name="items[${idx}][price]"]`);
+            const qtyInput  = document.querySelector(`input[name="items[${idx}][quantity]"]`);
+            const priceInput= document.querySelector(`input[name="items[${idx}][price]"]`);
             const origInput = document.querySelector(`input[name="items[${idx}][original_price]"]`);
 
-            const qty = qtyInput ? parseInt(qtyInput.value || '0', 10) : 0;
-            const price = priceInput ? parseInt(priceInput.value || '0', 10) : 0;
-            const orig = origInput ? parseInt(origInput.value || '0', 10) : 0;
+            const qty  = qtyInput ? soParseInt(qtyInput.value) : 0;
+            const price= priceInput ? soParseInt(priceInput.value) : 0;
+            const orig = origInput ? soParseInt(origInput.value) : 0;
 
-            rows.push({
-                idx,
-                pid,
-                qty: Math.max(0, qty),
-                price: Math.max(0, price),
-                orig: Math.max(0, orig),
-                qtyInput,
-                priceInput,
-                origInput,
-            });
+            if (qty > 0) rows.push({ pid, qty, price: Math.max(0, price), orig: Math.max(0, orig) });
         });
 
         return rows;
     }
 
-    function soComputeSubtotalBySell(rows) {
+    function soComputeSubtotalSell(rows) {
         return rows.reduce((sum, r) => sum + (r.qty * r.price), 0);
     }
-
-    function soComputeOriginalSubtotal(rows) {
-        return rows.reduce((sum, r) => sum + (r.qty * (r.orig > 0 ? r.orig : r.price)), 0);
-    }
-
     function soComputeDiffDiscount(rows) {
-        // Σ qty * max(0, orig - price)
         return rows.reduce((sum, r) => {
-            const base = (r.orig > 0 ? r.orig : r.price);
+            const base = r.orig > 0 ? r.orig : r.price;
             const diff = Math.max(0, base - r.price);
             return sum + (r.qty * diff);
         }, 0);
     }
+    function soComputeOriginalSubtotal(rows) {
+        return rows.reduce((sum, r) => sum + (r.qty * (r.orig > 0 ? r.orig : r.price)), 0);
+    }
 
-    let soIsApplyingPrice = false;
+    function soIsAutoDiscount() {
+        return !!document.getElementById('so_auto_discount')?.checked;
+    }
+    function soApplyAutoDiscountPercentFromPriceDiff(rows) {
+        const discEl = document.getElementById('so_discount_percentage');
+        if (!discEl) return;
 
-    function soApplyManualDiscountToPrices(pct) {
-        // pct: 0..100
-        const rows = soGetRowMeta();
-        if (rows.length === 0) return;
+        const originalSubtotal = soComputeOriginalSubtotal(rows);
+        if (originalSubtotal <= 0) {
+            discEl.value = soToFixed2(0);
+            return;
+        }
 
-        soIsApplyingPrice = true;
-
-        rows.forEach((r) => {
-            const base = (r.orig > 0 ? r.orig : r.price);
-            const newPrice = Math.max(0, Math.round(base * (1 - (pct / 100))));
-
-            if (r.priceInput) {
-                r.priceInput.value = String(newPrice);
-
-                // trigger Livewire binding
-                r.priceInput.dispatchEvent(new Event('input', { bubbles: true }));
-                r.priceInput.dispatchEvent(new Event('change', { bubbles: true }));
-            }
-        });
-
-        // release flag shortly after DOM events
-        setTimeout(() => { soIsApplyingPrice = false; }, 0);
+        const diffDiscount = soComputeDiffDiscount(rows);
+        let pct = (diffDiscount / originalSubtotal) * 100;
+        pct = soClamp(pct, 0, 100);
+        discEl.value = soToFixed2(pct);
     }
 
     function soRecalc() {
-        const rows = soGetRowMeta();
-        const subtotalSell = soComputeSubtotalBySell(rows);
+        const rows = soGetRows();
 
-        const taxPct = parseFloat(document.getElementById('so_tax_percentage')?.value || '0') || 0;
-        let discPct = parseFloat(document.getElementById('so_discount_percentage')?.value || '0') || 0;
+        const subtotalSell = soComputeSubtotalSell(rows);
+        const diffDiscount = soComputeDiffDiscount(rows);
 
-        const fee = parseInt(document.getElementById('so_fee_amount')?.value || '0', 10) || 0;
-        const shipping = parseInt(document.getElementById('so_shipping_amount')?.value || '0', 10) || 0;
-
-        const auto = document.getElementById('so_auto_discount')?.checked === true;
-
-        // ===== Discount amount rules =====
-        let discountAmount = 0;
-
-        if (auto) {
-            const originalSubtotal = soComputeOriginalSubtotal(rows);
-            const diffDiscount = soComputeDiffDiscount(rows);
-
-            discountAmount = Math.round(diffDiscount);
-
-            // set % with 2 decimals (NOT rounded to int)
-            if (originalSubtotal > 0) {
-                const pct = (diffDiscount / originalSubtotal) * 100;
-                const fixed = Math.min(100, Math.max(0, pct));
-                // show 2 decimals
-                document.getElementById('so_discount_percentage').value = fixed.toFixed(2);
-                discPct = fixed;
-            }
-        } else {
-            // manual: amount from subtotalSell * discPct
-            discountAmount = Math.round(subtotalSell * (discPct / 100));
+        if (soIsAutoDiscount()) {
+            soApplyAutoDiscountPercentFromPriceDiff(rows);
         }
 
-        const taxAmount = Math.round(subtotalSell * (taxPct / 100));
-        const grand = Math.round(subtotalSell + taxAmount - discountAmount + fee + shipping);
+        const taxPct  = soClamp(soParseFloat(document.getElementById('so_tax_percentage')?.value), 0, 100);
+        const discPct = soClamp(soParseFloat(document.getElementById('so_discount_percentage')?.value), 0, 100);
+
+        const fee      = Math.max(0, soParseInt(document.getElementById('so_fee_amount')?.value));
+        const shipping = Math.max(0, soParseInt(document.getElementById('so_shipping_amount')?.value));
+
+        const taxAmt = Math.round(subtotalSell * (taxPct / 100));
+
+        let discAmt = 0;
+        if (soIsAutoDiscount()) discAmt = Math.round(diffDiscount);
+        else discAmt = Math.round(subtotalSell * (discPct / 100));
+
+        const grand = Math.round(subtotalSell + taxAmt + fee + shipping - (soIsAutoDiscount() ? 0 : discAmt));
 
         document.getElementById('so_subtotal_text').innerText = soFormatRupiah(subtotalSell);
-        document.getElementById('so_tax_text').innerText = soFormatRupiah(taxAmount);
-        document.getElementById('so_discount_text').innerText = soFormatRupiah(discountAmount);
+        document.getElementById('so_tax_text').innerText = soFormatRupiah(taxAmt);
+        document.getElementById('so_discount_text').innerText = soFormatRupiah(discAmt);
         document.getElementById('so_fee_text').innerText = soFormatRupiah(fee);
         document.getElementById('so_shipping_text').innerText = soFormatRupiah(shipping);
         document.getElementById('so_grand_text').innerText = soFormatRupiah(grand);
-
-        // Deposit auto
-        const dpPctEl = document.getElementById('so_deposit_percentage');
-        const dpAmtEl = document.getElementById('so_deposit_amount');
-
-        if (dpPctEl && dpAmtEl) {
-            const dpPct = parseInt(dpPctEl.value || '0', 10) || 0;
-            const dpAmtNow = parseInt(dpAmtEl.value || '0', 10) || 0;
-
-            if (dpPct > 0 && (!dpAmtEl.value || dpAmtNow === 0)) {
-                const autoDp = Math.round(grand * (dpPct / 100));
-                dpAmtEl.value = autoDp;
-            }
-        }
     }
 
     document.addEventListener('DOMContentLoaded', function () {
-        const discountEl = document.getElementById('so_discount_percentage');
-        const autoEl = document.getElementById('so_auto_discount');
+        const discEl = document.getElementById('so_discount_percentage');
+        discEl?.addEventListener('input', function () {
+            discEl.value = soNormalizeDecimalString(discEl.value);
+        });
 
-        // input changes trigger recalc
         document.addEventListener('input', function (e) {
-            if (soIsApplyingPrice) return;
+            const id = e.target?.id || '';
+            const n  = e.target?.getAttribute('name') || '';
 
-            const n = e.target?.getAttribute('name') || '';
             if (
                 n.includes('[quantity]') ||
                 n.includes('[price]') ||
-                e.target?.id === 'so_tax_percentage' ||
-                e.target?.id === 'so_fee_amount' ||
-                e.target?.id === 'so_shipping_amount' ||
-                e.target?.id === 'so_deposit_percentage'
+                id === 'so_tax_percentage' ||
+                id === 'so_discount_percentage' ||
+                id === 'so_fee_amount' ||
+                id === 'so_shipping_amount'
             ) {
+                if (id === 'so_discount_percentage') {
+                    const chk = document.getElementById('so_auto_discount');
+                    if (chk && chk.checked) chk.checked = false;
+                }
                 soRecalc();
             }
-        });
-
-        // toggle auto/manual
-        autoEl?.addEventListener('change', function () {
-            soRecalc();
-        });
-
-        // manual discount: when user edits % and auto=false => update prices
-        discountEl?.addEventListener('input', function () {
-            const auto = autoEl?.checked === true;
-            if (auto) {
-                soRecalc();
-                return;
-            }
-
-            const pct = parseFloat(discountEl.value || '0') || 0;
-            const safe = Math.min(100, Math.max(0, pct));
-
-            // apply discount to all row prices (from original_price)
-            soApplyManualDiscountToPrices(safe);
-
-            // recalc totals after price updates
-            soRecalc();
         });
 
         soRecalc();
