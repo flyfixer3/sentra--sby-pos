@@ -14,7 +14,8 @@ class ProductTable extends Component
      *   'product_name' => string|null,
      *   'product_code' => string|null,
      *   'quantity' => int,
-     *   'price' => int,
+     *   'price' => int,            // editable selling price
+     *   'original_price' => int,   // master price from DB (baseline)
      * ]
      */
     public array $items = [];
@@ -33,22 +34,23 @@ class ProductTable extends Component
             $pid = (int)($r['product_id'] ?? 0);
             if ($pid <= 0) continue;
 
+            $price = max(0, (int)($r['price'] ?? 0));
+
             $this->items[] = [
-                'product_id'   => $pid,
-                'product_name' => $r['product_name'] ?? null,
-                'product_code' => $r['product_code'] ?? null,
-                'quantity'     => max(1, (int)($r['quantity'] ?? 1)),
-                'price'        => max(0, (int)($r['price'] ?? 0)),
+                'product_id'      => $pid,
+                'product_name'    => $r['product_name'] ?? null,
+                'product_code'    => $r['product_code'] ?? null,
+                'quantity'        => max(1, (int)($r['quantity'] ?? 1)),
+                'price'           => $price,
+                'original_price'  => max(0, (int)($r['original_price'] ?? 0)),
             ];
         }
 
-        // ✅ Kalau kosong, tetap ada 1 row
         if (count($this->items) === 0) {
             $this->addEmptyRow();
             return;
         }
 
-        // ✅ FIX UTAMA: kalau ada pid tapi name/code kosong, lookup dari master Product
         $needIds = collect($this->items)
             ->filter(function ($row) {
                 $pid = (int)($row['product_id'] ?? 0);
@@ -56,8 +58,9 @@ class ProductTable extends Component
 
                 $nameEmpty = empty($row['product_name']);
                 $codeEmpty = empty($row['product_code']);
+                $origEmpty = (int)($row['original_price'] ?? 0) <= 0;
 
-                return $nameEmpty || $codeEmpty;
+                return $nameEmpty || $codeEmpty || $origEmpty;
             })
             ->pluck('product_id')
             ->unique()
@@ -84,9 +87,13 @@ class ProductTable extends Component
                     $this->items[$idx]['product_code'] = (string) ($p->product_code ?? '');
                 }
 
-                // OPTIONAL: kalau price 0 dan product punya price, isi otomatis
-                if ((int)($this->items[$idx]['price'] ?? 0) <= 0 && $p->product_price !== null) {
-                    $this->items[$idx]['price'] = (int) $p->product_price;
+                $master = (int) ($p->product_price ?? 0);
+                if ((int)($this->items[$idx]['original_price'] ?? 0) <= 0) {
+                    $this->items[$idx]['original_price'] = $master;
+                }
+
+                if ((int)($this->items[$idx]['price'] ?? 0) <= 0 && $master > 0) {
+                    $this->items[$idx]['price'] = $master;
                 }
             }
         }
@@ -95,11 +102,12 @@ class ProductTable extends Component
     public function addEmptyRow(): void
     {
         $this->items[] = [
-            'product_id'   => 0,
-            'product_name' => null,
-            'product_code' => null,
-            'quantity'     => 1,
-            'price'        => 0,
+            'product_id'      => 0,
+            'product_name'    => null,
+            'product_code'    => null,
+            'quantity'        => 1,
+            'price'           => 0,
+            'original_price'  => 0,
         ];
     }
 
@@ -108,33 +116,42 @@ class ProductTable extends Component
         $pid = (int) data_get($product, 'id', 0);
         if ($pid <= 0) return;
 
-        // kalau sudah ada, +1 qty
+        $masterPrice = (int) data_get($product, 'product_price', 0);
+
         foreach ($this->items as $idx => $row) {
             if ((int)$row['product_id'] === $pid) {
                 $this->items[$idx]['quantity'] = (int)$this->items[$idx]['quantity'] + 1;
+
+                if ((int)($this->items[$idx]['original_price'] ?? 0) <= 0) {
+                    $this->items[$idx]['original_price'] = $masterPrice;
+                }
+                if ((int)($this->items[$idx]['price'] ?? 0) <= 0) {
+                    $this->items[$idx]['price'] = $masterPrice;
+                }
+
                 return;
             }
         }
 
-        // replace empty row pertama kalau ada
         foreach ($this->items as $idx => $row) {
             if ((int)($row['product_id'] ?? 0) <= 0) {
-                $this->items[$idx]['product_id']   = $pid;
-                $this->items[$idx]['product_name'] = (string) data_get($product, 'product_name', '');
-                $this->items[$idx]['product_code'] = (string) data_get($product, 'product_code', '');
-                $this->items[$idx]['price']        = (int) data_get($product, 'product_price', 0);
-                $this->items[$idx]['quantity']     = 1;
+                $this->items[$idx]['product_id']     = $pid;
+                $this->items[$idx]['product_name']   = (string) data_get($product, 'product_name', '');
+                $this->items[$idx]['product_code']   = (string) data_get($product, 'product_code', '');
+                $this->items[$idx]['original_price'] = $masterPrice;
+                $this->items[$idx]['price']          = $masterPrice;
+                $this->items[$idx]['quantity']       = 1;
                 return;
             }
         }
 
-        // kalau tidak ada empty row, append baru
         $this->items[] = [
-            'product_id'   => $pid,
-            'product_name' => (string) data_get($product, 'product_name', ''),
-            'product_code' => (string) data_get($product, 'product_code', ''),
-            'quantity'     => 1,
-            'price'        => (int) data_get($product, 'product_price', 0),
+            'product_id'      => $pid,
+            'product_name'    => (string) data_get($product, 'product_name', ''),
+            'product_code'    => (string) data_get($product, 'product_code', ''),
+            'quantity'        => 1,
+            'original_price'  => $masterPrice,
+            'price'           => $masterPrice,
         ];
     }
 
@@ -147,6 +164,7 @@ class ProductTable extends Component
                 'product_code' => null,
                 'quantity' => 1,
                 'price' => 0,
+                'original_price' => 0,
             ]];
             return;
         }

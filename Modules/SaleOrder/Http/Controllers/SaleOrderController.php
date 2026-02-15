@@ -186,14 +186,26 @@ class SaleOrderController extends Controller
                 'date' => 'required|date',
                 'customer_id' => 'required|integer',
 
-                // ✅ SO warehouse tetap nullable (redundant)
                 'warehouse_id' => 'nullable|integer',
-
                 'note' => 'nullable|string|max:5000',
+
+                'tax_percentage' => 'required|numeric|min:0|max:100',
+                'discount_percentage' => 'required|numeric|min:0|max:100', // input boleh 2 desimal
+                'auto_discount' => 'nullable|in:1',
+
+                'shipping_amount' => 'required|integer|min:0',
+                'fee_amount' => 'required|integer|min:0',
+
+                'deposit_percentage' => 'nullable|integer|min:0|max:100',
+                'deposit_amount' => 'nullable|integer|min:0',
+                'deposit_payment_method' => 'nullable|string|max:255',
+                'deposit_code' => 'nullable|string|max:255',
+
                 'items' => 'required|array|min:1',
                 'items.*.product_id' => 'required|integer',
                 'items.*.quantity' => 'required|integer|min:1',
                 'items.*.price' => 'nullable|integer|min:0',
+                'items.*.original_price' => 'nullable|integer|min:0', // ✅ baseline dari Livewire (optional)
             ];
 
             if ($source === 'quotation') $rules['quotation_id'] = 'required|integer';
@@ -208,8 +220,7 @@ class SaleOrderController extends Controller
                 $customer = Customer::query()
                     ->where('id', (int) $request->customer_id)
                     ->where(function ($q) use ($branchId) {
-                        $q->whereNull('branch_id')
-                        ->orWhere('branch_id', $branchId);
+                        $q->whereNull('branch_id')->orWhere('branch_id', $branchId);
                     })
                     ->firstOrFail();
 
@@ -229,9 +240,7 @@ class SaleOrderController extends Controller
                         ->where('quotation_id', $quotationId)
                         ->exists();
 
-                    if ($exists) {
-                        abort(422, 'Sale Order for this quotation already exists.');
-                    }
+                    if ($exists) abort(422, 'Sale Order for this quotation already exists.');
                 }
 
                 if ($source === 'sale') {
@@ -247,37 +256,100 @@ class SaleOrderController extends Controller
                         ->where('sale_id', $saleId)
                         ->exists();
 
-                    if ($exists) {
-                        abort(422, 'Sale Order for this invoice already exists.');
-                    }
+                    if ($exists) abort(422, 'Sale Order for this invoice already exists.');
                 }
 
                 // ==========================
-                // ✅ AGGREGATE QTY PER PRODUCT
+                // ✅ AGGREGATE + VALIDATE
                 // ==========================
                 $qtyByProduct = [];
+                $sellSubtotal = 0;
+
                 foreach ($request->items as $row) {
                     $pid = (int) ($row['product_id'] ?? 0);
                     $qty = (int) ($row['quantity'] ?? 0);
+                    $sell = array_key_exists('price', $row) && $row['price'] !== null ? (int) $row['price'] : 0;
+
                     if ($pid <= 0 || $qty <= 0) continue;
 
                     if (!isset($qtyByProduct[$pid])) $qtyByProduct[$pid] = 0;
                     $qtyByProduct[$pid] += $qty;
+
+                    $sellSubtotal += ($qty * max(0, $sell));
                 }
 
-                if (empty($qtyByProduct)) {
-                    abort(422, 'Items are empty.');
-                }
+                if (empty($qtyByProduct)) abort(422, 'Items are empty.');
 
-                // ✅ Pastikan product_id valid
                 $productIds = array_keys($qtyByProduct);
-                $validCount = Product::query()->whereIn('id', $productIds)->count();
-                if ($validCount !== count($productIds)) {
+
+                // master price map
+                $productMap = Product::query()
+                    ->select('id', 'product_price')
+                    ->whereIn('id', $productIds)
+                    ->get()
+                    ->keyBy('id');
+
+                if ($productMap->count() !== count($productIds)) {
                     abort(422, 'Invalid product selected.');
                 }
 
                 // ==========================
-                // ✅ CREATE SALE ORDER (header)
+                // ✅ MASTER SUBTOTAL (server truth)
+                // ==========================
+                $masterSubtotal = 0;
+                foreach ($qtyByProduct as $pid => $qty) {
+                    $master = (int) ($productMap[$pid]->product_price ?? 0);
+                    $masterSubtotal += ((int)$qty * max(0, $master));
+                }
+
+                // ==========================
+                // ✅ DISCOUNT (informational, not subtracted again)
+                // discount_amount = max(0, masterSubtotal - sellSubtotal)
+                // discount_percentage = discount_amount/masterSubtotal * 100 (2 decimals)
+                // ==========================
+                $discountAmount = max(0, (int) $masterSubtotal - (int) $sellSubtotal);
+
+                $discountPct = 0.0;
+                if ($masterSubtotal > 0 && $discountAmount > 0) {
+                    $discountPct = round(($discountAmount / $masterSubtotal) * 100, 2);
+                }
+
+                // ==========================
+                // ✅ FINANCIAL TOTAL
+                // tax dihitung dari sellSubtotal
+                // grandTotal = sellSubtotal + tax + fee + shipping  (NO - discount again)
+                // ==========================
+                $taxPct = (float) $request->tax_percentage;
+                $shipping = (int) $request->shipping_amount;
+                $fee = (int) $request->fee_amount;
+
+                $taxAmount = (int) round($sellSubtotal * ($taxPct / 100));
+                $grandTotal = (int) round($sellSubtotal + $taxAmount + $shipping + $fee);
+
+                // ==========================
+                // ✅ Deposit
+                // ==========================
+                $depositPct = (int) ($request->deposit_percentage ?? 0);
+                $depositAmountInput = $request->deposit_amount;
+                $depositAmount = (int) (is_numeric($depositAmountInput) ? $depositAmountInput : 0);
+
+                if ($depositAmount <= 0 && $depositPct > 0) {
+                    $depositAmount = (int) round($grandTotal * ($depositPct / 100));
+                }
+
+                if ($depositAmount < 0) $depositAmount = 0;
+                if ($depositAmount > $grandTotal) abort(422, 'Deposit amount cannot be greater than Grand Total.');
+
+                $depositCode = $request->deposit_code ? (string) $request->deposit_code : null;
+                $depositPaymentMethod = $request->deposit_payment_method ? (string) $request->deposit_payment_method : null;
+
+                if ($depositAmount > 0) {
+                    if (empty($depositCode)) abort(422, 'Deposit To is required when Deposit > 0.');
+                    if (empty($depositPaymentMethod)) abort(422, 'Deposit Payment Method is required when Deposit > 0.');
+                }
+
+                // ==========================
+                // ✅ CREATE SALE ORDER
                 // ==========================
                 $so = SaleOrder::create([
                     'branch_id' => $branchId,
@@ -288,13 +360,27 @@ class SaleOrderController extends Controller
                     'date' => $request->date,
                     'status' => 'pending',
                     'note' => $request->note,
+
+                    'tax_percentage' => $taxPct,
+                    'tax_amount' => $taxAmount,
+
+                    // ✅ we store the computed truth (server)
+                    'discount_percentage' => (float) $discountPct,
+                    'discount_amount' => (int) $discountAmount,
+
+                    'shipping_amount' => $shipping,
+                    'fee_amount' => $fee,
+                    'subtotal_amount' => (int) $sellSubtotal,   // subtotal sell (final)
+                    'total_amount' => (int) $grandTotal,        // total without double discount
+
+                    'deposit_percentage' => $depositPct,
+                    'deposit_amount' => (int) $depositAmount,
+                    'deposit_payment_method' => $depositPaymentMethod,
+                    'deposit_code' => $depositCode,
                 ]);
 
                 $saleOrderId = (int) $so->id;
 
-                // ==========================
-                // ✅ CREATE ITEMS
-                // ==========================
                 foreach ($request->items as $row) {
                     SaleOrderItem::create([
                         'sale_order_id' => $so->id,
@@ -304,12 +390,8 @@ class SaleOrderController extends Controller
                     ]);
                 }
 
-                // ==========================
-                // ✅ STEP 2: INCREASE qty_reserved (stocks)
-                // - reserve at branch-level (warehouse_id NULL)
-                // ==========================
+                // reserve stock (existing logic)
                 foreach ($qtyByProduct as $pid => $qty) {
-                    // lock row if exists (avoid race)
                     $existing = DB::table('stocks')
                         ->where('branch_id', (int) $branchId)
                         ->whereNull('warehouse_id')
@@ -325,7 +407,6 @@ class SaleOrderController extends Controller
                                 'updated_at' => now(),
                             ]);
                     } else {
-                        // create minimal row for branch-level reservation
                         DB::table('stocks')->insert([
                             'branch_id'    => (int) $branchId,
                             'warehouse_id' => null,
@@ -342,7 +423,45 @@ class SaleOrderController extends Controller
                     }
                 }
 
-                // mark quotation completed if needed (keep your rule)
+                // create DP payment (unchanged)
+                if ((int) $depositAmount > 0) {
+                    $salePayment = \Modules\Sale\Entities\SalePayment::create([
+                        'sale_id' => null,
+                        'sale_order_id' => (int) $so->id,
+                        'amount' => (int) $depositAmount,
+                        'date' => (string) $request->date,
+                        'reference' => 'SO/' . (string) ($so->reference ?? ('SO-' . $so->id)),
+                        'payment_method' => (string) $depositPaymentMethod,
+                        'note' => 'Deposit (DP) from Sale Order',
+                        'deposit_code' => (string) $depositCode,
+                    ]);
+
+                    \App\Helpers\Helper::addNewTransaction([
+                        'date' =>  (string) $request->date,
+                        'label' => "Deposit For Sale Order #".$so->reference,
+                        'description' => "Sale Order: ".$so->reference,
+                        'purchase_id' => null,
+                        'purchase_payment_id' => null,
+                        'purchase_return_id' => null,
+                        'purchase_return_payment_id' => null,
+                        'sale_id' => null,
+                        'sale_payment_id' => $salePayment->id,
+                        'sale_return_id' => null,
+                        'sale_return_payment_id' => null,
+                    ], [
+                        [
+                            'subaccount_number' => (string) $depositCode,
+                            'amount' => (int) $depositAmount,
+                            'type' => 'debit'
+                        ],
+                        [
+                            'subaccount_number' => '1-10100',
+                            'amount' => (int) $depositAmount,
+                            'type' => 'credit'
+                        ],
+                    ]);
+                }
+
                 $qid = (int) ($so->quotation_id ?? 0);
                 if ($qid > 0) {
                     $this->markQuotationCompletedIfHasChildren($qid, (int) $branchId);
@@ -439,9 +558,6 @@ class SaleOrderController extends Controller
         }
     }
 
-    // =========================
-    // ✅ NEW: UPDATE SALE ORDER
-    // =========================
     public function update(Request $request, SaleOrder $saleOrder)
     {
         abort_if(Gate::denies('edit_sale_orders'), 403);
@@ -463,10 +579,23 @@ class SaleOrderController extends Controller
                 'customer_id' => 'required|integer',
                 'note' => 'nullable|string|max:5000',
 
+                'tax_percentage' => 'required|numeric|min:0|max:100',
+                'discount_percentage' => 'required|numeric|min:0|max:100',
+                'auto_discount' => 'nullable|in:1',
+
+                'shipping_amount' => 'required|integer|min:0',
+                'fee_amount' => 'required|integer|min:0',
+
+                'deposit_percentage' => 'nullable|integer|min:0|max:100',
+                'deposit_amount' => 'nullable|integer|min:0',
+                'deposit_payment_method' => 'nullable|string|max:255',
+                'deposit_code' => 'nullable|string|max:255',
+
                 'items' => 'required|array|min:1',
                 'items.*.product_id' => 'required|integer',
                 'items.*.quantity' => 'required|integer|min:1',
                 'items.*.price' => 'nullable|integer|min:0',
+                'items.*.original_price' => 'nullable|integer|min:0',
             ]);
 
             DB::transaction(function () use ($request, $saleOrder, $branchId) {
@@ -484,20 +613,115 @@ class SaleOrderController extends Controller
                 $customer = Customer::query()
                     ->where('id', (int) $request->customer_id)
                     ->where(function ($q) use ($branchId) {
-                        $q->whereNull('branch_id')
-                          ->orWhere('branch_id', $branchId);
+                        $q->whereNull('branch_id')->orWhere('branch_id', $branchId);
                     })
                     ->firstOrFail();
 
-                // ✅ warehouse di SO kita keep NULL (biar gak redundant)
+                // ==========================
+                // ✅ Build qty + sellSubtotal
+                // ==========================
+                $qtyByProduct = [];
+                $sellSubtotal = 0;
+
+                foreach ($request->items as $row) {
+                    $pid = (int) ($row['product_id'] ?? 0);
+                    $qty = (int) ($row['quantity'] ?? 0);
+                    $sell = array_key_exists('price', $row) && $row['price'] !== null ? (int) $row['price'] : 0;
+
+                    if ($pid <= 0 || $qty <= 0) continue;
+
+                    if (!isset($qtyByProduct[$pid])) $qtyByProduct[$pid] = 0;
+                    $qtyByProduct[$pid] += $qty;
+
+                    $sellSubtotal += ($qty * max(0, $sell));
+                }
+
+                if (empty($qtyByProduct)) {
+                    throw new \RuntimeException('Items are empty.');
+                }
+
+                $productIds = array_keys($qtyByProduct);
+
+                $productMap = Product::query()
+                    ->select('id', 'product_price')
+                    ->whereIn('id', $productIds)
+                    ->get()
+                    ->keyBy('id');
+
+                if ($productMap->count() !== count($productIds)) {
+                    throw new \RuntimeException('Invalid product selected.');
+                }
+
+                // ==========================
+                // ✅ master subtotal
+                // ==========================
+                $masterSubtotal = 0;
+                foreach ($qtyByProduct as $pid => $qty) {
+                    $master = (int) ($productMap[$pid]->product_price ?? 0);
+                    $masterSubtotal += ((int)$qty * max(0, $master));
+                }
+
+                $discountAmount = max(0, (int) $masterSubtotal - (int) $sellSubtotal);
+
+                $discountPct = 0.0;
+                if ($masterSubtotal > 0 && $discountAmount > 0) {
+                    $discountPct = round(($discountAmount / $masterSubtotal) * 100, 2);
+                }
+
+                $taxPct = (float) $request->tax_percentage;
+                $shipping = (int) $request->shipping_amount;
+                $fee = (int) $request->fee_amount;
+
+                $taxAmount = (int) round($sellSubtotal * ($taxPct / 100));
+                $grandTotal = (int) round($sellSubtotal + $taxAmount + $shipping + $fee);
+
+                // deposit (same rule)
+                $depositPct = (int) ($request->deposit_percentage ?? 0);
+                $depositAmountInput = $request->deposit_amount;
+                $depositAmount = (int) (is_numeric($depositAmountInput) ? $depositAmountInput : 0);
+
+                if ($depositAmount <= 0 && $depositPct > 0) {
+                    $depositAmount = (int) round($grandTotal * ($depositPct / 100));
+                }
+
+                if ($depositAmount < 0) $depositAmount = 0;
+                if ($depositAmount > $grandTotal) {
+                    throw new \RuntimeException('Deposit amount cannot be greater than Grand Total.');
+                }
+
+                $depositCode = $request->deposit_code ? (string) $request->deposit_code : null;
+                $depositPaymentMethod = $request->deposit_payment_method ? (string) $request->deposit_payment_method : null;
+
+                if ($depositAmount > 0) {
+                    if (empty($depositCode)) throw new \RuntimeException('Deposit To is required when Deposit > 0.');
+                    if (empty($depositPaymentMethod)) throw new \RuntimeException('Deposit Payment Method is required when Deposit > 0.');
+                }
+
                 $saleOrder->update([
                     'date' => $request->date,
                     'customer_id' => (int) $customer->id,
                     'warehouse_id' => null,
                     'note' => $request->note,
+
+                    'tax_percentage' => $taxPct,
+                    'tax_amount' => $taxAmount,
+
+                    // ✅ store computed truth
+                    'discount_percentage' => (float) $discountPct,
+                    'discount_amount' => (int) $discountAmount,
+
+                    'shipping_amount' => $shipping,
+                    'fee_amount' => $fee,
+                    'subtotal_amount' => (int) $sellSubtotal,
+                    'total_amount' => (int) $grandTotal,
+
+                    'deposit_percentage' => $depositPct,
+                    'deposit_amount' => (int) $depositAmount,
+                    'deposit_payment_method' => $depositPaymentMethod,
+                    'deposit_code' => $depositCode,
                 ]);
 
-                // replace items (pending only)
+                // replace items
                 SaleOrderItem::query()
                     ->where('sale_order_id', (int) $saleOrder->id)
                     ->delete();
@@ -510,6 +734,8 @@ class SaleOrderController extends Controller
                         'price' => array_key_exists('price', $row) && $row['price'] !== null ? (int) $row['price'] : null,
                     ]);
                 }
+
+                // DP payment record tetap tidak diubah di update (sesuai catatan kamu)
             });
 
             toast('Sale Order updated!', 'success');
@@ -520,9 +746,6 @@ class SaleOrderController extends Controller
         }
     }
 
-    // =========================
-    // ✅ NEW: DELETE SALE ORDER
-    // =========================
     public function destroy(SaleOrder $saleOrder)
     {
         abort_if(Gate::denies('delete_sale_orders'), 403);

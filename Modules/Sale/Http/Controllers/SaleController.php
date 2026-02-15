@@ -36,11 +36,19 @@ class SaleController extends Controller
         return $dataTable->render('sale::index');
     }
 
-   public function create()
+    public function create()
     {
         abort_if(Gate::denies('create_sales'), 403);
 
-        $customers  = \Modules\People\Entities\Customer::all();
+        $branchId = BranchContext::id();
+
+        $customers  = \Modules\People\Entities\Customer::query()
+            ->where(function ($q) use ($branchId) {
+                $q->whereNull('branch_id')->orWhere('branch_id', $branchId);
+            })
+            ->orderBy('customer_name')
+            ->get();
+
         $warehouses = \Modules\Product\Entities\Warehouse::query()
             ->when(session('active_branch') && session('active_branch') !== 'all', function ($q) {
                 $q->where('branch_id', (int) session('active_branch'));
@@ -50,6 +58,10 @@ class SaleController extends Controller
         // ✅ detect create-from-delivery
         $saleDeliveryId = (int) request()->get('sale_delivery_id', 0);
         $prefillCustomerId = 0;
+
+        // ✅ NEW: locked financial from SaleOrder (kalau delivery punya sale_order_id)
+        $lockedFinancial = null; // ['sale_order_id'=>, 'sale_order_reference'=>, 'tax_percentage'=>, 'discount_percentage'=>, 'shipping_amount'=>, 'fee_amount'=>]
+        $lockedSaleOrder = null;
 
         // ✅ reset cart
         Cart::instance('sale')->destroy();
@@ -70,7 +82,6 @@ class SaleController extends Controller
             $branchId = session('active_branch');
 
             if (empty($branchId) || $branchId === 'all') {
-                // sesuai rule multi-branch kamu: kalau branch belum dipilih, jangan menipu
                 return 0;
             }
 
@@ -94,6 +105,26 @@ class SaleController extends Controller
             if ($delivery) {
                 $prefillCustomerId = (int) ($delivery->customer_id ?? 0);
 
+                // ✅ NEW: resolve SaleOrder financial lock (kalau ada sale_order_id)
+                $saleOrderId = (int) ($delivery->sale_order_id ?? 0);
+                if ($saleOrderId > 0) {
+                    $lockedSaleOrder = \Modules\SaleOrder\Entities\SaleOrder::query()
+                        ->where('branch_id', $branchId)
+                        ->where('id', $saleOrderId)
+                        ->first();
+
+                    if ($lockedSaleOrder) {
+                        $lockedFinancial = [
+                            'sale_order_id'        => (int) $lockedSaleOrder->id,
+                            'sale_order_reference' => (string) ($lockedSaleOrder->reference ?? ('SO-' . $lockedSaleOrder->id)),
+                            'tax_percentage'       => (int) ($lockedSaleOrder->tax_percentage ?? 0),
+                            'discount_percentage'  => (int) ($lockedSaleOrder->discount_percentage ?? 0),
+                            'shipping_amount'      => (int) ($lockedSaleOrder->shipping_amount ?? 0),
+                            'fee_amount'           => (int) ($lockedSaleOrder->fee_amount ?? 0),
+                        ];
+                    }
+                }
+
                 // warehouse context dari delivery (boleh null)
                 $deliveryWarehouseId = (int) ($delivery->warehouse_id ?? 0);
                 $deliveryWarehouseName = null;
@@ -110,19 +141,15 @@ class SaleController extends Controller
                     $qty = (int) ($it->quantity ?? 0);
                     if ($qty <= 0) continue;
 
-                    // ambil product untuk fallback unit/code dll
                     $p = \Modules\Product\Entities\Product::find($productId);
 
-                    // unit price / price
                     $unitPrice = (float) ($it->unit_price ?? ($p->product_price ?? 0));
-                    $priceShown = (float) ($it->price ?? $unitPrice); // price in cart = after discount if any (optional)
+                    $priceShown = (float) ($it->price ?? $unitPrice);
 
-                    // tax/discount (pakai yang ada di item, fallback 0)
                     $productTax = (float) ($it->product_tax_amount ?? 0);
                     $discAmt    = (float) ($it->product_discount_amount ?? 0);
                     $discType   = (string) ($it->product_discount_type ?? 'fixed');
 
-                    // ✅ stock scope
                     if ($deliveryWarehouseId > 0) {
                         $stock = $getStockLastByWarehouse($productId, $deliveryWarehouseId);
                         $stockScope = 'warehouse';
@@ -144,9 +171,8 @@ class SaleController extends Controller
                             'code'                  => (string) ($it->product_code ?? ($p->product_code ?? 'UNKNOWN')),
                             'unit'                  => (string) ($it->product_unit ?? ($p->product_unit ?? '')),
                             'stock'                 => (int) $stock,
-                            'stock_scope'           => $stockScope, // ✅ UI note
+                            'stock_scope'           => $stockScope,
 
-                            // placement context (boleh 0 kalau delivery belum assign)
                             'warehouse_id'          => $deliveryWarehouseId,
                             'warehouse_name'        => $deliveryWarehouseName,
 
@@ -154,7 +180,6 @@ class SaleController extends Controller
                             'unit_price'            => $unitPrice,
                             'product_discount'      => $discAmt,
                             'product_discount_type' => $discType,
-                            // optional kalau kamu pakai di modal/detail
                             'product_cost'          => (float) ($it->product_cost ?? ($p->product_cost ?? 0)),
                         ],
                     ]);
@@ -166,58 +191,50 @@ class SaleController extends Controller
             'customers'         => $customers,
             'warehouses'        => $warehouses,
             'prefillCustomerId' => $prefillCustomerId,
+
+            // ✅ NEW
+            'lockedFinancial'   => $lockedFinancial,
         ]);
     }
 
-    public function store(StoreSaleRequest $request) {
+    public function store(StoreSaleRequest $request)
+    {
         abort_if(Gate::denies('create_sales'), 403);
 
         try {
             DB::transaction(function () use ($request) {
                 $branchId = BranchContext::id();
 
-                // ✅ validasi customer harus global atau branch aktif
                 $customer = Customer::query()
                     ->where('id', $request->customer_id)
                     ->where(function ($q) use ($branchId) {
-                        $q->whereNull('branch_id')
-                        ->orWhere('branch_id', $branchId);
+                        $q->whereNull('branch_id')->orWhere('branch_id', $branchId);
                     })
                     ->firstOrFail();
 
-                // ✅ ambil cart
                 $cartItems = collect(Cart::instance('sale')->content());
                 if ($cartItems->isEmpty()) {
                     throw new \RuntimeException('Cart is empty. Please add items first.');
                 }
 
-                // ✅ hitung payment status
-                $due_amount = $request->total_amount - $request->paid_amount;
-                if ($due_amount == $request->total_amount) {
-                    $payment_status = 'Unpaid';
-                } elseif ($due_amount > 0) {
-                    $payment_status = 'Partial';
-                } else {
-                    $payment_status = 'Paid';
-                }
-
-                // optional quotation
-                if ($request->quotation_id) {
-                    $quotation = Quotation::findOrFail($request->quotation_id);
-                    $quotation->update(['status' => 'Sent']);
-                }
-
                 // ======================================================
-                // ✅ NEW: if invoice is created FROM SaleDelivery
+                // ✅ detect invoice-from-delivery + lock delivery
                 // ======================================================
                 $saleDeliveryId = (int) $request->get('sale_delivery_id', 0);
                 $fromDelivery = $saleDeliveryId > 0;
                 $lockedDelivery = null;
 
+                // ✅ NEW: SaleOrder lock data (kalau ada)
+                $lockedSaleOrder = null;
+                $lockedTaxPct = null;
+                $lockedDiscPct = null;
+                $lockedShipping = null;
+                $lockedFee = null;
+
                 if ($fromDelivery) {
                     $lockedDelivery = SaleDelivery::withoutGlobalScopes()
                         ->lockForUpdate()
-                        ->with(['items']) // optional, not required here
+                        ->with(['items'])
                         ->where('id', $saleDeliveryId)
                         ->where('branch_id', $branchId)
                         ->firstOrFail();
@@ -231,16 +248,82 @@ class SaleController extends Controller
                         throw new \RuntimeException('Invoice already exists for this Sale Delivery.');
                     }
 
-                    // safety: customer must match delivery
                     if ((int)($lockedDelivery->customer_id ?? 0) !== (int)$customer->id) {
                         throw new \RuntimeException('Customer mismatch with Sale Delivery.');
                     }
+
+                    // ✅ NEW: if delivery has sale_order_id -> lock financial from SO
+                    $saleOrderId = (int) ($lockedDelivery->sale_order_id ?? 0);
+                    if ($saleOrderId > 0) {
+                        $lockedSaleOrder = \Modules\SaleOrder\Entities\SaleOrder::query()
+                            ->where('branch_id', $branchId)
+                            ->where('id', $saleOrderId)
+                            ->first();
+
+                        if ($lockedSaleOrder) {
+                            $lockedTaxPct = (int) ($lockedSaleOrder->tax_percentage ?? 0);
+                            $lockedDiscPct = (int) ($lockedSaleOrder->discount_percentage ?? 0);
+                            $lockedShipping = (int) ($lockedSaleOrder->shipping_amount ?? 0);
+                            $lockedFee = (int) ($lockedSaleOrder->fee_amount ?? 0);
+                        }
+                    }
+                }
+
+                // ======================================================
+                // ✅ compute totals server-side (dipakai kalau from delivery + SO lock)
+                // ======================================================
+                $itemsSubtotal = 0;
+                $totalQty = 0;
+                foreach ($cartItems as $cart_item) {
+                    $qty = (int) ($cart_item->qty ?? 0);
+                    $price = (int) ($cart_item->price ?? 0);
+                    if ($qty <= 0) continue;
+
+                    $totalQty += $qty;
+                    $itemsSubtotal += ($qty * max(0, $price));
+                }
+
+                $effectiveTaxPct = (int) ($lockedTaxPct ?? (int) $request->tax_percentage);
+                $effectiveDiscPct = (int) ($lockedDiscPct ?? (int) $request->discount_percentage);
+                $effectiveShipping = (int) ($lockedShipping ?? (int) $request->shipping_amount);
+                $effectiveFee = (int) ($lockedFee ?? (int) $request->fee_amount);
+
+                // clamp
+                $effectiveTaxPct = max(0, min(100, $effectiveTaxPct));
+                $effectiveDiscPct = max(0, min(100, $effectiveDiscPct));
+                $effectiveShipping = max(0, $effectiveShipping);
+                $effectiveFee = max(0, $effectiveFee);
+
+                $taxAmount = (int) round($itemsSubtotal * ($effectiveTaxPct / 100));
+                $discountAmount = (int) round($itemsSubtotal * ($effectiveDiscPct / 100));
+                $computedGrandTotal = (int) round($itemsSubtotal + $taxAmount - $discountAmount + $effectiveFee + $effectiveShipping);
+
+                // ======================================================
+                // ✅ paid/due/payment_status
+                // ======================================================
+                $paidAmount = (int) ($request->paid_amount ?? 0);
+                $paidAmount = max(0, $paidAmount);
+
+                $due_amount = $computedGrandTotal - $paidAmount;
+
+                if ($due_amount == $computedGrandTotal) {
+                    $payment_status = 'Unpaid';
+                } elseif ($due_amount > 0) {
+                    $payment_status = 'Partial';
+                } else {
+                    $payment_status = 'Paid';
+                    $due_amount = 0;
+                }
+
+                if ($request->quotation_id) {
+                    $quotation = Quotation::findOrFail($request->quotation_id);
+                    $quotation->update(['status' => 'Sent']);
                 }
 
                 $total_cost = 0;
 
                 // ==========================================
-                // ✅ CREATE INVOICE (SALE) - NO STOCK MOVEMENT
+                // ✅ CREATE INVOICE (SALE)
                 // ==========================================
                 $saleData = [
                     'date' => $request->date,
@@ -248,39 +331,45 @@ class SaleController extends Controller
                     'sale_from' => $request->sale_from,
                     'customer_id' => $customer->id,
                     'customer_name' => $customer->customer_name,
-                    'tax_percentage' => $request->tax_percentage,
-                    'discount_percentage' => $request->discount_percentage,
-                    'shipping_amount' => (int) $request->shipping_amount,
-                    'paid_amount' => (int) $request->paid_amount,
-                    'total_amount' => (int) $request->total_amount,
-                    'total_quantity' => (int) $request->total_quantity,
-                    'fee_amount' => (int) $request->fee_amount,
+
+                    // ✅ financial (locked when from delivery + sale order)
+                    'tax_percentage' => $effectiveTaxPct,
+                    'discount_percentage' => $effectiveDiscPct,
+                    'shipping_amount' => $effectiveShipping,
+                    'fee_amount' => $effectiveFee,
+
+                    'paid_amount' => $paidAmount,
+                    'total_amount' => $computedGrandTotal,
+                    'total_quantity' => $totalQty,
+
                     'due_amount' => (int) $due_amount,
                     'payment_status' => $payment_status,
                     'payment_method' => $request->payment_method,
                     'note' => $request->note,
-                    'tax_amount' => (int) Cart::instance('sale')->tax(),
-                    'discount_amount' => (int) Cart::instance('sale')->discount(),
+
+                    // ✅ amounts computed from itemsSubtotal
+                    'tax_amount' => $taxAmount,
+                    'discount_amount' => $discountAmount,
                 ];
 
                 if (Schema::hasColumn('sales', 'branch_id')) {
                     $saleData['branch_id'] = $branchId;
                 }
 
-                // ✅ penting: kalau tabel sales ada warehouse_id, set null biar ga nyangkut default
                 if (Schema::hasColumn('sales', 'warehouse_id')) {
                     $saleData['warehouse_id'] = null;
                 }
 
                 $sale = Sale::create($saleData);
 
-                // ✅ tetap ambil warehouse KS (TAPI LOGIC KS dipindah nanti ke confirm delivery)
-                $warehouseKS = Warehouse::query()->where('warehouse_code', 'KS')->first();
-
                 // ==========================================
-                // ✅ Create SaleDetails (WAREHOUSE DIHILANGKAN)
+                // ✅ Create SaleDetails (warehouse null)
                 // ==========================================
                 foreach ($cartItems as $cart_item) {
+                    $qty = (int) ($cart_item->qty ?? 0);
+                    $price = (int) ($cart_item->price ?? 0);
+                    if ($qty <= 0) continue;
+
                     $total_cost += (int) ($cart_item->options->product_cost ?? 0);
 
                     $saleDetailData = [
@@ -290,13 +379,16 @@ class SaleController extends Controller
                         'product_code' => (string) ($cart_item->options->code ?? ''),
                         'product_cost' => (int) ($cart_item->options->product_cost ?? 0),
 
-                        // ✅ sesuai flow baru: invoice tidak menyimpan warehouse
                         'warehouse_id' => null,
 
-                        'quantity' => (int) $cart_item->qty,
-                        'price' => (int) $cart_item->price,
+                        'quantity' => $qty,
+                        'price' => max(0, $price),
                         'unit_price' => (int) ($cart_item->options->unit_price ?? 0),
-                        'sub_total' => (int) ($cart_item->options->sub_total ?? 0),
+
+                        // ✅ make sure subtotal consistent
+                        'sub_total' => (int) ($qty * max(0, $price)),
+
+                        // tetap keep per-item fields kalau memang dipakai di template
                         'product_discount_amount' => (int) ($cart_item->options->product_discount ?? 0),
                         'product_discount_type' => (string) ($cart_item->options->product_discount_type ?? 'fixed'),
                         'product_tax_amount' => (int) ($cart_item->options->product_tax ?? 0),
@@ -310,32 +402,29 @@ class SaleController extends Controller
                 }
 
                 // ======================================================
-                // ✅ NEW: If from SaleDelivery => link, NOT auto-create new delivery
+                // ✅ link invoice to delivery OR auto-create delivery
                 // ======================================================
                 if ($fromDelivery && $lockedDelivery) {
                     $lockedDelivery->update([
                         'sale_id' => (int) $sale->id,
                     ]);
                 } else {
-                    // ==========================================
-                    // ✅ AUTO CREATE SALE DELIVERY (tetap WAJIB untuk flow invoice-first)
-                    // ==========================================
                     $this->autoCreateSaleDeliveryFromSale(
                         $sale,
                         $branchId,
                         $request->quotation_id ? (int) $request->quotation_id : null,
-                        null // ✅ NO saleOrderId
+                        null
                     );
                 }
 
                 Cart::instance('sale')->destroy();
 
                 // ==========================================
-                // ✅ Accounting Transaction: selalu dibuat saat invoice dibuat
+                // ✅ Accounting Transaction
                 // ==========================================
                 if ($total_cost <= 0) {
                     Helper::addNewTransaction([
-                        'date' => $request->date,
+                        'date' => $sale->date,
                         'label' => "Sale Invoice for #" . $sale->reference,
                         'description' => "Order ID: " . $sale->reference,
                         'purchase_id' => null,
@@ -383,7 +472,7 @@ class SaleController extends Controller
                     }
 
                     $paymentData = [
-                        'date' => $request->date,
+                        'date' => $sale->date,
                         'reference' => 'INV/' . $sale->reference,
                         'amount' => (int) $sale->paid_amount,
                         'sale_id' => (int) $sale->id,
@@ -398,7 +487,7 @@ class SaleController extends Controller
                     $created_payment = SalePayment::create($paymentData);
 
                     Helper::addNewTransaction([
-                        'date' => $request->date,
+                        'date' => $sale->date,
                         'label' => "Payment for Sales Order #" . $sale->reference,
                         'description' => "Sale ID: " . $sale->reference,
                         'purchase_id' => null,
@@ -518,7 +607,74 @@ class SaleController extends Controller
             ->orderByDesc('id')
             ->get();
 
-        return view('sale::show', compact('sale', 'customer', 'saleDeliveries'));
+        // =========================================================
+        // ✅ NEW: DP PRO-RATA NOTE (basis A: subtotal items only)
+        // =========================================================
+        $saleOrderDepositInfo = null;
+
+        try {
+            // ambil sale_order_id dari delivery yang terkait invoice ini
+            $saleOrderId = (int) ($saleDeliveries->pluck('sale_order_id')->filter()->first() ?? 0);
+
+            if ($saleOrderId > 0) {
+                $saleOrder = \Modules\SaleOrder\Entities\SaleOrder::query()
+                    ->where('branch_id', $branchId)
+                    ->where('id', $saleOrderId)
+                    ->first();
+
+                if ($saleOrder) {
+                    $dpTotal = (int) ($saleOrder->deposit_amount ?? 0);
+
+                    if ($dpTotal > 0) {
+                        // subtotal invoice = sum(qty * price) dari sale_details (basis A)
+                        $invoiceSubtotal = 0;
+                        foreach ($sale->saleDetails as $d) {
+                            $qty = (int) ($d->quantity ?? 0);
+                            $price = (int) ($d->price ?? 0);
+                            if ($qty > 0 && $price >= 0) {
+                                $invoiceSubtotal += ($qty * $price);
+                            }
+                        }
+
+                        // subtotal sale order = sum(qty * price) dari sale_order_items (basis A)
+                        $soSubtotal = (int) \Illuminate\Support\Facades\DB::table('sale_order_items')
+                            ->where('sale_order_id', (int) $saleOrder->id)
+                            ->selectRaw('SUM(COALESCE(quantity,0) * COALESCE(price,0)) as s')
+                            ->value('s');
+
+                        if ($soSubtotal > 0 && $invoiceSubtotal > 0) {
+                            $allocated = (int) round($dpTotal * ($invoiceSubtotal / $soSubtotal));
+
+                            // safety clamp
+                            if ($allocated < 0) $allocated = 0;
+                            if ($allocated > $dpTotal) $allocated = $dpTotal;
+
+                            $pct = (int) round(($invoiceSubtotal / $soSubtotal) * 100);
+
+                            $saleOrderDepositInfo = [
+                                'sale_order_reference' => (string) ($saleOrder->reference ?? ('SO-'.$saleOrder->id)),
+                                'deposit_total' => $dpTotal,
+                                'allocated' => $allocated,
+                                'ratio_percent' => $pct,
+                            ];
+                        } else {
+                            // kalau subtotal tidak bisa dihitung (misal price kosong), tetap tampilkan dp total saja
+                            $saleOrderDepositInfo = [
+                                'sale_order_reference' => (string) ($saleOrder->reference ?? ('SO-'.$saleOrder->id)),
+                                'deposit_total' => $dpTotal,
+                                'allocated' => $dpTotal,
+                                'ratio_percent' => null,
+                            ];
+                        }
+                    }
+                }
+            }
+        } catch (\Throwable $e) {
+            // kalau ada error, jangan ngeblok view invoice
+            $saleOrderDepositInfo = null;
+        }
+
+        return view('sale::show', compact('sale', 'customer', 'saleDeliveries', 'saleOrderDepositInfo'));
     }
 
     public function edit(Sale $sale) {

@@ -53,6 +53,29 @@
                                     Payment Status: <strong>{{ $sale->payment_status }}</strong>
                                 </div>
 
+                                {{-- ✅ NEW: Deposit from Sale Order (Pro-rata note) --}}
+                                @if(!empty($saleOrderDepositInfo) && isset($saleOrderDepositInfo['deposit_total']) && (int)$saleOrderDepositInfo['deposit_total'] > 0)
+                                    <div class="mt-2 p-2" style="border:1px solid rgba(0,0,0,.08); border-radius:8px;">
+                                        <div class="text-muted" style="font-size: 12px;">Deposit (From Sale Order)</div>
+                                        <div>
+                                            SO: <strong>{{ $saleOrderDepositInfo['sale_order_reference'] }}</strong>
+                                        </div>
+                                        <div>
+                                            Total DP (SO): <strong>{{ format_currency((int)$saleOrderDepositInfo['deposit_total']) }}</strong>
+                                        </div>
+                                        <div>
+                                            Allocated to this Invoice:
+                                            <strong>{{ format_currency((int)$saleOrderDepositInfo['allocated']) }}</strong>
+                                            @if(!is_null($saleOrderDepositInfo['ratio_percent']))
+                                                <span class="text-muted">({{ (int)$saleOrderDepositInfo['ratio_percent'] }}% pro-rata by items subtotal)</span>
+                                            @endif
+                                        </div>
+                                        <div class="text-muted" style="font-size: 12px; margin-top: 4px;">
+                                            Catatan: DP ini hanya keterangan (tidak masuk Payments invoice).
+                                        </div>
+                                    </div>
+                                @endif
+
                                 {{-- ✅ Delivery links --}}
                                 <div class="mt-2">
                                     <div class="text-muted" style="font-size: 12px;">Sale Delivery:</div>
