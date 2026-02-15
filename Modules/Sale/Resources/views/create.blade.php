@@ -17,10 +17,12 @@
 
     $prefillCustomerId = (int) ($prefillCustomerId ?? old('customer_id', 0));
 
-    // ✅ NEW: from controller
     $lockedFinancial = $lockedFinancial ?? null;
-
     $isLockedBySO = $fromDelivery && !empty($lockedFinancial) && isset($lockedFinancial['sale_order_id']);
+
+    $dpTotal = (int) ($lockedFinancial['deposit_received_amount'] ?? 0);
+    $dpAllocated = (int) ($lockedFinancial['dp_allocated_for_this_invoice'] ?? 0);
+    $suggestedPayNow = (int) ($lockedFinancial['suggested_pay_now'] ?? 0);
 @endphp
 
 <div class="container-fluid mb-4">
@@ -68,6 +70,20 @@
                                 </div>
                             </div>
                         </div>
+
+                        @if($isLockedBySO && $dpTotal > 0)
+                            <div class="alert alert-warning">
+                                <div class="small">
+                                    <div class="font-weight-bold mb-1">Deposit (DP) from Sale Order</div>
+                                    DP Received (SO): <strong>{{ format_currency($dpTotal) }}</strong><br>
+                                    Allocated to this invoice (pro-rata): <strong>{{ format_currency($dpAllocated) }}</strong><br>
+                                    Suggested “Amount Received” now (Remaining after DP): <strong>{{ format_currency($suggestedPayNow) }}</strong>
+                                    <div class="text-muted" style="font-size: 12px;">
+                                        Tips: klik tombol ✓ di Amount Received untuk auto isi “remaining after DP”.
+                                    </div>
+                                </div>
+                            </div>
+                        @endif
                     @endif
 
                     <form id="sale-form" action="{{ route('sales.store') }}" method="POST">
@@ -77,12 +93,22 @@
                             <input type="hidden" name="sale_delivery_id" value="{{ $saleDeliveryId }}">
                         @endif
 
-                        {{-- ✅ NEW: provide locked financial as hidden fields (optional) --}}
                         @if($isLockedBySO)
                             <input type="hidden" name="tax_percentage" value="{{ (int)$lockedFinancial['tax_percentage'] }}">
                             <input type="hidden" name="discount_percentage" value="{{ (int)$lockedFinancial['discount_percentage'] }}">
                             <input type="hidden" name="fee_amount" value="{{ (int)$lockedFinancial['fee_amount'] }}">
                             <input type="hidden" name="shipping_amount" value="{{ (int)$lockedFinancial['shipping_amount'] }}">
+
+                            {{-- DP hints for JS --}}
+                            <input type="hidden" id="so_dp_total" value="{{ (int)($lockedFinancial['deposit_received_amount'] ?? 0) }}">
+                            <input type="hidden" id="so_dp_allocated" value="{{ (int)($lockedFinancial['dp_allocated_for_this_invoice'] ?? 0) }}">
+                            <input type="hidden" id="so_suggested_pay_now" value="{{ (int)($lockedFinancial['suggested_pay_now'] ?? 0) }}">
+
+                            {{-- locked numbers for JS set UI fields --}}
+                            <input type="hidden" id="so_locked_tax_pct" value="{{ (int)($lockedFinancial['tax_percentage'] ?? 0) }}">
+                            <input type="hidden" id="so_locked_disc_pct" value="{{ (int)($lockedFinancial['discount_percentage'] ?? 0) }}">
+                            <input type="hidden" id="so_locked_fee" value="{{ (int)($lockedFinancial['fee_amount'] ?? 0) }}">
+                            <input type="hidden" id="so_locked_ship" value="{{ (int)($lockedFinancial['shipping_amount'] ?? 0) }}">
                         @endif
 
                         <div class="form-row">
@@ -191,11 +217,18 @@
 
                             <div class="col-lg-3">
                                 <div class="form-group">
-                                    <label for="paid_amount">Amount Received <span class="text-danger">*</span></label>
+                                    <label for="paid_amount">
+                                        Amount Received <span class="text-danger">*</span>
+                                        @if($isLockedBySO && $dpTotal > 0)
+                                            <span class="text-muted" style="font-size: 12px;">
+                                                (suggested: {{ format_currency($suggestedPayNow) }})
+                                            </span>
+                                        @endif
+                                    </label>
                                     <div class="input-group">
                                         <input id="paid_amount" type="text" class="form-control" name="paid_amount" required>
                                         <div class="input-group-append">
-                                            <button id="getTotalAmount" class="btn btn-primary" type="button">
+                                            <button id="getTotalAmount" class="btn btn-primary" type="button" title="Auto fill amount">
                                                 <i class="bi bi-check-square"></i>
                                             </button>
                                         </div>
@@ -237,6 +270,33 @@
         return digits ? (parseInt(digits, 10) || 0) : 0;
     }
 
+    function setLockedFinancialInputsIfAny() {
+        var tax = $('#so_locked_tax_pct').val();
+        var disc = $('#so_locked_disc_pct').val();
+        var fee = $('#so_locked_fee').val();
+        var ship = $('#so_locked_ship').val();
+
+        // these inputs are rendered by Livewire product-cart-sale
+        // names commonly: tax_percentage, discount_percentage, fee_amount, shipping_amount
+        var $tax = $('input[name="tax_percentage"]');
+        var $disc = $('input[name="discount_percentage"]');
+        var $fee = $('input[name="fee_amount"]');
+        var $ship = $('input[name="shipping_amount"]');
+
+        if ($tax.length && typeof tax !== 'undefined') {
+            $tax.val(tax).prop('readonly', true);
+        }
+        if ($disc.length && typeof disc !== 'undefined') {
+            $disc.val(disc).prop('readonly', true);
+        }
+        if ($fee.length && typeof fee !== 'undefined') {
+            $fee.val(fee).prop('readonly', true);
+        }
+        if ($ship.length && typeof ship !== 'undefined') {
+            $ship.val(ship).prop('readonly', true);
+        }
+    }
+
     $(document).ready(function () {
         $('#paid_amount').maskMoney({
             prefix:'{{ settings()->currency->symbol }}',
@@ -246,13 +306,31 @@
             precision: 0
         });
 
+        // ✅ ensure locked values are applied into Livewire inputs
+        setLockedFinancialInputsIfAny();
+        document.addEventListener('livewire:load', function () {
+            setLockedFinancialInputsIfAny();
+        });
+
+        // fallback: if Livewire rerenders
+        document.addEventListener('DOMContentLoaded', function(){ setLockedFinancialInputsIfAny(); });
+
         $('#getTotalAmount').click(function () {
+            // total_amount is produced by the Livewire component
             var $total = $('input[name="total_amount"]');
             if ($total.length === 0) $total = $('#total_amount');
 
             var totalVal = $total.length ? $total.val() : '0';
             var totalInt = parseMoneyToInt(totalVal);
 
+            // ✅ If locked by SO and has DP suggestion, use "suggested pay now" (remaining after DP)
+            var suggested = parseInt($('#so_suggested_pay_now').val() || '0', 10);
+            if (!isNaN(suggested) && suggested > 0) {
+                $('#paid_amount').maskMoney('mask', suggested);
+                return;
+            }
+
+            // default behavior: fill total
             $('#paid_amount').maskMoney('mask', totalInt);
         });
 
