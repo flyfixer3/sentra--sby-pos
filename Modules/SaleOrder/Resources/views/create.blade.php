@@ -10,6 +10,57 @@
     </ol>
 @endsection
 
+@push('page_css')
+<style>
+    /* ========= DP Received modern control ========= */
+    .so-inputgroup-tight .input-group-text{
+        background:#f8f9fa;
+        border-left:0;
+    }
+    .so-switch-wrap{
+        display:flex;
+        align-items:center;
+        gap:10px;
+        padding:0 12px;
+        min-height:38px;
+        border:1px solid rgba(0,0,0,.125);
+        border-left:0;
+        border-top-right-radius:.375rem;
+        border-bottom-right-radius:.375rem;
+        background:#f8f9fa;
+        user-select:none;
+        white-space:nowrap;
+    }
+    .so-switch-wrap .form-check{
+        margin:0;
+        padding-left:0;
+        display:flex;
+        align-items:center;
+        gap:8px;
+    }
+    .so-switch-wrap .form-check-input{
+        margin-left:0;
+        cursor:pointer;
+    }
+    .so-switch-wrap .form-check-label{
+        cursor:pointer;
+        font-size:12px;
+        color:#495057;
+    }
+    .so-help-hint{
+        display:flex;
+        align-items:flex-start;
+        gap:8px;
+    }
+    .so-help-dot{
+        width:8px;height:8px;border-radius:999px;
+        background:rgba(13,110,253,.35);
+        margin-top:6px;
+        flex:0 0 auto;
+    }
+</style>
+@endpush
+
 @section('content')
 @php
     $items = old('items', $prefillItems ?? []);
@@ -213,20 +264,30 @@
                             {{-- ✅ NEW: DP RECEIVED --}}
                             <div class="col-lg-3 mb-3">
                                 <label class="form-label">DP Received Amount (optional)</label>
-                                <div class="d-flex gap-2">
+
+                                <div class="input-group">
                                     <input type="number" min="0" step="1"
-                                           name="deposit_received_amount" id="so_deposit_received_amount"
-                                           class="form-control" value="{{ $oldDpReceived }}">
-                                    <label class="d-flex align-items-center gap-2 small mb-0" style="white-space:nowrap;">
-                                        <input type="checkbox" name="deposit_received_use_max" id="so_deposit_received_use_max" value="1"
-                                            {{ (string)$oldUseMaxDpReceived === '1' ? 'checked' : '' }}>
-                                        Use Max
-                                    </label>
+                                        name="deposit_received_amount" id="so_deposit_received_amount"
+                                        class="form-control" value="{{ $oldDpReceived }}">
+
+                                    <span class="input-group-text">
+                                        <label class="form-check mb-0 d-flex align-items-center gap-2" style="white-space:nowrap;">
+                                            <input class="form-check-input mt-0"
+                                                type="checkbox"
+                                                name="deposit_received_use_max"
+                                                id="so_deposit_received_use_max"
+                                                value="1"
+                                                {{ (string)$oldUseMaxDpReceived === '1' ? 'checked' : '' }}>
+                                            <span class="form-check-label small">Use Max</span>
+                                        </label>
+                                    </span>
                                 </div>
-                                <div class="small text-muted">
+
+                                <div class="small text-muted mt-1">
                                     Jika dicentang, DP Received otomatis = Deposit Amount.
                                 </div>
                             </div>
+
 
                             <div class="col-lg-3 mb-3">
                                 <label class="form-label">Deposit Payment Method (optional)</label>
