@@ -47,6 +47,17 @@ class PurchaseOrder extends BaseModel
         return $this->belongsTo(Supplier::class, 'supplier_id', 'id');
     }
 
+    public function hasInvoice(): bool
+    {
+        if ($this->relationLoaded('purchases')) {
+            return $this->purchases->whereNull('deleted_at')->count() > 0;
+        }
+
+        return $this->purchases()
+            ->whereNull('deleted_at')
+            ->exists();
+    }
+
     /**
      * ✅ Total ordered qty
      */
@@ -121,25 +132,7 @@ class PurchaseOrder extends BaseModel
      */
     public function markAsCompleted(): void
     {
-        // pastikan fulfilled header (kalau ada kolom) ikut ke-update
-        $fulfilled = $this->calculateFulfilledQuantity();
-        $remaining = $this->remainingQuantity();
-        $ordered   = $this->totalOrderedQuantity();
-
-        $status = 'Pending';
-
-        if ($ordered > 0 && $remaining <= 0) {
-            $status = 'Completed';
-        } elseif ($fulfilled > 0 && $remaining > 0) {
-            $status = 'Partial';
-        } else {
-            $status = 'Pending';
-        }
-
-        // update status saja (fulfilled_quantity sudah diupdate di calculateFulfilledQuantity bila ada kolom)
-        $this->update([
-            'status' => $status,
-        ]);
+        $this->refreshStatus();
     }
 
     public static function boot()
@@ -150,6 +143,32 @@ class PurchaseOrder extends BaseModel
             $number = PurchaseOrder::max('id') + 1;
             $model->reference = make_reference_id('PO', $number);
         });
+    }
+
+    public function refreshStatus(): void
+    {
+        $fulfilled = $this->calculateFulfilledQuantity();
+        $remaining = $this->remainingQuantity();
+        $ordered   = $this->totalOrderedQuantity();
+
+        // ✅ invoice exists? => Completed
+        if ($this->hasInvoice()) {
+            $this->update(['status' => 'Completed']);
+            return;
+        }
+
+        // ✅ belum ada invoice, status berdasarkan delivery/fulfilled
+        $status = 'Pending';
+
+        if ($ordered > 0 && $remaining <= 0) {
+            $status = 'Delivered'; // ✅ FULL received but NOT invoiced
+        } elseif ($fulfilled > 0 && $remaining > 0) {
+            $status = 'Partial';
+        } else {
+            $status = 'Pending';
+        }
+
+        $this->update(['status' => $status]);
     }
 
     // Accessors yang sudah ada tetap

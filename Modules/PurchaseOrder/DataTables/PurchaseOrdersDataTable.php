@@ -54,7 +54,13 @@ class PurchaseOrdersDataTable extends DataTable
 
     public function query(PurchaseOrder $model)
     {
-        return $model->newQuery();
+        return $model->newQuery()
+            ->withCount([
+                // ✅ invoice_count = jumlah purchase (invoice) yang masih aktif (not deleted)
+                'purchases as invoice_count' => function ($q) {
+                    $q->whereNull('deleted_at');
+                }
+            ]);
     }
 
     public function html()

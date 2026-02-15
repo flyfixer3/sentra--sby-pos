@@ -3,20 +3,39 @@
         <i class="bi bi-three-dots-vertical"></i>
     </button>
     <div class="dropdown-menu">
+        @php
+            $statusLower = strtolower(trim((string) ($data->status ?? '')));
+            $hasInvoice = ((int) ($data->invoice_count ?? 0)) > 0;
+
+            // ✅ Make Invoice: hanya disable kalau invoice sudah ada
+            $disableInvoice = $hasInvoice;
+
+            // ✅ Make Delivery: hanya boleh untuk Pending/Partial
+            $disableDelivery = !in_array($statusLower, ['pending', 'partial'], true);
+        @endphp
+
         @can('create_purchase_order_purchases')
             <a href="{{ route('purchase-order-purchases.create', $data) }}"
-            class="dropdown-item {{ $data->status == 'Completed' ? 'disabled' : '' }}"
-            onclick="{{ $data->status == 'Completed' ? 'return false;' : '' }}">
-                <i class="bi bi-check2-circle mr-2 text-success" style="line-height: 1;"></i> Make Invoice
+            class="dropdown-item {{ $disableInvoice ? 'disabled' : '' }}"
+            onclick="{{ $disableInvoice ? 'return false;' : '' }}">
+                <i class="bi bi-receipt mr-2 text-primary" style="line-height: 1;"></i> Make Invoice
+                @if($disableInvoice)
+                    <span class="ml-2 badge badge-light">Already invoiced</span>
+                @endif
             </a>
         @endcan
+
         @can('create_purchase_deliveries')
             <a href="{{ route('purchase-orders.deliveries.create', $data) }}"
-            class="dropdown-item {{ $data->status == 'Completed' ? 'disabled' : '' }}"
-            onclick="{{ $data->status == 'Completed' ? 'return false;' : '' }}">
-                <i class="bi bi-truck mr-2 text-success" style="line-height: 1;"></i> Make Delivery
+            class="dropdown-item {{ $disableDelivery ? 'disabled' : '' }}"
+            onclick="{{ $disableDelivery ? 'return false;' : '' }}">
+                <i class="bi bi-truck mr-2 text-info" style="line-height: 1;"></i> Make Delivery
+                @if($disableDelivery)
+                    <span class="ml-2 badge badge-light">No remaining</span>
+                @endif
             </a>
         @endcan
+
         @can('send_purchase_order_mails')
             <a href="{{ route('purchase-order.email', $data) }}" class="dropdown-item">
                 <i class="bi bi-cursor mr-2 text-warning" style="line-height: 1;"></i> Send On Email

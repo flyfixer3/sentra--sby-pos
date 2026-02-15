@@ -229,7 +229,6 @@ class PurchaseController extends Controller
 
             $branchId = $this->getActiveBranchId();
 
-            // NOTE: kalau request->warehouse_id gak ada, pakai main warehouse branch aktif
             $warehouseId = $request->warehouse_id
                 ? (int) $request->warehouse_id
                 : $this->resolveDefaultWarehouseId($branchId);
@@ -242,9 +241,7 @@ class PurchaseController extends Controller
                 ? 'Unpaid'
                 : ($due_amount > 0 ? 'Partial' : 'Paid');
 
-            // =========================================================
             // ✅ fromDelivery detection (reliable)
-            // =========================================================
             $purchaseDeliveryId = $request->purchase_delivery_id ? (int) $request->purchase_delivery_id : null;
 
             if (empty($purchaseDeliveryId)) {
@@ -299,12 +296,7 @@ class PurchaseController extends Controller
                 }
             }
 
-            // =========================================================
-            // ✅ IMPORTANT CHANGE:
-            // - Invoice status TIDAK BOLEH jadi "Completed" cuma karena fromDelivery
-            // - Karena stok & received itu urusannya PD confirm.
-            // - Jadi, status invoice ikutin request (atau default Pending bila kosong).
-            // =========================================================
+            // ✅ Invoice status tetap ikutin request (atau default Pending)
             $finalStatus = $request->status ?: 'Pending';
 
             $purchase = Purchase::create([
@@ -335,6 +327,11 @@ class PurchaseController extends Controller
                 'branch_id' => $branchId,
                 'warehouse_id' => $warehouseId,
             ]);
+
+            // ✅ NEW: setelah invoice dibuat, status PO harus jadi Completed
+            if ($purchase_order) {
+                $purchase_order->refreshStatus();
+            }
 
             // =========================
             // 1) CREATE PURCHASE DETAILS (NO MUTATION / NO FULFILLED)
@@ -368,11 +365,6 @@ class PurchaseController extends Controller
                     'product_tax_amount' => ($cart_item->options->product_tax ?? 0) * 1,
                     'warehouse_id' => $itemWarehouseId,
                 ]);
-
-                // ❌ DIHAPUS TOTAL:
-                // - update fulfilled PO
-                // - Mutation::create untuk stock
-                // Karena sekarang semuanya dikerjakan di PurchaseDeliveryController::confirmStore()
             }
 
             // =========================
@@ -390,14 +382,9 @@ class PurchaseController extends Controller
                     ->update(['purchase_delivery_id' => (int) $autoPD->id]);
             }
 
-            // ❌ DIHAPUS:
-            // - Update status PO berdasarkan fulfilled (karena fulfilled dihitung saat confirm PD)
-
             Cart::instance('purchase')->destroy();
 
-            /**
-             * ✅ PAYMENT + JOURNAL (tetap)
-             */
+            // ✅ PAYMENT + JOURNAL (tetap)
             if ($purchase->paid_amount > 0) {
                 $created_payment = PurchasePayment::create([
                     'date' => $request->date,

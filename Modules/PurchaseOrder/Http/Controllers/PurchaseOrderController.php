@@ -262,21 +262,17 @@ class PurchaseOrderController extends Controller
 
         DB::transaction(function () use ($request, $purchase_order, $branchId) {
 
-            // pastikan PO ini milik branch aktif
             if ((int) $purchase_order->branch_id !== $branchId) {
                 abort(403, 'You can only edit Purchase Orders from the active branch.');
             }
 
-            // ambil fulfilled lama per product supaya tidak hilang kalau item masih sama
             $oldFulfilledMap = $purchase_order->purchaseOrderDetails()
                 ->get()
                 ->mapWithKeys(fn ($d) => [(int) $d->product_id => (int) $d->fulfilled_quantity])
                 ->toArray();
 
-            // hapus detail lama
             $purchase_order->purchaseOrderDetails()->delete();
 
-            // update header
             $purchase_order->update([
                 'date' => $request->date,
                 'reference' => $request->reference,
@@ -291,12 +287,10 @@ class PurchaseOrderController extends Controller
                 'discount_amount' => Cart::instance('purchase_order')->discount() * 1,
             ]);
 
-            // re-create details dari cart + preserve fulfilled
             foreach (Cart::instance('purchase_order')->content() as $cart_item) {
 
                 $fulfilled_qty = (int) ($oldFulfilledMap[(int) $cart_item->id] ?? 0);
 
-                // clamp: jangan sampai fulfilled lebih besar dari qty baru
                 $newQty = (int) $cart_item->qty;
                 if ($fulfilled_qty > $newQty) {
                     $fulfilled_qty = $newQty;
@@ -321,16 +315,14 @@ class PurchaseOrderController extends Controller
 
             Cart::instance('purchase_order')->destroy();
 
-            // ✅ pakai rule dari model (Pending/Partial/Completed)
+            // ✅ status PO final sesuai rule baru
             $purchase_order->refresh();
-            $purchase_order->calculateFulfilledQuantity(); // kalau header fulfilled_quantity ada kolomnya, ikut ke-update
-            $purchase_order->markAsCompleted();
+            $purchase_order->refreshStatus();
         });
 
         toast('Purchase Order Updated!', 'info');
         return redirect()->route('purchase-orders.index');
     }
-
 
     public function destroy(PurchaseOrder $purchase_order)
     {

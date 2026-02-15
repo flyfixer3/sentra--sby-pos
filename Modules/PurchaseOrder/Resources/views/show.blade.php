@@ -106,7 +106,11 @@
     .po-pill--warn{ background:rgba(245,158,11,.12); border-color:rgba(245,158,11,.22); color:#92400e; }
     .po-pill--ok{ background:rgba(34,197,94,.12); border-color:rgba(34,197,94,.22); color:#166534; }
     .po-pill--muted{ background:rgba(0,0,0,.03); border-color:rgba(0,0,0,.08); color:#334155; }
-
+    .po-pill--delivered{
+    background:rgba(99,102,241,.12);        /* indigo soft */
+    border-color:rgba(99,102,241,.24);
+    color:#4338ca;                           /* indigo text */
+    }
     .po-box{
         border:1px solid rgba(0,0,0,.08);
         border-radius:12px;
@@ -170,17 +174,27 @@
 @section('content')
 @php
     $status = (string) ($purchase_order->status ?? '');
-    $statusLower = strtolower($status);
+    $statusLower = strtolower(trim($status));
 
     $statusPill = 'po-pill po-pill--muted';
     if ($statusLower === 'pending') $statusPill = 'po-pill po-pill--info';
     if ($statusLower === 'partial' || $statusLower === 'partially sent') $statusPill = 'po-pill po-pill--warn';
     if ($statusLower === 'completed') $statusPill = 'po-pill po-pill--ok';
+    if ($statusLower === 'delivered') $statusPill = 'po-pill po-pill--delivered';
 
     $poDateRaw = $purchase_order->getRawOriginal('date') ?? null;
     $poDateText = $poDateRaw ? \Carbon\Carbon::parse($poDateRaw)->format('d M Y') : \Carbon\Carbon::now()->format('d M Y');
 
-    $canAction = (($purchase_order->status ?? null) !== 'Completed');
+    $hasInvoice = $purchase_order->relationLoaded('purchases')
+        ? ($purchase_order->purchases->whereNull('deleted_at')->count() > 0)
+        : ($purchase_order->purchases()->whereNull('deleted_at')->exists());
+
+    // ✅ Create Delivery hanya boleh kalau PO masih ada remaining (Pending/Partial)
+    // Kalau Delivered => remaining=0 => tidak boleh create delivery lagi.
+    $canCreateDelivery = in_array($statusLower, ['pending', 'partial'], true);
+
+    // ✅ Convert to Purchase hanya boleh kalau belum ada invoice
+    $canConvertToPurchase = !$hasInvoice;
 
     $totalFulfilledQty = (int) ($totalFulfilledQty ?? 0);
     $totalOrderedQty   = (int) ($totalOrderedQty ?? 0);
@@ -228,14 +242,16 @@
 
             <div class="po-actions">
                 {{-- Primary actions --}}
-                @if($canAction)
+                @if($canCreateDelivery)
                     <a href="{{ route('purchase-orders.deliveries.create', $purchase_order) }}"
-                       class="po-btn po-btn--success d-print-none">
+                    class="po-btn po-btn--success d-print-none">
                         <i class="bi bi-truck"></i> Create Delivery
                     </a>
+                @endif
 
+                @if($canConvertToPurchase)
                     <a href="{{ route('purchase-order-purchases.create', $purchase_order->id) }}"
-                       class="po-btn po-btn--primary d-print-none">
+                    class="po-btn po-btn--primary d-print-none">
                         <i class="bi bi-arrow-right-circle"></i> Convert to Purchase
                     </a>
                 @endif

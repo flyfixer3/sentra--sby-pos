@@ -635,7 +635,7 @@ class PurchaseDeliveryController extends Controller
                     'qty_damaged'  => (int) ($pdDetail->qty_damaged ?? 0) + $addDamaged,
                 ]);
 
-                // ✅ Update fulfilled qty PO detail (sudah ada)
+                // ✅ Update fulfilled qty PO detail
                 if (!empty($purchaseDelivery->purchase_order_id) && $purchaseDelivery->purchaseOrder) {
                     $po = $purchaseDelivery->purchaseOrder;
                     $poDetail = $po->purchaseOrderDetails->firstWhere('product_id', $productId);
@@ -738,13 +738,9 @@ class PurchaseDeliveryController extends Controller
                     );
                 }
 
-                // ============================================================
                 // ✅ FIX: TURUNKAN INCOMING POOL (warehouse_id = NULL)
-                // - Pastikan row pool ada (UPSERT) lalu decrement (LOCK SAFE)
-                // ============================================================
                 $branchId = (int) $purchaseDelivery->branch_id;
 
-                // 1) lock row pool, kalau belum ada -> insert
                 $poolRow = DB::table('stocks')
                     ->where('branch_id', $branchId)
                     ->whereNull('warehouse_id')
@@ -753,7 +749,6 @@ class PurchaseDeliveryController extends Controller
                     ->first();
 
                 if (!$poolRow) {
-                    // buat row pool minimal (kolom lain kamu sesuaikan sama schema stocks kamu)
                     DB::table('stocks')->insert([
                         'branch_id'     => $branchId,
                         'warehouse_id'  => null,
@@ -766,7 +761,6 @@ class PurchaseDeliveryController extends Controller
                     ]);
                 }
 
-                // 2) baru decrement incoming
                 DB::table('stocks')
                     ->where('branch_id', $branchId)
                     ->whereNull('warehouse_id')
@@ -804,10 +798,10 @@ class PurchaseDeliveryController extends Controller
                 'confirm_note_updated_at'   => $confirmNote ? now() : null,
             ]);
 
+            // ✅ UPDATE STATUS PO sesuai rule baru (Pending/Partial/Delivered/Completed)
             if (!empty($purchaseDelivery->purchase_order_id)) {
                 $po = PurchaseOrder::lockForUpdate()->findOrFail((int) $purchaseDelivery->purchase_order_id);
-                $po->calculateFulfilledQuantity();
-                $po->markAsCompleted();
+                $po->refreshStatus();
             }
         });
 
