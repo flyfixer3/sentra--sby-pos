@@ -142,9 +142,49 @@
                             $total_with_shipping = (float) Cart::instance($cart_instance)->total()
                                 + (float) ($shipping ?? 0)
                                 + (float) ($cart_instance == 'sale' ? ($platform_fee ?? 0) : 0);
+
+                            $dpAllocated = (int) ($so_dp_allocated ?? 0);
+                            $dpTotal = (int) ($so_dp_total ?? 0);
+
+                            $payNow = (float) $total_with_shipping;
+                            if ($cart_instance === 'sale' && $dpAllocated > 0) {
+                                $payNow = max(0, (float)$total_with_shipping - (float)$dpAllocated);
+                            }
                         @endphp
                         <th>(=) {{ format_currency($total_with_shipping) }}</th>
                     </tr>
+
+                    {{-- ✅ NEW: tampilkan DP breakdown biar user tidak bingung --}}
+                    @if($cart_instance === 'sale' && (int)($so_dp_allocated ?? 0) > 0)
+                        <tr>
+                            <th>
+                                Deposit from SO
+                                @if(!empty($so_sale_order_reference))
+                                    <div class="text-muted" style="font-size:12px;">
+                                        ({{ $so_sale_order_reference }})
+                                    </div>
+                                @endif
+                            </th>
+                            <td>
+                                (-) {{ format_currency((float)($so_dp_allocated ?? 0)) }}
+                                @if((int)($so_dp_total ?? 0) > 0)
+                                    <div class="text-muted" style="font-size:12px;">
+                                        DP Received: {{ format_currency((float)($so_dp_total ?? 0)) }}
+                                    </div>
+                                @endif
+                            </td>
+                        </tr>
+
+                        <tr>
+                            <th>
+                                Amount to Receive Now
+                                <div class="text-muted" style="font-size:12px;">
+                                    (Grand Total - Allocated DP)
+                                </div>
+                            </th>
+                            <th>(=) {{ format_currency((float)$payNow) }}</th>
+                        </tr>
+                    @endif
                 </table>
             </div>
         </div>

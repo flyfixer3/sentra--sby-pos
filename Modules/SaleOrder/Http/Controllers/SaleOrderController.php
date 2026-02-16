@@ -603,7 +603,7 @@ class SaleOrderController extends Controller
                 'shipping_amount' => 'required|integer|min:0',
                 'fee_amount' => 'required|integer|min:0',
 
-                'deposit_percentage' => 'nullable|integer|min:0|max:100',
+                'deposit_percentage' => 'nullable|numeric|min:0|max:100',
                 'deposit_amount' => 'nullable|integer|min:0',
                 'deposit_payment_method' => 'nullable|string|max:255',
                 'deposit_code' => 'nullable|string|max:255',

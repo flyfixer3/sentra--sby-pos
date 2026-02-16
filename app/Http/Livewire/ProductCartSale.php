@@ -28,6 +28,10 @@ class ProductCartSale extends Component
     public $item_discount;
     public $item_cost_konsyinasi;
 
+    public $so_dp_total = 0;
+    public $so_dp_allocated = 0;
+    public $so_sale_order_reference = null;
+
     public $data;
 
     public function mount($cartInstance, $data = null)
@@ -81,15 +85,20 @@ class ProductCartSale extends Component
             $this->item_cost_konsyinasi = [];
         }
 
-        // ✅ FIX UTAMA: kalau cart sudah terisi dari controller (create-from-delivery),
-        // state qty wajib disync dari cart biar tidak "muncul sesaat lalu hilang".
+        // ✅ FIX UTAMA qty state
         $this->syncQuantityDefaults();
+
+        // ✅ NEW: hitung DP allocated dari Sale Order (kalau create invoice from delivery)
+        $this->loadSaleOrderDepositInfo();
     }
 
     public function render()
     {
         // ✅ setiap render, pastikan qty state tetap kebaca
         $this->syncQuantityDefaults();
+
+        // ✅ NEW: tiap render juga update DP info (karena subtotal bisa berubah saat qty berubah)
+        $this->loadSaleOrderDepositInfo();
 
         // keep global_qty konsisten
         $this->global_qty = Cart::instance($this->cart_instance)->count();
@@ -307,4 +316,71 @@ class ProductCartSale extends Component
         }
     }
 
+    private function loadSaleOrderDepositInfo(): void
+    {
+        // reset default
+        $this->so_dp_total = 0;
+        $this->so_dp_allocated = 0;
+        $this->so_sale_order_reference = null;
+
+        // hanya relevan untuk invoice sale
+        if ($this->cart_instance !== 'sale') return;
+
+        $saleDeliveryId = (int) request()->get('sale_delivery_id', 0);
+        if ($saleDeliveryId <= 0) return;
+
+        try {
+            $delivery = \Modules\SaleDelivery\Entities\SaleDelivery::query()
+                ->where('id', $saleDeliveryId)
+                ->first();
+
+            if (!$delivery) return;
+
+            $saleOrderId = (int) ($delivery->sale_order_id ?? 0);
+            if ($saleOrderId <= 0) return;
+
+            $saleOrder = \Modules\SaleOrder\Entities\SaleOrder::query()
+                ->where('id', $saleOrderId)
+                ->first();
+
+            if (!$saleOrder) return;
+
+            $dpTotal = (int) ($saleOrder->deposit_received_amount ?? 0);
+            if ($dpTotal <= 0) return;
+
+            // cart subtotal (items only)
+            $cartSubtotal = 0;
+            $cart_items = Cart::instance($this->cart_instance)->content();
+            foreach ($cart_items as $row) {
+                $qty = (int) ($row->qty ?? 0);
+                $price = (int) ($row->price ?? 0);
+                if ($qty <= 0) continue;
+                $cartSubtotal += ($qty * max(0, $price));
+            }
+
+            // so subtotal (items only)
+            $soSubtotal = (int) \Illuminate\Support\Facades\DB::table('sale_order_items')
+                ->where('sale_order_id', $saleOrderId)
+                ->selectRaw('SUM(COALESCE(quantity,0) * COALESCE(price,0)) as s')
+                ->value('s');
+
+            $allocated = 0;
+            if ($soSubtotal > 0 && $cartSubtotal > 0) {
+                $allocated = (int) round($dpTotal * ($cartSubtotal / $soSubtotal));
+                if ($allocated < 0) $allocated = 0;
+                if ($allocated > $dpTotal) $allocated = $dpTotal;
+            } else {
+                $allocated = $dpTotal;
+            }
+
+            $this->so_dp_total = $dpTotal;
+            $this->so_dp_allocated = $allocated;
+            $this->so_sale_order_reference = (string) ($saleOrder->reference ?? ('SO-' . $saleOrderId));
+        } catch (\Throwable $e) {
+            // diamkan supaya tidak ganggu UI
+            $this->so_dp_total = 0;
+            $this->so_dp_allocated = 0;
+            $this->so_sale_order_reference = null;
+        }
+    }
 }

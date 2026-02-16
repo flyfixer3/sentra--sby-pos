@@ -347,7 +347,10 @@ class SaleDeliveryController extends Controller
 
             $request->validate([
                 'date' => 'required|date',
-                'warehouse_id' => 'required|integer',
+
+                // ✅ FIX: warehouse boleh null (karena flow kamu memang allow null)
+                'warehouse_id' => 'nullable|integer',
+
                 'note' => 'nullable|string|max:2000',
                 'items' => 'required|array|min:1',
                 'items.*.id' => 'nullable|integer',
@@ -363,14 +366,20 @@ class SaleDeliveryController extends Controller
                     ->with(['items'])
                     ->findOrFail($saleDelivery->id);
 
-                $warehouse = Warehouse::query()
-                    ->where('branch_id', $branchId)
-                    ->where('id', (int) $request->warehouse_id)
-                    ->firstOrFail();
+                // ✅ warehouse_id optional
+                $warehouseId = null;
+                if (!empty($request->warehouse_id)) {
+                    $warehouse = Warehouse::query()
+                        ->where('branch_id', $branchId)
+                        ->where('id', (int) $request->warehouse_id)
+                        ->firstOrFail();
+
+                    $warehouseId = (int) $warehouse->id;
+                }
 
                 $saleDelivery->update([
                     'date' => $request->date,
-                    'warehouse_id' => $warehouse->id,
+                    'warehouse_id' => $warehouseId,   // ✅ bisa null
                     'note' => $request->note,
                     'updated_by' => auth()->id(),
                 ]);
@@ -390,6 +399,12 @@ class SaleDeliveryController extends Controller
 
                     SaleDeliveryItem::create([
                         'sale_delivery_id' => (int) $saleDelivery->id,
+
+                        // ✅ kalau kamu memang mau item punya warehouse sendiri nanti:
+                        // 'warehouse_id' => $warehouseId,
+                        // tapi untuk sekarang tetap null biar konsisten sama flow kamu.
+                        'warehouse_id' => null,
+
                         'product_id' => (int) $row['product_id'],
                         'quantity' => (int) $row['quantity'],
                         'price' => $price,
@@ -399,6 +414,7 @@ class SaleDeliveryController extends Controller
 
             toast('Sale Delivery Updated!', 'success');
             return redirect()->route('sale-deliveries.show', $saleDelivery->id);
+
         } catch (\Throwable $e) {
             return $this->failBack($e->getMessage(), 422);
         }
