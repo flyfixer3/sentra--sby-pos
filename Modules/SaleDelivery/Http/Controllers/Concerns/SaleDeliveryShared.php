@@ -50,9 +50,42 @@ trait SaleDeliveryShared
             return;
         }
 
+        // =========================
+        // 1) Fulfillment status (qty delivered)
+        // =========================
         if ($totalRemaining <= 0) $newStatus = 'delivered';
         elseif ($totalRemaining < $totalOrdered) $newStatus = 'partial_delivered';
         else $newStatus = 'pending';
+
+        // =========================
+        // 2) Invoice completion rule:
+        // completed hanya jika:
+        // - fulfillment sudah delivered
+        // - dan SEMUA Sale Delivery (status confirmed) sudah punya sale_id (invoice)
+        // =========================
+        if ($newStatus === 'delivered') {
+            $confirmedCount = (int) DB::table('sale_deliveries')
+                ->where('sale_order_id', (int) $so->id)
+                ->where('branch_id', (int) $so->branch_id)
+                ->whereRaw('LOWER(COALESCE(status,"")) = ?', ['confirmed'])
+                ->count();
+
+            $invoicedConfirmedCount = (int) DB::table('sale_deliveries')
+                ->where('sale_order_id', (int) $so->id)
+                ->where('branch_id', (int) $so->branch_id)
+                ->whereRaw('LOWER(COALESCE(status,"")) = ?', ['confirmed'])
+                ->whereNotNull('sale_id')
+                ->count();
+
+            $allConfirmedInvoiced = ($confirmedCount > 0 && $confirmedCount === $invoicedConfirmedCount);
+
+            if ($allConfirmedInvoiced) {
+                $newStatus = 'completed';
+            } else {
+                // tetap delivered kalau belum semua invoiced
+                $newStatus = 'delivered';
+            }
+        }
 
         if ((string) $so->status !== $newStatus) {
             $so->update(['status' => $newStatus, 'updated_by' => auth()->id()]);

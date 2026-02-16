@@ -16,7 +16,8 @@
     $statusBadge = match($status) {
         'pending' => 'bg-warning text-dark',
         'partial_delivered' => 'bg-info text-dark',
-        'delivered' => 'bg-success',
+        'delivered' => 'bg-primary',
+        'completed' => 'bg-success',
         'cancelled' => 'bg-danger',
         default => 'bg-secondary',
     };
@@ -167,7 +168,7 @@
         </div>
     </div>
 
-    {{-- ✅ NEW: Financial Summary --}}
+    {{-- ✅ Financial Summary --}}
     <div class="card mb-3 shadow-sm">
         <div class="card-body">
             <h6 class="mb-3">Financial Summary</h6>
@@ -317,6 +318,7 @@
                             <th>Reference</th>
                             <th style="width:140px;">Date</th>
                             <th style="width:140px;">Status</th>
+                            <th style="width:170px;">Invoice</th>
                             <th class="text-center" style="width:120px;">Action</th>
                         </tr>
                     </thead>
@@ -331,11 +333,40 @@
                                 'cancelled' => 'bg-danger',
                                 default => 'bg-secondary',
                             };
+
+                            $hasInvoice = !empty($d->sale_id);
+                            $invBadge = $hasInvoice ? 'bg-success' : 'bg-secondary';
+
+                            $invUrl = null;
+                            if ($hasInvoice) {
+                                if (\Illuminate\Support\Facades\Route::has('sales.show')) {
+                                    $invUrl = route('sales.show', (int)$d->sale_id);
+                                } elseif (\Illuminate\Support\Facades\Route::has('sale.show')) {
+                                    $invUrl = route('sale.show', (int)$d->sale_id);
+                                } elseif (\Illuminate\Support\Facades\Route::has('sale-invoices.show')) {
+                                    $invUrl = route('sale-invoices.show', (int)$d->sale_id);
+                                }
+                            }
                         @endphp
                         <tr>
                             <td class="fw-semibold">{{ $d->reference }}</td>
                             <td>{{ $d->date ? \Carbon\Carbon::parse($d->date)->format('d M Y') : '-' }}</td>
                             <td><span class="badge {{ $dBadge }}">{{ strtoupper($dst) }}</span></td>
+
+                            <td>
+                                @if($hasInvoice)
+                                    @if($invUrl)
+                                        <a href="{{ $invUrl }}" class="text-decoration-none">
+                                            <span class="badge {{ $invBadge }}">INVOICED #{{ (int)$d->sale_id }}</span>
+                                        </a>
+                                    @else
+                                        <span class="badge {{ $invBadge }}">INVOICED #{{ (int)$d->sale_id }}</span>
+                                    @endif
+                                @else
+                                    <span class="badge {{ $invBadge }}">NOT YET</span>
+                                @endif
+                            </td>
+
                             <td class="text-center">
                                 <a class="btn btn-sm btn-outline-primary" href="{{ route('sale-deliveries.show', $d->id) }}">
                                     <i class="bi bi-eye"></i> View

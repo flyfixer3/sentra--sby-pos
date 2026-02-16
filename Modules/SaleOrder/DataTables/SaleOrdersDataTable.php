@@ -21,17 +21,21 @@ class SaleOrdersDataTable extends DataTable
                 return Carbon::parse($row->date)->format('d-m-Y');
             })
             ->editColumn('status', function ($row) {
-                // ✅ Status logic (sesuai definisi kamu):
-                // pending            : belum ada delivery confirmed
-                // partial_delivered  : ada delivery confirmed tapi belum penuh
-                // delivered          : semua barang terkirim tapi belum ada invoice
-                // completed          : sudah ada invoice (payment status tidak mempengaruhi)
                 $s = strtolower((string) ($row->status ?? 'pending'));
 
-                // Derive COMPLETED secara aman dari data yang sudah ada,
-                // supaya record lama yang sudah punya invoice tidak “nyangkut” di DELIVERED.
-                if ($s === 'delivered' && !empty($row->sale_id)) {
-                    $s = 'completed';
+                $confirmedCount = (int) ($row->confirmed_deliveries_count ?? 0);
+                $invoicedCount  = (int) ($row->invoiced_confirmed_deliveries_count ?? 0);
+
+                $allConfirmedInvoiced = ($confirmedCount > 0 && $confirmedCount === $invoicedCount);
+
+                // ✅ display correction:
+                // - kalau status delivered tapi belum semua invoiced -> tetap delivered
+                // - kalau status delivered dan semua invoiced -> completed
+                // - kalau status completed tapi ternyata belum semua invoiced -> turun ke delivered
+                if ($s === 'delivered') {
+                    $s = $allConfirmedInvoiced ? 'completed' : 'delivered';
+                } elseif ($s === 'completed') {
+                    $s = $allConfirmedInvoiced ? 'completed' : 'delivered';
                 }
 
                 $badge = 'secondary';
@@ -94,7 +98,24 @@ class SaleOrdersDataTable extends DataTable
 
     public function query(SaleOrder $model)
     {
-        return $model->query()->with(['customer']);
+        return $model->query()
+            ->with(['customer'])
+            ->select('sale_orders.*')
+            ->selectSub(function ($q) {
+                $q->from('sale_deliveries as sd')
+                    ->selectRaw('COUNT(*)')
+                    ->whereColumn('sd.sale_order_id', 'sale_orders.id')
+                    ->whereColumn('sd.branch_id', 'sale_orders.branch_id')
+                    ->whereRaw('LOWER(COALESCE(sd.status,"")) = ?', ['confirmed']);
+            }, 'confirmed_deliveries_count')
+            ->selectSub(function ($q) {
+                $q->from('sale_deliveries as sd')
+                    ->selectRaw('COUNT(*)')
+                    ->whereColumn('sd.sale_order_id', 'sale_orders.id')
+                    ->whereColumn('sd.branch_id', 'sale_orders.branch_id')
+                    ->whereRaw('LOWER(COALESCE(sd.status,"")) = ?', ['confirmed'])
+                    ->whereNotNull('sd.sale_id');
+            }, 'invoiced_confirmed_deliveries_count');
     }
 
     public function html()
