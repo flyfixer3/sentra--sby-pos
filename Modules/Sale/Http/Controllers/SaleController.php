@@ -229,7 +229,10 @@ class SaleController extends Controller
 
                             'deposit_percentage'        => (float) ($lockedSaleOrder->deposit_percentage ?? 0),
                             'deposit_amount'            => (float) ($lockedSaleOrder->deposit_amount ?? 0),
-                            'deposit_received_amount'   => (float) ($lockedSaleOrder->deposit_received_amount ?? 0),
+
+                            // ✅ PATCH: pastiin integer (biar UI selalu konsisten)
+                            'deposit_received_amount'   => (int) ($lockedSaleOrder->deposit_received_amount ?? 0),
+
                             'deposit_payment_method'    => (string) ($lockedSaleOrder->deposit_payment_method ?? ''),
                             'deposit_code'              => (string) ($lockedSaleOrder->deposit_code ?? ''),
 
@@ -271,7 +274,6 @@ class SaleController extends Controller
                     if ($qty <= 0) continue;
 
                     $p = \Modules\Product\Entities\Product::find($productId);
-
                     $soRow = $soItemByProduct[$productId] ?? null;
 
                     // ✅ PENTING:
@@ -381,25 +383,31 @@ class SaleController extends Controller
             $feeAlloc  = $splitEven($soFee,  $splitCount, $splitIndex);
 
             // ✅ PENTING: DISCOUNT JANGAN DIKURANGI DI SUMMARY
-            // Karena item price sudah NET (priceShown sudah diskon).
             $discAlloc = 0;
 
             $invoiceEstimatedGrand = (int) ($invoiceItemsSubtotal + $taxAlloc + $shipAlloc + $feeAlloc - $discAlloc);
             if ($invoiceEstimatedGrand < 0) $invoiceEstimatedGrand = 0;
 
-            // DP allocated = grand_after_discount (di sini grand sudah net)
-            $depositPct = (float) ($lockedSaleOrder->deposit_percentage ?? 0);
-            if ($depositPct < 0) $depositPct = 0;
-            if ($depositPct > 100) $depositPct = 100;
-
+            /**
+             * ✅✅ FIX UTAMA DP:
+             * DP yang boleh mengurangi invoice hanyalah yang SUDAH DITERIMA (deposit_received_amount).
+             */
             $dpTotalReceived = (int) ($lockedSaleOrder->deposit_received_amount ?? 0);
-            $dpAllocated = (int) round($invoiceEstimatedGrand * ($depositPct / 100));
+            if ($dpTotalReceived < 0) $dpTotalReceived = 0;
 
-            if ($dpTotalReceived > 0 && $dpAllocated > $dpTotalReceived) {
-                $dpAllocated = $dpTotalReceived;
+            if ($dpTotalReceived <= 0) {
+                $dpAllocated = 0;
+            } else {
+                $depositPct = (float) ($lockedSaleOrder->deposit_percentage ?? 0);
+                if ($depositPct < 0) $depositPct = 0;
+                if ($depositPct > 100) $depositPct = 100;
+
+                $dpAllocated = (int) round($invoiceEstimatedGrand * ($depositPct / 100));
+                if ($dpAllocated > $dpTotalReceived) $dpAllocated = $dpTotalReceived;
+                if ($dpAllocated < 0) $dpAllocated = 0;
             }
-            if ($dpAllocated < 0) $dpAllocated = 0;
 
+            // ✅ suggested pay now selalu ada (kalau DP=0 ya = total invoice)
             $suggestedPayNow = max(0, $invoiceEstimatedGrand - $dpAllocated);
 
             $lockedFinancial['invoice_items_subtotal'] = (int) $invoiceItemsSubtotal;
@@ -411,11 +419,12 @@ class SaleController extends Controller
             $lockedFinancial['ship_invoice_est'] = (int) $shipAlloc;
             $lockedFinancial['fee_invoice_est']  = (int) $feeAlloc;
 
-            // ✅ BIAR ROW DISCOUNT SUMMARY NGGAK MUNCUL
             $lockedFinancial['discount_info_invoice_est'] = 0;
 
-            // kalau kamu masih mau tampilkan info % dan angka discount (bukan untuk dikurangin)
             $lockedFinancial['discount_info_display_total'] = (int) round(max(0, (float)$deliveryDiscountInfoTotal));
+
+            // ✅ PATCH: pastiin juga diset kembali (biar UI gak null)
+            $lockedFinancial['deposit_received_amount'] = (int) $dpTotalReceived;
 
             $lockedFinancial['dp_allocated_for_this_invoice'] = (int) $dpAllocated;
             $lockedFinancial['suggested_pay_now'] = (int) $suggestedPayNow;

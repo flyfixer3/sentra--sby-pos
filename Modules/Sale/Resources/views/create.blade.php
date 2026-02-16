@@ -71,15 +71,23 @@
                             </div>
                         </div>
 
-                        @if($isLockedBySO && $dpTotal > 0)
+                        @if($isLockedBySO)
                             <div class="alert alert-warning">
                                 <div class="small">
                                     <div class="font-weight-bold mb-1">Deposit (DP) from Sale Order</div>
+
                                     DP Received (SO): <strong>{{ format_currency($dpTotal) }}</strong><br>
                                     Allocated to this invoice (pro-rata): <strong>{{ format_currency($dpAllocated) }}</strong><br>
-                                    Suggested “Amount Received” now (Remaining after DP): <strong>{{ format_currency($suggestedPayNow) }}</strong>
+
+                                    @if($dpTotal > 0)
+                                        Suggested “Amount Received” now (Remaining after DP): <strong>{{ format_currency($suggestedPayNow) }}</strong>
+                                    @else
+                                        <span class="text-muted">No DP received yet. DP allocation is <strong>{{ format_currency(0) }}</strong>.</span><br>
+                                        Suggested “Amount Received” now: <strong>{{ format_currency($suggestedPayNow) }}</strong>
+                                    @endif
+
                                     <div class="text-muted" style="font-size: 12px;">
-                                        Tips: klik tombol ✓ di Amount Received untuk auto isi “remaining after DP”.
+                                        Tips: klik tombol ✓ di Amount Received untuk auto isi nilai suggested.
                                     </div>
                                 </div>
                             </div>
@@ -223,7 +231,7 @@
                                 <div class="form-group">
                                     <label for="paid_amount">
                                         Amount Received <span class="text-danger">*</span>
-                                        @if($isLockedBySO && $dpTotal > 0)
+                                        @if($isLockedBySO)
                                             <span class="text-muted" style="font-size: 12px;">
                                                 (suggested: {{ format_currency($suggestedPayNow) }})
                                             </span>

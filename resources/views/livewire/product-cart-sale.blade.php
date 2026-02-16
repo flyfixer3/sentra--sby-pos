@@ -209,7 +209,7 @@
                         <th>(=) {{ format_currency((float)$grandTotal) }}</th>
                     </tr>
 
-                    @if($cart_instance === 'sale' && $isLockedBySO && (int)($dpAllocated ?? 0) > 0)
+                    @if($cart_instance === 'sale' && $isLockedBySO)
                         <tr>
                             <th>
                                 Deposit from SO
@@ -225,10 +225,14 @@
                                 @endif
                             </th>
                             <td>
-                                (-) {{ format_currency((float)$dpAllocated) }}
+                                (-) {{ format_currency((float) max(0, (int)($dpAllocated ?? 0))) }}
                                 @if((int)($so_dp_total ?? 0) > 0)
                                     <div class="text-muted" style="font-size:12px;">
                                         DP Received: {{ format_currency((float)($so_dp_total ?? 0)) }}
+                                    </div>
+                                @else
+                                    <div class="text-muted" style="font-size:12px;">
+                                        DP Received: {{ format_currency(0) }}
                                     </div>
                                 @endif
                             </td>
@@ -241,9 +245,10 @@
                                     (Grand Total - Allocated DP)
                                 </div>
                             </th>
-                            <th>(=) {{ format_currency((float)$payNow) }}</th>
+                            <th>(=) {{ format_currency((float) max(0, (int)($payNow ?? 0))) }}</th>
                         </tr>
                     @endif
+
                 </table>
             </div>
         </div>
