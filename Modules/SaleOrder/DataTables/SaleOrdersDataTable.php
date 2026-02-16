@@ -21,11 +21,24 @@ class SaleOrdersDataTable extends DataTable
                 return Carbon::parse($row->date)->format('d-m-Y');
             })
             ->editColumn('status', function ($row) {
+                // ✅ Status logic (sesuai definisi kamu):
+                // pending            : belum ada delivery confirmed
+                // partial_delivered  : ada delivery confirmed tapi belum penuh
+                // delivered          : semua barang terkirim tapi belum ada invoice
+                // completed          : sudah ada invoice (payment status tidak mempengaruhi)
                 $s = strtolower((string) ($row->status ?? 'pending'));
+
+                // Derive COMPLETED secara aman dari data yang sudah ada,
+                // supaya record lama yang sudah punya invoice tidak “nyangkut” di DELIVERED.
+                if ($s === 'delivered' && !empty($row->sale_id)) {
+                    $s = 'completed';
+                }
+
                 $badge = 'secondary';
                 if ($s === 'pending') $badge = 'warning';
                 if ($s === 'partial_delivered') $badge = 'info';
-                if ($s === 'delivered') $badge = 'success';
+                if ($s === 'delivered') $badge = 'primary';
+                if ($s === 'completed') $badge = 'success';
                 if ($s === 'cancelled') $badge = 'danger';
 
                 return '<span class="badge badge-' . $badge . '">' . strtoupper(e($s)) . '</span>';

@@ -51,14 +51,6 @@
                     <div class="d-flex align-items-center gap-2 flex-wrap">
                         <h4 class="mb-0">{{ $saleDelivery->reference }}</h4>
                         <span class="badge {{ $badgeClass }}">{{ strtoupper($st) }}</span>
-
-                        {{-- ✅ NEW: badge warehouse ketika confirmed --}}
-                        @if($st === 'confirmed')
-                            <span class="badge bg-light text-dark border">
-                                <i class="bi bi-building me-1"></i>
-                                Warehouse: <strong>{{ $warehouseName ?? '-' }}</strong>
-                            </span>
-                        @endif
                     </div>
 
                     <div class="text-muted small mt-1">
@@ -176,18 +168,6 @@
                             <div class="mt-1">
                                 Confirmed by:
                                 <strong>{{ $saleDelivery->confirmed_at ? ($saleDelivery->confirmer?->name ?? '-') : '-' }}</strong>
-                            </div>
-
-                            {{-- ✅ NEW: tampilkan Warehouse yg dipakai confirm --}}
-                            <div class="mt-1">
-                                Warehouse:
-                                <strong>
-                                    @if($st === 'confirmed')
-                                        {{ $warehouseName ?? '-' }}
-                                    @else
-                                        -
-                                    @endif
-                                </strong>
                             </div>
 
                             <div class="mt-1">

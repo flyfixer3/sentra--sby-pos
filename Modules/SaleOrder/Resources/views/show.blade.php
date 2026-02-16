@@ -316,7 +316,6 @@
                         <tr>
                             <th>Reference</th>
                             <th style="width:140px;">Date</th>
-                            <th>Warehouse</th>
                             <th style="width:140px;">Status</th>
                             <th class="text-center" style="width:120px;">Action</th>
                         </tr>
@@ -336,7 +335,6 @@
                         <tr>
                             <td class="fw-semibold">{{ $d->reference }}</td>
                             <td>{{ $d->date ? \Carbon\Carbon::parse($d->date)->format('d M Y') : '-' }}</td>
-                            <td>{{ $d->warehouse?->warehouse_name ?? ('WH#'.$d->warehouse_id) }}</td>
                             <td><span class="badge {{ $dBadge }}">{{ strtoupper($dst) }}</span></td>
                             <td class="text-center">
                                 <a class="btn btn-sm btn-outline-primary" href="{{ route('sale-deliveries.show', $d->id) }}">

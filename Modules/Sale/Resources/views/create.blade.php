@@ -174,7 +174,11 @@
                             </div>
                         </div>
 
-                        <livewire:product-cart-sale :cartInstance="'sale'" :data=null  :warehouses="$warehouses"/>
+                        <livewire:product-cart-sale
+                            :cartInstance="'sale'"
+                            :data="$lockedFinancial"
+                            :warehouses="$warehouses"
+                        />
 
                         <div class="form-row">
                             <div class="col-lg-3">
@@ -284,16 +288,16 @@
         var $ship = $('input[name="shipping_amount"]');
 
         if ($tax.length && typeof tax !== 'undefined') {
-            $tax.val(tax).prop('readonly', true);
+            $tax.prop('readonly', true);
         }
         if ($disc.length && typeof disc !== 'undefined') {
-            $disc.val(disc).prop('readonly', true);
+            $disc.prop('readonly', true);
         }
         if ($fee.length && typeof fee !== 'undefined') {
-            $fee.val(fee).prop('readonly', true);
+            $fee.prop('readonly', true);
         }
         if ($ship.length && typeof ship !== 'undefined') {
-            $ship.val(ship).prop('readonly', true);
+            $ship.prop('readonly', true);
         }
     }
 

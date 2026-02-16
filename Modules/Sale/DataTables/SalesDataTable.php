@@ -41,15 +41,22 @@ class SalesDataTable extends DataTable
                 return $this->formatDateWithCreatedTime($row, 'date');
             })
 
-            ->addColumn('total_amount', function ($data) {
-                return format_currency($data->total_amount);
+            /**
+             * ✅ IMPORTANT:
+             * - total_amount = Invoice Total (grand total after discount)
+             * - paid_amount  = Cash Received (uang benar-benar diterima saat buat invoice)
+             * - due_amount   = Amount to Receive / Balance (sisa tagihan setelah DP allocated + cash)
+             */
+            ->addColumn('total_amount', function ($row) {
+                return format_currency((int) ($row->total_amount ?? 0));
             })
-            ->addColumn('paid_amount', function ($data) {
-                return format_currency($data->paid_amount);
+            ->addColumn('paid_amount', function ($row) {
+                return format_currency((int) ($row->paid_amount ?? 0));
             })
-            ->addColumn('due_amount', function ($data) {
-                return format_currency($data->due_amount);
+            ->addColumn('due_amount', function ($row) {
+                return format_currency((int) ($row->due_amount ?? 0));
             })
+
             ->addColumn('payment_status', function ($data) {
                 return view('sale::partials.payment-status', compact('data'));
             })
@@ -97,13 +104,19 @@ class SalesDataTable extends DataTable
                 ->title('Customer')
                 ->className('text-center align-middle'),
 
+            // ✅ Invoice Total (Grand Total after discount)
             Column::computed('total_amount')
+                ->title('Invoice Total')
                 ->className('text-center align-middle'),
 
+            // ✅ Cash received at invoice creation
             Column::computed('paid_amount')
+                ->title('Cash Received')
                 ->className('text-center align-middle'),
 
+            // ✅ Remaining balance after DP allocated + cash
             Column::computed('due_amount')
+                ->title('Amount to Receive')
                 ->className('text-center align-middle'),
 
             Column::computed('payment_status')

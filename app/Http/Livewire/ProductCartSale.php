@@ -17,6 +17,7 @@ class ProductCartSale extends Component
     public $global_qty;
     public $shipping;
     public $platform_fee = 0;
+    public $is_locked_by_so = false;
 
     // [product_id] => total stock pada branch (gabungan semua warehouse)
     public $check_quantity;
@@ -38,57 +39,67 @@ class ProductCartSale extends Component
     {
         $this->cart_instance = $cartInstance;
 
-        if ($data) {
+        // default init (biar aman di semua scenario)
+        $this->global_discount = 0;
+        $this->global_tax = 0;
+        $this->global_qty = 0;
+        $this->shipping = 0;
+        $this->platform_fee = 0;
+
+        $this->check_quantity = [];
+        $this->quantity = [];
+        $this->discount_type = [];
+        $this->item_discount = [];
+        $this->item_cost_konsyinasi = [];
+
+        if (!empty($data)) {
             $this->data = $data;
+            $this->is_locked_by_so = !empty(data_get($data, 'sale_order_id'));
+            $this->so_dp_total = (int) data_get($data, 'deposit_received_amount', 0);
+            $this->so_dp_allocated = (int) data_get($data, 'dp_allocated_for_this_invoice', 0);
+            $this->so_sale_order_reference = (string) data_get($data, 'sale_order_reference', null);
 
-            $this->global_discount = (int) ($data->discount_percentage ?? 0);
-            $this->global_tax      = (int) ($data->tax_percentage ?? 0);
-            $this->global_qty      = Cart::instance($this->cart_instance)->count();
-            $this->shipping        = (int) ($data->shipping_amount ?? 0);
-            $this->platform_fee    = (int) ($data->fee_amount ?? 0);
+            // ✅ support array/object (lockedFinancial dari controller itu array)
+            $this->global_discount = (int) data_get($data, 'discount_percentage', 0);
+            $this->global_tax      = (int) data_get($data, 'tax_percentage', 0);
+            $this->shipping        = (int) data_get($data, 'shipping_amount', 0);
+            $this->platform_fee    = (int) data_get($data, 'fee_amount', 0);
 
+            // keep qty consistent
+            $this->global_qty = Cart::instance($this->cart_instance)->count();
+
+            // ✅ INI FIX UTAMA: set global ke Cart biar Cart::discount() & tax() hidup
             $this->updatedGlobalTax();
             $this->updatedGlobalDiscount();
 
-            $this->check_quantity = [];
-            $this->quantity = [];
-            $this->discount_type = [];
-            $this->item_discount = [];
-            $this->item_cost_konsyinasi = [];
-
+            // init per-item states from cart
             $cart_items = Cart::instance($this->cart_instance)->content();
             foreach ($cart_items as $cart_item) {
-                $this->check_quantity[$cart_item->id] = (int) ($cart_item->options->stock ?? 0);
-                $this->quantity[$cart_item->id] = (int) $cart_item->qty;
-                $this->discount_type[$cart_item->id] = (string) ($cart_item->options->product_discount_type ?? 'fixed');
-                $this->item_cost_konsyinasi[$cart_item->id] = (float) ($cart_item->options->product_cost ?? 0);
+                $pid = (int) $cart_item->id;
+
+                $this->check_quantity[$pid] = (int) ($cart_item->options->stock ?? 0);
+                $this->quantity[$pid] = (int) $cart_item->qty;
+
+                $this->discount_type[$pid] = (string) ($cart_item->options->product_discount_type ?? 'fixed');
+                $this->item_cost_konsyinasi[$pid] = (float) ($cart_item->options->product_cost ?? 0);
 
                 if (($cart_item->options->product_discount_type ?? 'fixed') === 'fixed') {
-                    $this->item_discount[$cart_item->id] = (float) ($cart_item->options->product_discount ?? 0);
+                    $this->item_discount[$pid] = (float) ($cart_item->options->product_discount ?? 0);
                 } else {
-                    $priceBase = ((float)$cart_item->price > 0) ? (float)$cart_item->price : 1;
+                    $priceBase = ((float) $cart_item->price > 0) ? (float) $cart_item->price : 1;
                     $disc = (float) ($cart_item->options->product_discount ?? 0);
-                    $this->item_discount[$cart_item->id] = round(100 * ($disc / $priceBase));
+                    $this->item_discount[$pid] = round(100 * ($disc / $priceBase));
                 }
             }
         } else {
-            $this->global_discount = 0;
-            $this->global_tax = 0;
-            $this->global_qty = 0;
-            $this->shipping = 0;
-            $this->platform_fee = 0;
-
-            $this->check_quantity = [];
-            $this->quantity = [];
-            $this->discount_type = [];
-            $this->item_discount = [];
-            $this->item_cost_konsyinasi = [];
+            // no data: tetap sync qty dari cart kalau ada
+            $this->global_qty = Cart::instance($this->cart_instance)->count();
         }
 
-        // ✅ FIX UTAMA qty state
+        // ✅ FIX qty state biar ga blank / ke-override
         $this->syncQuantityDefaults();
 
-        // ✅ NEW: hitung DP allocated dari Sale Order (kalau create invoice from delivery)
+        // ✅ DP info (kalau create invoice from delivery)
         $this->loadSaleOrderDepositInfo();
     }
 
@@ -326,6 +337,22 @@ class ProductCartSale extends Component
         // hanya relevan untuk invoice sale
         if ($this->cart_instance !== 'sale') return;
 
+        /**
+         * ✅ FIX: kalau invoice ini locked by SO dan controller sudah kirim dp numbers,
+         * jangan hitung ulang di Livewire (biar gak beda / kelihatan “double”).
+         */
+        if (!empty($this->is_locked_by_so) && !empty($this->data)) {
+            $this->so_dp_total = (int) data_get($this->data, 'deposit_received_amount', 0);
+            $this->so_dp_allocated = (int) data_get($this->data, 'dp_allocated_for_this_invoice', 0);
+            $this->so_sale_order_reference = (string) data_get($this->data, 'sale_order_reference', null);
+
+            // kalau dp_allocated memang 0 (misal belum ada dp), ya sudah.
+            return;
+        }
+
+        // =========================
+        // fallback behavior lama (non-locked)
+        // =========================
         $saleDeliveryId = (int) request()->get('sale_delivery_id', 0);
         if ($saleDeliveryId <= 0) return;
 
@@ -377,7 +404,6 @@ class ProductCartSale extends Component
             $this->so_dp_allocated = $allocated;
             $this->so_sale_order_reference = (string) ($saleOrder->reference ?? ('SO-' . $saleOrderId));
         } catch (\Throwable $e) {
-            // diamkan supaya tidak ganggu UI
             $this->so_dp_total = 0;
             $this->so_dp_allocated = 0;
             $this->so_sale_order_reference = null;

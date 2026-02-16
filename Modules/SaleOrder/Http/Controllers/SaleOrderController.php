@@ -509,7 +509,22 @@ class SaleOrderController extends Controller
             'deliveries' => function ($q) {
                 $q->orderBy('id', 'desc');
             },
+            // ✅ FIX: eager load warehouse relation inside deliveries
+            'deliveries.warehouse',
         ]);
+
+        // ✅ EXTRA safety: kalau warehouse_id ada tapi relasi belum kebaca, set manual
+        foreach (($saleOrder->deliveries ?? []) as $d) {
+            $wid = (int) ($d->warehouse_id ?? 0);
+            if ($wid > 0 && !$d->relationLoaded('warehouse')) {
+                $wh = \Modules\Product\Entities\Warehouse::find($wid);
+                if ($wh) $d->setRelation('warehouse', $wh);
+            }
+            if ($wid > 0 && $d->relationLoaded('warehouse') && empty($d->warehouse)) {
+                $wh = \Modules\Product\Entities\Warehouse::find($wid);
+                if ($wh) $d->setRelation('warehouse', $wh);
+            }
+        }
 
         $remainingMap = $this->getRemainingQtyBySaleOrder($saleOrder->id);
         $plannedRemainingMap = $this->getPlannedRemainingQtyBySaleOrder($saleOrder->id);
