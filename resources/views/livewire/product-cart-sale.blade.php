@@ -28,83 +28,83 @@
 
             <table class="table table-bordered">
                 <thead class="thead-dark">
-                    <tr>
-                        <th class="align-middle">Product</th>
-                        <th class="align-middle">Sell Unit Price</th>
-                        <th class="align-middle">Stock</th>
-                        <th class="align-middle">Quantity</th>
-                        <th class="align-middle">Discount</th>
-                        <th class="align-middle">Tax</th>
-                        <th class="align-middle">Sub Total</th>
-                        <th class="align-middle">Action</th>
-                    </tr>
+                <tr>
+                    <th class="align-middle">Product</th>
+                    <th class="align-middle">Sell Unit Price</th>
+                    <th class="align-middle">Stock</th>
+                    <th class="align-middle">Quantity</th>
+                    <th class="align-middle">Discount</th>
+                    <th class="align-middle">Tax</th>
+                    <th class="align-middle">Sub Total</th>
+                    <th class="align-middle">Action</th>
+                </tr>
                 </thead>
 
                 <tbody>
-                    @if(isset($cart_items) && $cart_items->isNotEmpty())
-                        @foreach($cart_items as $cart_item)
-                            @php
-                                $scope = (string)($cart_item->options->stock_scope ?? 'warehouse');
-                                $whName = (string)($cart_item->options->warehouse_name ?? '');
-                                $scopeNote = $scope === 'branch'
-                                    ? 'Stock shown is total from ALL warehouses (active branch).'
-                                    : ('Stock shown is from warehouse' . ($whName ? (': ' . $whName) : '.') );
-                            @endphp
+                @if(isset($cart_items) && $cart_items->isNotEmpty())
+                    @foreach($cart_items as $cart_item)
+                        @php
+                            $scope = (string)($cart_item->options->stock_scope ?? 'warehouse');
+                            $whName = (string)($cart_item->options->warehouse_name ?? '');
+                            $scopeNote = $scope === 'branch'
+                                ? 'Stock shown is total from ALL warehouses (active branch).'
+                                : ('Stock shown is from warehouse' . ($whName ? (': ' . $whName) : '.') );
+                        @endphp
 
-                            <tr>
-                                <td class="align-middle">
-                                    {{ $cart_item->name }} <br>
-                                    <span class="badge badge-success">
-                                        {{ $cart_item->options->code ?? '-' }}
-                                    </span>
-                                    @include('livewire.includes.product-cart-modal-sale')
-                                </td>
-
-                                <td class="align-middle">
-                                    {{ format_currency((float)($cart_item->price ?? 0)) }}
-                                </td>
-
-                                <td class="align-middle text-center">
-                                    <span class="badge badge-info">
-                                        {{ (int)($cart_item->options->stock ?? 0) . ' ' . (string)($cart_item->options->unit ?? '') }}
-                                    </span>
-                                    <div class="mt-1">
-                                        <small class="text-muted">{{ $scopeNote }}</small>
-                                    </div>
-                                </td>
-
-                                <td class="align-middle">
-                                    @include('livewire.includes.product-cart-quantity')
-                                </td>
-
-                                <td class="align-middle">
-                                    {{ format_currency((float)($cart_item->options->product_discount ?? 0)) }}
-                                </td>
-
-                                <td class="align-middle">
-                                    {{ format_currency((float)($cart_item->options->product_tax ?? 0)) }}
-                                </td>
-
-                                <td class="align-middle">
-                                    {{ format_currency((float)($cart_item->options->sub_total ?? 0)) }}
-                                </td>
-
-                                <td class="align-middle text-center">
-                                    <a href="#" wire:click.prevent="removeItem('{{ $cart_item->rowId }}')">
-                                        <i class="bi bi-x-circle font-2xl text-danger"></i>
-                                    </a>
-                                </td>
-                            </tr>
-                        @endforeach
-                    @else
                         <tr>
-                            <td colspan="8" class="text-center">
-                                <span class="text-danger">
-                                    Please search &amp; select products!
+                            <td class="align-middle">
+                                {{ $cart_item->name }} <br>
+                                <span class="badge badge-success">
+                                    {{ $cart_item->options->code ?? '-' }}
                                 </span>
+                                @include('livewire.includes.product-cart-modal-sale')
+                            </td>
+
+                            <td class="align-middle">
+                                {{ format_currency((float)($cart_item->price ?? 0)) }}
+                            </td>
+
+                            <td class="align-middle text-center">
+                                <span class="badge badge-info">
+                                    {{ (int)($cart_item->options->stock ?? 0) . ' ' . (string)($cart_item->options->unit ?? '') }}
+                                </span>
+                                <div class="mt-1">
+                                    <small class="text-muted">{{ $scopeNote }}</small>
+                                </div>
+                            </td>
+
+                            <td class="align-middle">
+                                @include('livewire.includes.product-cart-quantity')
+                            </td>
+
+                            <td class="align-middle">
+                                {{ format_currency((float)($cart_item->options->product_discount ?? 0)) }}
+                            </td>
+
+                            <td class="align-middle">
+                                {{ format_currency((float)($cart_item->options->product_tax ?? 0)) }}
+                            </td>
+
+                            <td class="align-middle">
+                                {{ format_currency((float)($cart_item->options->sub_total ?? 0)) }}
+                            </td>
+
+                            <td class="align-middle text-center">
+                                <a href="#" wire:click.prevent="removeItem('{{ $cart_item->rowId }}')">
+                                    <i class="bi bi-x-circle font-2xl text-danger"></i>
+                                </a>
                             </td>
                         </tr>
-                    @endif
+                    @endforeach
+                @else
+                    <tr>
+                        <td colspan="8" class="text-center">
+                            <span class="text-danger">
+                                Please search &amp; select products!
+                            </span>
+                        </td>
+                    </tr>
+                @endif
                 </tbody>
             </table>
         </div>
@@ -117,7 +117,6 @@
                     @php
                         $isLockedBySO = !empty(data_get($data, 'sale_order_id'));
 
-                        // cart subtotal shown (string no decimals), keep int
                         $cartSubtotalRaw = (string) Cart::instance($cart_instance)->subtotal(0, '.', '');
                         $itemsSubtotal = (int) $cartSubtotalRaw;
 
@@ -127,14 +126,13 @@
                         $allocShip   = (int) data_get($data, 'ship_invoice_est', 0);
                         $allocFee    = (int) data_get($data, 'fee_invoice_est', 0);
 
-                        // ✅ discount allocation that MUST reduce grand total (controller already sets int)
+                        // ✅ discount allocation (minus grand)
                         $discAlloc   = (int) data_get($data, 'discount_info_invoice_est', 0);
 
-                        // dp & pay now from controller (based on deposit_percentage)
+                        // dp & pay now
                         $dpAllocated = (int) data_get($data, 'dp_allocated_for_this_invoice', 0);
                         $suggested   = (int) data_get($data, 'suggested_pay_now', 0);
 
-                        // SO notes
                         $discInfoTotal = (float) data_get($data, 'discount_info_amount', 0);
                         $discInfoPct   = (float) data_get($data, 'discount_info_percentage', 0);
                         $depositPct    = (float) data_get($data, 'deposit_percentage', 0);
@@ -150,17 +148,15 @@
                         $feeInputTotal  = (int) ($cart_instance === 'sale' ? ($platform_fee ?? 0) : 0);
 
                         if ($isLockedBySO) {
-                            // ✅ locked: use controller allocations, and discount reduces grand
                             $summaryTax  = max(0, $allocTax);
                             $summaryShip = max(0, $allocShip);
                             $summaryFee  = max(0, $allocFee);
                             $summaryDisc = max(0, $discAlloc);
 
-                            // controller already computed grand/payNow with discount + dp%
+                            // ✅ controller sudah hitung grand setelah discount
                             $grandTotal = max(0, $lockedGrand);
                             $payNow     = max(0, $suggested);
                         } else {
-                            // non-locked: normal cart math
                             $summaryTax  = max(0, $taxAmount);
                             $summaryShip = max(0, $shipInputTotal);
                             $summaryFee  = max(0, $feeInputTotal);
@@ -183,14 +179,14 @@
                         <td>(+) {{ format_currency((float)$summaryTax) }}</td>
                     </tr>
 
+                    {{-- ✅ DISCOUNT ROW: always shown (locked uses discAlloc) --}}
                     @if($isLockedBySO)
-                        {{-- ✅ NOW discount is part of total (minus) --}}
                         @if($summaryDisc > 0)
                             <tr>
                                 <th>
                                     Discount (Locked by SO)
                                     <div class="text-muted" style="font-size:12px;">
-                                        (based on delivery items{{ $discInfoPct > 0 ? ', SO %: ' . number_format($discInfoPct, 2, '.', '') . '%' : '' }})
+                                        (based on delivery items / unit price diff{{ $discInfoPct > 0 ? ', SO %: ' . number_format($discInfoPct, 2, '.', '') . '%' : '' }})
                                     </div>
                                 </th>
                                 <td>(-) {{ format_currency((float)$summaryDisc) }}</td>

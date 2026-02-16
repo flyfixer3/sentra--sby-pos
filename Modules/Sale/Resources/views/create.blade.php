@@ -54,8 +54,8 @@
                                         <div class="small mt-2">
                                             <strong>Financial locked by Sale Order</strong>
                                             (SO: <strong>{{ $lockedFinancial['sale_order_reference'] }}</strong>)<br>
-                                            Tax: <strong>{{ (int)$lockedFinancial['tax_percentage'] }}%</strong> •
-                                            Discount: <strong>{{ (int)$lockedFinancial['discount_percentage'] }}%</strong> •
+                                            Tax: <strong>{{ number_format((float)$lockedFinancial['tax_percentage'], 2, '.', '') }}%</strong> •
+                                            Discount: <strong>{{ number_format((float)$lockedFinancial['discount_percentage'], 2, '.', '') }}%</strong> •
                                             Fee: <strong>{{ format_currency((int)$lockedFinancial['fee_amount']) }}</strong> •
                                             Shipping: <strong>{{ format_currency((int)$lockedFinancial['shipping_amount']) }}</strong>
                                             <div class="text-muted" style="font-size: 12px;">
@@ -94,8 +94,8 @@
                         @endif
 
                         @if($isLockedBySO)
-                            <input type="hidden" name="tax_percentage" value="{{ (int)$lockedFinancial['tax_percentage'] }}">
-                            <input type="hidden" name="discount_percentage" value="{{ (int)$lockedFinancial['discount_percentage'] }}">
+                            <input type="hidden" name="tax_percentage" value="{{ number_format((float)$lockedFinancial['tax_percentage'], 2, '.', '') }}">
+                            <input type="hidden" name="discount_percentage" value="{{ number_format((float)$lockedFinancial['discount_percentage'], 2, '.', '') }}">
                             <input type="hidden" name="fee_amount" value="{{ (int)$lockedFinancial['fee_amount'] }}">
                             <input type="hidden" name="shipping_amount" value="{{ (int)$lockedFinancial['shipping_amount'] }}">
 

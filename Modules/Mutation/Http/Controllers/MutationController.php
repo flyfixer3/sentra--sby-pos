@@ -261,9 +261,11 @@ class MutationController extends Controller
         return (int) $mutation->id;
     }
 
+   
     /**
      * INTERNAL CORE: melakukan lock stock, hitung early/last, create mutation, update stock.
-     * Return Mutation model supaya bisa dipakai dua versi method di atas.
+     * ✅ UPDATED: jika rack_id ada, sync juga ke stock_racks (qty_available + bucket).
+     * ✅ STRICT: kalau OUT dan stock_racks tidak cukup => throw (jangan diam-diam clamp ke 0).
      */
     private function applyInOutInternal(
         int $branchId,
@@ -284,6 +286,20 @@ class MutationController extends Controller
             throw new \RuntimeException("Qty must be > 0");
         }
 
+        // ---------------------------------------------
+        // 0) helper: resolve bucket dari note
+        // ---------------------------------------------
+        $resolveBucketFromNote = function (string $noteX): ?string {
+            $n = strtoupper(trim($noteX));
+            if (str_contains($n, '| GOOD')) return 'qty_good';
+            if (str_contains($n, '| DEFECT')) return 'qty_defect';
+            if (str_contains($n, '| DAMAGED')) return 'qty_damaged';
+            return null;
+        };
+
+        // ---------------------------------------------
+        // 1) lock + update STOCKS (source of truth)
+        // ---------------------------------------------
         $stock = Stock::withoutGlobalScopes()
             ->where('branch_id', $branchId)
             ->where('warehouse_id', $warehouseId)
@@ -322,10 +338,13 @@ class MutationController extends Controller
             throw new \RuntimeException("Stock minus tidak diizinkan. Product {$productId}, current {$early}, out {$qty}.");
         }
 
+        // ---------------------------------------------
+        // 2) create MUTATION LOG
+        // ---------------------------------------------
         $mutation = Mutation::create([
             'branch_id'     => $branchId,
             'warehouse_id'  => $warehouseId,
-            'rack_id'       => $rackId,      // ✅ NEW (boleh null)
+            'rack_id'       => $rackId, // boleh null
             'product_id'    => $productId,
             'reference'     => $reference,
             'date'          => $date,
@@ -337,10 +356,100 @@ class MutationController extends Controller
             'stock_last'    => $last,
         ]);
 
+        // ---------------------------------------------
+        // 3) update STOCKS
+        // ---------------------------------------------
         $stock->update([
             'qty_available' => $last,
             'updated_by'    => auth()->id(),
         ]);
+
+        // ---------------------------------------------
+        // 4) ✅ NEW: sync STOCK_RACKS jika rack_id ada
+        //    STRICT: Out harus cukup, kalau tidak => throw.
+        // ---------------------------------------------
+        if (!empty($rackId) && (int) $rackId > 0) {
+
+            $bucketCol = $resolveBucketFromNote($note);
+
+            $sr = DB::table('stock_racks')
+                ->where('branch_id', (int) $branchId)
+                ->where('warehouse_id', (int) $warehouseId)
+                ->where('rack_id', (int) $rackId)
+                ->where('product_id', (int) $productId)
+                ->lockForUpdate()
+                ->first();
+
+            if (!$sr) {
+                // kalau IN: boleh auto-create
+                // kalau OUT: ini red flag karena keluar dari rack yang tidak punya row
+                if ($mutationType === 'Out') {
+                    throw new \RuntimeException(
+                        "Stock rack row not found for OUT. " .
+                        "Branch {$branchId}, WH {$warehouseId}, Rack {$rackId}, Product {$productId}. Ref {$reference}"
+                    );
+                }
+
+                DB::table('stock_racks')->insert([
+                    'branch_id'     => (int) $branchId,
+                    'warehouse_id'  => (int) $warehouseId,
+                    'rack_id'       => (int) $rackId,
+                    'product_id'    => (int) $productId,
+                    'qty_available' => 0,
+                    'qty_good'      => 0,
+                    'qty_defect'    => 0,
+                    'qty_damaged'   => 0,
+                    'created_at'    => now(),
+                    'updated_at'    => now(),
+                ]);
+
+                $sr = (object) [
+                    'qty_available' => 0,
+                    'qty_good'      => 0,
+                    'qty_defect'    => 0,
+                    'qty_damaged'   => 0,
+                ];
+            }
+
+            $curAvail = (int) ($sr->qty_available ?? 0);
+
+            if ($mutationType === 'Out' && $curAvail < $qty) {
+                throw new \RuntimeException(
+                    "Not enough rack qty_available for OUT. " .
+                    "Need {$qty}, have {$curAvail}. " .
+                    "Branch {$branchId}, WH {$warehouseId}, Rack {$rackId}, Product {$productId}. Ref {$reference}"
+                );
+            }
+
+            $newAvail = $mutationType === 'In' ? ($curAvail + $qty) : ($curAvail - $qty);
+
+            $update = [
+                'qty_available' => (int) $newAvail,
+                'updated_at'    => now(),
+            ];
+
+            if ($bucketCol && in_array($bucketCol, ['qty_good', 'qty_defect', 'qty_damaged'], true)) {
+                $curBucket = (int) ($sr->{$bucketCol} ?? 0);
+
+                if ($mutationType === 'Out' && $curBucket < $qty) {
+                    throw new \RuntimeException(
+                        "Not enough rack {$bucketCol} for OUT. " .
+                        "Need {$qty}, have {$curBucket}. " .
+                        "Branch {$branchId}, WH {$warehouseId}, Rack {$rackId}, Product {$productId}. Ref {$reference}"
+                    );
+                }
+
+                $newBucket = $mutationType === 'In' ? ($curBucket + $qty) : ($curBucket - $qty);
+                $update[$bucketCol] = (int) $newBucket;
+            }
+
+            DB::table('stock_racks')
+                ->where('branch_id', (int) $branchId)
+                ->where('warehouse_id', (int) $warehouseId)
+                ->where('rack_id', (int) $rackId)
+                ->where('product_id', (int) $productId)
+                ->update($update);
+        }
 
         return $mutation;
     }
