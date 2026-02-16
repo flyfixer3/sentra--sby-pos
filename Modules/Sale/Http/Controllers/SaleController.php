@@ -36,6 +36,60 @@ class SaleController extends Controller
         return $dataTable->render('sale::index');
     }
 
+    private function calcCumulativeAlloc(int $total, int $base, int $prevBase, int $currAddBase): int
+    {
+        $total = max(0, $total);
+        $base = max(0, $base);
+        $prevBase = max(0, $prevBase);
+        $currAddBase = max(0, $currAddBase);
+
+        if ($total <= 0 || $base <= 0 || $currAddBase <= 0) {
+            return 0;
+        }
+
+        // prev cumulative allocation
+        $prevCum = intdiv($total * $prevBase, $base);
+
+        // target cumulative allocation after adding this invoice base
+        $targetCum = intdiv($total * ($prevBase + $currAddBase), $base);
+
+        $alloc = $targetCum - $prevCum;
+        if ($alloc < 0) $alloc = 0;
+
+        $remaining = $total - $prevCum;
+        if ($alloc > $remaining) $alloc = max(0, $remaining);
+
+        return (int) $alloc;
+    }
+
+    private function getPrevInvoiceItemsSubtotalForSO(int $saleOrderId, int $branchId): int
+    {
+        // sum of (qty * price) from previous invoices created from deliveries in this SO
+        // source of truth: sale_details
+        $prev = (int) DB::table('sale_details as sd')
+            ->join('sales as s', 's.id', '=', 'sd.sale_id')
+            ->join('sale_deliveries as del', 'del.sale_id', '=', 's.id')
+            ->where('del.sale_order_id', $saleOrderId)
+            ->where('del.branch_id', $branchId)
+            ->whereNotNull('del.sale_id')
+            ->selectRaw('SUM(COALESCE(sd.quantity,0) * COALESCE(sd.price,0)) as s')
+            ->value('s');
+
+        return max(0, $prev);
+    }
+
+    private function getPrevInvoiceGrandTotalForSO(int $saleOrderId, int $branchId): int
+    {
+        $prev = (int) DB::table('sales as s')
+            ->join('sale_deliveries as del', 'del.sale_id', '=', 's.id')
+            ->where('del.sale_order_id', $saleOrderId)
+            ->where('del.branch_id', $branchId)
+            ->whereNotNull('del.sale_id')
+            ->sum('s.total_amount');
+
+        return max(0, $prev);
+    }
+
     public function create()
     {
         abort_if(Gate::denies('create_sales'), 403);
@@ -93,16 +147,52 @@ class SaleController extends Controller
             return (int) $sum;
         };
 
-        // invoice items subtotal (qty * price)
-        $invoiceItemsSubtotal = 0;
+        // =========================
+        // Helpers: equal split (shipping/fee) by invoice count
+        // =========================
+        $splitEven = function (int $total, int $count, int $index1Based): int {
+            $total = max(0, $total);
+            $count = max(1, $count);
+            $index1Based = max(1, $index1Based);
 
-        // SO total (versi sekarang di DB kamu: belum minus discount)
+            $base = intdiv($total, $count);
+            $rem  = $total - ($base * $count);
+
+            $extra = ($index1Based <= $rem) ? 1 : 0;
+            return (int) ($base + $extra);
+        };
+
+        $getDeliverySplitContext = function (int $saleOrderId, int $branchId, int $currentDeliveryId): array {
+            $rows = \Modules\SaleDelivery\Entities\SaleDelivery::withoutGlobalScopes()
+                ->where('sale_order_id', $saleOrderId)
+                ->where('branch_id', $branchId)
+                ->whereRaw('LOWER(COALESCE(status, "")) = ?', ['confirmed'])
+                ->orderBy('id')
+                ->pluck('id')
+                ->toArray();
+
+            $count = count($rows);
+            if ($count <= 0) return ['count' => 1, 'index' => 1];
+
+            $index = array_search($currentDeliveryId, $rows, true);
+            $index1Based = ($index === false) ? 1 : ((int)$index + 1);
+
+            return ['count' => $count, 'index' => $index1Based];
+        };
+
+        // invoice items subtotal (qty * shown price)
+        $invoiceItemsSubtotal = 0;
         $saleOrderGrandTotal = 0;
 
-        // pro-rata estimate untuk UI
         $invoiceEstimatedGrand = 0;
         $dpAllocated = 0;
         $suggestedPayNow = 0;
+
+        // ✅ discount that must reduce grand total (based on delivery items)
+        $deliveryDiscountInfoTotal = 0.0;
+
+        $splitCount = 1;
+        $splitIndex = 1;
 
         if ($saleDeliveryId > 0) {
             $delivery = \Modules\SaleDelivery\Entities\SaleDelivery::with(['items'])->find($saleDeliveryId);
@@ -120,36 +210,45 @@ class SaleController extends Controller
                     if ($lockedSaleOrder) {
                         $saleOrderGrandTotal = (int) ($lockedSaleOrder->total_amount ?? 0);
 
-                        // ✅ DISCOUNT APPLIED (amount)
+                        $ctx = $getDeliverySplitContext((int)$lockedSaleOrder->id, (int)$branchId, (int)$delivery->id);
+                        $splitCount = (int) $ctx['count'];
+                        $splitIndex = (int) $ctx['index'];
+
                         $discountPct = (float) ($lockedSaleOrder->discount_percentage ?? 0);
-                        $discountAmt = (int) ($lockedSaleOrder->discount_amount ?? 0);
+                        $discountDiffAmt = (float) ($lockedSaleOrder->discount_amount ?? 0);
 
                         $lockedFinancial = [
                             'sale_order_id'        => (int) $lockedSaleOrder->id,
                             'sale_order_reference' => (string) ($lockedSaleOrder->reference ?? ('SO-' . $lockedSaleOrder->id)),
 
-                            'tax_percentage'       => (int) ($lockedSaleOrder->tax_percentage ?? 0),
+                            // readonly display values
+                            'tax_percentage'       => (float) ($lockedSaleOrder->tax_percentage ?? 0),
+                            'tax_amount'           => (float) ($lockedSaleOrder->tax_amount ?? 0),
 
-                            // penting: di UI input masih ada %,
-                            // tapi perhitungan locked harus tetap pakai AMOUNT agar presisi sesuai SO.
-                            'discount_percentage'  => (float) $discountPct,
-                            'discount_amount'      => (int) $discountAmt,
+                            // ✅ percent is decimal-ready
+                            'discount_percentage'  => (float) ($lockedSaleOrder->discount_percentage ?? 0),
 
-                            'shipping_amount'      => (int) ($lockedSaleOrder->shipping_amount ?? 0),
-                            'fee_amount'           => (int) ($lockedSaleOrder->fee_amount ?? 0),
+                            // readonly display values (SO totals)
+                            'shipping_amount'      => (float) ($lockedSaleOrder->shipping_amount ?? 0),
+                            'fee_amount'           => (float) ($lockedSaleOrder->fee_amount ?? 0),
 
-                            // info untuk UI
+                            // info untuk UI (reference)
                             'discount_info_percentage' => (float) $discountPct,
-                            'discount_info_amount'     => (int) $discountAmt,
+                            'discount_info_amount'     => (float) $discountDiffAmt,
 
                             // DP info
                             'deposit_percentage'        => (float) ($lockedSaleOrder->deposit_percentage ?? 0),
-                            'deposit_amount'            => (int) ($lockedSaleOrder->deposit_amount ?? 0),
-                            'deposit_received_amount'   => (int) ($lockedSaleOrder->deposit_received_amount ?? 0),
+                            'deposit_amount'            => (float) ($lockedSaleOrder->deposit_amount ?? 0),
+                            'deposit_received_amount'   => (float) ($lockedSaleOrder->deposit_received_amount ?? 0),
                             'deposit_payment_method'    => (string) ($lockedSaleOrder->deposit_payment_method ?? ''),
                             'deposit_code'              => (string) ($lockedSaleOrder->deposit_code ?? ''),
 
-                            'sale_order_total_amount'   => (int) ($lockedSaleOrder->total_amount ?? 0),
+                            // SO subtotal & grand
+                            'sale_order_subtotal_amount' => (float) ($lockedSaleOrder->subtotal_amount ?? 0),
+                            'sale_order_total_amount'    => (float) ($lockedSaleOrder->total_amount ?? 0),
+
+                            'split_count' => $splitCount,
+                            'split_index' => $splitIndex,
                         ];
                     }
                 }
@@ -175,8 +274,18 @@ class SaleController extends Controller
                     $priceShown = (float) ($it->price ?? $unitPrice);
 
                     $productTax = (float) ($it->product_tax_amount ?? 0);
+
+                    // ✅ discount from delivery (this one MUST reduce grand total)
                     $discAmt    = (float) ($it->product_discount_amount ?? 0);
                     $discType   = (string) ($it->product_discount_type ?? 'fixed');
+
+                    if ($discAmt > 0) {
+                        if (strtolower($discType) === 'fixed') {
+                            $deliveryDiscountInfoTotal += ($discAmt * $qty);
+                        } else {
+                            $deliveryDiscountInfoTotal += (($unitPrice * $qty) * ($discAmt / 100));
+                        }
+                    }
 
                     if ($deliveryWarehouseId > 0) {
                         $stock = $getStockLastByWarehouse($productId, $deliveryWarehouseId);
@@ -207,8 +316,10 @@ class SaleController extends Controller
 
                             'product_tax'           => $productTax,
                             'unit_price'            => $unitPrice,
+
                             'product_discount'      => $discAmt,
                             'product_discount_type' => $discType,
+
                             'product_cost'          => (float) ($it->product_cost ?? ($p->product_cost ?? 0)),
                         ],
                     ]);
@@ -216,80 +327,65 @@ class SaleController extends Controller
             }
         }
 
-        /**
-         * ✅ KUNCI: invoice_estimated_grand_total HARUS AFTER DISCOUNT
-         * dan suggested_pay_now HARUS SAMA dengan (grand - dpAllocated)
-         */
-        if (!empty($lockedFinancial) && !empty($lockedFinancial['sale_order_id'])) {
+        // ==========================================
+        // ✅ LOCKED CALC FOR SUMMARY UI (UPDATED)
+        // ==========================================
+        if (!empty($lockedSaleOrder) && !empty($lockedFinancial) && (int)$lockedSaleOrder->id > 0) {
 
-            $taxPct    = (int) ($lockedFinancial['tax_percentage'] ?? 0);
-            $feeSO     = (int) ($lockedFinancial['fee_amount'] ?? 0);
-            $shipSO    = (int) ($lockedFinancial['shipping_amount'] ?? 0);
-            $discSOAmt = (int) ($lockedFinancial['discount_amount'] ?? 0);
+            $soSubtotal = (int) ($lockedSaleOrder->subtotal_amount ?? 0);
+            $soSubtotal = max(0, $soSubtotal);
 
-            $taxPct = max(0, min(100, $taxPct));
+            $soTaxAmount = (int) ($lockedSaleOrder->tax_amount ?? 0);
 
-            $soItemsSubtotal = (int) DB::table('sale_order_items')
-                ->where('sale_order_id', (int) $lockedFinancial['sale_order_id'])
-                ->selectRaw('SUM(COALESCE(quantity,0) * COALESCE(price,0)) as s')
-                ->value('s');
+            $soShip = (int) ($lockedSaleOrder->shipping_amount ?? 0);
+            $soFee  = (int) ($lockedSaleOrder->fee_amount ?? 0);
 
-            $ratioItems = 1.0;
-            if ($soItemsSubtotal > 0 && $invoiceItemsSubtotal > 0) {
-                $ratioItems = $invoiceItemsSubtotal / $soItemsSubtotal;
-                $ratioItems = max(0, min(1, $ratioItems));
-            }
+            // TAX prorata
+            $prevSubtotal = $this->getPrevInvoiceItemsSubtotalForSO((int)$lockedSaleOrder->id, (int)$branchId);
+            $taxAlloc  = $this->calcCumulativeAlloc($soTaxAmount, $soSubtotal, $prevSubtotal, $invoiceItemsSubtotal);
 
-            $feeInvoice  = (int) round(max(0, $feeSO) * $ratioItems);
-            $shipInvoice = (int) round(max(0, $shipSO) * $ratioItems);
-            $taxAmt      = (int) round($invoiceItemsSubtotal * ($taxPct / 100));
+            // shipping/fee split
+            $shipAlloc = $splitEven($soShip, $splitCount, $splitIndex);
+            $feeAlloc  = $splitEven($soFee,  $splitCount, $splitIndex);
 
-            // ✅ DISCOUNT INVOICE EST: pro-rata AMOUNT (biar presisi sama SO)
-            $discountInvoiceEst = (int) round(max(0, $discSOAmt) * $ratioItems);
+            // ✅ DISCOUNT must reduce grand total
+            $discAlloc = (int) round(max(0, (float) $deliveryDiscountInfoTotal));
 
-            $invoiceEstimatedGrand = (int) (
-                $invoiceItemsSubtotal
-                + $taxAmt
-                + $feeInvoice
-                + $shipInvoice
-                - $discountInvoiceEst
-            );
+            // ✅ grand after discount
+            $invoiceEstimatedGrand = (int) ($invoiceItemsSubtotal + $taxAlloc + $shipAlloc + $feeAlloc - $discAlloc);
             if ($invoiceEstimatedGrand < 0) $invoiceEstimatedGrand = 0;
 
-            // ✅ DP allocation (simple ratio for suggestion UI)
-            $dpTotal = (int) ($lockedFinancial['deposit_received_amount'] ?? 0);
+            // ✅ DP allocated = grand_after_discount * deposit_percentage (SO)
+            $depositPct = (float) ($lockedSaleOrder->deposit_percentage ?? 0);
+            if ($depositPct < 0) $depositPct = 0;
+            if ($depositPct > 100) $depositPct = 100;
 
-            $soGrand = (int) ($lockedFinancial['sale_order_total_amount'] ?? 0);
+            $dpTotalReceived = (int) ($lockedSaleOrder->deposit_received_amount ?? 0);
+            $dpAllocated = (int) round($invoiceEstimatedGrand * ($depositPct / 100));
 
-            // base after discount (karena total_amount SO belum minus discount)
-            $soGrandAfterDisc = max(0, $soGrand - max(0, $discSOAmt));
-            $baseForDp = $soGrandAfterDisc > 0 ? $soGrandAfterDisc : $soGrand;
-
-            $ratioDp = 1.0;
-            if ($baseForDp > 0 && $invoiceEstimatedGrand > 0) {
-                $ratioDp = $invoiceEstimatedGrand / $baseForDp;
-                $ratioDp = max(0, min(1, $ratioDp));
+            // clamp to received dp (kalau ada)
+            if ($dpTotalReceived > 0 && $dpAllocated > $dpTotalReceived) {
+                $dpAllocated = $dpTotalReceived;
             }
-
-            $dpAllocated = (int) round($dpTotal * $ratioDp);
             if ($dpAllocated < 0) $dpAllocated = 0;
-            if ($dpAllocated > $dpTotal) $dpAllocated = $dpTotal;
 
             $suggestedPayNow = max(0, $invoiceEstimatedGrand - $dpAllocated);
 
-            // ✅ pack values for UI/Livewire (1 sumber kebenaran)
             $lockedFinancial['invoice_items_subtotal'] = (int) $invoiceItemsSubtotal;
             $lockedFinancial['sale_order_grand_total'] = (int) $saleOrderGrandTotal;
 
             $lockedFinancial['invoice_estimated_grand_total'] = (int) $invoiceEstimatedGrand;
-            $lockedFinancial['discount_invoice_est'] = (int) $discountInvoiceEst;
 
+            $lockedFinancial['tax_invoice_est']  = (int) $taxAlloc;
+            $lockedFinancial['ship_invoice_est'] = (int) $shipAlloc;
+            $lockedFinancial['fee_invoice_est']  = (int) $feeAlloc;
+
+            // ✅ now this is TRUE discount allocation to subtract
+            $lockedFinancial['discount_info_invoice_est'] = (int) $discAlloc;
+
+            // ✅ dp/paynow updated
             $lockedFinancial['dp_allocated_for_this_invoice'] = (int) $dpAllocated;
             $lockedFinancial['suggested_pay_now'] = (int) $suggestedPayNow;
-
-            $lockedFinancial['fee_invoice_est']  = (int) $feeInvoice;
-            $lockedFinancial['ship_invoice_est'] = (int) $shipInvoice;
-            $lockedFinancial['tax_invoice_est']  = (int) $taxAmt;
         }
 
         return view('sale::create', [
@@ -321,21 +417,53 @@ class SaleController extends Controller
                 }
 
                 // ======================================================
-                // ✅ detect invoice-from-delivery + lock delivery
+                // Detect invoice-from-delivery + lock delivery
                 // ======================================================
                 $saleDeliveryId = (int) $request->get('sale_delivery_id', 0);
                 $fromDelivery = $saleDeliveryId > 0;
+
+                /** @var \Modules\SaleDelivery\Entities\SaleDelivery|null $lockedDelivery */
                 $lockedDelivery = null;
 
-                // ✅ SaleOrder lock
+                /** @var \Modules\SaleOrder\Entities\SaleOrder|null $lockedSaleOrder */
                 $lockedSaleOrder = null;
-                $lockedTaxPct = null;
-                $lockedShipping = null;
-                $lockedFee = null;
 
-                // ✅ for pro-rata discount/ship/fee
-                $saleOrderSubtotal = 0;
-                $invoiceItemsSubtotal = 0;
+                // for split shipping/fee equally across invoices (deliveries)
+                $splitCount = 1;
+                $splitIndex = 1;
+
+                // discount info per invoice (reference only)
+                $deliveryDiscountInfoTotal = 0.0;
+
+                $splitEven = function (int $total, int $count, int $index1Based): int {
+                    $total = max(0, $total);
+                    $count = max(1, $count);
+                    $index1Based = max(1, $index1Based);
+
+                    $base = intdiv($total, $count);
+                    $rem  = $total - ($base * $count);
+
+                    $extra = ($index1Based <= $rem) ? 1 : 0;
+                    return (int) ($base + $extra);
+                };
+
+                $getDeliverySplitContext = function (int $saleOrderId, int $branchId, int $currentDeliveryId): array {
+                    $rows = \Modules\SaleDelivery\Entities\SaleDelivery::withoutGlobalScopes()
+                        ->where('sale_order_id', $saleOrderId)
+                        ->where('branch_id', $branchId)
+                        ->whereRaw('LOWER(COALESCE(status, "")) = ?', ['confirmed'])
+                        ->orderBy('id')
+                        ->pluck('id')
+                        ->toArray();
+
+                    $count = count($rows);
+                    if ($count <= 0) return ['count' => 1, 'index' => 1];
+
+                    $idx = array_search($currentDeliveryId, $rows, true);
+                    $index1Based = ($idx === false) ? 1 : ((int)$idx + 1);
+
+                    return ['count' => $count, 'index' => $index1Based];
+                };
 
                 if ($fromDelivery) {
                     $lockedDelivery = SaleDelivery::withoutGlobalScopes()
@@ -359,28 +487,42 @@ class SaleController extends Controller
                     }
 
                     $saleOrderId = (int) ($lockedDelivery->sale_order_id ?? 0);
-                    if ($saleOrderId > 0) {
-                        $lockedSaleOrder = \Modules\SaleOrder\Entities\SaleOrder::query()
-                            ->where('branch_id', $branchId)
-                            ->where('id', $saleOrderId)
-                            ->first();
+                    if ($saleOrderId <= 0) {
+                        throw new \RuntimeException('Sale Delivery does not have Sale Order reference.');
+                    }
 
-                        if ($lockedSaleOrder) {
-                            $lockedTaxPct  = (int) ($lockedSaleOrder->tax_percentage ?? 0);
-                            $lockedShipping = (int) ($lockedSaleOrder->shipping_amount ?? 0);
-                            $lockedFee      = (int) ($lockedSaleOrder->fee_amount ?? 0);
+                    $lockedSaleOrder = \Modules\SaleOrder\Entities\SaleOrder::query()
+                        ->where('branch_id', $branchId)
+                        ->where('id', $saleOrderId)
+                        ->firstOrFail();
 
-                            // subtotal SO (items only)
-                            $saleOrderSubtotal = (int) DB::table('sale_order_items')
-                                ->where('sale_order_id', (int) $lockedSaleOrder->id)
-                                ->selectRaw('SUM(COALESCE(quantity,0) * COALESCE(price,0)) as s')
-                                ->value('s');
+                    // split context (equal split shipping/fee per invoice)
+                    $ctx = $getDeliverySplitContext((int)$lockedSaleOrder->id, (int)$branchId, (int)$lockedDelivery->id);
+                    $splitCount = (int) $ctx['count'];
+                    $splitIndex = (int) $ctx['index'];
+
+                    // ✅ discount info per invoice: compute from delivery items (reference only)
+                    foreach (($lockedDelivery->items ?? []) as $it) {
+                        $qty = (int) ($it->quantity ?? 0);
+                        if ($qty <= 0) continue;
+
+                        $unitPrice = (float) ($it->unit_price ?? 0);
+                        $discAmt   = (float) ($it->product_discount_amount ?? 0);
+                        $discType  = strtolower((string) ($it->product_discount_type ?? 'fixed'));
+
+                        if ($discAmt <= 0) continue;
+
+                        if ($discType === 'fixed') {
+                            $deliveryDiscountInfoTotal += ($discAmt * $qty);
+                        } else {
+                            $deliveryDiscountInfoTotal += (($unitPrice * $qty) * ($discAmt / 100));
                         }
                     }
                 }
 
                 // ======================================================
-                // ✅ compute items subtotal & qty server-side
+                // Compute invoice items subtotal & qty (SERVER TRUTH)
+                // IMPORTANT: price di cart sudah SELL PRICE.
                 // ======================================================
                 $itemsSubtotal = 0;
                 $totalQty = 0;
@@ -393,120 +535,79 @@ class SaleController extends Controller
                     $totalQty += $qty;
                     $itemsSubtotal += ($qty * max(0, $price));
                 }
-                $invoiceItemsSubtotal = (int) $itemsSubtotal;
+
+                $itemsSubtotal = max(0, (int) $itemsSubtotal);
 
                 // ======================================================
-                // ✅ effective financial (locked when from delivery + sale order)
+                // Defaults (non-locked)
                 // ======================================================
-                $effectiveTaxPct  = (int) ($lockedTaxPct ?? (int) $request->tax_percentage);
-                $effectiveDiscPct = (int) $request->discount_percentage; // default
+                $effectiveTaxPct  = round((float) ($request->tax_percentage ?? 0), 2);
+                $effectiveDiscPct = round((float) ($request->discount_percentage ?? 0), 2);
 
-                $baseShipping = (int) ($lockedShipping ?? (int) $request->shipping_amount);
-                $baseFee      = (int) ($lockedFee ?? (int) $request->fee_amount);
+                // optional clamp aman
+                if ($effectiveTaxPct < 0) $effectiveTaxPct = 0;
+                if ($effectiveTaxPct > 100) $effectiveTaxPct = 100;
 
-                // locked SO: discPct boleh ikut SO untuk display, tapi diskonnya dihitung dari SO discount_amount (lebih aman)
-                if ($fromDelivery && $lockedSaleOrder) {
-                    $effectiveDiscPct = (int) ($lockedSaleOrder->discount_percentage ?? 0);
-                }
+                if ($effectiveDiscPct < 0) $effectiveDiscPct = 0;
+                if ($effectiveDiscPct > 100) $effectiveDiscPct = 100;
 
-                $effectiveTaxPct  = max(0, min(100, $effectiveTaxPct));
-                $effectiveDiscPct = max(0, min(100, $effectiveDiscPct));
+                $effectiveShipping = (int) ($request->shipping_amount ?? 0);
+                $effectiveFee      = (int) ($request->fee_amount ?? 0);
 
-                $baseShipping = max(0, $baseShipping);
-                $baseFee      = max(0, $baseFee);
+                $taxAmount      = (int) floor($itemsSubtotal * ($effectiveTaxPct / 100));
+                $discountAmount = (int) floor($itemsSubtotal * ($effectiveDiscPct / 100));
 
-                // ✅ pro-rata fee & shipping if sale order exists
-                $effectiveShipping = $baseShipping;
-                $effectiveFee      = $baseFee;
-
-                $ratio = 1.0;
-                if ($fromDelivery && $lockedSaleOrder && $saleOrderSubtotal > 0 && $invoiceItemsSubtotal > 0) {
-                    $ratio = $invoiceItemsSubtotal / $saleOrderSubtotal;
-                    $ratio = max(0, min(1, $ratio));
-
-                    $effectiveShipping = (int) floor($baseShipping * $ratio);
-                    $effectiveFee      = (int) floor($baseFee * $ratio);
-
-                    $effectiveShipping = max(0, $effectiveShipping);
-                    $effectiveFee      = max(0, $effectiveFee);
-                }
-
-                // ✅ compute tax
-                $taxAmount = (int) floor($itemsSubtotal * ($effectiveTaxPct / 100));
-
-                /**
-                 * ✅ FIX: discount harus dihitung juga saat locked
-                 * - locked: ambil dari SO.discount_amount, pro-rata by items ratio
-                 * - non-locked: pakai % invoice seperti biasa
-                 */
-                $discountAmount = 0;
-
-                if ($fromDelivery && $lockedSaleOrder) {
-                    $soDiscAmt = (int) ($lockedSaleOrder->discount_amount ?? 0);
-
-                    if ($saleOrderSubtotal > 0 && $invoiceItemsSubtotal > 0) {
-                        $ratioDisc = $invoiceItemsSubtotal / $saleOrderSubtotal;
-                        $ratioDisc = max(0, min(1, $ratioDisc));
-                        $discountAmount = (int) floor(max(0, $soDiscAmt) * $ratioDisc);
-                    } else {
-                        $discountAmount = (int) max(0, $soDiscAmt);
-                    }
-                } else {
-                    $discountAmount = (int) floor($itemsSubtotal * ($effectiveDiscPct / 100));
-                }
-
-                // ✅ invoice grand total (truth)
                 $computedGrandTotal = (int) ($itemsSubtotal + $taxAmount - $discountAmount + $effectiveFee + $effectiveShipping);
                 if ($computedGrandTotal < 0) $computedGrandTotal = 0;
 
                 // ======================================================
-                // ✅ paid/due/payment_status
-                // ======================================================
-                $paidAmount = (int) ($request->paid_amount ?? 0);
-                $paidAmount = max(0, $paidAmount);
-
-                // ======================================================
-                // ✅ DP Allocation (MONEY-SAFE, MULTI-INVOICE SAFE)
-                // basis harus konsisten dengan after-discount
+                // LOCKED BY SALE ORDER (invoice from delivery)
                 // ======================================================
                 $dpAllocatedForThisInvoice = 0;
 
                 if ($fromDelivery && $lockedSaleOrder) {
-                    $dpTotal  = (int) ($lockedSaleOrder->deposit_received_amount ?? 0);
-                    $soGrand  = (int) ($lockedSaleOrder->total_amount ?? 0);
-                    $soDisc   = (int) ($lockedSaleOrder->discount_amount ?? 0);
+                    $soSubtotal = max(0, (int) ($lockedSaleOrder->subtotal_amount ?? 0));
+                    $soGrand    = max(0, (int) ($lockedSaleOrder->total_amount ?? 0));
 
-                    // base after discount (karena sebelumnya SO total belum mengurangi discount)
-                    $soGrandAfterDisc = max(0, $soGrand - max(0, $soDisc));
-                    $base = $soGrandAfterDisc > 0 ? $soGrandAfterDisc : $soGrand;
+                    $soTaxAmount = (int) ($lockedSaleOrder->tax_amount ?? 0);
+                    $soShip      = (int) ($lockedSaleOrder->shipping_amount ?? 0);
+                    $soFee       = (int) ($lockedSaleOrder->fee_amount ?? 0);
 
-                    if ($dpTotal > 0 && $base > 0 && $computedGrandTotal > 0) {
-                        $prevGrand = (int) DB::table('sales as s')
-                            ->join('sale_deliveries as sd', 'sd.sale_id', '=', 's.id')
-                            ->where('sd.sale_order_id', (int) $lockedSaleOrder->id)
-                            ->where('sd.branch_id', (int) $branchId)
-                            ->whereNotNull('sd.sale_id')
-                            ->sum('s.total_amount');
+                    $prevSubtotal = $this->getPrevInvoiceItemsSubtotalForSO((int) $lockedSaleOrder->id, (int) $branchId);
 
-                        $prevGrand = max(0, $prevGrand);
+                    $allocTax  = $this->calcCumulativeAlloc($soTaxAmount, $soSubtotal, $prevSubtotal, $itemsSubtotal);
+                    $allocShip = $splitEven($soShip, $splitCount, $splitIndex);
+                    $allocFee  = $splitEven($soFee,  $splitCount, $splitIndex);
 
-                        // anti drift
-                        $prevCum   = intdiv($dpTotal * $prevGrand, $base);
-                        $targetCum = intdiv($dpTotal * ($prevGrand + $computedGrandTotal), $base);
+                    // invoice MUST NOT apply discount again (sell price sudah final)
+                    $effectiveDiscPct = round((float) ($lockedSaleOrder->discount_percentage ?? 0), 2);
+                    $discountAmount = 0;
 
-                        $dpAllocatedForThisInvoice = $targetCum - $prevCum;
+                    // readonly pct for UI only
+                    $effectiveTaxPct = round((float) ($lockedSaleOrder->tax_percentage ?? 0), 2);
 
-                        if ($dpAllocatedForThisInvoice < 0) $dpAllocatedForThisInvoice = 0;
+                    $effectiveShipping = (int) $allocShip;
+                    $effectiveFee      = (int) $allocFee;
+                    $taxAmount         = (int) $allocTax;
 
-                        $remainingDp = $dpTotal - $prevCum;
-                        if ($dpAllocatedForThisInvoice > $remainingDp) {
-                            $dpAllocatedForThisInvoice = max(0, $remainingDp);
-                        }
+                    $computedGrandTotal = (int) ($itemsSubtotal + $taxAmount + $effectiveFee + $effectiveShipping);
+                    if ($computedGrandTotal < 0) $computedGrandTotal = 0;
+
+                    $dpTotal = max(0, (int) ($lockedSaleOrder->deposit_received_amount ?? 0));
+                    $prevGrand = $this->getPrevInvoiceGrandTotalForSO((int) $lockedSaleOrder->id, (int) $branchId);
+
+                    if ($dpTotal > 0 && $soGrand > 0 && $computedGrandTotal > 0) {
+                        $dpAllocatedForThisInvoice = $this->calcCumulativeAlloc($dpTotal, $soGrand, $prevGrand, $computedGrandTotal);
                     }
                 }
 
-                $effectivePaidForStatus = $paidAmount + $dpAllocatedForThisInvoice;
-                $due_amount = $computedGrandTotal - $effectivePaidForStatus;
+                // ======================================================
+                // Payment status
+                // ======================================================
+                $paidAmount = max(0, (int) ($request->paid_amount ?? 0));
+
+                $effectivePaidForStatus = $paidAmount + (int) $dpAllocatedForThisInvoice;
+                $due_amount = (int) ($computedGrandTotal - $effectivePaidForStatus);
 
                 if ($due_amount == $computedGrandTotal) {
                     $payment_status = 'Unpaid';
@@ -522,11 +623,21 @@ class SaleController extends Controller
                     $quotation->update(['status' => 'Sent']);
                 }
 
-                $total_cost = 0;
+                // ======================================================
+                // CREATE INVOICE (SALE)
+                // ======================================================
+                $note = trim((string) ($request->note ?? ''));
 
-                // ==========================================
-                // ✅ CREATE INVOICE (SALE)
-                // ==========================================
+                if ($fromDelivery && $lockedSaleOrder) {
+                    $soRef = (string) ($lockedSaleOrder->reference ?? ('SO-' . $lockedSaleOrder->id));
+
+                    $append = "SO Locked: {$soRef}"
+                        . " | Discount Info (Diff): " . number_format((float)$deliveryDiscountInfoTotal, 2, '.', '')
+                        . " | DP Allocated: " . number_format((float)$dpAllocatedForThisInvoice, 2, '.', '');
+
+                    $note = $note !== '' ? ($note . "\n" . $append) : $append;
+                }
+
                 $saleData = [
                     'date' => $request->date,
                     'license_number' => $request->car_number_plate,
@@ -534,39 +645,41 @@ class SaleController extends Controller
                     'customer_id' => $customer->id,
                     'customer_name' => $customer->customer_name,
 
-                    'tax_percentage' => $effectiveTaxPct,
-                    'discount_percentage' => $effectiveDiscPct,
-                    'shipping_amount' => $effectiveShipping,
-                    'fee_amount' => $effectiveFee,
+                    // ✅ DECIMAL percentage (biar 23.90 nyangkut)
+                    'tax_percentage'      => (float) $effectiveTaxPct,
+                    'discount_percentage' => (float) $effectiveDiscPct,
 
-                    'paid_amount' => $paidAmount,
-                    'total_amount' => $computedGrandTotal,
-                    'total_quantity' => $totalQty,
+                    'shipping_amount' => (int) $effectiveShipping,
+                    'fee_amount' => (int) $effectiveFee,
+
+                    'paid_amount' => (int) $paidAmount,
+                    'total_amount' => (int) $computedGrandTotal,
+                    'total_quantity' => (int) $totalQty,
 
                     'due_amount' => (int) $due_amount,
                     'payment_status' => $payment_status,
                     'payment_method' => $request->payment_method,
 
-                    // NOTE: tetap dari request (bukan wire state)
-                    'note' => $request->note,
+                    'note' => $note,
 
-                    'tax_amount' => $taxAmount,
-                    'discount_amount' => $discountAmount,
+                    'tax_amount' => (int) $taxAmount,
+                    'discount_amount' => (int) $discountAmount, // locked => 0
                 ];
 
                 if (Schema::hasColumn('sales', 'branch_id')) {
                     $saleData['branch_id'] = $branchId;
                 }
-
                 if (Schema::hasColumn('sales', 'warehouse_id')) {
                     $saleData['warehouse_id'] = null;
                 }
 
                 $sale = Sale::create($saleData);
 
-                // ==========================================
-                // ✅ Create SaleDetails
-                // ==========================================
+                // ======================================================
+                // Create SaleDetails
+                // ======================================================
+                $total_cost = 0;
+
                 foreach ($cartItems as $cart_item) {
                     $qty = (int) ($cart_item->qty ?? 0);
                     $price = (int) ($cart_item->price ?? 0);
@@ -575,7 +688,7 @@ class SaleController extends Controller
                     $total_cost += (int) ($cart_item->options->product_cost ?? 0);
 
                     $saleDetailData = [
-                        'sale_id' => $sale->id,
+                        'sale_id' => (int) $sale->id,
                         'product_id' => (int) $cart_item->id,
                         'product_name' => (string) $cart_item->name,
                         'product_code' => (string) ($cart_item->options->code ?? ''),
@@ -583,15 +696,15 @@ class SaleController extends Controller
 
                         'warehouse_id' => null,
 
-                        'quantity' => $qty,
-                        'price' => max(0, $price),
+                        'quantity' => (int) $qty,
+                        'price' => max(0, (int) $price),
                         'unit_price' => (int) ($cart_item->options->unit_price ?? 0),
 
-                        'sub_total' => (int) ($qty * max(0, $price)),
+                        'sub_total' => (int) ($qty * max(0, (int) $price)),
 
-                        'product_discount_amount' => (int) ($cart_item->options->product_discount ?? 0),
+                        'product_discount_amount' => (float) ($cart_item->options->product_discount ?? 0),
                         'product_discount_type' => (string) ($cart_item->options->product_discount_type ?? 'fixed'),
-                        'product_tax_amount' => (int) ($cart_item->options->product_tax ?? 0),
+                        'product_tax_amount' => (float) ($cart_item->options->product_tax ?? 0),
                     ];
 
                     if (Schema::hasColumn('sale_details', 'branch_id')) {
@@ -602,7 +715,7 @@ class SaleController extends Controller
                 }
 
                 // ======================================================
-                // ✅ link invoice to delivery OR auto-create delivery
+                // Link invoice to delivery OR auto-create delivery
                 // ======================================================
                 if ($fromDelivery && $lockedDelivery) {
                     $lockedDelivery->update([
@@ -642,9 +755,9 @@ class SaleController extends Controller
 
                 Cart::instance('sale')->destroy();
 
-                // ==========================================
-                // ✅ Accounting Transaction (unchanged)
-                // ==========================================
+                // ======================================================
+                // Accounting Transaction (unchanged)
+                // ======================================================
                 if ($total_cost <= 0) {
                     Helper::addNewTransaction([
                         'date' => $sale->date,
@@ -683,12 +796,11 @@ class SaleController extends Controller
                     ]);
                 }
 
-                // ==========================================
-                // ✅ Payment record (kalau paid_amount > 0)
-                // ==========================================
+                // ======================================================
+                // Payment record (kalau paid_amount > 0)
+                // ======================================================
                 if ((int) $sale->paid_amount > 0) {
-                    $depositCode = (string) ($request->deposit_code ?? '');
-                    $depositCode = trim($depositCode);
+                    $depositCode = trim((string) ($request->deposit_code ?? ''));
 
                     if ($depositCode === '' || $depositCode === '-') {
                         throw new \RuntimeException("Deposit To wajib dipilih jika Amount Received > 0.");

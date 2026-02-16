@@ -234,7 +234,8 @@
                     <table class="table table-sm table-bordered align-middle mb-0">
                         <thead class="thead-light">
                             <tr>
-                                <th style="width:60px;">#</th>
+                                {{-- ✅ berubah dari "#" jadi "ID" --}}
+                                <th style="width:90px;">ID</th>
                                 <th style="width:180px;">Branch</th>
                                 <th style="width:180px;">Warehouse</th>
                                 <th style="width:160px;">Rack</th>
@@ -586,11 +587,18 @@ function reloadQualityTable(){
             return;
         }
 
-        res.data.forEach(function(row, idx){
+        res.data.forEach(function(row){
             var branch = escapeHtml(row.branch_name || '-');
             var whName = escapeHtml(row.warehouse_name || '-');
             var rackName = escapeHtml(row.rack_name || '-');
             var qty = asInt(row.quantity || 0);
+
+            // ✅ ambil ID asli dari backend (defect/damaged)
+            var rawId = 0;
+            if (qType === 'defect') rawId = asInt(row.product_defect_id || row.id || 0);
+            else rawId = asInt(row.product_damaged_id || row.id || 0);
+
+            var idText = rawId > 0 ? ('ID#' + rawId) : '-';
 
             var typeText = '-';
             var descText = '-';
@@ -613,7 +621,7 @@ function reloadQualityTable(){
 
             bodyEl.innerHTML += ''
                 + '<tr>'
-                + '  <td>' + (idx+1) + '</td>'
+                + '  <td><span class="badge badge-secondary">' + escapeHtml(idText) + '</span></td>'
                 + '  <td>' + branch + '</td>'
                 + '  <td>' + whName + '</td>'
                 + '  <td><span class="badge badge-dark">' + rackName + '</span></td>'

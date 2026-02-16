@@ -44,7 +44,7 @@
                     @if(isset($cart_items) && $cart_items->isNotEmpty())
                         @foreach($cart_items as $cart_item)
                             @php
-                                $scope = (string)($cart_item->options->stock_scope ?? 'warehouse'); // warehouse | branch
+                                $scope = (string)($cart_item->options->stock_scope ?? 'warehouse');
                                 $whName = (string)($cart_item->options->warehouse_name ?? '');
                                 $scopeNote = $scope === 'branch'
                                     ? 'Stock shown is total from ALL warehouses (active branch).'
@@ -61,7 +61,7 @@
                                 </td>
 
                                 <td class="align-middle">
-                                    {{ format_currency((float)($cart_item->options->unit_price ?? 0)) }}
+                                    {{ format_currency((float)($cart_item->price ?? 0)) }}
                                 </td>
 
                                 <td class="align-middle text-center">
@@ -117,99 +117,103 @@
                     @php
                         $isLockedBySO = !empty(data_get($data, 'sale_order_id'));
 
-                        /**
-                        * IMPORTANT:
-                        * Cart::subtotal()/tax()/discount() umumnya RETURN STRING berformat.
-                        * Jangan cast (float) langsung karena bisa salah parse ("1,295,000" jadi 1).
-                        */
-                        $cartSubtotalRaw = (string) Cart::instance($cart_instance)->subtotal(0, '.', ''); // "1295000"
-                        $cartTaxRaw      = (string) Cart::instance($cart_instance)->tax(0, '.', '');
-                        $cartDiscRaw     = (string) Cart::instance($cart_instance)->discount(0, '.', '');
-
+                        // cart subtotal shown (string no decimals), keep int
+                        $cartSubtotalRaw = (string) Cart::instance($cart_instance)->subtotal(0, '.', '');
                         $itemsSubtotal = (int) $cartSubtotalRaw;
-                        $taxAmount     = (int) $cartTaxRaw;
-                        $discAmount    = (int) $cartDiscRaw;
 
-                        $shipAmount = (int) ($shipping ?? 0);
-                        $feeAmount  = (int) ($cart_instance === 'sale' ? ($platform_fee ?? 0) : 0);
-
-                        // ====== LOCKED BY SO: 1 sumber kebenaran (controller) ======
+                        // ===== locked numbers from controller =====
                         $lockedGrand = (int) data_get($data, 'invoice_estimated_grand_total', 0);
+                        $allocTax    = (int) data_get($data, 'tax_invoice_est', 0);
+                        $allocShip   = (int) data_get($data, 'ship_invoice_est', 0);
+                        $allocFee    = (int) data_get($data, 'fee_invoice_est', 0);
+
+                        // ✅ discount allocation that MUST reduce grand total (controller already sets int)
+                        $discAlloc   = (int) data_get($data, 'discount_info_invoice_est', 0);
+
+                        // dp & pay now from controller (based on deposit_percentage)
                         $dpAllocated = (int) data_get($data, 'dp_allocated_for_this_invoice', 0);
                         $suggested   = (int) data_get($data, 'suggested_pay_now', 0);
 
-                        // Diskon info dari SO (amount)
-                        $discInfoAmt = (int) data_get($data, 'discount_info_amount', 0);
-                        $discInfoPct = (float) data_get($data, 'discount_info_percentage', 0);
+                        // SO notes
+                        $discInfoTotal = (float) data_get($data, 'discount_info_amount', 0);
+                        $discInfoPct   = (float) data_get($data, 'discount_info_percentage', 0);
+                        $depositPct    = (float) data_get($data, 'deposit_percentage', 0);
 
-                        if ($isLockedBySO && $lockedGrand > 0) {
-                            // ✅ grand & payNow langsung pakai hasil controller
+                        // non-locked fallback
+                        $cartTaxRaw  = (string) Cart::instance($cart_instance)->tax(0, '.', '');
+                        $cartDiscRaw = (string) Cart::instance($cart_instance)->discount(0, '.', '');
+
+                        $taxAmount  = (int) $cartTaxRaw;
+                        $discAmount = (int) $cartDiscRaw;
+
+                        $shipInputTotal = (int) ($shipping ?? 0);
+                        $feeInputTotal  = (int) ($cart_instance === 'sale' ? ($platform_fee ?? 0) : 0);
+
+                        if ($isLockedBySO) {
+                            // ✅ locked: use controller allocations, and discount reduces grand
+                            $summaryTax  = max(0, $allocTax);
+                            $summaryShip = max(0, $allocShip);
+                            $summaryFee  = max(0, $allocFee);
+                            $summaryDisc = max(0, $discAlloc);
+
+                            // controller already computed grand/payNow with discount + dp%
                             $grandTotal = max(0, $lockedGrand);
                             $payNow     = max(0, $suggested);
-
-                            // ✅ hard validation (opsional buat debug)
-                            // if ($payNow !== max(0, $grandTotal - $dpAllocated)) { ... }
                         } else {
-                            // ====== NON-LOCKED: hitung dari cart (numeric safe) ======
-                            $grandTotal = max(0, ($itemsSubtotal + $taxAmount - $discAmount + $shipAmount + $feeAmount));
-                            $payNow     = $grandTotal; // non-locked biasanya nggak ada dpAllocated
+                            // non-locked: normal cart math
+                            $summaryTax  = max(0, $taxAmount);
+                            $summaryShip = max(0, $shipInputTotal);
+                            $summaryFee  = max(0, $feeInputTotal);
+                            $summaryDisc = max(0, $discAmount);
+
+                            $grandTotal = max(0, ($itemsSubtotal + $summaryTax - $summaryDisc + $summaryShip + $summaryFee));
+                            $payNow = $grandTotal;
                         }
                     @endphp
 
                     @if($cart_instance == 'sale')
                         <tr>
                             <th>Platform Fee</th>
-                            <td>(+) {{ format_currency((float)($platform_fee ?? 0)) }}</td>
+                            <td>(+) {{ format_currency((float)$summaryFee) }}</td>
                         </tr>
                     @endif
 
                     <tr>
-                        <th>Order Tax ({{ (float)($global_tax ?? 0) }}%)</th>
-                        <td>(+) {{ format_currency((float) Cart::instance($cart_instance)->tax()) }}</td>
+                        <th>Order Tax ({{ number_format((float)($global_tax ?? 0), 2, '.', '') }}%)</th>
+                        <td>(+) {{ format_currency((float)$summaryTax) }}</td>
                     </tr>
 
                     @if($isLockedBySO)
-                        <tr>
-                            <!-- <th>
-                                Discount (Applied)
-                                @if($discInfoPct > 0)
-                                    <div class="text-muted" style="font-size:12px;">
-                                        ({{ $discInfoPct }}% locked from SO)
-                                    </div>
-                                @endif
-                            </th> -->
-                            <!-- <td>(-) {{ format_currency((float) Cart::instance($cart_instance)->discount()) }}</td> -->
-                        </tr>
-
-                        @if($discInfoAmt > 0)
+                        {{-- ✅ NOW discount is part of total (minus) --}}
+                        @if($summaryDisc > 0)
                             <tr>
                                 <th>
-                                    Discount Info (Diff)
+                                    Discount (Locked by SO)
                                     <div class="text-muted" style="font-size:12px;">
-                                        (reference)
+                                        (based on delivery items{{ $discInfoPct > 0 ? ', SO %: ' . number_format($discInfoPct, 2, '.', '') . '%' : '' }})
                                     </div>
                                 </th>
-                                <td>{{ format_currency((float)$discInfoAmt) }}</td>
+                                <td>(-) {{ format_currency((float)$summaryDisc) }}</td>
                             </tr>
                         @endif
                     @else
                         <tr>
-                            <th>Discount ({{ (float)($global_discount ?? 0) }}%)</th>
-                            <td>(-) {{ format_currency((float) Cart::instance($cart_instance)->discount()) }}</td>
+                            <th>Discount ({{ number_format((float)($global_discount ?? 0), 2, '.', '') }}%)</th>
+                            <td>(-) {{ format_currency((float)$summaryDisc) }}</td>
                         </tr>
                     @endif
 
                     <tr>
                         <th>Shipping</th>
-                        <td>(+) {{ format_currency((float)($shipping ?? 0)) }}</td>
+                        <td>(+) {{ format_currency((float)$summaryShip) }}</td>
                     </tr>
 
                     <tr>
                         <th>Grand Total</th>
-                        <th>(=) {{ format_currency($grandTotal) }}</th>
+                        <th>(=) {{ format_currency((float)$grandTotal) }}</th>
                     </tr>
 
-                    @if($cart_instance === 'sale' && (int)($so_dp_allocated ?? 0) > 0)
+                    @if($cart_instance === 'sale' && $isLockedBySO && (int)($dpAllocated ?? 0) > 0)
                         <tr>
                             <th>
                                 Deposit from SO
@@ -218,9 +222,14 @@
                                         ({{ $so_sale_order_reference }})
                                     </div>
                                 @endif
+                                @if($depositPct > 0)
+                                    <div class="text-muted" style="font-size:12px;">
+                                        ({{ number_format((float)$depositPct, 2, '.', '') }}% of invoice grand total)
+                                    </div>
+                                @endif
                             </th>
                             <td>
-                                (-) {{ format_currency((float)($so_dp_allocated ?? 0)) }}
+                                (-) {{ format_currency((float)$dpAllocated) }}
                                 @if((int)($so_dp_total ?? 0) > 0)
                                     <div class="text-muted" style="font-size:12px;">
                                         DP Received: {{ format_currency((float)($so_dp_total ?? 0)) }}
@@ -259,6 +268,8 @@
                     min="0"
                     max="100"
                     required
+                    step="0.01"
+                    @if($isLockedBySO) readonly @endif
                 >
             </div>
         </div>
@@ -274,6 +285,7 @@
                     min="0"
                     max="100"
                     required
+                    step="0.01"
                     @if($isLockedBySO) readonly @endif
                 >
             </div>
@@ -290,6 +302,8 @@
                         name="fee_amount"
                         min="0"
                         required
+                        step="0.01"
+                        @if($isLockedBySO) readonly @endif
                     >
                 </div>
             </div>
@@ -306,6 +320,7 @@
                     min="0"
                     required
                     step="0.01"
+                    @if($isLockedBySO) readonly @endif
                 >
             </div>
         </div>

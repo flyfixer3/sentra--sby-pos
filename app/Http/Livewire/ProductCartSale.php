@@ -59,9 +59,11 @@ class ProductCartSale extends Component
             $this->so_dp_allocated = (int) data_get($data, 'dp_allocated_for_this_invoice', 0);
             $this->so_sale_order_reference = (string) data_get($data, 'sale_order_reference', null);
 
-            // ✅ support array/object (lockedFinancial dari controller itu array)
-            $this->global_discount = (int) data_get($data, 'discount_percentage', 0);
-            $this->global_tax      = (int) data_get($data, 'tax_percentage', 0);
+            // ✅ FIX: pake float biar 23.90% gak jadi 23%
+            $this->global_discount = (float) data_get($data, 'discount_percentage', 0);
+            $this->global_tax      = (float) data_get($data, 'tax_percentage', 0);
+
+            // uang tetap int (sesuai DB kamu sekarang)
             $this->shipping        = (int) data_get($data, 'shipping_amount', 0);
             $this->platform_fee    = (int) data_get($data, 'fee_amount', 0);
 
@@ -88,7 +90,7 @@ class ProductCartSale extends Component
                 } else {
                     $priceBase = ((float) $cart_item->price > 0) ? (float) $cart_item->price : 1;
                     $disc = (float) ($cart_item->options->product_discount ?? 0);
-                    $this->item_discount[$pid] = round(100 * ($disc / $priceBase));
+                    $this->item_discount[$pid] = round(100 * ($disc / $priceBase), 2);
                 }
             }
         } else {
@@ -190,12 +192,24 @@ class ProductCartSale extends Component
 
     public function updatedGlobalTax()
     {
-        Cart::instance($this->cart_instance)->setGlobalTax((integer)$this->global_tax);
+        $val = round((float) ($this->global_tax ?? 0), 2);
+        if ($val < 0) $val = 0;
+        if ($val > 100) $val = 100;
+
+        $this->global_tax = $val;
+
+        Cart::instance($this->cart_instance)->setGlobalTax((float) $val);
     }
 
     public function updatedGlobalDiscount()
     {
-        Cart::instance($this->cart_instance)->setGlobalDiscount((integer)$this->global_discount);
+        $val = round((float) ($this->global_discount ?? 0), 2);
+        if ($val < 0) $val = 0;
+        if ($val > 100) $val = 100;
+
+        $this->global_discount = $val;
+
+        Cart::instance($this->cart_instance)->setGlobalDiscount((float) $val);
     }
 
     public function updateQuantity($row_id, $product_id)

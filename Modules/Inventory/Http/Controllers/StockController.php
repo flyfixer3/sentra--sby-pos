@@ -341,7 +341,12 @@ class StockController extends Controller
                 ->where('i.product_id', $productId)
                 ->whereNull('i.moved_out_at')
                 ->select([
+                    // ✅ expose explicit id supaya UI bisa tampil "ID#xxx"
+                    DB::raw('i.id as product_defect_id'),
+
+                    // keep juga id existing (biar backward compatible kalau ada pemakaian lain)
                     'i.id',
+
                     'i.branch_id',
                     'i.warehouse_id',
                     'i.rack_id',
@@ -394,7 +399,12 @@ class StockController extends Controller
             ->where('i.resolution_status', 'pending')
             ->whereNull('i.moved_out_at')
             ->select([
+                // ✅ expose explicit id supaya UI bisa tampil "ID#xxx"
+                DB::raw('i.id as product_damaged_id'),
+
+                // keep juga id existing
                 'i.id',
+
                 'i.branch_id',
                 'i.warehouse_id',
                 'i.rack_id',
