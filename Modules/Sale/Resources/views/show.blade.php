@@ -1,5 +1,3 @@
-{{-- ... file lain tetap sama, aku tulis FULL section yang kamu kirim + update totals ... --}}
-
 @extends('layouts.app')
 
 @section('title', 'Sales Details')
@@ -54,6 +52,14 @@
                                 <div>
                                     Payment Status: <strong>{{ $sale->payment_status }}</strong>
                                 </div>
+
+                                {{-- ✅ Sale note (from create/edit) --}}
+                                @if(!empty($sale->note))
+                                    <div class="mt-2">
+                                        <div class="text-muted" style="font-size: 12px;">Note:</div>
+                                        <div><strong>{{ $sale->note }}</strong></div>
+                                    </div>
+                                @endif
 
                                 {{-- ✅ Deposit from Sale Order --}}
                                 @if(!empty($saleOrderDepositInfo) && isset($saleOrderDepositInfo['deposit_total']) && (int)$saleOrderDepositInfo['deposit_total'] > 0)
@@ -175,42 +181,100 @@
                                     if(!empty($saleOrderDepositInfo) && isset($saleOrderDepositInfo['allocated'])) {
                                         $allocatedDp = (int)$saleOrderDepositInfo['allocated'];
                                     }
-                                    $balanceDue = max(0, (int)$sale->total_amount - $allocatedDp);
+
+                                    $grandTotal = (int) $sale->total_amount;
+                                    $paidInvoice = (int) $sale->paid_amount;
+
+                                    $netAfterDp = $allocatedDp > 0 ? max(0, $grandTotal - $allocatedDp) : $grandTotal;
+                                    $remainingAfterDp = max(0, $netAfterDp - $paidInvoice);
                                 @endphp
 
                                 <table class="table">
                                     <tbody>
-                                    <tr>
+                                        <tr>
                                         <td class="left"><strong>Discount ({{ $sale->discount_percentage }}%)</strong></td>
-                                        <td class="right">{{ format_currency($sale->discount_amount) }}</td>
-                                    </tr>
-                                    <tr>
+                                        <td class="right">{{ format_currency((int)$sale->discount_amount) }}</td>
+                                        </tr>
+                                        <tr>
                                         <td class="left"><strong>Tax ({{ $sale->tax_percentage }}%)</strong></td>
-                                        <td class="right">{{ format_currency($sale->tax_amount) }}</td>
-                                    </tr>
-                                    <tr>
+                                        <td class="right">{{ format_currency((int)$sale->tax_amount) }}</td>
+                                        </tr>
+                                        <tr>
                                         <td class="left"><strong>Shipping</strong></td>
-                                        <td class="right">{{ format_currency($sale->shipping_amount) }}</td>
-                                    </tr>
-                                    <tr>
-                                        <td class="left"><strong>Grand Total</strong></td>
-                                        <td class="right"><strong>{{ format_currency($sale->total_amount) }}</strong></td>
-                                    </tr>
+                                        <td class="right">{{ format_currency((int)$sale->shipping_amount) }}</td>
+                                        </tr>
+                                        <tr>
+                                        <td class="left"><strong>Fee</strong></td>
+                                        <td class="right">{{ format_currency((int)($sale->fee_amount ?? 0)) }}</td>
+                                        </tr>
 
-                                    @if($allocatedDp > 0)
+                                        <tr>
+                                        <td class="left"><strong>Grand Total</strong></td>
+                                        <td class="right"><strong>{{ format_currency($grandTotal) }}</strong></td>
+                                        </tr>
+
+                                        @if($allocatedDp > 0)
                                         <tr>
                                             <td class="left"><strong>Less: DP Allocated (SO)</strong></td>
                                             <td class="right">- {{ format_currency($allocatedDp) }}</td>
                                         </tr>
                                         <tr>
-                                            <td class="left"><strong>Balance Due</strong></td>
-                                            <td class="right"><strong>{{ format_currency($balanceDue) }}</strong></td>
+                                            <td class="left"><strong>Net Invoice Total</strong></td>
+                                            <td class="right"><strong>{{ format_currency($netAfterDp) }}</strong></td>
                                         </tr>
-                                    @endif
+                                        @endif
+
+                                        <tr>
+                                        <td class="left"><strong>Total Paid</strong></td>
+                                        <td class="right">{{ format_currency($paidInvoice) }}</td>
+                                        </tr>
+                                        <tr>
+                                        <td class="left"><strong>Remaining Due</strong></td>
+                                        <td class="right"><strong>{{ format_currency($remainingAfterDp) }}</strong></td>
+                                        </tr>
                                     </tbody>
                                 </table>
                             </div>
                         </div>
+
+                        {{-- ✅ Payment History (Invoice) --}}
+                        @if(isset($salePayments) && $salePayments->count() > 0)
+                            <div class="row mt-4">
+                                <div class="col-12">
+                                    <h5 class="mb-2 border-bottom pb-2">Payment History</h5>
+                                    <div class="table-responsive">
+                                        <table class="table table-bordered table-sm">
+                                            <thead>
+                                            <tr>
+                                                <th class="align-middle">Date</th>
+                                                <th class="align-middle">Reference</th>
+                                                <th class="align-middle">Method</th>
+                                                <th class="align-middle text-right">Amount</th>
+                                                <th class="align-middle">Note</th>
+                                                <th class="align-middle text-center" style="width: 90px;">Action</th>
+                                            </tr>
+                                            </thead>
+                                            <tbody>
+                                            @foreach($salePayments as $p)
+                                                <tr>
+                                                    <td class="align-middle">{{ $p->date }}</td>
+                                                    <td class="align-middle">{{ $p->reference }}</td>
+                                                    <td class="align-middle">{{ $p->payment_method }}</td>
+                                                    <td class="align-middle text-right">{{ format_currency((int)$p->amount) }}</td>
+                                                    <td class="align-middle">{{ $p->note }}</td>
+                                                    <td class="align-middle text-center">
+                                                        <a target="_blank" href="{{ route('sale-payments.receipt', $p->id) }}" class="btn btn-sm btn-secondary" title="Print Receipt">
+                                                            <i class="bi bi-printer"></i>
+                                                        </a>
+                                                    </td>
+                                                </tr>
+                                            @endforeach
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </div>
+                            </div>
+                        @endif
                     </div><!-- card-body -->
                 </div><!-- card -->
             </div>

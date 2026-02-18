@@ -24,7 +24,7 @@ use Modules\Sale\Http\Requests\StoreSaleRequest;
 use Modules\SaleDelivery\Entities\SaleDelivery;
 use Modules\SaleDelivery\Entities\SaleDeliveryItem;
 use Modules\Sale\Http\Requests\UpdateSaleRequest;
-
+use Barryvdh\DomPDF\Facade\Pdf;
 // ✅ SaleOrder anchor
 use Modules\SaleOrder\Entities\SaleOrder;
 use Modules\SaleOrder\Entities\SaleOrderItem;
@@ -967,6 +967,102 @@ class SaleController extends Controller
         }
     }
 
+    public function pdf(Sale $sale)
+    {
+        abort_if(Gate::denies('show_sales'), 403);
+
+        $branchId = BranchContext::id();
+
+        $sale->load(['creator', 'updater', 'saleDetails']);
+
+        $customer = Customer::query()
+            ->where('id', $sale->customer_id)
+            ->where(function ($q) use ($branchId) {
+                $q->whereNull('branch_id')->orWhere('branch_id', $branchId);
+            })
+            ->firstOrFail();
+
+        $saleDeliveries = SaleDelivery::query()
+            ->where('branch_id', $branchId)
+            ->where('sale_id', (int) $sale->id)
+            ->orderByDesc('id')
+            ->get();
+
+        $salePayments = SalePayment::query()
+            ->where('sale_id', (int) $sale->id)
+            ->orderBy('id')
+            ->get();
+
+        // --- Deposit info dari Sale Order (jika alurnya: SO -> SD -> Sale)
+        $saleOrderDepositInfo = null;
+
+        try {
+            $saleOrderId = (int) ($saleDeliveries->pluck('sale_order_id')->filter()->first() ?? 0);
+
+            if ($saleOrderId > 0) {
+                $saleOrder = \Modules\SaleOrder\Entities\SaleOrder::query()
+                    ->where('branch_id', $branchId)
+                    ->where('id', $saleOrderId)
+                    ->first();
+
+                if ($saleOrder) {
+                    $dpTotal = (int) ($saleOrder->deposit_received_amount ?? 0);
+
+                    if ($dpTotal > 0) {
+                        $invoiceSubtotal = 0;
+                        foreach ($sale->saleDetails as $d) {
+                            $qty = (int) ($d->quantity ?? 0);
+                            $price = (int) ($d->price ?? 0);
+                            if ($qty > 0 && $price >= 0) {
+                                $invoiceSubtotal += ($qty * $price);
+                            }
+                        }
+
+                        $soSubtotal = (int) DB::table('sale_order_items')
+                            ->where('sale_order_id', (int) $saleOrder->id)
+                            ->selectRaw('SUM(COALESCE(quantity,0) * COALESCE(price,0)) as s')
+                            ->value('s');
+
+                        if ($soSubtotal > 0 && $invoiceSubtotal > 0) {
+                            $allocated = (int) round($dpTotal * ($invoiceSubtotal / $soSubtotal));
+
+                            if ($allocated < 0) $allocated = 0;
+                            if ($allocated > $dpTotal) $allocated = $dpTotal;
+
+                            $pct = (int) round(($invoiceSubtotal / $soSubtotal) * 100);
+
+                            $saleOrderDepositInfo = [
+                                'sale_order_reference' => (string) ($saleOrder->reference ?? ('SO-'.$saleOrder->id)),
+                                'deposit_total' => $dpTotal,
+                                'allocated' => $allocated,
+                                'ratio_percent' => $pct,
+                            ];
+                        } else {
+                            $saleOrderDepositInfo = [
+                                'sale_order_reference' => (string) ($saleOrder->reference ?? ('SO-'.$saleOrder->id)),
+                                'deposit_total' => $dpTotal,
+                                'allocated' => $dpTotal,
+                                'ratio_percent' => null,
+                            ];
+                        }
+                    }
+                }
+            }
+        } catch (\Throwable $e) {
+            $saleOrderDepositInfo = null;
+        }
+
+        $pdf = Pdf::loadView('sale::print', [
+            'sale' => $sale,
+            'customer' => $customer,
+            'saleDeliveries' => $saleDeliveries,
+            'saleOrderDepositInfo' => $saleOrderDepositInfo,
+            'salePayments' => $salePayments,
+        ])->setPaper('a4');
+
+        return $pdf->stream('sale-' . $sale->reference . '.pdf');
+    }
+
     public function show(Sale $sale)
     {
         abort_if(Gate::denies('show_sales'), 403);
@@ -986,6 +1082,11 @@ class SaleController extends Controller
             ->where('branch_id', $branchId)
             ->where('sale_id', (int) $sale->id)
             ->orderByDesc('id')
+            ->get();
+
+        $salePayments = SalePayment::query()
+            ->where('sale_id', (int) $sale->id)
+            ->orderBy('id')
             ->get();
 
         $saleOrderDepositInfo = null;
@@ -1046,7 +1147,7 @@ class SaleController extends Controller
             $saleOrderDepositInfo = null;
         }
 
-        return view('sale::show', compact('sale', 'customer', 'saleDeliveries', 'saleOrderDepositInfo'));
+        return view('sale::show', compact('sale', 'customer', 'saleDeliveries', 'saleOrderDepositInfo', 'salePayments'));
     }
 
     public function edit(Sale $sale) {

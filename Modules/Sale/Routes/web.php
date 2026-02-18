@@ -45,17 +45,11 @@ Route::group(['middleware' => 'auth'], function () {
      * PDF (READ-ONLY)
      * ============================
      */
-    Route::get('/sales/pdf/{id}', function ($id) {
-        $sale = \Modules\Sale\Entities\Sale::findOrFail($id);
-        $customer = \Modules\People\Entities\Customer::findOrFail($sale->customer_id);
-
-        $pdf = \PDF::loadView('sale::print', [
-            'sale' => $sale,
-            'customer' => $customer,
-        ])->setPaper('a4');
-
-        return $pdf->stream('sale-' . $sale->reference . '.pdf');
-    })->name('sales.pdf');
+    // NOTE:
+    // Jangan pakai alias \PDF, karena di config/app.php alias "PDF" ter-mapping ke Snappy (wkhtmltopdf).
+    // Untuk shared hosting / environment tanpa wkhtmltopdf, ini akan error dan PDF gagal load.
+    // Gunakan DomPDF facade (Barryvdh\DomPDF\Facade\Pdf) melalui controller.
+    Route::get('/sales/pdf/{sale}', 'SaleController@pdf')->name('sales.pdf');
 
     Route::get('/sales/pos/pdf/{id}', function ($id) {
         $sale = \Modules\Sale\Entities\Sale::findOrFail($id);
@@ -78,4 +72,12 @@ Route::group(['middleware' => 'auth'], function () {
             'customer' => $customer,
         ]);
     })->name('sales.pos.debug');
+
+    /**
+     * ============================
+     * SALE PAYMENT RECEIPT (READ-ONLY)
+     * ============================
+     */
+    Route::get('/sale-payments/receipt/{salePayment}', 'SalePaymentsController@receipt')->name('sale-payments.receipt');
+    Route::get('/sale-payments/receipt/{salePayment}/debug', 'SalePaymentsController@receiptDebug')->name('sale-payments.receipt.debug');
 });

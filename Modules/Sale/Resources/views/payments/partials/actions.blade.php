@@ -1,4 +1,10 @@
 @can('access_sale_payments')
+    <a target="_blank" href="{{ route('sale-payments.receipt', $data->id) }}" class="btn btn-secondary btn-sm" title="Print Receipt">
+        <i class="bi bi-printer"></i>
+    </a>
+@endcan
+
+@can('access_sale_payments')
     <a href="{{ route('sale-payments.edit', [$data->sale->id, $data->id]) }}" class="btn btn-info btn-sm">
         <i class="bi bi-pencil"></i>
     </a>

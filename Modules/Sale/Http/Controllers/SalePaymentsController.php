@@ -11,6 +11,8 @@ use Illuminate\Support\Facades\Gate;
 use Modules\Sale\Entities\Sale;
 use App\Helpers\Helper;
 use Modules\Sale\Entities\SalePayment;
+use Barryvdh\DomPDF\Facade\Pdf;
+use Modules\People\Entities\Customer;
 
 class SalePaymentsController extends Controller
 {
@@ -183,5 +185,74 @@ class SalePaymentsController extends Controller
         toast('Sale Payment Deleted!', 'warning');
 
         return redirect()->route('sales.index');
+    }
+
+    public function receipt(SalePayment $salePayment)
+    {
+        abort_if(Gate::denies('access_sale_payments'), 403);
+
+        $salePayment->load('sale');
+        $sale = $salePayment->sale;
+
+        if (!$sale) {
+            abort(404);
+        }
+
+        $customer = Customer::query()->find($sale->customer_id);
+
+        // Hitung paid_before supaya receipt bisa menampilkan: sebelum bayar ini sudah berapa
+        $paidBefore = (int) SalePayment::query()
+            ->where('sale_id', (int) $sale->id)
+            ->where('id', '<', (int) $salePayment->id)
+            ->sum('amount');
+
+        $grandTotal = (int) ($sale->total_amount ?? 0);
+        $paidThis = (int) ($salePayment->amount ?? 0);
+        $paidAfter = $paidBefore + $paidThis;
+        $remaining = max(0, $grandTotal - $paidAfter);
+
+        $pdf = Pdf::loadView('sale::payments.receipt', [
+            'sale' => $sale,
+            'customer' => $customer,
+            'salePayment' => $salePayment,
+            'paidBefore' => $paidBefore,
+            'paidAfter' => $paidAfter,
+            'remaining' => $remaining,
+        ])->setPaper('a5', 'portrait');
+
+        return $pdf->stream('receipt-' . ($salePayment->reference ?? $salePayment->id) . '.pdf');
+    }
+
+    public function receiptDebug(SalePayment $salePayment)
+    {
+        abort_if(Gate::denies('access_sale_payments'), 403);
+
+        $salePayment->load('sale');
+        $sale = $salePayment->sale;
+
+        if (!$sale) {
+            abort(404);
+        }
+
+        $customer = Customer::query()->find($sale->customer_id);
+
+        $paidBefore = (int) SalePayment::query()
+            ->where('sale_id', (int) $sale->id)
+            ->where('id', '<', (int) $salePayment->id)
+            ->sum('amount');
+
+        $grandTotal = (int) ($sale->total_amount ?? 0);
+        $paidThis = (int) ($salePayment->amount ?? 0);
+        $paidAfter = $paidBefore + $paidThis;
+        $remaining = max(0, $grandTotal - $paidAfter);
+
+        return view('sale::payments.receipt', [
+            'sale' => $sale,
+            'customer' => $customer,
+            'salePayment' => $salePayment,
+            'paidBefore' => $paidBefore,
+            'paidAfter' => $paidAfter,
+            'remaining' => $remaining,
+        ]);
     }
 }
