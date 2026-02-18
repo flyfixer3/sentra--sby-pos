@@ -37,8 +37,6 @@ class SaleDeliveriesDataTable extends DataTable
 
             ->addColumn('customer_name', fn($row) => $row->customer?->customer_name ?? '-')
 
-            ->addColumn('warehouse_name', fn($row) => $row->warehouse?->warehouse_name ?? '-')
-
             ->addColumn('items_count', fn($row) => (int) ($row->items_count ?? 0))
 
             ->addColumn('status', function ($row) {
@@ -58,11 +56,11 @@ class SaleDeliveriesDataTable extends DataTable
         $branchId = BranchContext::id();
 
         $q = $branchId
-            ? $model->query() // HasBranchScope aktif
-            : $model->newQuery()->withoutGlobalScopes(); // all branch mode
+            ? $model->query()
+            : $model->newQuery()->withoutGlobalScopes();
 
         return $q->latest('id')
-                ->with(['warehouse', 'customer', 'creator', 'confirmer'])
+                ->with(['customer', 'creator', 'confirmer'])
                 ->withCount('items');
     }
 
@@ -77,7 +75,8 @@ class SaleDeliveriesDataTable extends DataTable
                 "tr" .
                 "<'row'<'col-md-5'i><'col-md-7 mt-2'p>>"
             )
-            ->orderBy(9)
+            // ✅ FIX: index created_at sekarang di kolom ke-8 (bukan 9)
+            ->orderBy(8)
             ->buttons(
                 Button::make('excel')->text('<i class="bi bi-file-earmark-excel-fill"></i> Excel'),
                 Button::make('print')->text('<i class="bi bi-printer-fill"></i> Print'),
@@ -98,10 +97,6 @@ class SaleDeliveriesDataTable extends DataTable
 
             Column::computed('customer_name')
                 ->title('Customer')
-                ->className('text-center align-middle'),
-
-            Column::computed('warehouse_name')
-                ->title('Warehouse')
                 ->className('text-center align-middle'),
 
             Column::computed('items_count')

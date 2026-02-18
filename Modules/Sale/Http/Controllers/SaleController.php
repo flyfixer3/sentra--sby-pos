@@ -852,10 +852,19 @@ class SaleController extends Controller
                 }
 
                 // ======================================================
-                // Payment record (kalau paid_amount > 0)
+                // ✅ Payment record (kalau paid_amount > 0)
                 // ======================================================
                 if ((int) $sale->paid_amount > 0) {
                     $depositCode = trim((string) ($request->deposit_code ?? ''));
+
+                    // ✅ NEW: kalau invoice dari delivery + ada SO, dan deposit_code kosong,
+                    // ambil deposit_code dari Sale Order (biar konsisten & gak double input)
+                    if ($depositCode === '' && $fromDelivery && $lockedSaleOrder) {
+                        $soDepositCode = trim((string) ($lockedSaleOrder->deposit_code ?? ''));
+                        if ($soDepositCode !== '' && $soDepositCode !== '-') {
+                            $depositCode = $soDepositCode;
+                        }
+                    }
 
                     if ($depositCode === '' || $depositCode === '-') {
                         throw new \RuntimeException("Deposit To wajib dipilih jika Amount Received > 0.");
