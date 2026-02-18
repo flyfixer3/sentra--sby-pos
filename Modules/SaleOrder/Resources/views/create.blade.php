@@ -71,13 +71,14 @@
     $oldShipping = old('shipping_amount', 0);
     $oldFee = old('fee_amount', 0);
 
-    $oldDepositPct = old('deposit_percentage', '');
-    $oldDepositAmt = old('deposit_amount', '');
+    // ✅ deposit default 0 (NOT empty)
+    $oldDepositPct = old('deposit_percentage', 0);
+    $oldDepositAmt = old('deposit_amount', 0);
     $oldDepositMethod = old('deposit_payment_method', '');
     $oldDepositCode = old('deposit_code', '');
 
-    // ✅ NEW
-    $oldDpReceived = old('deposit_received_amount', '');
+    // ✅ dp received default 0 (NOT empty)
+    $oldDpReceived = old('deposit_received_amount', 0);
     $oldUseMaxDpReceived = old('deposit_received_use_max', '');
 
     $oldAutoDiscount = old('auto_discount', '1'); // default ON
@@ -242,33 +243,33 @@
 
                         <div class="row">
                             <div class="col-lg-3 mb-3">
-                                <label class="form-label">Deposit (%) (optional)</label>
+                                <label class="form-label">Deposit (%)</label>
 
                                 <input type="text"
                                        inputmode="decimal"
                                        placeholder="0"
                                        name="deposit_percentage" id="so_deposit_percentage"
-                                       class="form-control" value="{{ $oldDepositPct }}">
+                                       class="form-control" value="{{ $oldDepositPct }}" required>
 
                                 <div class="small text-muted">Kalau diisi, Deposit Amount otomatis ikut Grand Total.</div>
                             </div>
 
                             <div class="col-lg-3 mb-3">
-                                <label class="form-label">Deposit Amount (optional)</label>
+                                <label class="form-label">Deposit Amount</label>
                                 <input type="number" min="0" step="1"
                                        name="deposit_amount" id="so_deposit_amount"
-                                       class="form-control" value="{{ $oldDepositAmt }}">
+                                       class="form-control" value="{{ $oldDepositAmt }}" required>
                                 <div class="small text-muted">Kalau diisi manual, akan override persen.</div>
                             </div>
 
-                            {{-- ✅ NEW: DP RECEIVED --}}
+                            {{-- ✅ DP RECEIVED --}}
                             <div class="col-lg-3 mb-3">
-                                <label class="form-label">DP Received Amount (optional)</label>
+                                <label class="form-label">DP Received Amount</label>
 
                                 <div class="input-group">
                                     <input type="number" min="0" step="1"
                                         name="deposit_received_amount" id="so_deposit_received_amount"
-                                        class="form-control" value="{{ $oldDpReceived }}">
+                                        class="form-control" value="{{ $oldDpReceived }}" required>
 
                                     <span class="input-group-text">
                                         <label class="form-check mb-0 d-flex align-items-center gap-2" style="white-space:nowrap;">
@@ -288,9 +289,8 @@
                                 </div>
                             </div>
 
-
                             <div class="col-lg-3 mb-3">
-                                <label class="form-label">Deposit Payment Method (optional)</label>
+                                <label class="form-label">Deposit Payment Method</label>
                                 <select class="form-control" name="deposit_payment_method" id="so_deposit_payment_method">
                                     <option value="">-- Choose --</option>
                                     <option value="Cash" {{ $oldDepositMethod === 'Cash' ? 'selected' : '' }}>Cash</option>
@@ -304,7 +304,7 @@
 
                         <div class="row">
                             <div class="col-lg-3 mb-3">
-                                <label class="form-label">Deposit To (optional)</label>
+                                <label class="form-label">Deposit To</label>
                                 <select class="form-control" name="deposit_code" id="so_deposit_code">
                                     <option value="">-- Choose Deposit --</option>
                                     @foreach(\App\Models\AccountingSubaccount::join('accounting_accounts', 'accounting_accounts.id', '=', 'accounting_subaccounts.accounting_account_id')
@@ -469,7 +469,7 @@
             if (window.__soDpMode === 'amt') {
                 const amt = Math.max(0, soParseInt(amtEl.value));
                 if (grand <= 0) {
-                    pctEl.value = '';
+                    pctEl.value = '0';
                 } else {
                     let pct = (amt / grand) * 100;
                     pct = soClamp(pct, 0, 100);
@@ -480,7 +480,7 @@
                 pct = soClamp(pct, 0, 100);
 
                 if (pct <= 0 || grand <= 0) {
-                    amtEl.value = '';
+                    amtEl.value = '0';
                 } else {
                     const amt = Math.round(grand * (pct / 100));
                     amtEl.value = String(Math.max(0, amt));
@@ -507,7 +507,7 @@
             window.__soDpReceivedSyncing = true;
             try {
                 const depAmt = Math.max(0, soParseInt(depAmtEl.value));
-                recEl.value = depAmt > 0 ? String(depAmt) : '';
+                recEl.value = String(depAmt);
             } finally {
                 window.__soDpReceivedSyncing = false;
             }

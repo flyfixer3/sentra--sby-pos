@@ -122,6 +122,15 @@
                 </div>
 
                 <div class="d-flex flex-wrap gap-2 align-items-center">
+                    {{-- ✅ NEW: Print DP Receipt --}}
+                    @if($dpRec > 0)
+                        <a class="btn btn-outline-secondary"
+                           href="{{ route('sale-orders.dp-receipt', $saleOrder->id) }}"
+                           target="_blank">
+                            <i class="bi bi-printer"></i> Print DP Receipt
+                        </a>
+                    @endif
+
                     @can('create_sale_deliveries')
                         @if($hasPlannedRemaining)
                             <a class="btn btn-primary"

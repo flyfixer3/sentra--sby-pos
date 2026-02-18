@@ -634,7 +634,6 @@ class SaleController extends Controller
                     $allocFee  = $splitEven($soFee,  $splitCount, $splitIndex);
 
                     // ✅ PENTING: jangan apply discount lagi.
-                    // Karena itemsSubtotal sudah NET (sell price) dan discount hanya info.
                     $effectiveDiscPct = round((float) ($lockedSaleOrder->discount_percentage ?? 0), 2);
                     $discountAmount = 0;
 
@@ -709,6 +708,9 @@ class SaleController extends Controller
                     'total_amount' => (int) $computedGrandTotal,
                     'total_quantity' => (int) $totalQty,
 
+                    // ✅ NEW: single source of truth
+                    'dp_allocated_amount' => (int) $dpAllocatedForThisInvoice,
+
                     'due_amount' => (int) $due_amount,
                     'payment_status' => $payment_status,
                     'payment_method' => $request->payment_method,
@@ -716,7 +718,7 @@ class SaleController extends Controller
                     'note' => $note,
 
                     'tax_amount' => (int) $taxAmount,
-                    'discount_amount' => (int) $discountAmount, // locked => 0
+                    'discount_amount' => (int) $discountAmount,
                 ];
 
                 if (Schema::hasColumn('sales', 'branch_id')) {
@@ -755,7 +757,6 @@ class SaleController extends Controller
 
                         'sub_total' => (int) ($qty * max(0, (int) $price)),
 
-                        // ini tetap disimpan buat info, bukan untuk ngurangin grand total lagi
                         'product_discount_amount' => (float) ($cart_item->options->product_discount ?? 0),
                         'product_discount_type' => (string) ($cart_item->options->product_discount_type ?? 'fixed'),
                         'product_tax_amount' => (float) ($cart_item->options->product_tax ?? 0),
@@ -993,7 +994,6 @@ class SaleController extends Controller
             ->orderBy('id')
             ->get();
 
-        // --- Deposit info dari Sale Order (jika alurnya: SO -> SD -> Sale)
         $saleOrderDepositInfo = null;
 
         try {
@@ -1007,44 +1007,15 @@ class SaleController extends Controller
 
                 if ($saleOrder) {
                     $dpTotal = (int) ($saleOrder->deposit_received_amount ?? 0);
+                    $allocated = (int) ($sale->dp_allocated_amount ?? 0);
 
-                    if ($dpTotal > 0) {
-                        $invoiceSubtotal = 0;
-                        foreach ($sale->saleDetails as $d) {
-                            $qty = (int) ($d->quantity ?? 0);
-                            $price = (int) ($d->price ?? 0);
-                            if ($qty > 0 && $price >= 0) {
-                                $invoiceSubtotal += ($qty * $price);
-                            }
-                        }
-
-                        $soSubtotal = (int) DB::table('sale_order_items')
-                            ->where('sale_order_id', (int) $saleOrder->id)
-                            ->selectRaw('SUM(COALESCE(quantity,0) * COALESCE(price,0)) as s')
-                            ->value('s');
-
-                        if ($soSubtotal > 0 && $invoiceSubtotal > 0) {
-                            $allocated = (int) round($dpTotal * ($invoiceSubtotal / $soSubtotal));
-
-                            if ($allocated < 0) $allocated = 0;
-                            if ($allocated > $dpTotal) $allocated = $dpTotal;
-
-                            $pct = (int) round(($invoiceSubtotal / $soSubtotal) * 100);
-
-                            $saleOrderDepositInfo = [
-                                'sale_order_reference' => (string) ($saleOrder->reference ?? ('SO-'.$saleOrder->id)),
-                                'deposit_total' => $dpTotal,
-                                'allocated' => $allocated,
-                                'ratio_percent' => $pct,
-                            ];
-                        } else {
-                            $saleOrderDepositInfo = [
-                                'sale_order_reference' => (string) ($saleOrder->reference ?? ('SO-'.$saleOrder->id)),
-                                'deposit_total' => $dpTotal,
-                                'allocated' => $dpTotal,
-                                'ratio_percent' => null,
-                            ];
-                        }
+                    if ($dpTotal > 0 || $allocated > 0) {
+                        $saleOrderDepositInfo = [
+                            'sale_order_reference' => (string) ($saleOrder->reference ?? ('SO-'.$saleOrder->id)),
+                            'deposit_total' => max(0, $dpTotal),
+                            'allocated' => max(0, $allocated),
+                            'ratio_percent' => null,
+                        ];
                     }
                 }
             }
@@ -1102,44 +1073,15 @@ class SaleController extends Controller
 
                 if ($saleOrder) {
                     $dpTotal = (int) ($saleOrder->deposit_received_amount ?? 0);
+                    $allocated = (int) ($sale->dp_allocated_amount ?? 0);
 
-                    if ($dpTotal > 0) {
-                        $invoiceSubtotal = 0;
-                        foreach ($sale->saleDetails as $d) {
-                            $qty = (int) ($d->quantity ?? 0);
-                            $price = (int) ($d->price ?? 0);
-                            if ($qty > 0 && $price >= 0) {
-                                $invoiceSubtotal += ($qty * $price);
-                            }
-                        }
-
-                        $soSubtotal = (int) \Illuminate\Support\Facades\DB::table('sale_order_items')
-                            ->where('sale_order_id', (int) $saleOrder->id)
-                            ->selectRaw('SUM(COALESCE(quantity,0) * COALESCE(price,0)) as s')
-                            ->value('s');
-
-                        if ($soSubtotal > 0 && $invoiceSubtotal > 0) {
-                            $allocated = (int) round($dpTotal * ($invoiceSubtotal / $soSubtotal));
-
-                            if ($allocated < 0) $allocated = 0;
-                            if ($allocated > $dpTotal) $allocated = $dpTotal;
-
-                            $pct = (int) round(($invoiceSubtotal / $soSubtotal) * 100);
-
-                            $saleOrderDepositInfo = [
-                                'sale_order_reference' => (string) ($saleOrder->reference ?? ('SO-'.$saleOrder->id)),
-                                'deposit_total' => $dpTotal,
-                                'allocated' => $allocated,
-                                'ratio_percent' => $pct,
-                            ];
-                        } else {
-                            $saleOrderDepositInfo = [
-                                'sale_order_reference' => (string) ($saleOrder->reference ?? ('SO-'.$saleOrder->id)),
-                                'deposit_total' => $dpTotal,
-                                'allocated' => $dpTotal,
-                                'ratio_percent' => null,
-                            ];
-                        }
+                    if ($dpTotal > 0 || $allocated > 0) {
+                        $saleOrderDepositInfo = [
+                            'sale_order_reference' => (string) ($saleOrder->reference ?? ('SO-'.$saleOrder->id)),
+                            'deposit_total' => max(0, $dpTotal),
+                            'allocated' => max(0, $allocated),
+                            'ratio_percent' => null, // sudah tidak pakai pro-rata
+                        ];
                     }
                 }
             }

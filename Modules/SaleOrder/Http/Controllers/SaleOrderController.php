@@ -536,6 +536,125 @@ class SaleOrderController extends Controller
         ));
     }
 
+    public function dpReceipt(\Modules\SaleOrder\Entities\SaleOrder $saleOrder)
+    {
+        abort_if(\Illuminate\Support\Facades\Gate::denies('show_sale_orders'), 403);
+
+        $branchId = \App\Support\BranchContext::id();
+        if ((int) $saleOrder->branch_id !== (int) $branchId) {
+            abort(403, 'Wrong branch context.');
+        }
+
+        $saleOrder->load(['customer']);
+
+        $dpReceived = (int) ($saleOrder->deposit_received_amount ?? 0);
+        if ($dpReceived <= 0) {
+            abort(404, 'This Sale Order has no DP received.');
+        }
+
+        // Ambil payment DP terakhir untuk SO ini (yang dibuat saat store)
+        $salePayment = \Modules\Sale\Entities\SalePayment::query()
+            ->whereNull('sale_id')
+            ->where('sale_order_id', (int) $saleOrder->id)
+            ->orderBy('id', 'desc')
+            ->first();
+
+        if (!$salePayment) {
+            // Safety: kalau ternyata record payment tidak ada (data lama), tetap bisa print pakai data SO
+            $salePayment = new \Modules\Sale\Entities\SalePayment();
+            $salePayment->id = 0;
+            $salePayment->sale_order_id = (int) $saleOrder->id;
+            $salePayment->sale_id = null;
+            $salePayment->amount = $dpReceived;
+            $salePayment->date = $saleOrder->date ?? date('Y-m-d');
+            $salePayment->reference = 'SO/' . (string) ($saleOrder->reference ?? ('SO-' . $saleOrder->id));
+            $salePayment->payment_method = $saleOrder->deposit_payment_method ?? '-';
+            $salePayment->note = 'Deposit (DP) Received';
+            $salePayment->deposit_code = $saleOrder->deposit_code ?? null;
+        }
+
+        // paid before receipt (kalau suatu saat DP bisa lebih dari 1 kali)
+        $paidBefore = (int) \Modules\Sale\Entities\SalePayment::query()
+            ->whereNull('sale_id')
+            ->where('sale_order_id', (int) $saleOrder->id)
+            ->where('id', '<', (int) ($salePayment->id ?? 0))
+            ->sum('amount');
+
+        $paidAfter = $paidBefore + (int) ($salePayment->amount ?? 0);
+
+        $grandTotal = (int) ($saleOrder->total_amount ?? 0);
+        $remaining = max(0, $grandTotal - $paidAfter);
+
+        // PDF
+        $pdf = \Barryvdh\DomPDF\Facade\Pdf::loadView('saleorder::dp-receipt', [
+            'saleOrder' => $saleOrder,
+            'customer' => $saleOrder->customer,
+            'salePayment' => $salePayment,
+            'paidBefore' => $paidBefore,
+            'paidAfter' => $paidAfter,
+            'remaining' => $remaining,
+        ])->setPaper('a4');
+
+        $ref = $salePayment->reference ?? ('SO-' . $saleOrder->id);
+        return $pdf->stream('dp-receipt-' . $ref . '.pdf');
+    }
+
+    public function dpReceiptDebug(\Modules\SaleOrder\Entities\SaleOrder $saleOrder)
+    {
+        abort_if(\Illuminate\Support\Facades\Gate::denies('show_sale_orders'), 403);
+
+        $branchId = \App\Support\BranchContext::id();
+        if ((int) $saleOrder->branch_id !== (int) $branchId) {
+            abort(403, 'Wrong branch context.');
+        }
+
+        $saleOrder->load(['customer']);
+
+        $dpReceived = (int) ($saleOrder->deposit_received_amount ?? 0);
+        if ($dpReceived <= 0) {
+            abort(404, 'This Sale Order has no DP received.');
+        }
+
+        $salePayment = \Modules\Sale\Entities\SalePayment::query()
+            ->whereNull('sale_id')
+            ->where('sale_order_id', (int) $saleOrder->id)
+            ->orderBy('id', 'desc')
+            ->first();
+
+        if (!$salePayment) {
+            $salePayment = new \Modules\Sale\Entities\SalePayment();
+            $salePayment->id = 0;
+            $salePayment->sale_order_id = (int) $saleOrder->id;
+            $salePayment->sale_id = null;
+            $salePayment->amount = $dpReceived;
+            $salePayment->date = $saleOrder->date ?? date('Y-m-d');
+            $salePayment->reference = 'SO/' . (string) ($saleOrder->reference ?? ('SO-' . $saleOrder->id));
+            $salePayment->payment_method = $saleOrder->deposit_payment_method ?? '-';
+            $salePayment->note = 'Deposit (DP) Received';
+            $salePayment->deposit_code = $saleOrder->deposit_code ?? null;
+        }
+
+        $paidBefore = (int) \Modules\Sale\Entities\SalePayment::query()
+            ->whereNull('sale_id')
+            ->where('sale_order_id', (int) $saleOrder->id)
+            ->where('id', '<', (int) ($salePayment->id ?? 0))
+            ->sum('amount');
+
+        $paidAfter = $paidBefore + (int) ($salePayment->amount ?? 0);
+
+        $grandTotal = (int) ($saleOrder->total_amount ?? 0);
+        $remaining = max(0, $grandTotal - $paidAfter);
+
+        return view('saleorder::dp-receipt', [
+            'saleOrder' => $saleOrder,
+            'customer' => $saleOrder->customer,
+            'salePayment' => $salePayment,
+            'paidBefore' => $paidBefore,
+            'paidAfter' => $paidAfter,
+            'remaining' => $remaining,
+        ]);
+    }
+
     // =========================
     // ✅ NEW: EDIT SALE ORDER
     // =========================

@@ -1,5 +1,7 @@
 <?php
 
+use Illuminate\Support\Facades\Route;
+
 Route::group([
     'middleware' => ['auth'],
     'prefix' => 'sale-orders',
@@ -22,8 +24,16 @@ Route::group([
     Route::put('/{saleOrder}', 'SaleOrderController@update')
         ->name('sale-orders.update');
 
+    // ✅ SHOW
     Route::get('/{saleOrder}', 'SaleOrderController@show')
         ->name('sale-orders.show');
+
+    // ✅ NEW: DP Receipt (PDF + Debug)
+    Route::get('/{saleOrder}/dp-receipt', 'SaleOrderController@dpReceipt')
+        ->name('sale-orders.dp-receipt');
+
+    Route::get('/{saleOrder}/dp-receipt/debug', 'SaleOrderController@dpReceiptDebug')
+        ->name('sale-orders.dp-receipt.debug');
 
     // ✅ DELETE
     Route::delete('/{saleOrder}', 'SaleOrderController@destroy')

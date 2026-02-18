@@ -61,25 +61,32 @@
                                     </div>
                                 @endif
 
-                                {{-- ✅ Deposit from Sale Order --}}
-                                @if(!empty($saleOrderDepositInfo) && isset($saleOrderDepositInfo['deposit_total']) && (int)$saleOrderDepositInfo['deposit_total'] > 0)
+                                {{-- ✅ Deposit from Sale Order (Single source of truth) --}}
+                                @php
+                                    $allocatedDp = (int) ($sale->dp_allocated_amount ?? 0);
+                                @endphp
+
+                                @if(!empty($saleOrderDepositInfo) && ((int)($saleOrderDepositInfo['deposit_total'] ?? 0) > 0 || $allocatedDp > 0))
                                     <div class="mt-2 p-2" style="border:1px solid rgba(0,0,0,.08); border-radius:8px;">
                                         <div class="text-muted" style="font-size: 12px;">Deposit (From Sale Order)</div>
+
+                                        @if(!empty($saleOrderDepositInfo['sale_order_reference']))
+                                            <div>
+                                                SO: <strong>{{ $saleOrderDepositInfo['sale_order_reference'] }}</strong>
+                                            </div>
+                                        @endif
+
                                         <div>
-                                            SO: <strong>{{ $saleOrderDepositInfo['sale_order_reference'] }}</strong>
+                                            Total DP (SO): <strong>{{ format_currency((int)($saleOrderDepositInfo['deposit_total'] ?? 0)) }}</strong>
                                         </div>
-                                        <div>
-                                            Total DP (SO): <strong>{{ format_currency((int)$saleOrderDepositInfo['deposit_total']) }}</strong>
-                                        </div>
+
                                         <div>
                                             Allocated to this Invoice:
-                                            <strong>{{ format_currency((int)$saleOrderDepositInfo['allocated']) }}</strong>
-                                            @if(!is_null($saleOrderDepositInfo['ratio_percent']))
-                                                <span class="text-muted">({{ (int)$saleOrderDepositInfo['ratio_percent'] }}% pro-rata by items subtotal)</span>
-                                            @endif
+                                            <strong>{{ format_currency($allocatedDp) }}</strong>
                                         </div>
+
                                         <div class="text-muted" style="font-size: 12px; margin-top: 4px;">
-                                            Catatan: DP ini hanya keterangan (tidak masuk Payments invoice).
+                                            Catatan: DP Allocated ini dipakai sebagai pengurang invoice (single source of truth).
                                         </div>
                                     </div>
                                 @endif
@@ -177,11 +184,6 @@
 
                             <div class="col-lg-4 col-sm-5 ml-md-auto">
                                 @php
-                                    $allocatedDp = 0;
-                                    if(!empty($saleOrderDepositInfo) && isset($saleOrderDepositInfo['allocated'])) {
-                                        $allocatedDp = (int)$saleOrderDepositInfo['allocated'];
-                                    }
-
                                     $grandTotal = (int) $sale->total_amount;
                                     $paidInvoice = (int) $sale->paid_amount;
 
@@ -192,45 +194,45 @@
                                 <table class="table">
                                     <tbody>
                                         <tr>
-                                        <td class="left"><strong>Discount ({{ $sale->discount_percentage }}%)</strong></td>
-                                        <td class="right">{{ format_currency((int)$sale->discount_amount) }}</td>
+                                            <td class="left"><strong>Discount ({{ $sale->discount_percentage }}%)</strong></td>
+                                            <td class="right">{{ format_currency((int)$sale->discount_amount) }}</td>
                                         </tr>
                                         <tr>
-                                        <td class="left"><strong>Tax ({{ $sale->tax_percentage }}%)</strong></td>
-                                        <td class="right">{{ format_currency((int)$sale->tax_amount) }}</td>
+                                            <td class="left"><strong>Tax ({{ $sale->tax_percentage }}%)</strong></td>
+                                            <td class="right">{{ format_currency((int)$sale->tax_amount) }}</td>
                                         </tr>
                                         <tr>
-                                        <td class="left"><strong>Shipping</strong></td>
-                                        <td class="right">{{ format_currency((int)$sale->shipping_amount) }}</td>
+                                            <td class="left"><strong>Shipping</strong></td>
+                                            <td class="right">{{ format_currency((int)$sale->shipping_amount) }}</td>
                                         </tr>
                                         <tr>
-                                        <td class="left"><strong>Fee</strong></td>
-                                        <td class="right">{{ format_currency((int)($sale->fee_amount ?? 0)) }}</td>
+                                            <td class="left"><strong>Fee</strong></td>
+                                            <td class="right">{{ format_currency((int)($sale->fee_amount ?? 0)) }}</td>
                                         </tr>
 
                                         <tr>
-                                        <td class="left"><strong>Grand Total</strong></td>
-                                        <td class="right"><strong>{{ format_currency($grandTotal) }}</strong></td>
+                                            <td class="left"><strong>Grand Total</strong></td>
+                                            <td class="right"><strong>{{ format_currency($grandTotal) }}</strong></td>
                                         </tr>
 
                                         @if($allocatedDp > 0)
-                                        <tr>
-                                            <td class="left"><strong>Less: DP Allocated (SO)</strong></td>
-                                            <td class="right">- {{ format_currency($allocatedDp) }}</td>
-                                        </tr>
-                                        <tr>
-                                            <td class="left"><strong>Net Invoice Total</strong></td>
-                                            <td class="right"><strong>{{ format_currency($netAfterDp) }}</strong></td>
-                                        </tr>
+                                            <tr>
+                                                <td class="left"><strong>Less: DP Allocated (SO)</strong></td>
+                                                <td class="right">- {{ format_currency($allocatedDp) }}</td>
+                                            </tr>
+                                            <tr>
+                                                <td class="left"><strong>Net Invoice Total</strong></td>
+                                                <td class="right"><strong>{{ format_currency($netAfterDp) }}</strong></td>
+                                            </tr>
                                         @endif
 
                                         <tr>
-                                        <td class="left"><strong>Total Paid</strong></td>
-                                        <td class="right">{{ format_currency($paidInvoice) }}</td>
+                                            <td class="left"><strong>Total Paid</strong></td>
+                                            <td class="right">{{ format_currency($paidInvoice) }}</td>
                                         </tr>
                                         <tr>
-                                        <td class="left"><strong>Remaining Due</strong></td>
-                                        <td class="right"><strong>{{ format_currency($remainingAfterDp) }}</strong></td>
+                                            <td class="left"><strong>Remaining Due</strong></td>
+                                            <td class="right"><strong>{{ format_currency($remainingAfterDp) }}</strong></td>
                                         </tr>
                                     </tbody>
                                 </table>

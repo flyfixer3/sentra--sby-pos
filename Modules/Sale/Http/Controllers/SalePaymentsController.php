@@ -200,16 +200,20 @@ class SalePaymentsController extends Controller
 
         $customer = Customer::query()->find($sale->customer_id);
 
-        // Hitung paid_before supaya receipt bisa menampilkan: sebelum bayar ini sudah berapa
         $paidBefore = (int) SalePayment::query()
             ->where('sale_id', (int) $sale->id)
             ->where('id', '<', (int) $salePayment->id)
             ->sum('amount');
 
-        $grandTotal = (int) ($sale->total_amount ?? 0);
         $paidThis = (int) ($salePayment->amount ?? 0);
         $paidAfter = $paidBefore + $paidThis;
-        $remaining = max(0, $grandTotal - $paidAfter);
+
+        // ✅ NEW: pakai net setelah DP allocated
+        $grandTotal = (int) ($sale->total_amount ?? 0);
+        $dpAllocated = (int) ($sale->dp_allocated_amount ?? 0);
+        $netTotal = max(0, $grandTotal - $dpAllocated);
+
+        $remaining = max(0, $netTotal - $paidAfter);
 
         $pdf = Pdf::loadView('sale::payments.receipt', [
             'sale' => $sale,
@@ -218,6 +222,10 @@ class SalePaymentsController extends Controller
             'paidBefore' => $paidBefore,
             'paidAfter' => $paidAfter,
             'remaining' => $remaining,
+
+            // optional kalau mau tampilkan di receipt
+            'dpAllocated' => $dpAllocated,
+            'netTotal' => $netTotal,
         ])->setPaper('a5', 'portrait');
 
         return $pdf->stream('receipt-' . ($salePayment->reference ?? $salePayment->id) . '.pdf');
