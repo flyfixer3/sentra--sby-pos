@@ -2,12 +2,12 @@
 
 namespace Modules\Inventory\Entities;
 
-use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use App\Models\BaseModel;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Modules\Product\Entities\Warehouse;
+use Modules\Branch\Entities\Branch;
 
 class Rack extends BaseModel
 {
@@ -30,9 +30,13 @@ class Rack extends BaseModel
         return $this->belongsTo(Warehouse::class, 'warehouse_id');
     }
 
+    public function branch(): BelongsTo
+    {
+        return $this->belongsTo(Branch::class, 'branch_id');
+    }
+
     public function stockRacks(): HasMany
     {
         return $this->hasMany(StockRack::class, 'rack_id');
     }
-
 }

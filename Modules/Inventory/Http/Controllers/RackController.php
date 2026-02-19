@@ -70,11 +70,15 @@ class RackController extends Controller
         abort_if(Gate::denies('create_racks'), 403);
 
         $branchId = BranchContext::id();
+        $isAll = ($branchId === 'all' || $branchId === null || $branchId === '');
+
+        if ($isAll) {
+            toast('Please select a specific branch first. You cannot create Rack in "All Branches" mode.', 'error');
+            return redirect()->route('inventory.racks.index');
+        }
 
         $warehouses = Warehouse::query()
-            ->when($branchId !== 'all', function ($w) use ($branchId) {
-                $w->where('branch_id', (int) $branchId);
-            })
+            ->where('branch_id', (int) $branchId)
             ->orderBy('warehouse_name')
             ->get();
 
@@ -85,9 +89,13 @@ class RackController extends Controller
     {
         abort_if(Gate::denies('create_racks'), 403);
 
-        $branchIdRaw = BranchContext::id();
-        $isAll = ($branchIdRaw === 'all' || $branchIdRaw === null || $branchIdRaw === '');
-        $branchId = $isAll ? 'all' : (int) $branchIdRaw;
+        $branchId = BranchContext::id();
+        $isAll = ($branchId === 'all' || $branchId === null || $branchId === '');
+
+        if ($isAll) {
+            toast('Please select a specific branch first. You cannot create Rack in "All Branches" mode.', 'error');
+            return redirect()->route('inventory.racks.index');
+        }
 
         $request->validate([
             'warehouse_id' => 'required|integer',
@@ -98,9 +106,8 @@ class RackController extends Controller
 
         $warehouse = Warehouse::withoutGlobalScopes()->findOrFail((int) $request->warehouse_id);
 
-        if (!$isAll) {
-            abort_unless((int) $warehouse->branch_id === (int) $branchId, 403);
-        }
+        // wajib match active branch
+        abort_unless((int) $warehouse->branch_id === (int) $branchId, 403);
 
         $code = strtoupper(trim((string) $request->code));
 
@@ -117,7 +124,7 @@ class RackController extends Controller
 
         Rack::withoutGlobalScopes()->create([
             'warehouse_id' => (int) $warehouse->id,
-            'branch_id'    => (int) $warehouse->branch_id, // ✅ penting
+            'branch_id'    => (int) $warehouse->branch_id, // ✅ ikut warehouse
             'code'         => $code,
             'name'         => $request->name ? trim((string) $request->name) : null,
             'description'  => $request->description ? trim((string) $request->description) : null,
@@ -134,30 +141,23 @@ class RackController extends Controller
         abort_if(Gate::denies('create_racks'), 403);
 
         $branchId = BranchContext::id();
+        $isAll = ($branchId === 'all' || $branchId === null || $branchId === '');
 
-        $warehouse = Warehouse::findOrFail((int) $warehouseId);
-        if ($branchId !== 'all') {
-            abort_unless((int) $warehouse->branch_id === (int) $branchId, 403);
+        if ($isAll) {
+            return response()->json([
+                'message' => 'Please select a specific branch first. You cannot generate Rack code in "All Branches" mode.'
+            ], 422);
         }
 
-        // Ambil semua code rack di warehouse ini
-        $codes = Rack::query()
+        $warehouse = Warehouse::withoutGlobalScopes()->findOrFail((int) $warehouseId);
+        abort_unless((int) $warehouse->branch_id === (int) $branchId, 403);
+
+        $codes = Rack::withoutGlobalScopes()
             ->where('warehouse_id', (int) $warehouse->id)
             ->pluck('code')
             ->map(fn($c) => strtoupper(trim((string) $c)))
             ->toArray();
 
-        // format yang kita generate: R001, R002, ...
-        $max = 0;
-        foreach ($codes as $c) {
-            if (preg_match('/^R(\d{1,})$/', $c, $m)) {
-                $num = (int) $m[1];
-                if ($num > $max) $max = $num;
-            }
-        }
-
-        // cari yang kosong (kalau ada yang bolong)
-        // contoh: ada R001, R003 -> harusnya generate R002
         $used = [];
         foreach ($codes as $c) {
             if (preg_match('/^R(\d{1,})$/', $c, $m)) {
@@ -180,16 +180,18 @@ class RackController extends Controller
         abort_if(Gate::denies('edit_racks'), 403);
 
         $branchId = BranchContext::id();
+        $isAll = ($branchId === 'all' || $branchId === null || $branchId === '');
 
-        $warehouse = Warehouse::findOrFail((int) $rack->warehouse_id);
-        if ($branchId !== 'all') {
-            abort_unless((int) $warehouse->branch_id === (int) $branchId, 403);
+        if ($isAll) {
+            toast('Please select a specific branch first. You cannot edit Rack in "All Branches" mode.', 'error');
+            return redirect()->route('inventory.racks.index');
         }
 
-        $warehouses = Warehouse::query()
-            ->when($branchId !== 'all', function ($w) use ($branchId) {
-                $w->where('branch_id', (int) $branchId);
-            })
+        $warehouse = Warehouse::withoutGlobalScopes()->findOrFail((int) $rack->warehouse_id);
+        abort_unless((int) $warehouse->branch_id === (int) $branchId, 403);
+
+        $warehouses = Warehouse::withoutGlobalScopes()
+            ->where('branch_id', (int) $branchId)
             ->orderBy('warehouse_name')
             ->get();
 
