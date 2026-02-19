@@ -58,12 +58,10 @@ class AdjustmentController extends Controller
         return view('adjustment::create', compact('warehouses', 'activeBranchId', 'defaultWarehouseId'));
     }
 
-
     public function store(Request $request)
     {
         abort_if(Gate::denies('create_adjustments'), 403);
 
-        // IMPORTANT: reference TIDAK divalidasi, karena auto-generate di model Adjustment::boot()
         $request->validate([
             'date'          => 'required|date',
             'warehouse_id'  => 'required|integer|exists:warehouses,id',
@@ -71,6 +69,9 @@ class AdjustmentController extends Controller
 
             'product_ids'   => 'required|array|min:1',
             'product_ids.*' => 'required|integer|exists:products,id',
+
+            'rack_ids'      => 'required|array|min:1',
+            'rack_ids.*'    => 'required|integer|exists:racks,id',
 
             'quantities'    => 'required|array|min:1',
             'quantities.*'  => 'required|integer|min:1',
@@ -107,18 +108,26 @@ class AdjustmentController extends Controller
                 'created_by'   => Auth::id(),
             ]);
 
-            // setelah create, reference sudah ter-generate otomatis
             $reference = (string) $adjustment->reference;
 
             foreach ($request->product_ids as $key => $productId) {
 
                 $productId = (int) $productId;
+                $rackId    = (int) ($request->rack_ids[$key] ?? 0);
                 $qty       = (int) ($request->quantities[$key] ?? 0);
                 $type      = (string) ($request->types[$key] ?? '');
                 $itemNote  = $request->notes[$key] ?? null;
 
+                if ($rackId <= 0) {
+                    throw new \Illuminate\Http\Exceptions\HttpResponseException(
+                        redirect()->back()->withInput()->with('error', 'Rack is required for every item.')
+                    );
+                }
+
+                // ✅ validate rack belongs to warehouse
+                $this->assertRackBelongsToWarehouse($rackId, $warehouseId);
+
                 if ($qty <= 0 || !in_array($type, ['add', 'sub'], true)) {
-                    // validasi item buruk -> redirect back (biar konsisten)
                     throw new \Illuminate\Http\Exceptions\HttpResponseException(
                         redirect()->back()->withInput()->with('error', 'Invalid item data.')
                     );
@@ -129,6 +138,7 @@ class AdjustmentController extends Controller
                 AdjustedProduct::create([
                     'adjustment_id' => $adjustment->id,
                     'product_id'    => $productId,
+                    'rack_id'       => $rackId,
                     'quantity'      => $qty,
                     'type'          => $type,
                     'note'          => $itemNote,
@@ -136,11 +146,12 @@ class AdjustmentController extends Controller
 
                 $mutationType = $type === 'add' ? 'In' : 'Out';
 
-                // note diawali "Adjustment" supaya rollbackByReference(..., 'Adjustment') aman
+                // ✅ bucket default untuk stock adjustment: GOOD
                 $mutationNote = trim(
                     'Adjustment #' . $adjustment->id
                     . ($adjustment->note ? ' | ' . $adjustment->note : '')
                     . ($itemNote ? ' | Item: ' . $itemNote : '')
+                    . ' | GOOD'
                 );
 
                 $this->mutationController->applyInOut(
@@ -151,7 +162,8 @@ class AdjustmentController extends Controller
                     $qty,
                     $reference,
                     $mutationNote,
-                    (string) $request->date
+                    (string) $request->date,
+                    $rackId
                 );
             }
         });
@@ -159,7 +171,6 @@ class AdjustmentController extends Controller
         toast('Adjustment Created!', 'success');
         return redirect()->route('adjustments.index');
     }
-
 
     public function show(Adjustment $adjustment)
     {
@@ -204,11 +215,10 @@ class AdjustmentController extends Controller
     }
 
 
-   public function update(Request $request, Adjustment $adjustment)
+    public function update(Request $request, Adjustment $adjustment)
     {
         abort_if(Gate::denies('edit_adjustments'), 403);
 
-        // IMPORTANT: reference jangan divalidasi & jangan diupdate (biar rollback by reference aman)
         $request->validate([
             'date'          => 'required|date',
             'warehouse_id'  => 'required|integer|exists:warehouses,id',
@@ -216,6 +226,9 @@ class AdjustmentController extends Controller
 
             'product_ids'   => 'required|array|min:1',
             'product_ids.*' => 'required|integer|exists:products,id',
+
+            'rack_ids'      => 'required|array|min:1',
+            'rack_ids.*'    => 'required|integer|exists:racks,id',
 
             'quantities'    => 'required|array|min:1',
             'quantities.*'  => 'required|integer|min:1',
@@ -235,7 +248,6 @@ class AdjustmentController extends Controller
         }
         $branchId = (int) $active;
 
-        // (optional tapi bagus) pastikan adjustment ini milik branch aktif
         if ((int) $adjustment->branch_id !== $branchId) {
             abort(403, 'You can only update adjustments from the active branch.');
         }
@@ -251,13 +263,13 @@ class AdjustmentController extends Controller
 
             $reference = (string) $adjustment->reference;
 
-            // 1) rollback mutation lama
+            // rollback mutation lama
             $this->mutationController->rollbackByReference($reference, 'Adjustment');
 
-            // 2) hapus detail lama
+            // hapus detail lama
             AdjustedProduct::where('adjustment_id', $adjustment->id)->delete();
 
-            // 3) update header (reference tetap)
+            // update header
             $adjustment->update([
                 'date'         => (string) $request->date,
                 'note'         => $request->note,
@@ -265,13 +277,21 @@ class AdjustmentController extends Controller
                 'warehouse_id' => $newWarehouseId,
             ]);
 
-            // 4) insert detail baru + mutation baru
             foreach ($request->product_ids as $key => $productId) {
 
                 $productId = (int) $productId;
+                $rackId    = (int) ($request->rack_ids[$key] ?? 0);
                 $qty       = (int) ($request->quantities[$key] ?? 0);
                 $type      = (string) ($request->types[$key] ?? '');
                 $itemNote  = $request->notes[$key] ?? null;
+
+                if ($rackId <= 0) {
+                    throw new \Illuminate\Http\Exceptions\HttpResponseException(
+                        redirect()->back()->withInput()->with('error', 'Rack is required for every item.')
+                    );
+                }
+
+                $this->assertRackBelongsToWarehouse($rackId, $newWarehouseId);
 
                 if ($qty <= 0 || !in_array($type, ['add', 'sub'], true)) {
                     throw new \Illuminate\Http\Exceptions\HttpResponseException(
@@ -284,6 +304,7 @@ class AdjustmentController extends Controller
                 AdjustedProduct::create([
                     'adjustment_id' => $adjustment->id,
                     'product_id'    => $productId,
+                    'rack_id'       => $rackId,
                     'quantity'      => $qty,
                     'type'          => $type,
                     'note'          => $itemNote,
@@ -295,6 +316,7 @@ class AdjustmentController extends Controller
                     'Adjustment #' . $adjustment->id
                     . ($adjustment->note ? ' | ' . $adjustment->note : '')
                     . ($itemNote ? ' | Item: ' . $itemNote : '')
+                    . ' | GOOD'
                 );
 
                 $this->mutationController->applyInOut(
@@ -305,7 +327,8 @@ class AdjustmentController extends Controller
                     $qty,
                     $reference,
                     $mutationNote,
-                    (string) $request->date
+                    (string) $request->date,
+                    $rackId
                 );
             }
         });
@@ -313,7 +336,6 @@ class AdjustmentController extends Controller
         toast('Adjustment Updated!', 'info');
         return redirect()->route('adjustments.index');
     }
-
 
     public function destroy(Adjustment $adjustment)
     {
@@ -362,6 +384,7 @@ class AdjustmentController extends Controller
         $request->validate([
             'date'         => 'required|date',
             'warehouse_id' => 'required|integer|exists:warehouses,id',
+            'rack_id'      => 'required|integer|exists:racks,id',
             'type'         => 'required|in:defect,damaged,defect_to_good,damaged_to_good',
             'qty'          => 'required|integer|min:1|max:500',
             'product_id'   => 'required|integer|exists:products,id',
@@ -369,6 +392,7 @@ class AdjustmentController extends Controller
         ]);
 
         $warehouseId = (int) $request->warehouse_id;
+        $rackId      = (int) $request->rack_id;
         $productId   = (int) $request->product_id;
         $type        = (string) $request->type;
         $qty         = (int) $request->qty;
@@ -378,6 +402,9 @@ class AdjustmentController extends Controller
         if ((int) $warehouse->branch_id !== $branchId) {
             abort(403, 'Warehouse must belong to active branch.');
         }
+
+        // ✅ rack belongs to warehouse
+        $this->assertRackBelongsToWarehouse($rackId, $warehouseId);
 
         if (!is_array($request->units) || count($request->units) !== $qty) {
             return redirect()
@@ -423,7 +450,7 @@ class AdjustmentController extends Controller
             }
         }
 
-        DB::transaction(function () use ($branchId, $warehouseId, $productId, $type, $qty, $date, $request) {
+        DB::transaction(function () use ($branchId, $warehouseId, $rackId, $productId, $type, $qty, $date, $request) {
 
             Product::findOrFail($productId);
 
@@ -464,28 +491,40 @@ class AdjustmentController extends Controller
                 'created_by'   => (int) Auth::id(),
             ]);
 
-            // row summary untuk tampilan di adjustment detail
             AdjustedProduct::create([
                 'adjustment_id' => $adjustment->id,
                 'product_id'    => $productId,
+                'rack_id'       => $rackId,
                 'quantity'      => $qty,
-                'type'          => in_array($type, ['defect_to_good', 'damaged_to_good'], true) ? 'add' : 'sub',
-                'note'          => $noteHuman . ' | NET-ZERO log',
+                'type'          => 'sub',
+                'note'          => $noteHuman . ' | NET-ZERO bucket log',
             ]);
 
-            // NET-ZERO mutation (histori saja)
-            $noteBase = $noteHuman . " | PID {$productId} | WH {$warehouseId} | By UID " . (int) Auth::id();
+            // ✅ NET-ZERO but bucket-aware mutations
+            // mapping:
+            // defect: OUT GOOD, IN DEFECT
+            // damaged: OUT GOOD, IN DAMAGED
+            // defect_to_good: OUT DEFECT, IN GOOD
+            // damaged_to_good: OUT DAMAGED, IN GOOD
+            $noteBase = $noteHuman . " | PID {$productId} | WH {$warehouseId} | RACK {$rackId} | By UID " . (int) Auth::id();
 
-            $mutationInId = $this->mutationController->applyInOutAndGetMutationId(
-                $branchId,
-                $warehouseId,
-                $productId,
-                'In',
-                $qty,
-                $ref,
-                $noteBase . " | LOG-IN (virtual)",
-                $date
-            );
+            $outBucket = 'GOOD';
+            $inBucket  = 'DEFECT';
+
+            if ($type === 'damaged') {
+                $outBucket = 'GOOD';
+                $inBucket  = 'DAMAGED';
+            }
+
+            if ($type === 'defect_to_good') {
+                $outBucket = 'DEFECT';
+                $inBucket  = 'GOOD';
+            }
+
+            if ($type === 'damaged_to_good') {
+                $outBucket = 'DAMAGED';
+                $inBucket  = 'GOOD';
+            }
 
             $mutationOutId = $this->mutationController->applyInOutAndGetMutationId(
                 $branchId,
@@ -494,12 +533,25 @@ class AdjustmentController extends Controller
                 'Out',
                 $qty,
                 $ref,
-                $noteBase . " | LOG-OUT (virtual)",
-                $date
+                $noteBase . " | OUT | {$outBucket}",
+                $date,
+                $rackId
+            );
+
+            $mutationInId = $this->mutationController->applyInOutAndGetMutationId(
+                $branchId,
+                $warehouseId,
+                $productId,
+                'In',
+                $qty,
+                $ref,
+                $noteBase . " | IN | {$inBucket}",
+                $date,
+                $rackId
             );
 
             // ==========================================================
-            // A) GOOD -> DEFECT / DAMAGED (tetap seperti sekarang)
+            // A) GOOD -> DEFECT / DAMAGED : create per-unit rows with rack_id
             // ==========================================================
             if ($type === 'defect' || $type === 'damaged') {
 
@@ -516,6 +568,7 @@ class AdjustmentController extends Controller
                         ProductDefectItem::create([
                             'branch_id'      => $branchId,
                             'warehouse_id'   => $warehouseId,
+                            'rack_id'        => $rackId,
                             'product_id'     => $productId,
                             'reference_id'   => $adjustment->id,
                             'reference_type' => Adjustment::class,
@@ -529,6 +582,7 @@ class AdjustmentController extends Controller
                         ProductDamagedItem::create([
                             'branch_id'       => $branchId,
                             'warehouse_id'    => $warehouseId,
+                            'rack_id'         => $rackId,
                             'product_id'      => $productId,
                             'reference_id'    => $adjustment->id,
                             'reference_type'  => Adjustment::class,
@@ -536,8 +590,8 @@ class AdjustmentController extends Controller
                             'reason'          => trim((string) ($unit['reason'] ?? '')),
                             'photo_path'      => $photoPath,
                             'created_by'      => (int) Auth::id(),
-                            'mutation_in_id'  => (int) $mutationInId,
-                            'mutation_out_id' => (int) $mutationOutId,
+                            'mutation_in_id'  => (int) $mutationInId,   // ✅ IN DAMAGED
+                            'mutation_out_id' => null,                  // out nanti saat moved_out
                         ]);
                     }
                 }
@@ -546,13 +600,14 @@ class AdjustmentController extends Controller
             }
 
             // ==========================================================
-            // B) DEFECT/DAMAGED -> GOOD (DELETE FIFO)  ✅
+            // B) DEFECT -> GOOD (DELETE FIFO) + rack filter
             // ==========================================================
             if ($type === 'defect_to_good') {
 
                 $ids = ProductDefectItem::query()
                     ->where('branch_id', $branchId)
                     ->where('warehouse_id', $warehouseId)
+                    ->where('rack_id', $rackId)
                     ->where('product_id', $productId)
                     ->orderBy('id')
                     ->limit($qty)
@@ -562,7 +617,7 @@ class AdjustmentController extends Controller
 
                 if (count($ids) < $qty) {
                     throw new \Illuminate\Http\Exceptions\HttpResponseException(
-                        redirect()->back()->withInput()->with('error', "Not enough DEFECT units to reclass to GOOD. Available=" . count($ids) . ", Needed={$qty}.")
+                        redirect()->back()->withInput()->with('error', "Not enough DEFECT units in this rack to reclass to GOOD. Available=" . count($ids) . ", Needed={$qty}.")
                     );
                 }
 
@@ -573,11 +628,15 @@ class AdjustmentController extends Controller
                 return;
             }
 
+            // ==========================================================
+            // C) DAMAGED -> GOOD (DELETE FIFO) + rack filter
+            // ==========================================================
             if ($type === 'damaged_to_good') {
 
                 $ids = ProductDamagedItem::query()
                     ->where('branch_id', $branchId)
                     ->where('warehouse_id', $warehouseId)
+                    ->where('rack_id', $rackId)
                     ->where('product_id', $productId)
                     ->orderBy('id')
                     ->limit($qty)
@@ -587,7 +646,7 @@ class AdjustmentController extends Controller
 
                 if (count($ids) < $qty) {
                     throw new \Illuminate\Http\Exceptions\HttpResponseException(
-                        redirect()->back()->withInput()->with('error', "Not enough DAMAGED units to reclass to GOOD. Available=" . count($ids) . ", Needed={$qty}.")
+                        redirect()->back()->withInput()->with('error', "Not enough DAMAGED units in this rack to reclass to GOOD. Available=" . count($ids) . ", Needed={$qty}.")
                     );
                 }
 
@@ -637,19 +696,20 @@ class AdjustmentController extends Controller
         abort_if(Gate::denies('create_adjustments'), 403);
 
         $active = session('active_branch');
-        if ($active === 'all' || !$active) {
+        if ($active === 'all' || $active === null || $active === '') {
             return response()->json([
                 'success' => false,
                 'message' => "Please select a specific branch (not All Branch)."
             ], 422);
         }
 
-        $branchId = (int) $active;
+        $branchId    = (int) $active;
         $warehouseId = (int) $request->query('warehouse_id');
+        $rackId      = (int) $request->query('rack_id', 0); // optional
 
-        // purpose: good | defect | damaged
+        // purpose: good | defect | damaged | total
         $purpose = strtolower((string) $request->query('purpose', 'good'));
-        if (!in_array($purpose, ['good', 'defect', 'damaged'], true)) {
+        if (!in_array($purpose, ['good', 'defect', 'damaged', 'total'], true)) {
             $purpose = 'good';
         }
 
@@ -665,51 +725,41 @@ class AdjustmentController extends Controller
             abort(403, 'Warehouse must belong to active branch.');
         }
 
-        // defect qty (semua row defect)
-        $defectSub = DB::table('product_defect_items')
-            ->selectRaw('product_id, SUM(quantity) as defect_qty')
-            ->where('branch_id', $branchId)
-            ->where('warehouse_id', $warehouseId)
-            ->groupBy('product_id');
+        $q = DB::table('stock_racks')
+            ->leftJoin('products', 'products.id', '=', 'stock_racks.product_id')
+            ->where('stock_racks.branch_id', $branchId)
+            ->where('stock_racks.warehouse_id', $warehouseId);
 
-        // damaged qty (semua row damaged)
-        $damagedSub = DB::table('product_damaged_items')
-            ->selectRaw('product_id, SUM(quantity) as damaged_qty')
-            ->where('branch_id', $branchId)
-            ->where('warehouse_id', $warehouseId)
-            ->groupBy('product_id');
+        if ($rackId > 0) {
+            $q->where('stock_racks.rack_id', $rackId);
+        }
 
-        $rows = DB::table('stocks')
-            ->selectRaw('
-                stocks.product_id,
-                SUM(stocks.qty_available) as total_qty,
-                COALESCE(defect.defect_qty,0) as defect_qty,
-                COALESCE(damaged.damaged_qty,0) as damaged_qty,
-                GREATEST(
-                    SUM(stocks.qty_available)
-                    - COALESCE(defect.defect_qty,0)
-                    - COALESCE(damaged.damaged_qty,0),
-                0) as good_qty,
+        $rows = $q->selectRaw('
+                stock_racks.product_id,
+                COALESCE(SUM(stock_racks.qty_available), 0) as qty_available,
+                COALESCE(SUM(stock_racks.qty_good), 0) as good_qty,
+                COALESCE(SUM(stock_racks.qty_defect), 0) as defect_qty,
+                COALESCE(SUM(stock_racks.qty_damaged), 0) as damaged_qty,
                 MAX(products.product_code) as product_code,
                 MAX(products.product_name) as product_name
             ')
-            ->leftJoin('products', 'products.id', '=', 'stocks.product_id')
-            ->leftJoinSub($defectSub, 'defect', fn($j) => $j->on('defect.product_id','=','stocks.product_id'))
-            ->leftJoinSub($damagedSub,'damaged',fn($j)=> $j->on('damaged.product_id','=','stocks.product_id'))
-            ->where('stocks.branch_id', $branchId)
-            ->where('stocks.warehouse_id', $warehouseId)
-            ->groupBy('stocks.product_id')
+            ->groupBy('stock_racks.product_id')
             ->orderByRaw('MAX(products.product_name)')
             ->get();
 
         $data = [];
         foreach ($rows as $r) {
+            $goodQty    = (int) ($r->good_qty ?? 0);
+            $defectQty  = (int) ($r->defect_qty ?? 0);
+            $damagedQty = (int) ($r->damaged_qty ?? 0);
 
-            $goodQty    = (int) $r->good_qty;
-            $defectQty  = (int) $r->defect_qty;
-            $damagedQty = (int) $r->damaged_qty;
+            // ✅ total available = good + defect + damaged (atau pakai qty_available jika sudah benar)
+            $totalAvailable = $goodQty + $defectQty + $damagedQty;
+            $qtyAvailableCol = (int) ($r->qty_available ?? 0);
+            if ($qtyAvailableCol > 0) {
+                $totalAvailable = $qtyAvailableCol;
+            }
 
-            // Tentukan available qty sesuai purpose
             $availableQty = 0;
             $badgeText = '';
 
@@ -719,9 +769,12 @@ class AdjustmentController extends Controller
             } elseif ($purpose === 'defect') {
                 $availableQty = $defectQty;
                 $badgeText = 'DEFECT';
-            } else {
+            } elseif ($purpose === 'damaged') {
                 $availableQty = $damagedQty;
                 $badgeText = 'DAMAGED';
+            } else { // total
+                $availableQty = $totalAvailable;
+                $badgeText = 'TOTAL';
             }
 
             if ($availableQty <= 0) {
@@ -729,13 +782,16 @@ class AdjustmentController extends Controller
             }
 
             $label =
-                trim(($r->product_code ?? '').' '.($r->product_name ?? '')) .
+                trim(($r->product_code ?? '') . ' ' . ($r->product_name ?? '')) .
                 ' (' . $badgeText . ': ' . number_format($availableQty) . ')';
 
             $data[] = [
                 'id'            => (int) $r->product_id,
                 'text'          => $label,
-                'available_qty' => (int) $availableQty,
+                'available_qty' => $availableQty,
+
+                // extra info
+                'total_available' => $totalAvailable,
                 'good_qty'      => $goodQty,
                 'defect_qty'    => $defectQty,
                 'damaged_qty'   => $damagedQty,
@@ -743,10 +799,74 @@ class AdjustmentController extends Controller
         }
 
         return response()->json([
-            'success' => true,
-            'purpose' => $purpose,
-            'data'    => $data,
+            'success'      => true,
+            'purpose'      => $purpose,
+            'warehouse_id' => $warehouseId,
+            'rack_id'      => $rackId > 0 ? $rackId : null,
+            'data'         => $data,
         ]);
     }
 
+    public function racks(Request $request)
+    {
+        abort_if(Gate::denies('create_adjustments'), 403);
+
+        $active = session('active_branch');
+        if ($active === 'all' || $active === null || $active === '') {
+            return response()->json([
+                'success' => false,
+                'message' => "Please select a specific branch (not All Branch)."
+            ], 422);
+        }
+
+        $branchId = (int) $active;
+        $warehouseId = (int) $request->query('warehouse_id');
+
+        if ($warehouseId <= 0) {
+            return response()->json([
+                'success' => false,
+                'message' => "warehouse_id is required."
+            ], 422);
+        }
+
+        $wh = Warehouse::findOrFail($warehouseId);
+        if ((int)$wh->branch_id !== $branchId) {
+            return response()->json([
+                'success' => false,
+                'message' => "Warehouse must belong to active branch."
+            ], 403);
+        }
+
+        $rows = DB::table('racks')
+            ->where('warehouse_id', $warehouseId)
+            ->orderBy('code')
+            ->orderBy('name')
+            ->get(['id', 'code', 'name']);
+
+        $data = [];
+        foreach ($rows as $r) {
+            $label = trim((string)($r->code ?? '')) . ' - ' . trim((string)($r->name ?? ''));
+            $data[] = [
+                'id' => (int)$r->id,
+                'label' => trim($label, ' -'),
+            ];
+        }
+
+        return response()->json([
+            'success' => true,
+            'data' => $data,
+        ]);
+    }
+
+    private function assertRackBelongsToWarehouse(int $rackId, int $warehouseId): void
+    {
+        $ok = DB::table('racks')
+            ->where('id', $rackId)
+            ->where('warehouse_id', $warehouseId)
+            ->exists();
+
+        if (!$ok) {
+            abort(422, "Invalid rack: rack_id={$rackId} does not belong to warehouse_id={$warehouseId}.");
+        }
+    }
 }

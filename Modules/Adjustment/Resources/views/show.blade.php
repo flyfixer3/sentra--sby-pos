@@ -38,7 +38,6 @@
         $creatorName = optional($adjustment->creator)->name ?? optional($adjustment->creator)->username ?? '-';
         $createdAt   = $adjustment->created_at ? Carbon::parse($adjustment->created_at)->format('d M Y H:i') : '-';
 
-        // Detect Quality Reclass by note / item note / reference pattern
         $isQuality = false;
         $noteText = (string) ($adjustment->note ?? '');
         if (stripos($noteText, 'Quality Reclass') !== false) {
@@ -52,7 +51,6 @@
             }
         }
 
-        // Pull per-unit QC items linked to this adjustment
         $defectItems = ProductDefectItem::query()
             ->where('reference_type', \Modules\Adjustment\Entities\Adjustment::class)
             ->where('reference_id', $adjustment->id)
@@ -65,11 +63,9 @@
             ->orderBy('id')
             ->get();
 
-        $qualityType = null; // defect / damaged
+        $qualityType = null;
         if ($defectItems->count() > 0) $qualityType = 'defect';
         if ($damagedItems->count() > 0) $qualityType = 'damaged';
-
-        // If both exist (harusnya nggak), anggap mixed
         if ($defectItems->count() > 0 && $damagedItems->count() > 0) $qualityType = 'mixed';
     @endphp
 
@@ -78,7 +74,6 @@
             <div class="card">
                 <div class="card-body">
 
-                    {{-- NOTE HEADER (general) --}}
                     @if(!empty($adjustment->note))
                         <div class="alert alert-info mb-3 d-flex align-items-center justify-content-between">
                             <div>
@@ -130,17 +125,27 @@
                             <tr>
                                 <th>Product Name</th>
                                 <th>Code</th>
+                                <th>Rack</th>
                                 <th>Quantity</th>
-                                <th>Type</th>
                             </tr>
 
                             @foreach($adjustment->adjustedProducts as $adjustedProduct)
                                 <tr>
                                     <td>{{ $adjustedProduct->product->product_name ?? '-' }}</td>
                                     <td>{{ $adjustedProduct->product->product_code ?? '-' }}</td>
-                                    <td>{{ $adjustedProduct->quantity }}</td>
                                     <td>
-                                        {{-- ✅ If quality: show Quality Reclass type instead of add/sub --}}
+                                        @if($adjustedProduct->rack)
+                                            {{ $adjustedProduct->rack->code ?? '-' }} - {{ $adjustedProduct->rack->name ?? '-' }}
+                                        @else
+                                            <span class="muted">-</span>
+                                        @endif
+                                    </td>
+                                    <td>{{ $adjustedProduct->quantity }}</td>
+                                </tr>
+
+                                <tr>
+                                    <td colspan="4">
+                                        <strong>Type:</strong>
                                         @if($isQuality)
                                             <span class="qc-badge">
                                                 <i class="bi bi-shield-check"></i>
@@ -156,22 +161,19 @@
                                                 (-) Subtraction
                                             @endif
                                         @endif
+
+                                        @if(!empty($adjustedProduct->note))
+                                            <div class="mt-2">
+                                                <strong>Item Note:</strong><br>
+                                                {{ $adjustedProduct->note }}
+                                            </div>
+                                        @endif
                                     </td>
                                 </tr>
-
-                                @if(!empty($adjustedProduct->note))
-                                    <tr>
-                                        <td colspan="4">
-                                            <strong>Item Note:</strong><br>
-                                            {{ $adjustedProduct->note }}
-                                        </td>
-                                    </tr>
-                                @endif
                             @endforeach
                         </table>
                     </div>
 
-                    {{-- ✅ QUALITY DETAILS + PHOTO --}}
                     @if($isQuality)
                         <div class="mt-4">
 
@@ -188,6 +190,7 @@
                                         <thead>
                                             <tr>
                                                 <th style="width:60px" class="text-center">#</th>
+                                                <th>Rack</th>
                                                 <th>Defect Type</th>
                                                 <th>Description</th>
                                                 <th style="width:120px" class="text-center">Photo</th>
@@ -197,6 +200,7 @@
                                             @forelse($defectItems as $i => $it)
                                                 <tr>
                                                     <td class="text-center">{{ $i+1 }}</td>
+                                                    <td>{{ $it->rack_id ?? '-' }}</td>
                                                     <td>{{ $it->defect_type ?? '-' }}</td>
                                                     <td>{{ $it->description ?? '-' }}</td>
                                                     <td class="text-center">
@@ -212,7 +216,7 @@
                                                 </tr>
                                             @empty
                                                 <tr>
-                                                    <td colspan="4" class="text-center muted">No defect items found.</td>
+                                                    <td colspan="5" class="text-center muted">No defect items found.</td>
                                                 </tr>
                                             @endforelse
                                         </tbody>
@@ -225,6 +229,7 @@
                                         <thead>
                                             <tr>
                                                 <th style="width:60px" class="text-center">#</th>
+                                                <th>Rack</th>
                                                 <th>Reason</th>
                                                 <th>Description</th>
                                                 <th style="width:120px" class="text-center">Photo</th>
@@ -234,6 +239,7 @@
                                             @forelse($damagedItems as $i => $it)
                                                 <tr>
                                                     <td class="text-center">{{ $i+1 }}</td>
+                                                    <td>{{ $it->rack_id ?? '-' }}</td>
                                                     <td>{{ $it->reason ?? '-' }}</td>
                                                     <td>{{ $it->description ?? '-' }}</td>
                                                     <td class="text-center">
@@ -249,7 +255,7 @@
                                                 </tr>
                                             @empty
                                                 <tr>
-                                                    <td colspan="4" class="text-center muted">No damaged items found.</td>
+                                                    <td colspan="5" class="text-center muted">No damaged items found.</td>
                                                 </tr>
                                             @endforelse
                                         </tbody>

@@ -10,7 +10,11 @@
                     <th style="width:60px">#</th>
                     <th>Product</th>
                     <th style="width:160px">Code</th>
+
                     <th style="width:140px" class="text-center">Stock</th>
+
+                    <th style="width:220px">Rack</th>
+
                     <th style="width:140px">Qty</th>
                     <th style="width:160px">Type</th>
                     <th>Note</th>
@@ -28,6 +32,8 @@
                             $badgeClass = 'badge-success';
                             if ($stockLabel === 'DEFECT') $badgeClass = 'badge-warning';
                             if ($stockLabel === 'DAMAGED') $badgeClass = 'badge-danger';
+
+                            $selectedRackId = isset($product['rack_id']) ? (int)$product['rack_id'] : null;
                         @endphp
 
                         <tr>
@@ -42,15 +48,49 @@
                                     </span>
                                 @else
                                     <span class="badge badge-info">
-                                        {{ $product['product_quantity'] }} {{ $product['product_unit'] }}
+                                        {{ number_format((int)($product['stock_qty'] ?? 0)) }} {{ $product['product_unit'] }}
                                     </span>
                                 @endif
                             </td>
 
-                            {{-- Stock mode: kirim array untuk controller store/update --}}
+                            {{-- STOCK mode: kirim array untuk controller store/update --}}
                             @if($mode !== 'quality')
                                 <input type="hidden" name="product_ids[]" value="{{ $product['id'] }}">
                             @endif
+
+                            <td>
+                                @if($mode === 'quality')
+                                    <select
+                                        class="form-control"
+                                        name="rack_id"
+                                        wire:model="products.{{ $key }}.rack_id"
+                                        required
+                                    >
+                                        <option value="">-- Select Rack --</option>
+                                        @foreach(($rackOptions ?? []) as $opt)
+                                            <option value="{{ $opt['id'] }}" {{ (int)$opt['id'] === (int)$selectedRackId ? 'selected' : '' }}>
+                                                {{ $opt['label'] }}
+                                            </option>
+                                        @endforeach
+                                    </select>
+                                    <small class="text-muted">Required (Quality)</small>
+                                @else
+                                    <select
+                                        class="form-control"
+                                        name="rack_ids[]"
+                                        wire:model.lazy="products.{{ $key }}.rack_id"
+                                        required
+                                    >
+                                        <option value="">-- Select Rack --</option>
+                                        @foreach(($rackOptions ?? []) as $opt)
+                                            <option value="{{ $opt['id'] }}" {{ (int)$opt['id'] === (int)$selectedRackId ? 'selected' : '' }}>
+                                                {{ $opt['label'] }}
+                                            </option>
+                                        @endforeach
+                                    </select>
+                                    <small class="text-muted">Required</small>
+                                @endif
+                            </td>
 
                             <td>
                                 <input
@@ -58,7 +98,7 @@
                                     min="1"
                                     class="form-control"
                                     @if($mode === 'quality')
-                                        wire:model.lazy="products.{{ $key }}.quantity"
+                                        wire:model="products.{{ $key }}.quantity"
                                     @else
                                         name="quantities[]"
                                         value="{{ $product['quantity'] }}"
@@ -101,7 +141,7 @@
                     @endforeach
                 @else
                     <tr>
-                        <td colspan="8" class="text-center text-danger">
+                        <td colspan="9" class="text-center text-danger">
                             Please search & select products!
                         </td>
                     </tr>

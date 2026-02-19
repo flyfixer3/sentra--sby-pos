@@ -15,4 +15,8 @@ Route::group(['middleware' => 'auth'], function () {
     Route::get('adjustments/quality/products', 'AdjustmentController@qualityProducts')
         ->name('adjustments.quality.products');
 
+    // ✅ NEW: get racks by warehouse
+    Route::get('adjustments/racks', 'AdjustmentController@racks')
+        ->name('adjustments.racks');
+
 });

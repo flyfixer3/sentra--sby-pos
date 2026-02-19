@@ -49,7 +49,7 @@
                 <div class="sa-header">
                     <div>
                         <h5 class="sa-title">Create Adjustment</h5>
-                        <p class="sa-sub">Mode 1: Stock add/sub (creates mutation). Mode 2: Quality reclass GOOD → defect/damaged (label only).</p>
+                        <p class="sa-sub">Mode 1: Stock add/sub (creates mutation). Mode 2: Quality reclass GOOD ↔ defect/damaged (net-zero mutation buckets).</p>
                     </div>
 
                     <span class="sa-badge">
@@ -81,7 +81,8 @@
 
                             <div class="alert alert-light border mb-3">
                                 <div class="sa-help">
-                                    <b>Stock Adjustment</b> akan membuat <b>Mutation In/Out</b> dan update <b>Stock.qty_available</b>.
+                                    <b>Stock Adjustment</b> akan membuat <b>Mutation In/Out</b> dan update <b>Stock.qty_available</b> + <b>StockRack (GOOD)</b>.
+                                    <br>✅ Setiap item wajib pilih <b>Rack</b>.
                                 </div>
                             </div>
 
@@ -144,7 +145,10 @@
 
                             <div class="alert alert-info border mb-3">
                                 <div class="sa-help mb-1"><b>Info:</b> GOOD = TOTAL - defect - damaged (warehouse yang dipilih).</div>
-                                <div class="sa-help">Reclass ini <b>label only</b> + create detail per unit + foto opsional.</div>
+                                <div class="sa-help">
+                                    Reclass ini akan mengubah bucket di <b>StockRack</b> (GOOD/DEFECT/DAMAGED) tapi total stok tetap net-zero.
+                                    <br>✅ Pilih <b>Rack</b> per item (di tabel) seperti Stock Adjustment.
+                                </div>
                             </div>
 
                             @php
@@ -157,7 +161,7 @@
                                 <input type="hidden" name="date" value="{{ now()->format('Y-m-d') }}">
 
                                 <div class="form-row">
-                                    <div class="col-lg-4">
+                                    <div class="col-lg-6">
                                         <div class="form-group">
                                             <label class="sa-form-label">Warehouse <span class="text-danger">*</span></label>
 
@@ -169,7 +173,6 @@
                                                 @endforeach
                                             </select>
 
-                                            {{-- dikirim ke backend --}}
                                             <input type="hidden" name="warehouse_id" id="quality_warehouse_id" value="{{ $defaultQualityWarehouseId }}">
 
                                             <small class="text-muted">
@@ -178,10 +181,10 @@
                                         </div>
                                     </div>
 
-                                    <div class="col-lg-4">
+                                    <div class="col-lg-6">
                                         <div class="form-group">
                                             <label class="sa-form-label">Type <span class="text-danger">*</span></label>
-                                           <select name="type" id="quality_type" class="form-control" required>
+                                            <select name="type" id="quality_type" class="form-control" required>
                                                 <optgroup label="GOOD → Quality Issue">
                                                     <option value="defect">Defect (GOOD → DEFECT)</option>
                                                     <option value="damaged">Damaged (GOOD → DAMAGED)</option>
@@ -193,8 +196,10 @@
                                             </select>
                                         </div>
                                     </div>
+                                </div>
 
-                                    <div class="col-lg-4">
+                                <div class="form-row">
+                                    <div class="col-lg-12">
                                         <div class="form-group">
                                             <label class="sa-form-label">Summary</label>
                                             <div class="d-flex align-items-center gap-2" style="gap:10px;">
@@ -277,14 +282,6 @@
 <script>
 (function(){
 
-    function livewireEmit(eventName, payload){
-        try{
-            if (window.Livewire && typeof window.Livewire.emit === 'function') {
-                window.Livewire.emit(eventName, payload);
-            }
-        }catch(e){}
-    }
-
     function toastWarn(msg){
         try{
             if (window.toastr && typeof window.toastr.warning === 'function') {
@@ -295,6 +292,30 @@
         alert(msg);
     }
 
+    // ==========================
+    // ✅ STOCK: sync warehouse -> Livewire
+    // ==========================
+    function syncStockWarehouse(){
+        const ws = document.getElementById('warehouse_id_stock');
+        if (!ws) return;
+
+        const wid = ws.value ? parseInt(ws.value, 10) : null;
+        try{
+            if (window.Livewire && typeof window.Livewire.emit === 'function') {
+                window.Livewire.emit('stockWarehouseChanged', wid);
+            }
+        }catch(e){}
+    }
+
+    document.getElementById('warehouse_id_stock')?.addEventListener('change', syncStockWarehouse);
+
+    document.addEventListener('livewire:load', function(){
+        syncStockWarehouse();
+    });
+
+    // ==========================
+    // ✅ QUALITY: warehouse hidden + Livewire (rack handled inside Livewire per-row)
+    // ==========================
     function syncQualityWarehouse(){
         const wq = document.getElementById('warehouse_id_quality');
         const hidden = document.getElementById('quality_warehouse_id');
@@ -303,12 +324,16 @@
         const wid = wq.value ? parseInt(wq.value, 10) : null;
         hidden.value = wid ?? '';
 
-        if (window.Livewire && typeof window.Livewire.emit === 'function') {
-            window.Livewire.emit('qualityWarehouseChanged', wid);
-        }
+        try{
+            if (window.Livewire && typeof window.Livewire.emit === 'function') {
+                window.Livewire.emit('qualityWarehouseChanged', wid);
+            }
+        }catch(e){}
     }
 
-
+    // ==========================
+    // Units builder
+    // ==========================
     function buildUnits(qty, type){
         const tbody = document.getElementById('unit_tbody');
         const title = document.getElementById('unit_col_title');
@@ -360,8 +385,6 @@
         }
     }
 
-
-
     window.addEventListener('quality-table-updated', function(e){
         const detail = (e && e.detail) ? e.detail : {};
         const productId = detail.product_id || '';
@@ -378,33 +401,13 @@
         buildUnits(qty, type);
     });
 
-    // saat tab quality benar-benar aktif
-    document.querySelector('button[data-target="#pane-quality"]')
-        ?.addEventListener('shown.bs.tab', function(){
-            syncQualityWarehouse();
-            const qty = document.getElementById('quality_qty')?.value || 0;
-            const type = document.getElementById('quality_type')?.value || 'defect';
-            buildUnits(qty, type);
-        });
-
-    // fallback click
-    document.getElementById('tab-quality')?.addEventListener('click', ()=>{
-        syncQualityWarehouse();
-        const qty = document.getElementById('quality_qty')?.value || 0;
-        const type = document.getElementById('quality_type')?.value || 'defect';
-        buildUnits(qty, type);
-    });
-
     document.getElementById('warehouse_id_quality')?.addEventListener('change', syncQualityWarehouse);
 
     document.getElementById('quality_type')?.addEventListener('change', ()=>{
         const typeVal = document.getElementById('quality_type').value;
-
-        // update unit table
         const qty = document.getElementById('quality_qty')?.value || 0;
         buildUnits(qty, typeVal);
 
-        // NEW: kasih tahu Livewire agar tabel stok berubah sumbernya
         try{
             if (window.Livewire && typeof window.Livewire.emit === 'function') {
                 window.Livewire.emit('qualityTypeChanged', typeVal);
@@ -412,20 +415,27 @@
         }catch(e){}
     });
 
-
     document.getElementById('qualityForm')?.addEventListener('submit', function(ev){
         const wh = document.getElementById('quality_warehouse_id').value;
+
+        // ✅ rack sekarang per-item di tabel (name="rack_id")
+        const rack = document.querySelector('#qualityForm select[name="rack_id"]')?.value || '';
+
         const pid = document.getElementById('quality_product_id').value;
         const qty = parseInt(document.getElementById('quality_qty').value || '0', 10);
 
         if (!wh) { ev.preventDefault(); toastWarn('Please select Warehouse first (Quality tab).'); return; }
         if (!pid) { ev.preventDefault(); toastWarn('Please select 1 product (via SearchProduct) for Quality Reclass.'); return; }
+        if (!rack) { ev.preventDefault(); toastWarn('Please select Rack for the item (Quality tab).'); return; }
         if (!qty || qty < 1) { ev.preventDefault(); toastWarn('Qty must be at least 1.'); return; }
     });
 
-    // INIT: sekali saat Livewire ready
+    // init quality on load
     document.addEventListener('livewire:load', function(){
         syncQualityWarehouse();
+        const qty = document.getElementById('quality_qty')?.value || 0;
+        const type = document.getElementById('quality_type')?.value || 'defect';
+        buildUnits(qty, type);
     });
 
 })();
