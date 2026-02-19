@@ -16,6 +16,29 @@
             background:#fff;
         }
         .muted{ color:#6c757d; font-size:12px; }
+
+        /* ✅ Condition badges */
+        .cond-badge{
+            display:inline-flex;align-items:center;gap:6px;
+            padding:6px 10px;border-radius:999px;font-size:12px;
+            border:1px solid rgba(0,0,0,.08);
+            white-space:nowrap;
+        }
+        .cond-good{
+            background: rgba(25,135,84,.10);
+            border-color: rgba(25,135,84,.25);
+            color: #198754;
+        }
+        .cond-defect{
+            background: rgba(255,193,7,.12);
+            border-color: rgba(255,193,7,.35);
+            color: #b88400;
+        }
+        .cond-damaged{
+            background: rgba(220,53,69,.10);
+            border-color: rgba(220,53,69,.25);
+            color: #dc3545;
+        }
     </style>
 @endpush
 
@@ -38,19 +61,22 @@
         $creatorName = optional($adjustment->creator)->name ?? optional($adjustment->creator)->username ?? '-';
         $createdAt   = $adjustment->created_at ? Carbon::parse($adjustment->created_at)->format('d M Y H:i') : '-';
 
+        // detect "Quality Reclass"
         $isQuality = false;
         $noteText = (string) ($adjustment->note ?? '');
         if (stripos($noteText, 'Quality Reclass') !== false) {
             $isQuality = true;
         } else {
             foreach ($adjustment->adjustedProducts as $ap) {
-                if (stripos((string) ($ap->note ?? ''), 'Quality Reclass') !== false || stripos((string) ($ap->note ?? ''), 'NET-ZERO') !== false) {
+                $apNote = (string) ($ap->note ?? '');
+                if (stripos($apNote, 'Quality Reclass') !== false || stripos($apNote, 'NET-ZERO') !== false) {
                     $isQuality = true;
                     break;
                 }
             }
         }
 
+        // per-unit rows linked to this adjustment (for QC section)
         $defectItems = ProductDefectItem::query()
             ->where('reference_type', \Modules\Adjustment\Entities\Adjustment::class)
             ->where('reference_id', $adjustment->id)
@@ -67,6 +93,34 @@
         if ($defectItems->count() > 0) $qualityType = 'defect';
         if ($damagedItems->count() > 0) $qualityType = 'damaged';
         if ($defectItems->count() > 0 && $damagedItems->count() > 0) $qualityType = 'mixed';
+
+        // helper parsing condition from adjustedProduct.note:
+        // note format example: "Item: ... | COND=DEFECT | DEFECT_TYPE=..."
+        $parseCond = function (?string $note): string {
+            $note = (string) $note;
+            if ($note === '') return 'GOOD';
+            if (preg_match('/\bCOND=([A-Z_]+)\b/i', $note, $m)) {
+                $v = strtoupper((string) ($m[1] ?? 'GOOD'));
+                if (in_array($v, ['GOOD','DEFECT','DAMAGED'], true)) return $v;
+            }
+            return 'GOOD';
+        };
+
+        $condBadgeClass = function (string $cond): string {
+            return match ($cond) {
+                'DEFECT' => 'cond-badge cond-defect',
+                'DAMAGED' => 'cond-badge cond-damaged',
+                default => 'cond-badge cond-good',
+            };
+        };
+
+        $condIcon = function (string $cond): string {
+            return match ($cond) {
+                'DEFECT' => 'bi bi-exclamation-triangle',
+                'DAMAGED' => 'bi bi-x-octagon',
+                default => 'bi bi-check-circle',
+            };
+        };
     @endphp
 
     <div class="row">
@@ -122,17 +176,37 @@
                                 <td colspan="2">{{ $createdAt }}</td>
                             </tr>
 
+                            {{-- ✅ Item list --}}
                             <tr>
-                                <th>Product Name</th>
-                                <th>Code</th>
+                                <th>Product</th>
                                 <th>Rack</th>
-                                <th>Quantity</th>
+                                <th class="text-center" style="width:160px">Condition</th>
+                                <th class="text-center" style="width:170px">Type / Qty</th>
                             </tr>
 
                             @foreach($adjustment->adjustedProducts as $adjustedProduct)
+                                @php
+                                    $cond = $parseCond($adjustedProduct->note ?? '');
+                                    $badgeCls = $condBadgeClass($cond);
+                                    $iconCls = $condIcon($cond);
+
+                                    $typeText = $isQuality
+                                        ? 'Quality Reclass'
+                                        : (($adjustedProduct->type === 'add') ? 'Add' : 'Sub');
+
+                                    $typePrefix = $isQuality ? '' : (($adjustedProduct->type === 'add') ? '(+)' : '(-)');
+                                @endphp
+
                                 <tr>
-                                    <td>{{ $adjustedProduct->product->product_name ?? '-' }}</td>
-                                    <td>{{ $adjustedProduct->product->product_code ?? '-' }}</td>
+                                    <td>
+                                        <div>
+                                            <strong>{{ $adjustedProduct->product->product_name ?? '-' }}</strong>
+                                        </div>
+                                        <div class="muted">
+                                            Code: {{ $adjustedProduct->product->product_code ?? '-' }}
+                                        </div>
+                                    </td>
+
                                     <td>
                                         @if($adjustedProduct->rack)
                                             {{ $adjustedProduct->rack->code ?? '-' }} - {{ $adjustedProduct->rack->name ?? '-' }}
@@ -140,40 +214,47 @@
                                             <span class="muted">-</span>
                                         @endif
                                     </td>
-                                    <td>{{ $adjustedProduct->quantity }}</td>
-                                </tr>
 
-                                <tr>
-                                    <td colspan="4">
-                                        <strong>Type:</strong>
+                                    <td class="text-center">
                                         @if($isQuality)
                                             <span class="qc-badge">
                                                 <i class="bi bi-shield-check"></i>
-                                                Quality Reclass
+                                                Quality
                                                 @if($qualityType && $qualityType !== 'mixed')
                                                     ({{ $qualityType }})
                                                 @endif
                                             </span>
                                         @else
-                                            @if($adjustedProduct->type === 'add')
-                                                (+) Addition
-                                            @else
-                                                (-) Subtraction
-                                            @endif
-                                        @endif
-
-                                        @if(!empty($adjustedProduct->note))
-                                            <div class="mt-2">
-                                                <strong>Item Note:</strong><br>
-                                                {{ $adjustedProduct->note }}
-                                            </div>
+                                            <span class="{{ $badgeCls }}">
+                                                <i class="{{ $iconCls }}"></i>
+                                                {{ $cond }}
+                                            </span>
                                         @endif
                                     </td>
+
+                                    <td class="text-center">
+                                        <div>
+                                            <strong>{{ $typePrefix }} {{ $typeText }}</strong>
+                                        </div>
+                                        <div class="muted">
+                                            Qty: {{ (int) $adjustedProduct->quantity }}
+                                        </div>
+                                    </td>
                                 </tr>
+
+                                @if(!empty($adjustedProduct->note))
+                                    <tr>
+                                        <td colspan="4">
+                                            <strong>Item Note:</strong><br>
+                                            {{ $adjustedProduct->note }}
+                                        </td>
+                                    </tr>
+                                @endif
                             @endforeach
                         </table>
                     </div>
 
+                    {{-- QC details only when quality reclass --}}
                     @if($isQuality)
                         <div class="mt-4">
 

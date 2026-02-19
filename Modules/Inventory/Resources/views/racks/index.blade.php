@@ -77,7 +77,8 @@
                 <table class="table table-bordered table-striped mb-0">
                     <thead class="thead-dark">
                         <tr>
-                            <th style="width:70px;">#</th>
+                            <!-- <th style="width:70px;">#</th> -->
+                            <th style="width:70px;">Rack ID</th>
                             <th>Warehouse</th>
                             <th style="width:140px;">Code</th>
                             <th>Name</th>
@@ -88,7 +89,8 @@
                     <tbody>
                         @forelse($racks as $i => $r)
                             <tr>
-                                <td class="align-middle">{{ $racks->firstItem() + $i }}</td>
+                                <!-- <td class="align-middle">{{ $racks->firstItem() + $i }}</td> -->
+                                <td class="align-middle">{{ $r->id }}</td>
                                 <td class="align-middle">
                                     {{ $r->warehouse?->warehouse_name ?? ('WH#'.$r->warehouse_id) }}
                                 </td>
