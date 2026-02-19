@@ -82,20 +82,15 @@ class AdjustmentController extends Controller
             'conditions'    => 'required|array|min:1',
             'conditions.*'  => 'required|in:good,defect,damaged',
 
-            // ✅ per-row free note
-            'notes'         => 'nullable|array',
-
-            // ✅ NEW: per-unit payload (string JSON) - nullable, tapi akan divalidasi per kondisi
-            'defects_json'        => 'nullable|array',
-            'defects_json.*'      => 'nullable|string',
-            'damaged_json'        => 'nullable|array',
-            'damaged_json.*'      => 'nullable|string',
-
-            // ✅ NEW: pick ids untuk SUB (string JSON) - nullable, tapi akan divalidasi per kondisi
-            'defect_unit_ids'     => 'nullable|array',
-            'defect_unit_ids.*'   => 'nullable|string',
-            'damaged_unit_ids'    => 'nullable|array',
-            'damaged_unit_ids.*'  => 'nullable|string',
+            'notes'              => 'nullable|array',
+            'defects_json'       => 'nullable|array',
+            'defects_json.*'     => 'nullable|string',
+            'damaged_json'       => 'nullable|array',
+            'damaged_json.*'     => 'nullable|string',
+            'defect_unit_ids'    => 'nullable|array',
+            'defect_unit_ids.*'  => 'nullable|string',
+            'damaged_unit_ids'   => 'nullable|array',
+            'damaged_unit_ids.*' => 'nullable|string',
         ]);
 
         $active = session('active_branch');
@@ -114,7 +109,6 @@ class AdjustmentController extends Controller
             abort(403, 'Warehouse must belong to active branch.');
         }
 
-        // helper json decode aman
         $decodeJsonArray = function ($raw): array {
             if ($raw === null) return [];
             if (is_array($raw)) return $raw;
@@ -165,87 +159,76 @@ class AdjustmentController extends Controller
 
                 Product::findOrFail($productId);
 
-                // =========================================================
-                // VALIDASI PER-UNIT (SESUI RULE)
-                // =========================================================
-
-                // ADD DEFECT -> wajib defects_json (array length = qty), setiap unit wajib defect_type, rack_id optional (default line rack)
+                // ===== VALIDASI PER-UNIT / PICK (tetap punyamu) =====
                 $defectUnits = [];
                 if ($type === 'add' && $condition === 'defect') {
                     $defectUnits = $decodeJsonArray($request->defects_json[$key] ?? null);
                     if (count($defectUnits) !== $qty) {
                         throw new \Illuminate\Http\Exceptions\HttpResponseException(
-                            redirect()->back()->withInput()->with('error', "DEFECT details must be filled per unit. Line #" . ($key + 1) . " Qty={$qty}, Details=" . count($defectUnits))
+                            redirect()->back()->withInput()->with('error', "DEFECT details must be filled per unit. Line #" . ($key + 1))
                         );
                     }
                     foreach ($defectUnits as $i => $u) {
                         $u = (array) $u;
-                        $dt = trim((string) ($u['defect_type'] ?? ''));
-                        if ($dt === '') {
+                        if (trim((string) ($u['defect_type'] ?? '')) === '') {
                             throw new \Illuminate\Http\Exceptions\HttpResponseException(
-                                redirect()->back()->withInput()->with('error', "Defect Type is required for each DEFECT unit (line #" . ($key + 1) . ", row #" . ($i + 1) . ").")
+                                redirect()->back()->withInput()->with('error', "Defect Type is required (line #" . ($key + 1) . ", row #" . ($i + 1) . ").")
                             );
                         }
                     }
                 }
 
-                // ADD DAMAGED -> wajib damaged_json (array length = qty), setiap unit wajib reason
                 $damagedUnits = [];
                 if ($type === 'add' && $condition === 'damaged') {
                     $damagedUnits = $decodeJsonArray($request->damaged_json[$key] ?? null);
                     if (count($damagedUnits) !== $qty) {
                         throw new \Illuminate\Http\Exceptions\HttpResponseException(
-                            redirect()->back()->withInput()->with('error', "DAMAGED details must be filled per unit. Line #" . ($key + 1) . " Qty={$qty}, Details=" . count($damagedUnits))
+                            redirect()->back()->withInput()->with('error', "DAMAGED details must be filled per unit. Line #" . ($key + 1))
                         );
                     }
                     foreach ($damagedUnits as $i => $u) {
                         $u = (array) $u;
-                        $rs = trim((string) ($u['reason'] ?? ''));
-                        if ($rs === '') {
+                        if (trim((string) ($u['reason'] ?? '')) === '') {
                             throw new \Illuminate\Http\Exceptions\HttpResponseException(
-                                redirect()->back()->withInput()->with('error', "Damaged Reason is required for each DAMAGED unit (line #" . ($key + 1) . ", row #" . ($i + 1) . ").")
+                                redirect()->back()->withInput()->with('error', "Damaged Reason is required (line #" . ($key + 1) . ", row #" . ($i + 1) . ").")
                             );
                         }
                     }
                 }
 
-                // SUB DEFECT -> wajib defect_unit_ids (array length = qty) berisi ID unit yang dipilih user
                 $defectPickIds = [];
                 if ($type === 'sub' && $condition === 'defect') {
                     $defectPickIds = $decodeJsonArray($request->defect_unit_ids[$key] ?? null);
                     if (count($defectPickIds) !== $qty) {
                         throw new \Illuminate\Http\Exceptions\HttpResponseException(
-                            redirect()->back()->withInput()->with('error', "SUB DEFECT must pick unit IDs per qty. Line #" . ($key + 1) . " Qty={$qty}, Picked=" . count($defectPickIds))
+                            redirect()->back()->withInput()->with('error', "SUB DEFECT must pick unit IDs per qty. Line #" . ($key + 1))
                         );
                     }
                     $defectPickIds = array_values(array_unique(array_map('intval', $defectPickIds)));
                     if (count($defectPickIds) !== $qty) {
                         throw new \Illuminate\Http\Exceptions\HttpResponseException(
-                            redirect()->back()->withInput()->with('error', "SUB DEFECT picked IDs must be unique and match Qty. Line #" . ($key + 1) . ".")
+                            redirect()->back()->withInput()->with('error', "SUB DEFECT picked IDs must be unique and match Qty. Line #" . ($key + 1))
                         );
                     }
                 }
 
-                // SUB DAMAGED -> wajib damaged_unit_ids (array length = qty)
                 $damagedPickIds = [];
                 if ($type === 'sub' && $condition === 'damaged') {
                     $damagedPickIds = $decodeJsonArray($request->damaged_unit_ids[$key] ?? null);
                     if (count($damagedPickIds) !== $qty) {
                         throw new \Illuminate\Http\Exceptions\HttpResponseException(
-                            redirect()->back()->withInput()->with('error', "SUB DAMAGED must pick unit IDs per qty. Line #" . ($key + 1) . " Qty={$qty}, Picked=" . count($damagedPickIds))
+                            redirect()->back()->withInput()->with('error', "SUB DAMAGED must pick unit IDs per qty. Line #" . ($key + 1))
                         );
                     }
                     $damagedPickIds = array_values(array_unique(array_map('intval', $damagedPickIds)));
                     if (count($damagedPickIds) !== $qty) {
                         throw new \Illuminate\Http\Exceptions\HttpResponseException(
-                            redirect()->back()->withInput()->with('error', "SUB DAMAGED picked IDs must be unique and match Qty. Line #" . ($key + 1) . ".")
+                            redirect()->back()->withInput()->with('error', "SUB DAMAGED picked IDs must be unique and match Qty. Line #" . ($key + 1))
                         );
                     }
                 }
 
-                // =========================================================
-                // SAVE adjusted_products (log)
-                // =========================================================
+                // ===== SAVE adjusted_products =====
                 $adjustedNotePieces = [];
                 if (!empty($itemNote)) $adjustedNotePieces[] = "Item: {$itemNote}";
                 $adjustedNotePieces[] = 'COND=' . strtoupper($condition);
@@ -267,9 +250,7 @@ class AdjustmentController extends Controller
                     . ' | ' . strtoupper($condition)
                 );
 
-                // =========================================================
-                // CASE 1: GOOD (same as before)
-                // =========================================================
+                // ===== CASE GOOD =====
                 if ($condition === 'good') {
                     $this->mutationController->applyInOut(
                         $branchId,
@@ -285,14 +266,13 @@ class AdjustmentController extends Controller
                     continue;
                 }
 
-                // =========================================================
-                // CASE 2: SUB DEFECT / SUB DAMAGED (NOW MUST PICK IDs)
-                // =========================================================
+                // ===== ✅ CASE SUB DEFECT (ENFORCE RACK) =====
                 if ($type === 'sub' && $condition === 'defect') {
 
                     $items = ProductDefectItem::query()
                         ->where('branch_id', $branchId)
                         ->where('warehouse_id', $warehouseId)
+                        ->where('rack_id', $rackId)           // ✅ IMPORTANT
                         ->where('product_id', $productId)
                         ->whereNull('moved_out_at')
                         ->whereIn('id', $defectPickIds)
@@ -300,7 +280,7 @@ class AdjustmentController extends Controller
                         ->get();
 
                     if ($items->count() !== $qty) {
-                        throw new \RuntimeException("SUB DEFECT invalid selection. Some selected units are not available / mismatch. Need={$qty}, Found={$items->count()}.");
+                        throw new \RuntimeException("SUB DEFECT invalid selection (must match selected rack). Need={$qty}, Found={$items->count()}.");
                     }
 
                     $this->mutationController->applyInOut(
@@ -327,11 +307,13 @@ class AdjustmentController extends Controller
                     continue;
                 }
 
+                // ===== ✅ CASE SUB DAMAGED (ENFORCE RACK) =====
                 if ($type === 'sub' && $condition === 'damaged') {
 
                     $items = ProductDamagedItem::query()
                         ->where('branch_id', $branchId)
                         ->where('warehouse_id', $warehouseId)
+                        ->where('rack_id', $rackId)           // ✅ IMPORTANT
                         ->where('product_id', $productId)
                         ->whereNull('moved_out_at')
                         ->whereIn('id', $damagedPickIds)
@@ -339,7 +321,7 @@ class AdjustmentController extends Controller
                         ->get();
 
                     if ($items->count() !== $qty) {
-                        throw new \RuntimeException("SUB DAMAGED invalid selection. Some selected units are not available / mismatch. Need={$qty}, Found={$items->count()}.");
+                        throw new \RuntimeException("SUB DAMAGED invalid selection (must match selected rack). Need={$qty}, Found={$items->count()}.");
                     }
 
                     $mutationOutId = $this->mutationController->applyInOutAndGetMutationId(
@@ -367,9 +349,7 @@ class AdjustmentController extends Controller
                     continue;
                 }
 
-                // =========================================================
-                // CASE 3: ADD DEFECT / ADD DAMAGED (NOW PER-UNIT CREATE)
-                // =========================================================
+                // ===== CASE ADD DEFECT =====
                 if ($type === 'add' && $condition === 'defect') {
 
                     $this->mutationController->applyInOut(
@@ -384,30 +364,30 @@ class AdjustmentController extends Controller
                         $rackId
                     );
 
-                    // create 1 row per unit
                     for ($i = 0; $i < $qty; $i++) {
                         $u = (array) ($defectUnits[$i] ?? []);
                         $unitRackId = (int) ($u['rack_id'] ?? $rackId);
                         $this->assertRackBelongsToWarehouse($unitRackId, $warehouseId);
 
                         ProductDefectItem::create([
-                            'branch_id'       => $branchId,
-                            'warehouse_id'    => $warehouseId,
-                            'rack_id'         => $unitRackId,
-                            'product_id'      => $productId,
-                            'reference_id'    => (int) $adjustment->id,
-                            'reference_type'  => Adjustment::class,
-                            'quantity'        => 1,
-                            'defect_type'     => trim((string) ($u['defect_type'] ?? '')),
-                            'description'     => trim((string) ($u['description'] ?? '')) ?: ($itemNote ?: null),
-                            'photo_path'      => null, // ✅ upload: kalau mau, nanti kita sambungkan file via modal (array files)
-                            'created_by'      => (int) Auth::id(),
+                            'branch_id'      => $branchId,
+                            'warehouse_id'   => $warehouseId,
+                            'rack_id'        => $unitRackId,
+                            'product_id'     => $productId,
+                            'reference_id'   => (int) $adjustment->id,
+                            'reference_type' => Adjustment::class,
+                            'quantity'       => 1,
+                            'defect_type'    => trim((string) ($u['defect_type'] ?? '')),
+                            'description'    => trim((string) ($u['description'] ?? '')) ?: ($itemNote ?: null),
+                            'photo_path'     => null,
+                            'created_by'     => (int) Auth::id(),
                         ]);
                     }
 
                     continue;
                 }
 
+                // ===== CASE ADD DAMAGED =====
                 if ($type === 'add' && $condition === 'damaged') {
 
                     $mutationInId = $this->mutationController->applyInOutAndGetMutationId(
@@ -428,30 +408,29 @@ class AdjustmentController extends Controller
                         $this->assertRackBelongsToWarehouse($unitRackId, $warehouseId);
 
                         ProductDamagedItem::create([
-                            'branch_id'          => $branchId,
-                            'warehouse_id'       => $warehouseId,
-                            'rack_id'            => $unitRackId,
-                            'product_id'         => $productId,
-                            'reference_id'       => (int) $adjustment->id,
-                            'reference_type'     => Adjustment::class,
-                            'quantity'           => 1,
-                            'damage_type'        => 'damaged',
-                            'reason'             => trim((string) ($u['reason'] ?? '')),
-                            'photo_path'         => null, // ✅ upload nanti
-                            'cause'              => null,
-                            'responsible_user_id'=> null,
-                            'resolution_status'  => 'pending',
-                            'resolution_note'    => null,
-                            'mutation_in_id'     => (int) $mutationInId,
-                            'mutation_out_id'    => null,
-                            'created_by'         => (int) Auth::id(),
+                            'branch_id'           => $branchId,
+                            'warehouse_id'        => $warehouseId,
+                            'rack_id'             => $unitRackId,
+                            'product_id'          => $productId,
+                            'reference_id'        => (int) $adjustment->id,
+                            'reference_type'      => Adjustment::class,
+                            'quantity'            => 1,
+                            'damage_type'         => 'damaged',
+                            'reason'              => trim((string) ($u['reason'] ?? '')),
+                            'photo_path'          => null,
+                            'cause'               => null,
+                            'responsible_user_id' => null,
+                            'resolution_status'   => 'pending',
+                            'resolution_note'     => null,
+                            'mutation_in_id'      => (int) $mutationInId,
+                            'mutation_out_id'     => null,
+                            'created_by'          => (int) Auth::id(),
                         ]);
                     }
 
                     continue;
                 }
 
-                // fallback (should not happen)
                 throw new \RuntimeException("Unhandled adjustment line (condition={$condition}, type={$type}).");
             }
         });
@@ -518,7 +497,7 @@ class AdjustmentController extends Controller
         $warehouseId = (int) $request->query('warehouse_id');
         $productId   = (int) $request->query('product_id');
         $condition   = strtolower((string) $request->query('condition', 'defect')); // defect|damaged
-        $rackId      = (int) $request->query('rack_id', 0); // optional filter
+        $rackId      = (int) $request->query('rack_id', 0); // REQUIRED for SUB modal (we enforce)
 
         if ($warehouseId <= 0 || $productId <= 0) {
             return response()->json([
@@ -534,6 +513,14 @@ class AdjustmentController extends Controller
             ], 422);
         }
 
+        // ✅ rack is required to keep rack stock integrity
+        if ($rackId <= 0) {
+            return response()->json([
+                'success' => false,
+                'message' => 'rack_id is required.'
+            ], 422);
+        }
+
         $warehouse = Warehouse::findOrFail($warehouseId);
         if ((int) $warehouse->branch_id !== $branchId) {
             return response()->json([
@@ -542,79 +529,89 @@ class AdjustmentController extends Controller
             ], 403);
         }
 
+        // ✅ rack belongs to warehouse
+        $this->assertRackBelongsToWarehouse($rackId, $warehouseId);
+
         Product::findOrFail($productId);
 
+        // helper: rack label
+        $rackLabelMap = DB::table('racks')
+            ->where('warehouse_id', $warehouseId)
+            ->get(['id', 'code', 'name'])
+            ->mapWithKeys(function ($r) {
+                $label = trim((string)($r->code ?? '') . ((string)($r->name ?? '') !== '' ? ' - ' . (string)($r->name ?? '') : ''));
+                if ($label === '') $label = 'Rack#' . (int)$r->id;
+                return [(int)$r->id => $label];
+            })
+            ->toArray();
+
         if ($condition === 'defect') {
-            $q = ProductDefectItem::query()
+
+            $rows = ProductDefectItem::query()
                 ->where('branch_id', $branchId)
                 ->where('warehouse_id', $warehouseId)
+                ->where('rack_id', $rackId)                 // ✅ ENFORCE RACK
                 ->where('product_id', $productId)
-                ->whereNull('moved_out_at');
-
-            if ($rackId > 0) {
-                $q->where('rack_id', $rackId);
-            }
-
-            $rows = $q->orderBy('id', 'asc')
+                ->whereNull('moved_out_at')
+                ->orderBy('id', 'asc')
                 ->limit(1000)
                 ->get(['id', 'rack_id', 'defect_type', 'description']);
 
-            $data = $rows->map(function ($r) {
-                $title = 'ID#' . $r->id;
-                $meta  = trim((string) $r->defect_type);
-                $desc  = trim((string) $r->description);
+            $data = $rows->map(function ($r) use ($rackLabelMap) {
+                $rackText = $rackLabelMap[(int)$r->rack_id] ?? ('Rack#' . (int)$r->rack_id);
 
-                $label = $title;
-                if ($meta !== '') $label .= ' | ' . $meta;
-                if ($desc !== '') $label .= ' | ' . $desc;
+                $parts = [];
+                $parts[] = "Rack: {$rackText}";
+                $dt = trim((string) $r->defect_type);
+                $ds = trim((string) $r->description);
+
+                if ($dt !== '') $parts[] = "Type: {$dt}";
+                if ($ds !== '') $parts[] = $ds;
 
                 return [
                     'id'      => (int) $r->id,
                     'rack_id' => (int) $r->rack_id,
-                    'label'   => $label,
+                    'label'   => implode(' | ', $parts),
                 ];
             })->values();
 
             return response()->json([
-                'success' => true,
+                'success'   => true,
                 'condition' => 'defect',
-                'data' => $data,
+                'data'      => $data,
             ]);
         }
 
         // damaged
-        $q = ProductDamagedItem::query()
+        $rows = ProductDamagedItem::query()
             ->where('branch_id', $branchId)
             ->where('warehouse_id', $warehouseId)
+            ->where('rack_id', $rackId)                     // ✅ ENFORCE RACK
             ->where('product_id', $productId)
-            ->whereNull('moved_out_at');
-
-        if ($rackId > 0) {
-            $q->where('rack_id', $rackId);
-        }
-
-        $rows = $q->orderBy('id', 'asc')
+            ->whereNull('moved_out_at')
+            ->orderBy('id', 'asc')
             ->limit(1000)
             ->get(['id', 'rack_id', 'reason']);
 
-        $data = $rows->map(function ($r) {
-            $title = 'ID#' . $r->id;
-            $rs    = trim((string) $r->reason);
+        $data = $rows->map(function ($r) use ($rackLabelMap) {
+            $rackText = $rackLabelMap[(int)$r->rack_id] ?? ('Rack#' . (int)$r->rack_id);
 
-            $label = $title;
-            if ($rs !== '') $label .= ' | ' . $rs;
+            $parts = [];
+            $parts[] = "Rack: {$rackText}";
+            $rs = trim((string) $r->reason);
+            if ($rs !== '') $parts[] = $rs;
 
             return [
                 'id'      => (int) $r->id,
                 'rack_id' => (int) $r->rack_id,
-                'label'   => $label,
+                'label'   => implode(' | ', $parts),
             ];
         })->values();
 
         return response()->json([
-            'success' => true,
+            'success'   => true,
             'condition' => 'damaged',
-            'data' => $data,
+            'data'      => $data,
         ]);
     }
 

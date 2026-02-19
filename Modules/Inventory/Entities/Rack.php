@@ -17,6 +17,7 @@ class Rack extends BaseModel
 
     protected $fillable = [
         'warehouse_id',
+        'branch_id',
         'code',
         'name',
         'description',

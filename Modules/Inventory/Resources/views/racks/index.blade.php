@@ -10,6 +10,11 @@
 @endsection
 
 @section('content')
+@php
+    $activeBranch = session('active_branch');
+    $isAllBranch = ($activeBranch === 'all' || $activeBranch === null || $activeBranch === '');
+@endphp
+
 <div class="container-fluid">
     @include('utils.alerts')
 
@@ -77,8 +82,12 @@
                 <table class="table table-bordered table-striped mb-0">
                     <thead class="thead-dark">
                         <tr>
-                            <!-- <th style="width:70px;">#</th> -->
                             <th style="width:70px;">Rack ID</th>
+
+                            @if($isAllBranch)
+                                <th style="width:200px;">Branch</th>
+                            @endif
+
                             <th>Warehouse</th>
                             <th style="width:140px;">Code</th>
                             <th>Name</th>
@@ -89,10 +98,16 @@
                     <tbody>
                         @forelse($racks as $i => $r)
                             <tr>
-                                <!-- <td class="align-middle">{{ $racks->firstItem() + $i }}</td> -->
                                 <td class="align-middle">{{ $r->id }}</td>
+
+                                @if($isAllBranch)
+                                    <td class="align-middle">
+                                        {{ $r->branch_name ?? ('Branch#' . ($r->warehouse_branch_id ?? '-')) }}
+                                    </td>
+                                @endif
+
                                 <td class="align-middle">
-                                    {{ $r->warehouse?->warehouse_name ?? ('WH#'.$r->warehouse_id) }}
+                                    {{ $r->warehouse_name ?? ('WH#'.$r->warehouse_id) }}
                                 </td>
                                 <td class="align-middle">
                                     <span class="badge badge-dark">{{ $r->code }}</span>
@@ -121,7 +136,7 @@
                             </tr>
                         @empty
                             <tr>
-                                <td colspan="6" class="text-center text-muted py-4">
+                                <td colspan="{{ $isAllBranch ? 7 : 6 }}" class="text-center text-muted py-4">
                                     No racks found.
                                 </td>
                             </tr>

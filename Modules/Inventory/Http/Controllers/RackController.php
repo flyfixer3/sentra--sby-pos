@@ -16,14 +16,25 @@ class RackController extends Controller
     {
         abort_if(Gate::denies('access_racks'), 403);
 
-        $branchId = BranchContext::id();
+        $branchIdRaw = BranchContext::id();
+        $isAll = ($branchIdRaw === 'all' || $branchIdRaw === null || $branchIdRaw === '');
 
-        $q = Rack::query()
-            ->select('racks.*')
+        $branchId = $isAll ? 'all' : (int) $branchIdRaw;
+
+        $q = Rack::withoutGlobalScopes()
+            ->select([
+                'racks.*',
+                'warehouses.warehouse_name as warehouse_name',
+                'warehouses.branch_id as warehouse_branch_id',
+                'branches.name as branch_name',
+            ])
             ->join('warehouses', 'warehouses.id', '=', 'racks.warehouse_id')
-            ->when($branchId !== 'all', function ($query) use ($branchId) {
-                $query->where('warehouses.branch_id', (int) $branchId);
-            });
+            ->leftJoin('branches', 'branches.id', '=', 'warehouses.branch_id');
+
+        if (!$isAll) {
+            // bisa pakai racks.branch_id karena sudah kita tambah
+            $q->where('racks.branch_id', (int) $branchId);
+        }
 
         if ($request->filled('warehouse_id')) {
             $wid = (int) $request->warehouse_id;
@@ -34,15 +45,18 @@ class RackController extends Controller
             $s = trim((string) $request->search);
             $q->where(function ($w) use ($s) {
                 $w->where('racks.code', 'like', "%{$s}%")
-                  ->orWhere('racks.name', 'like', "%{$s}%")
-                  ->orWhere('racks.description', 'like', "%{$s}%");
+                ->orWhere('racks.name', 'like', "%{$s}%")
+                ->orWhere('racks.description', 'like', "%{$s}%");
             });
         }
 
-        $racks = $q->orderBy('racks.id', 'desc')->paginate(20)->withQueryString();
+        $racks = $q->orderBy('racks.id', 'desc')
+            ->paginate(20)
+            ->withQueryString();
 
-        $warehouses = Warehouse::query()
-            ->when($branchId !== 'all', function ($w) use ($branchId) {
+        // dropdown warehouses: pakai withoutGlobalScopes supaya mode ALL aman
+        $warehouses = Warehouse::withoutGlobalScopes()
+            ->when(!$isAll, function ($w) use ($branchId) {
                 $w->where('branch_id', (int) $branchId);
             })
             ->orderBy('warehouse_name')
@@ -71,7 +85,9 @@ class RackController extends Controller
     {
         abort_if(Gate::denies('create_racks'), 403);
 
-        $branchId = BranchContext::id();
+        $branchIdRaw = BranchContext::id();
+        $isAll = ($branchIdRaw === 'all' || $branchIdRaw === null || $branchIdRaw === '');
+        $branchId = $isAll ? 'all' : (int) $branchIdRaw;
 
         $request->validate([
             'warehouse_id' => 'required|integer',
@@ -80,15 +96,15 @@ class RackController extends Controller
             'description' => 'nullable|string|max:2000',
         ]);
 
-        $warehouse = Warehouse::findOrFail((int) $request->warehouse_id);
-        if ($branchId !== 'all') {
+        $warehouse = Warehouse::withoutGlobalScopes()->findOrFail((int) $request->warehouse_id);
+
+        if (!$isAll) {
             abort_unless((int) $warehouse->branch_id === (int) $branchId, 403);
         }
 
-        // unik per warehouse: code
         $code = strtoupper(trim((string) $request->code));
 
-        $exists = Rack::query()
+        $exists = Rack::withoutGlobalScopes()
             ->where('warehouse_id', (int) $warehouse->id)
             ->where('code', $code)
             ->exists();
@@ -99,13 +115,14 @@ class RackController extends Controller
                 ->with('message', 'Rack code sudah dipakai di gudang tersebut.');
         }
 
-        Rack::create([
+        Rack::withoutGlobalScopes()->create([
             'warehouse_id' => (int) $warehouse->id,
-            'code' => strtoupper(trim((string) $request->code)),
-            'name' => $request->name ? trim((string) $request->name) : null,
-            'description' => $request->description ? trim((string) $request->description) : null,
-            'created_by' => auth()->id(),
-            'updated_by' => auth()->id(),
+            'branch_id'    => (int) $warehouse->branch_id, // ✅ penting
+            'code'         => $code,
+            'name'         => $request->name ? trim((string) $request->name) : null,
+            'description'  => $request->description ? trim((string) $request->description) : null,
+            'created_by'   => auth()->id(),
+            'updated_by'   => auth()->id(),
         ]);
 
         toast('Rack Created!', 'success');
@@ -183,7 +200,9 @@ class RackController extends Controller
     {
         abort_if(Gate::denies('edit_racks'), 403);
 
-        $branchId = BranchContext::id();
+        $branchIdRaw = BranchContext::id();
+        $isAll = ($branchIdRaw === 'all' || $branchIdRaw === null || $branchIdRaw === '');
+        $branchId = $isAll ? 'all' : (int) $branchIdRaw;
 
         $request->validate([
             'warehouse_id' => 'required|integer',
@@ -192,14 +211,17 @@ class RackController extends Controller
             'description' => 'nullable|string|max:2000',
         ]);
 
-        $warehouse = Warehouse::findOrFail((int) $request->warehouse_id);
-        if ($branchId !== 'all') {
+        $warehouse = Warehouse::withoutGlobalScopes()->findOrFail((int) $request->warehouse_id);
+
+        if (!$isAll) {
             abort_unless((int) $warehouse->branch_id === (int) $branchId, 403);
         }
 
-        $exists = Rack::query()
+        $code = strtoupper(trim((string) $request->code));
+
+        $exists = Rack::withoutGlobalScopes()
             ->where('warehouse_id', (int) $warehouse->id)
-            ->where('code', strtoupper(trim((string) $request->code)))
+            ->where('code', $code)
             ->where('id', '!=', (int) $rack->id)
             ->exists();
 
@@ -209,13 +231,14 @@ class RackController extends Controller
                 ->with('message', 'Rack code sudah dipakai di gudang tersebut.');
         }
 
-        DB::transaction(function () use ($rack, $warehouse, $request) {
+        DB::transaction(function () use ($rack, $warehouse, $request, $code) {
             $rack->update([
                 'warehouse_id' => (int) $warehouse->id,
-                'code' => strtoupper(trim((string) $request->code)),
-                'name' => $request->name ? trim((string) $request->name) : null,
-                'description' => $request->description ? trim((string) $request->description) : null,
-                'updated_by' => auth()->id(),
+                'branch_id'    => (int) $warehouse->branch_id, // ✅ sync branch
+                'code'         => $code,
+                'name'         => $request->name ? trim((string) $request->name) : null,
+                'description'  => $request->description ? trim((string) $request->description) : null,
+                'updated_by'   => auth()->id(),
             ]);
         });
 
