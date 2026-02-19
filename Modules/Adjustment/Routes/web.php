@@ -1,6 +1,7 @@
 <?php
 
 use Illuminate\Support\Facades\Route;
+use Modules\Adjustment\Http\Controllers\AdjustmentController;
 
 Route::group(['middleware' => 'auth'], function () {
 
@@ -19,4 +20,6 @@ Route::group(['middleware' => 'auth'], function () {
     Route::get('adjustments/racks', 'AdjustmentController@racks')
         ->name('adjustments.racks');
 
+    Route::get('/adjustments/pick-units', [AdjustmentController::class, 'pickUnits'])
+    ->name('adjustments.pick-units');
 });

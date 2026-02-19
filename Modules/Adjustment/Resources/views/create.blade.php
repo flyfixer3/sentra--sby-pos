@@ -61,14 +61,31 @@
                 <div class="card-body">
                     @include('utils.alerts')
 
+                    {{-- ✅ TAB: kasih dual attribute (BS4 + BS5) --}}
                     <ul class="nav nav-pills mb-3" id="adjustmentTabs" role="tablist">
                         <li class="nav-item" role="presentation">
-                            <button class="nav-link active" id="tab-stock" data-toggle="pill" data-target="#pane-stock" type="button" role="tab">
+                            <button
+                                class="nav-link active"
+                                id="tab-stock"
+                                data-toggle="pill" data-target="#pane-stock"
+                                data-bs-toggle="pill" data-bs-target="#pane-stock"
+                                type="button" role="tab"
+                                aria-controls="pane-stock"
+                                aria-selected="true"
+                            >
                                 <i class="bi bi-arrow-left-right"></i> Stock Adjustment
                             </button>
                         </li>
                         <li class="nav-item" role="presentation">
-                            <button class="nav-link" id="tab-quality" data-toggle="pill" data-target="#pane-quality" type="button" role="tab">
+                            <button
+                                class="nav-link"
+                                id="tab-quality"
+                                data-toggle="pill" data-target="#pane-quality"
+                                data-bs-toggle="pill" data-bs-target="#pane-quality"
+                                type="button" role="tab"
+                                aria-controls="pane-quality"
+                                aria-selected="false"
+                            >
                                 <i class="bi bi-shield-check"></i> Quality Reclass
                             </button>
                         </li>
@@ -292,6 +309,46 @@
         alert(msg);
     }
 
+    /**
+     * ✅ Bootstrap Bridge (BS5 data-bs-* → BS4 jQuery plugins)
+     * Kalau project kamu masih BS4 (CoreUI biasanya BS4), tapi komponen/Livewire pakai data-bs-toggle,
+     * maka modal/tab/pill tidak akan jalan. Script ini bikin tetap jalan.
+     */
+    function bootstrapBridge(){
+        // kalau bootstrap 5 sudah ada, gak perlu bridge
+        const hasBS5 = !!(window.bootstrap && (window.bootstrap.Modal || window.bootstrap.Tab));
+        const hasJQ  = !!window.jQuery;
+
+        if (hasBS5 || !hasJQ) return;
+
+        // 1) MODAL: data-bs-toggle="modal"
+        document.addEventListener('click', function(ev){
+            const btn = ev.target.closest('[data-bs-toggle="modal"]');
+            if (!btn) return;
+
+            const target = btn.getAttribute('data-bs-target') || btn.dataset.bsTarget;
+            if (!target) return;
+
+            try{
+                window.jQuery(target).modal('show');
+                ev.preventDefault();
+            }catch(e){}
+        }, true);
+
+        // 2) TAB/PILL: data-bs-toggle="tab|pill"
+        document.addEventListener('click', function(ev){
+            const el = ev.target.closest('[data-bs-toggle="tab"], [data-bs-toggle="pill"]');
+            if (!el) return;
+
+            try{
+                window.jQuery(el).tab('show');
+                ev.preventDefault();
+            }catch(e){}
+        }, true);
+    }
+
+    bootstrapBridge();
+
     // ==========================
     // ✅ STOCK: sync warehouse -> Livewire
     // ==========================
@@ -314,7 +371,7 @@
     });
 
     // ==========================
-    // ✅ QUALITY: warehouse hidden + Livewire (rack handled inside Livewire per-row)
+    // ✅ QUALITY: warehouse hidden + Livewire
     // ==========================
     function syncQualityWarehouse(){
         const wq = document.getElementById('warehouse_id_quality');
@@ -418,7 +475,7 @@
     document.getElementById('qualityForm')?.addEventListener('submit', function(ev){
         const wh = document.getElementById('quality_warehouse_id').value;
 
-        // ✅ rack sekarang per-item di tabel (name="rack_id")
+        // rack sekarang per-item di tabel (name="rack_id")
         const rack = document.querySelector('#qualityForm select[name="rack_id"]')?.value || '';
 
         const pid = document.getElementById('quality_product_id').value;
