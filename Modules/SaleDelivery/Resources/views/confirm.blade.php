@@ -215,10 +215,10 @@
                 <div>
                     <div class="font-weight-bold">Rules</div>
                     <div class="small mt-1">
-                        • Semua item wajib pilih Warehouse (di modal)<br>
                         • Total selected (GOOD qty + DEFECT IDs + DAMAGED IDs) wajib sama dengan Expected<br>
                         • GOOD: input qty per rack (allocation otomatis terbentuk)<br>
-                        • DEFECT/DAMAGED: tiap ID selalu 1 pc
+                        • DEFECT/DAMAGED: tiap ID selalu 1 pc<br>
+                        • Warehouse dropdown di modal hanya untuk <b>filter</b> (opsional), karena warehouse sudah ditentukan per item di backend.
                     </div>
                 </div>
             </div>
@@ -231,7 +231,7 @@
             <div>
                 <div class="font-weight-bold">Masih ada item yang belum valid.</div>
                 <div class="small">
-                    Buka “Pick Items” per item, pilih warehouse, lalu pastikan total selected sama dengan Expected.
+                    Buka “Pick Items” per item, lalu pastikan total selected sama dengan Expected.
                 </div>
             </div>
         </div>
@@ -279,7 +279,10 @@
                             {{-- REQUIRED BASE --}}
                             <input type="hidden" name="items[{{ $i }}][id]" value="{{ $itemId }}">
 
-                            {{-- warehouse chosen in modal --}}
+                            {{-- NOTE:
+                                 warehouse_id di form ini tidak dipakai lagi sebagai validasi / sumber data (karena backend ambil dari item->warehouse_id).
+                                 Tapi kita biarkan hidden ini tetap ada untuk kompatibilitas.
+                            --}}
                             <input type="hidden" name="items[{{ $i }}][warehouse_id]" class="h-warehouse" value="{{ (int)old("items.$i.warehouse_id", 0) }}">
 
                             {{-- auto hidden qty (from modal selection) --}}
@@ -294,9 +297,6 @@
 
                             <div class="d-flex flex-wrap align-items-center justify-content-between" style="gap:10px;">
                                 <div class="small">
-                                    <span class="badge badge-light border">
-                                        Warehouse: <b class="t-warehouse">-</b>
-                                    </span>
                                     <span class="badge badge-light border ml-1">
                                         Selected: <b class="t-total">0</b> / {{ $expected }}
                                     </span>
@@ -382,7 +382,7 @@
                                                     @endforeach
                                                 </select>
                                                 <div class="small text-muted mt-1">
-                                                    Saat Save, warehouse wajib dipilih (bukan All).
+                                                    Warehouse ini hanya untuk <b>filter</b> (opsional).
                                                 </div>
                                             </div>
 
@@ -504,7 +504,7 @@
                         </div>
 
                         <div class="small text-muted mt-3">
-                            Tips: per item klik “Pick Items” → pilih warehouse → atur GOOD/DEFECT/DAMAGED sampai total = Expected.
+                            Tips: per item klik “Pick Items” → atur GOOD/DEFECT/DAMAGED sampai total = Expected.
                         </div>
                     </div>
                 </div>
@@ -594,7 +594,7 @@
         const racks = racksForWarehouse(wid);
         return racks.map(r => {
             const rid = toInt(r.id);
-            const st = getRackStock(pid, wid, rid); // ✅ NEW
+            const st = getRackStock(pid, wid, rid);
             return {
                 type: 'good',
                 warehouse_id: toInt(wid),
@@ -684,19 +684,14 @@
     function updateCard(card){
         const expected = toInt(card.dataset.expected);
 
-        const hWarehouse = card.querySelector('.h-warehouse');
         const hGood = card.querySelector('.h-good');
         const hDef = card.querySelector('.h-defect');
         const hDam = card.querySelector('.h-damaged');
 
-        const wid = toInt(hWarehouse ? hWarehouse.value : 0);
         const good = toInt(hGood ? hGood.value : 0);
         const defect = toInt(hDef ? hDef.value : 0);
         const damaged = toInt(hDam ? hDam.value : 0);
         const total = good + defect + damaged;
-
-        const tWh = card.querySelector('.t-warehouse');
-        if (tWh) tWh.textContent = getWarehouseName(wid);
 
         const tGood = card.querySelector('.t-good');
         const tDef  = card.querySelector('.t-defect');
@@ -707,19 +702,16 @@
         if (tDam)  tDam.textContent = String(damaged);
         if (tTot)  tTot.textContent = String(total);
 
-        const okWarehouse = wid > 0;
+        // ✅ Warehouse tidak divalidasi lagi di UI (karena warehouse sumbernya dari backend per item).
         const okTotal = total === expected;
-        const ok = okWarehouse && okTotal;
+        const ok = okTotal;
 
         card.classList.toggle('border-danger', !ok);
         card.classList.toggle('border-success', ok);
 
         const st = card.querySelector('.t-status');
         if (st) {
-            if (!okWarehouse) {
-                st.textContent = 'Pick warehouse';
-                st.className = 'badge badge-danger t-status';
-            } else if (!okTotal) {
+            if (!okTotal) {
                 st.textContent = 'Qty mismatch';
                 st.className = 'badge badge-danger t-status';
             } else {
@@ -754,7 +746,8 @@
         const pid = toInt(card.dataset.productId);
         const expected = toInt(card.dataset.expected);
 
-        const hWarehouse = card.querySelector('.h-warehouse');
+        const hWarehouse = card.querySelector('.h-warehouse'); // kept for compatibility only
+
         const hGood = card.querySelector('.h-good');
         const hDef = card.querySelector('.h-defect');
         const hDam = card.querySelector('.h-damaged');
@@ -781,7 +774,8 @@
         const btnApply = modalEl.querySelector('.m-apply');
         const btnSave  = modalEl.querySelector('.m-save');
 
-        let chosenWid = toInt(hWarehouse ? hWarehouse.value : 0);
+        // dropdown warehouse adalah filter => default All
+        let chosenWid = 0;
 
         // hydrate existing selection from hidden inputs
         let goodAlloc = [];
@@ -833,14 +827,11 @@
             if (tSel2) tSel2.textContent = String(sel);
         }
 
-        // ✅ FIX #1: rack dropdown auto update on warehouse change,
-        // ✅ and DO NOT reset rack selection if still valid
         function rebuildRacks(preserve){
             const wid = toInt(selWh ? selWh.value : 0);
 
             if (!selRack) return;
 
-            // if All warehouse: disable rack filter (avoid ambiguous rack across WH)
             if (wid <= 0) {
                 selRack.innerHTML = `<option value="">All Racks</option>`;
                 selRack.value = '';
@@ -853,11 +844,9 @@
             selRack.disabled = false;
             selRack.innerHTML = buildRackOptions(wid, true);
 
-            // try keep previous selection if exists in new options
             if (prev > 0 && selRack.querySelector(`option[value="${prev}"]`)) {
                 selRack.value = String(prev);
             } else {
-                // keep as is if current still exists, else reset
                 const cur = toInt(selRack.value);
                 if (cur > 0 && !selRack.querySelector(`option[value="${cur}"]`)) {
                     selRack.value = '';
@@ -865,9 +854,6 @@
             }
         }
 
-        // ✅ FIX #2 + Requested behavior:
-        // default All warehouse => show ALL list (all WH in active branch),
-        // warehouse optional for browsing, but required for Save.
         function buildList(){
             if (!body) return;
 
@@ -881,18 +867,17 @@
             let totalStock = 0;
             body.innerHTML = '';
 
-            // helper to append row UI
             function appendRow(r){
                 const row = document.createElement('div');
                 row.className = 'pick-row';
 
                 if (r.type === 'good') {
                     const rid = toInt(r.rack_id);
-                    const avail = toInt(r.stock_total); // ✅ NEW: TOTAL pcs available
+                    const avail = toInt(r.stock_total);
                     const disabled = avail <= 0;
 
                     let curQty = toInt(goodAllocMap[rid] || 0);
-                    if (curQty > avail) curQty = avail; // clamp existing selection
+                    if (curQty > avail) curQty = avail;
 
                     row.innerHTML = `
                         <div style="width:24px; padding-top:2px;">
@@ -949,7 +934,6 @@
             function rowsForWarehouse(oneWid){
                 let rows = [];
 
-                // GOOD rows (per rack)
                 let goodRows = buildGoodRows(pid, oneWid).map(r => ({
                     type: 'good',
                     rack_id: r.rack_id,
@@ -964,7 +948,6 @@
                         | Avail: ${toInt(r.stock_total)} (G${toInt(r.stock_good)}/D${toInt(r.stock_defect)}/DM${toInt(r.stock_damaged)})`,
                 }));
 
-                // rack filter only meaningful when specific warehouse selected
                 if (wid > 0 && rackFilter > 0) {
                     goodRows = goodRows.filter(x => toInt(x.rack_id) === rackFilter);
                 }
@@ -996,21 +979,17 @@
                     ].filter(Boolean).join(' | ')
                 }));
 
-                // condition filter
                 if (cond === '' || cond === 'good') rows = rows.concat(goodRows);
                 if (cond === '' || cond === 'defect') rows = rows.concat(defectRows);
                 if (cond === '' || cond === 'damaged') rows = rows.concat(damagedRows);
 
-                // rack filter for defect/damaged also (only when specific warehouse)
                 if (wid > 0 && rackFilter > 0) rows = rows.filter(x => toInt(x.rack_id) === rackFilter);
 
-                // totalStock counting (real pcs: defect+damaged)
                 totalStock += defectRows.length + damagedRows.length;
 
                 return rows;
             }
 
-            // build rows
             if (wid > 0) {
                 const rows = rowsForWarehouse(wid);
 
@@ -1020,7 +999,6 @@
                     rows.forEach(r => appendRow(r));
                 }
             } else {
-                // ✅ show ALL warehouses by default
                 let any = false;
                 WAREHOUSES.forEach(w => {
                     const oneWid = toInt(w.id);
@@ -1040,7 +1018,6 @@
             if (tStock) tStock.textContent = String(totalStock);
             if (tStock2) tStock2.textContent = String(totalStock);
 
-            // handlers
             Array.from(body.querySelectorAll('.m-id-check')).forEach(ch => {
                 ch.addEventListener('change', () => {
                     const type = String(ch.dataset.type || '');
@@ -1100,7 +1077,6 @@
                     const max = toInt(inp.getAttribute('max'));
                     let v = toInt(inp.value);
 
-                    // ✅ clamp
                     if (max > 0 && v > max) v = max;
                     if (v < 0) v = 0;
                     inp.value = String(v);
@@ -1124,17 +1100,14 @@
         }
 
         function doApply(){
-            // ✅ Apply now only rebuilds list, DOES NOT nuke rack selection
             rebuildRacks(true);
             buildList();
         }
 
         function doSave(){
-            const wid = toInt(selWh ? selWh.value : 0);
-            if (wid <= 0) {
-                alert('Warehouse wajib dipilih sebelum Save.');
-                return;
-            }
+            // ✅ PERUBAHAN UTAMA:
+            // Warehouse dropdown tidak wajib dipilih, karena hanya filter.
+            // Kita tetap simpan selection apapun (bahkan jika wid=0 / All warehouse).
 
             const g = sumGood();
             const d = defectIds.length;
@@ -1146,7 +1119,11 @@
                 return;
             }
 
+            // optional: simpan nilai filter warehouse terakhir (kalau dipilih) ke hidden (kompatibilitas),
+            // tapi tidak mempengaruhi backend (backend pakai warehouse per item).
+            const wid = toInt(selWh ? selWh.value : 0);
             if (hWarehouse) hWarehouse.value = String(wid);
+
             if (hGood) hGood.value = String(g);
             if (hDef)  hDef.value = String(d);
             if (hDam)  hDam.value = String(dm);
@@ -1176,7 +1153,6 @@
         if (btnApply) btnApply.onclick = doApply;
         if (btnSave)  btnSave.onclick  = doSave;
 
-        // ✅ NEW: change events so you don't have to click Apply just to see list
         if (selWh) {
             selWh.onchange = function(){
                 rebuildRacks(false);
@@ -1194,7 +1170,6 @@
             };
         }
 
-        // init
         if (selWh) selWh.value = chosenWid > 0 ? String(chosenWid) : '';
         rebuildRacks(false);
         buildList();

@@ -384,7 +384,6 @@
               <option value="supplier">supplier</option>
               <option value="unknown">unknown</option>
             </select>
-            <div class="form-text">Optional</div>
           </div>
 
           <div class="col-md-4" id="ri_responsible_wrap" style="display:none;">
