@@ -19,7 +19,12 @@ class ProductTable extends Component
         'stockWarehouseChanged' => 'stockWarehouseChanged',
     ];
 
-    public string $mode = 'stock'; // stock | quality
+    /**
+     * mode:
+     * - stock_add  (UI receive details)
+     * - quality
+     */
+    public string $mode = 'stock_add';
     public array $products = [];
 
     // quality
@@ -30,10 +35,10 @@ class ProductTable extends Component
     // stock
     public ?int $stockWarehouseId = null;
 
-    // racks options (by selected warehouse)
+    // racks options (QUALITY dropdown)
     public array $rackOptions = [];
 
-    public function mount($adjustedProducts = null, $mode = 'stock')
+    public function mount($adjustedProducts = null, $mode = 'stock_add', $warehouseId = null)
     {
         $this->mode = (string) $mode;
         $this->products = [];
@@ -41,11 +46,27 @@ class ProductTable extends Component
         $active = session('active_branch');
         $this->branchId = is_numeric($active) ? (int) $active : 0;
 
+        // Set default type for quality
         if ($this->mode === 'quality') {
             $this->qualityType = 'defect';
         }
 
-        if (!empty($adjustedProducts)) {
+        // ✅ NEW: set initial warehouse id (passed from blade)
+        $warehouseId = is_numeric($warehouseId) ? (int) $warehouseId : null;
+
+        if ($this->mode === 'stock_add') {
+            $this->stockWarehouseId = ($warehouseId && $warehouseId > 0) ? $warehouseId : null;
+        }
+
+        if ($this->mode === 'quality') {
+            $this->qualityWarehouseId = ($warehouseId && $warehouseId > 0) ? $warehouseId : null;
+
+            // preload racks for quality dropdown
+            $this->rackOptions = $this->loadRacksForWarehouse($this->qualityWarehouseId);
+        }
+
+        // edit mode (optional)
+        if (!empty($adjustedProducts) && is_iterable($adjustedProducts)) {
             foreach ($adjustedProducts as $row) {
                 $productId = (int) ($row['product_id'] ?? 0);
                 if (!$productId) continue;
@@ -60,18 +81,21 @@ class ProductTable extends Component
                     'product_quantity' => $p->product_quantity,
                     'product_unit' => $p->product_unit,
 
+                    // stock_add defaults
+                    'qty_good' => (int) ($row['qty_good'] ?? 0),
+                    'qty_defect' => (int) ($row['qty_defect'] ?? 0),
+                    'qty_damaged' => (int) ($row['qty_damaged'] ?? 0),
+                    'good_allocations' => (array) ($row['good_allocations'] ?? []),
+                    'defects' => (array) ($row['defects'] ?? []),
+                    'damaged_items' => (array) ($row['damaged_items'] ?? []),
+
+                    // quality defaults
                     'quantity' => (int) ($row['quantity'] ?? 1),
-                    'type' => $row['type'] ?? 'add',
-                    'note' => $row['note'] ?? null,
-
-                    // rack
                     'rack_id' => isset($row['rack_id']) ? (int) $row['rack_id'] : null,
+                    'stock_label' => (string) ($row['stock_label'] ?? 'GOOD'),
+                    'available_qty' => (int) ($row['available_qty'] ?? 0),
 
-                    // quality info
-                    'stock_label' => 'GOOD',
-                    'available_qty' => (int) ($row['good_qty'] ?? 0),
-
-                    // stock info
+                    // display stock
                     'stock_qty' => (int) ($row['stock_qty'] ?? 0),
                 ];
             }
@@ -82,14 +106,22 @@ class ProductTable extends Component
 
     public function render()
     {
-        return view('livewire.adjustment.product-table');
+        if ($this->mode === 'stock_add') {
+            return view('livewire.adjustment.product-table-stock');
+        }
+
+        // default: quality
+        return view('livewire.adjustment.product-table-quality');
     }
 
     // =========================
-    // STOCK WAREHOUSE HANDLER
+    // STOCK WAREHOUSE HANDLER (MODE GUARDED)
     // =========================
     public function stockWarehouseChanged($payload): void
     {
+        // ✅ IMPORTANT: hanya stock_add yang boleh respon event stock
+        if ($this->mode !== 'stock_add') return;
+
         $warehouseId = null;
 
         if (is_array($payload)) {
@@ -101,40 +133,18 @@ class ProductTable extends Component
         $warehouseId = is_numeric($warehouseId) ? (int) $warehouseId : null;
         $this->stockWarehouseId = ($warehouseId && $warehouseId > 0) ? $warehouseId : null;
 
-        if ($this->mode === 'stock') {
-            $this->products = [];
-        }
-
-        $this->rackOptions = $this->loadRacksForWarehouse($this->stockWarehouseId);
-    }
-
-    private function loadRacksForWarehouse(?int $warehouseId): array
-    {
-        if (!$warehouseId || $warehouseId <= 0) return [];
-
-        $rows = DB::table('racks')
-            ->where('warehouse_id', (int) $warehouseId)
-            ->orderBy('code')
-            ->orderBy('name')
-            ->get(['id', 'code', 'name']);
-
-        $opts = [];
-        foreach ($rows as $r) {
-            $label = trim((string) ($r->code ?? '')) . ' - ' . trim((string) ($r->name ?? ''));
-            $opts[] = [
-                'id' => (int) $r->id,
-                'label' => trim($label, ' -'),
-            ];
-        }
-
-        return $opts;
+        // stock_add: ganti WH = reset list (sesuai behavior kamu sebelumnya)
+        $this->products = [];
     }
 
     // =========================
-    // QUALITY HANDLERS
+    // QUALITY HANDLERS (MODE GUARDED)
     // =========================
     public function qualityWarehouseChanged($payload)
     {
+        // ✅ IMPORTANT: hanya quality yang boleh respon event quality
+        if ($this->mode !== 'quality') return;
+
         $warehouseId = null;
 
         if (is_array($payload)) {
@@ -150,11 +160,9 @@ class ProductTable extends Component
         $warehouseId = is_numeric($warehouseId) ? (int) $warehouseId : null;
         $this->qualityWarehouseId = ($warehouseId && $warehouseId > 0) ? $warehouseId : null;
 
-        if ($this->mode === 'quality') {
-            $this->products = [];
-        }
+        $this->products = [];
 
-        // ✅ IMPORTANT: load rack options juga untuk QUALITY
+        // ✅ rack options untuk dropdown QUALITY
         $this->rackOptions = $this->loadRacksForWarehouse($this->qualityWarehouseId);
 
         $this->dispatchQualitySummary();
@@ -162,6 +170,8 @@ class ProductTable extends Component
 
     public function qualityTypeChanged($payload)
     {
+        if ($this->mode !== 'quality') return;
+
         $type = '';
 
         if (is_array($payload)) {
@@ -177,7 +187,8 @@ class ProductTable extends Component
 
         $this->qualityType = $type;
 
-        if ($this->mode === 'quality' && !empty($this->products) && $this->qualityWarehouseId) {
+        // recalc jika sudah ada product
+        if (!empty($this->products) && $this->qualityWarehouseId) {
             $productId = (int) ($this->products[0]['id'] ?? 0);
             $rackId    = (int) ($this->products[0]['rack_id'] ?? 0);
 
@@ -238,7 +249,7 @@ class ProductTable extends Component
             }
         }
 
-        if ($this->mode === 'stock') {
+        if ($this->mode === 'stock_add') {
             if (!$this->stockWarehouseId) {
                 session()->flash('message', 'Please select Warehouse first (Stock tab).');
                 return;
@@ -252,33 +263,48 @@ class ProductTable extends Component
             return;
         }
 
-        // ✅ default rack = first option (for BOTH modes)
-        $defaultRackId = !empty($this->rackOptions) ? (int) ($this->rackOptions[0]['id'] ?? 0) : 0;
-        if ($defaultRackId <= 0) $defaultRackId = null;
-
         // =========================
-        // STOCK mode (tetap)
+        // STOCK qty display (FIX: use stock_racks)
         // =========================
         $stockQty = 0;
-        if ($this->mode === 'stock') {
-            $stockQty = (int) DB::table('stocks')
+        if ($this->mode === 'stock_add') {
+            $row = DB::table('stock_racks')
                 ->where('branch_id', $this->branchId)
                 ->where('warehouse_id', (int) $this->stockWarehouseId)
                 ->where('product_id', (int) $p->id)
-                ->sum('qty_available');
+                ->selectRaw('
+                    COALESCE(SUM(qty_available), 0) as qty_available,
+                    COALESCE(SUM(qty_good), 0) as qty_good,
+                    COALESCE(SUM(qty_defect), 0) as qty_defect,
+                    COALESCE(SUM(qty_damaged), 0) as qty_damaged
+                ')
+                ->first();
+
+            $qtyAvailable = (int) ($row->qty_available ?? 0);
+            $fallbackTotal = (int) (($row->qty_good ?? 0) + ($row->qty_defect ?? 0) + ($row->qty_damaged ?? 0));
+
+            $stockQty = $qtyAvailable > 0 ? $qtyAvailable : $fallbackTotal;
         }
 
         // =========================
-        // QUALITY mode (FIX: pakai stock_racks)
+        // QUALITY mode info
         // =========================
         $stockLabel = 'GOOD';
         $availableQty = 0;
 
         if ($this->mode === 'quality') {
+            // load rack options once if not loaded
+            if (empty($this->rackOptions) && $this->qualityWarehouseId) {
+                $this->rackOptions = $this->loadRacksForWarehouse($this->qualityWarehouseId);
+            }
+
+            $defaultRackId = !empty($this->rackOptions) ? (int) ($this->rackOptions[0]['id'] ?? 0) : 0;
+            if ($defaultRackId <= 0) $defaultRackId = null;
+
             $info = $this->getAvailableInfoForProduct(
                 $this->branchId,
                 (int) $this->qualityWarehouseId,
-                $defaultRackId ? (int)$defaultRackId : null,
+                $defaultRackId ? (int) $defaultRackId : null,
                 (int) $p->id,
                 $this->qualityType
             );
@@ -291,30 +317,50 @@ class ProductTable extends Component
                 $this->dispatchQualitySummary();
                 return;
             }
+
+            $this->products[] = [
+                'id' => $p->id,
+                'product_name' => $p->product_name,
+                'product_code' => $p->product_code,
+                'product_quantity' => $p->product_quantity,
+                'product_unit' => $p->product_unit,
+
+                // quality
+                'quantity' => 1,
+                'rack_id' => $defaultRackId,
+                'stock_label' => $stockLabel,
+                'available_qty' => $availableQty,
+
+                // display stock
+                'stock_qty' => 0,
+            ];
+
+            $this->dispatchQualitySummary();
+            return;
         }
 
-        $this->products[] = [
-            'id' => $p->id,
-            'product_name' => $p->product_name,
-            'product_code' => $p->product_code,
+        // =========================
+        // STOCK_ADD row init (fields must match blade)
+        // =========================
+        if ($this->mode === 'stock_add') {
+            $this->products[] = [
+                'id' => $p->id,
+                'product_name' => $p->product_name,
+                'product_code' => $p->product_code,
+                'product_quantity' => $p->product_quantity,
+                'product_unit' => $p->product_unit,
 
-            'product_quantity' => $p->product_quantity,
-            'product_unit' => $p->product_unit,
+                'stock_qty' => $stockQty,
 
-            'stock_qty' => $stockQty,
-
-            'quantity' => 1,
-            'type' => 'add',
-            'note' => null,
-
-            // ✅ rack now used in QUALITY too
-            'rack_id' => $defaultRackId,
-
-            'stock_label' => $stockLabel,
-            'available_qty' => (int) $availableQty,
-        ];
-
-        $this->dispatchQualitySummary();
+                // UI expects these fields
+                'qty_good' => 0,
+                'qty_defect' => 0,
+                'qty_damaged' => 0,
+                'good_allocations' => [],
+                'defects' => [],
+                'damaged_items' => [],
+            ];
+        }
     }
 
     public function removeProduct($key)
@@ -325,6 +371,28 @@ class ProductTable extends Component
         $this->dispatchQualitySummary();
     }
 
+    private function loadRacksForWarehouse(?int $warehouseId): array
+    {
+        if (!$warehouseId || $warehouseId <= 0) return [];
+
+        $rows = DB::table('racks')
+            ->where('warehouse_id', (int) $warehouseId)
+            ->orderBy('code')
+            ->orderBy('name')
+            ->get(['id', 'code', 'name']);
+
+        $opts = [];
+        foreach ($rows as $r) {
+            $label = trim((string) ($r->code ?? '')) . ' - ' . trim((string) ($r->name ?? ''));
+            $opts[] = [
+                'id' => (int) $r->id,
+                'label' => trim($label, ' -'),
+            ];
+        }
+
+        return $opts;
+    }
+
     private function getAvailableInfoForProduct(
         int $branchId,
         int $warehouseId,
@@ -332,7 +400,6 @@ class ProductTable extends Component
         int $productId,
         string $qualityType
     ): array {
-        // label yang ditampilkan di badge (GOOD/DEFECT/DAMAGED)
         $label = 'GOOD';
 
         if ($branchId <= 0 || $warehouseId <= 0 || $productId <= 0) {
@@ -343,7 +410,6 @@ class ProductTable extends Component
             ];
         }
 
-        // Ambil stok per rack dari stock_racks (SUM karena bisa saja ada multiple row)
         $q = DB::table('stock_racks')
             ->where('branch_id', $branchId)
             ->where('warehouse_id', $warehouseId)
@@ -362,21 +428,11 @@ class ProductTable extends Component
             ->first();
 
         $qtyAvailable = (int) ($row->qty_available ?? 0);
-
-        // ✅ total available = good + defect + damaged (sesuai request kamu)
-        // (kalau qty_available sudah merepresentasikan itu, hasilnya tetap konsisten)
         $totalAvailable = (int) (($row->qty_good ?? 0) + ($row->qty_defect ?? 0) + ($row->qty_damaged ?? 0));
         if ($qtyAvailable > 0) {
-            // pilih qty_available sebagai sumber utama jika memang sudah ter-maintain benar
             $totalAvailable = $qtyAvailable;
         }
 
-        // ==========================================================
-        // Mapping available qty berdasarkan action:
-        // - defect / damaged          => sumbernya GOOD (yang akan dipindah)
-        // - defect_to_good            => sumbernya DEFECT
-        // - damaged_to_good           => sumbernya DAMAGED
-        // ==========================================================
         $available = 0;
 
         if (in_array($qualityType, ['defect', 'damaged'], true)) {
@@ -399,28 +455,23 @@ class ProductTable extends Component
         return [
             'label' => $label,
             'available_qty' => $available,
-            'total_available' => $totalAvailable, // kalau mau kamu tampilkan juga
+            'total_available' => $totalAvailable,
         ];
     }
 
     public function updatedProducts($value = null, $name = null)
     {
-        // STOCK mode ga perlu logic tambahan
-        if ($this->mode !== 'quality') {
-            return;
-        }
+        if ($this->mode !== 'quality') return;
 
         if (empty($this->products) || !$this->qualityWarehouseId) {
             $this->dispatchQualitySummary();
             return;
         }
 
-        // kita hanya support 1 product untuk quality
         $productId = (int) ($this->products[0]['id'] ?? 0);
         $rackId    = (int) ($this->products[0]['rack_id'] ?? 0);
 
         if ($productId > 0) {
-            // Recalc available setiap kali rack/qty berubah
             $info = $this->getAvailableInfoForProduct(
                 $this->branchId,
                 (int) $this->qualityWarehouseId,

@@ -578,7 +578,18 @@ class MutationController extends Controller
             ->lockForUpdate()
             ->get();
 
+        // helper: resolve bucket dari note (sama seperti applyInOutInternal)
+        $resolveBucketFromNote = function (string $noteX): ?string {
+            $n = strtoupper(trim($noteX));
+            if (str_contains($n, '| GOOD')) return 'qty_good';
+            if (str_contains($n, '| DEFECT')) return 'qty_defect';
+            if (str_contains($n, '| DAMAGED')) return 'qty_damaged';
+            return null;
+        };
+
         foreach ($mutations as $m) {
+
+            // 1) rollback STOCK (existing behavior kamu)
             $stock = Stock::withoutGlobalScopes()
                 ->where('branch_id', (int) $m->branch_id)
                 ->where('warehouse_id', (int) $m->warehouse_id)
@@ -611,6 +622,66 @@ class MutationController extends Controller
                 'updated_by'    => auth()->id(),
             ]);
 
+            // 2) ✅ rollback STOCK_RACKS (NEW)
+            $rackId = (int) ($m->rack_id ?? 0);
+            if ($rackId > 0) {
+
+                $qty = 0;
+                // mutation table kamu punya stock_in/stock_out
+                if (strtoupper((string)$m->mutation_type) === 'IN') {
+                    $qty = (int) ($m->stock_in ?? 0);
+                } elseif (strtoupper((string)$m->mutation_type) === 'OUT') {
+                    $qty = (int) ($m->stock_out ?? 0);
+                } else {
+                    // Transfer di module lain: ignore rack rollback (karena transfer kamu tidak pakai rack_id)
+                    $qty = 0;
+                }
+
+                if ($qty > 0) {
+
+                    $bucketCol = $resolveBucketFromNote((string) ($m->note ?? ''));
+
+                    $sr = DB::table('stock_racks')
+                        ->where('branch_id', (int) $m->branch_id)
+                        ->where('warehouse_id', (int) $m->warehouse_id)
+                        ->where('rack_id', (int) $rackId)
+                        ->where('product_id', (int) $m->product_id)
+                        ->lockForUpdate()
+                        ->first();
+
+                    if ($sr) {
+                        $curAvail = (int) ($sr->qty_available ?? 0);
+
+                        // reverse delta:
+                        // - kalau mutation IN dulu menambah, rollback harus mengurangi
+                        // - kalau mutation OUT dulu mengurangi, rollback harus menambah
+                        $isIn = strtoupper((string)$m->mutation_type) === 'IN';
+                        $newAvail = $isIn ? ($curAvail - $qty) : ($curAvail + $qty);
+                        if ($newAvail < 0) $newAvail = 0; // safety guard
+
+                        $update = [
+                            'qty_available' => (int) $newAvail,
+                            'updated_at'    => now(),
+                        ];
+
+                        if ($bucketCol && in_array($bucketCol, ['qty_good', 'qty_defect', 'qty_damaged'], true)) {
+                            $curBucket = (int) ($sr->{$bucketCol} ?? 0);
+                            $newBucket = $isIn ? ($curBucket - $qty) : ($curBucket + $qty);
+                            if ($newBucket < 0) $newBucket = 0; // safety guard
+                            $update[$bucketCol] = (int) $newBucket;
+                        }
+
+                        DB::table('stock_racks')
+                            ->where('branch_id', (int) $m->branch_id)
+                            ->where('warehouse_id', (int) $m->warehouse_id)
+                            ->where('rack_id', (int) $rackId)
+                            ->where('product_id', (int) $m->product_id)
+                            ->update($update);
+                    }
+                }
+            }
+
+            // 3) delete mutation log
             $m->delete();
         }
     }

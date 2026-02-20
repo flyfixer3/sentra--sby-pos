@@ -2,8 +2,10 @@
 
 namespace App\Providers;
 
+use App\Http\Livewire\Adjustment\ProductTable;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\ServiceProvider;
+use Livewire\Livewire;
 
 class AppServiceProvider extends ServiceProvider
 {
@@ -24,6 +26,8 @@ class AppServiceProvider extends ServiceProvider
      */
     public function boot()
     {
+        Livewire::component('adjustment.product-table-stock', ProductTable::class);
+        Livewire::component('adjustment.product-table-quality', ProductTable::class);
         // Model::preventLazyLoading(!app()->isProduction());
     }
 }

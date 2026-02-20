@@ -12,317 +12,310 @@
         </div>
     @endif
 
-    {{-- =========================
-        STOCK ADD (NEW UI like transfer::confirm)
-       ========================= --}}
-    @if($mode === 'stock_add')
-
-        <h5 class="mb-2">Receive Details (per item)</h5>
-        <div class="alert alert-light border mb-3">
-            <div class="d-flex align-items-start">
-                <div>
-                    <div class="font-weight-bold mb-1">Rule Validasi</div>
-                    <div class="text-muted">
-                        Isi qty yang akan ditambahkan per produk:
-                        <strong>Total = Good + Defect + Damaged</strong>.
-                    </div>
-                    <div class="text-muted mt-2">
-                        <small>
-                            - <strong>GOOD</strong> bisa dibagi ke beberapa rack (split).<br>
-                            - <strong>Defect/Damaged</strong> dicatat <strong>per unit</strong> (tiap baris qty = 1) dan tiap unit wajib pilih rack.<br>
-                            - Foto opsional, tapi sangat disarankan untuk audit.
-                        </small>
-                    </div>
+    <h5 class="mb-2">Receive Details (per item)</h5>
+    <div class="alert alert-light border mb-3">
+        <div class="d-flex align-items-start">
+            <div>
+                <div class="font-weight-bold mb-1">Rule Validasi</div>
+                <div class="text-muted">
+                    Isi qty yang akan ditambahkan per produk:
+                    <strong>Total = Good + Defect + Damaged</strong>.
+                </div>
+                <div class="text-muted mt-2">
+                    <small>
+                        - <strong>GOOD</strong> bisa dibagi ke beberapa rack (split).<br>
+                        - <strong>Defect/Damaged</strong> dicatat <strong>per unit</strong> (tiap baris qty = 1) dan tiap unit wajib pilih rack.<br>
+                        - Foto opsional, tapi sangat disarankan untuk audit.
+                    </small>
                 </div>
             </div>
         </div>
+    </div>
 
-        @if(empty($products))
-            <div class="alert alert-danger">
-                Please search & select products!
-            </div>
-        @else
+    @if(empty($products))
+        <div class="alert alert-danger">
+            Please search &amp; select products!
+        </div>
+    @else
 
-            <div class="table-responsive">
-                <table class="table table-bordered table-sm table-modern" id="adjustment-add-table">
-                    <thead>
-                        <tr>
-                            <th style="min-width: 320px;">Product</th>
-                            <th class="text-center" style="width: 90px;">Total</th>
-                            <th class="text-center" style="width: 110px;">Good</th>
-                            <th class="text-center" style="width: 110px;">Defect</th>
-                            <th class="text-center" style="width: 110px;">Damaged</th>
+        <div class="table-responsive">
+            <table class="table table-bordered table-sm table-modern" id="adjustment-add-table">
+                <thead>
+                    <tr>
+                        <th style="min-width: 320px;">Product</th>
+                        <th class="text-center" style="width: 90px;">Total</th>
+                        <th class="text-center" style="width: 110px;">Good</th>
+                        <th class="text-center" style="width: 110px;">Defect</th>
+                        <th class="text-center" style="width: 110px;">Damaged</th>
 
-                            <th class="text-center" style="width: 180px;">Rack Allocation</th>
-                            <th class="text-center" style="width: 170px;">Per-Unit Notes</th>
-                            <th class="text-center" style="width: 140px;">Status</th>
-                            <th class="text-center" style="width: 70px;">Action</th>
+                        <th class="text-center" style="width: 180px;">Rack Allocation</th>
+                        <th class="text-center" style="width: 170px;">Per-Unit Notes</th>
+                        <th class="text-center" style="width: 140px;">Status</th>
+                        <th class="text-center" style="width: 70px;">Action</th>
+                    </tr>
+                </thead>
+
+                <tbody>
+                    @foreach($products as $idx => $product)
+                        @php
+                            $pid  = (int) ($product['id'] ?? 0);
+                            $pname = (string) ($product['product_name'] ?? '-');
+                            $pcode = (string) ($product['product_code'] ?? '');
+                            $stockQty = (int) ($product['stock_qty'] ?? 0);
+                            $unit = (string) ($product['product_unit'] ?? '');
+
+                            $oldGood = (int) old("items.$idx.qty_good", (int)($product['qty_good'] ?? 0));
+                            $oldDef  = (int) old("items.$idx.qty_defect", (int)($product['qty_defect'] ?? 0));
+                            $oldDam  = (int) old("items.$idx.qty_damaged", (int)($product['qty_damaged'] ?? 0));
+
+                            $oldGoodAlloc = old("items.$idx.good_allocations", (array)($product['good_allocations'] ?? []));
+                            $oldDefects   = old("items.$idx.defects", (array)($product['defects'] ?? []));
+                            $oldDamages   = old("items.$idx.damaged_items", (array)($product['damaged_items'] ?? []));
+                        @endphp
+
+                        <tr class="adj-receive-row"
+                            data-index="{{ $idx }}"
+                            data-product="{{ $pid }}">
+                            <td class="align-middle">
+                                <div class="d-flex align-items-start justify-content-between">
+                                    <div>
+                                        <div class="font-weight-bold">{{ $pname }}</div>
+                                        <div class="text-muted"><small>{{ $pcode }}</small></div>
+                                        <div class="text-muted"><small>Stock: <b>{{ number_format($stockQty) }} {{ $unit }}</b></small></div>
+                                    </div>
+                                    <span class="badge badge-pill badge-light border px-2 py-1">
+                                        PID: {{ $pid }}
+                                    </span>
+                                </div>
+
+                                <input type="hidden" name="items[{{ $idx }}][product_id]" value="{{ $pid }}">
+                            </td>
+
+                            <td class="text-center align-middle">
+                                <span class="badge badge-primary adj-total-badge" data-idx="{{ $idx }}">0</span>
+                            </td>
+
+                            <td class="text-center align-middle">
+                                <input type="number"
+                                       min="0"
+                                       step="1"
+                                       class="form-control form-control-sm text-center qty-input qty-good"
+                                       name="items[{{ $idx }}][qty_good]"
+                                       value="{{ $oldGood }}"
+                                       required>
+                            </td>
+
+                            <td class="text-center align-middle">
+                                <input type="number"
+                                       min="0"
+                                       step="1"
+                                       class="form-control form-control-sm text-center qty-input qty-defect"
+                                       name="items[{{ $idx }}][qty_defect]"
+                                       value="{{ $oldDef }}"
+                                       required>
+                            </td>
+
+                            <td class="text-center align-middle">
+                                <input type="number"
+                                       min="0"
+                                       step="1"
+                                       class="form-control form-control-sm text-center qty-input qty-damaged"
+                                       name="items[{{ $idx }}][qty_damaged]"
+                                       value="{{ $oldDam }}"
+                                       required>
+                            </td>
+
+                            <td class="text-center align-middle">
+                                <button type="button"
+                                        class="btn btn-sm btn-outline-primary btn-good-rack"
+                                        data-target="#goodAllocWrap-{{ $idx }}">
+                                    Good Racks
+                                </button>
+                            </td>
+
+                            <td class="text-center align-middle">
+                                <button type="button"
+                                        class="btn btn-sm btn-notes"
+                                        data-target="#perUnitWrap-{{ $idx }}">
+                                    Notes
+                                    <span class="ml-2 badge badge-pill badge-defect badge-defect-count">0</span>
+                                    <span class="ml-1 badge badge-pill badge-damaged badge-damaged-count">0</span>
+                                </button>
+                            </td>
+
+                            <td class="text-center align-middle">
+                                <span class="badge badge-secondary row-status">CHECK</span>
+                                <div class="small text-muted mt-1 row-hint"></div>
+                            </td>
+
+                            <td class="text-center align-middle">
+                                <button type="button" class="btn btn-sm btn-danger" wire:click="removeProduct({{ $idx }})">
+                                    <i class="bi bi-trash"></i>
+                                </button>
+                            </td>
                         </tr>
-                    </thead>
 
-                    <tbody>
-                        @foreach($products as $idx => $product)
-                            @php
-                                $pid  = (int) ($product['id'] ?? 0);
-                                $pname = (string) ($product['product_name'] ?? '-');
-                                $pcode = (string) ($product['product_code'] ?? '');
-                                $stockQty = (int) ($product['stock_qty'] ?? 0);
-                                $unit = (string) ($product['product_unit'] ?? '');
-
-                                $oldGood = (int) old("items.$idx.qty_good", (int)($product['qty_good'] ?? 0));
-                                $oldDef  = (int) old("items.$idx.qty_defect", (int)($product['qty_defect'] ?? 0));
-                                $oldDam  = (int) old("items.$idx.qty_damaged", (int)($product['qty_damaged'] ?? 0));
-
-                                $oldGoodAlloc = old("items.$idx.good_allocations", (array)($product['good_allocations'] ?? []));
-                                $oldDefects   = old("items.$idx.defects", (array)($product['defects'] ?? []));
-                                $oldDamages   = old("items.$idx.damaged_items", (array)($product['damaged_items'] ?? []));
-                            @endphp
-
-                            <tr class="adj-receive-row"
-                                data-index="{{ $idx }}"
-                                data-product="{{ $pid }}">
-                                <td class="align-middle">
-                                    <div class="d-flex align-items-start justify-content-between">
-                                        <div>
-                                            <div class="font-weight-bold">{{ $pname }}</div>
-                                            <div class="text-muted"><small>{{ $pcode }}</small></div>
-                                            <div class="text-muted"><small>Stock: <b>{{ number_format($stockQty) }} {{ $unit }}</b></small></div>
+                        {{-- GOOD ALLOCATION --}}
+                        <tr class="goodalloc-row" id="goodAllocWrap-{{ $idx }}" style="display:none;">
+                            <td colspan="9" class="perunit-td">
+                                <div class="perunit-card">
+                                    <div class="perunit-card-header">
+                                        <div class="d-flex align-items-center justify-content-between">
+                                            <div class="font-weight-bold">
+                                                Good Rack Allocation — {{ $pname }}
+                                            </div>
+                                            <button type="button"
+                                                    class="btn btn-sm btn-outline-secondary btn-close-goodalloc"
+                                                    data-target="#goodAllocWrap-{{ $idx }}">
+                                                Close
+                                            </button>
                                         </div>
-                                        <span class="badge badge-pill badge-light border px-2 py-1">
-                                            PID: {{ $pid }}
-                                        </span>
-                                    </div>
-
-                                    <input type="hidden" name="items[{{ $idx }}][product_id]" value="{{ $pid }}">
-                                </td>
-
-                                <td class="text-center align-middle">
-                                    <span class="badge badge-primary adj-total-badge" data-idx="{{ $idx }}">0</span>
-                                </td>
-
-                                <td class="text-center align-middle">
-                                    <input type="number"
-                                           min="0"
-                                           step="1"
-                                           class="form-control form-control-sm text-center qty-input qty-good"
-                                           name="items[{{ $idx }}][qty_good]"
-                                           value="{{ $oldGood }}"
-                                           required>
-                                </td>
-
-                                <td class="text-center align-middle">
-                                    <input type="number"
-                                           min="0"
-                                           step="1"
-                                           class="form-control form-control-sm text-center qty-input qty-defect"
-                                           name="items[{{ $idx }}][qty_defect]"
-                                           value="{{ $oldDef }}"
-                                           required>
-                                </td>
-
-                                <td class="text-center align-middle">
-                                    <input type="number"
-                                           min="0"
-                                           step="1"
-                                           class="form-control form-control-sm text-center qty-input qty-damaged"
-                                           name="items[{{ $idx }}][qty_damaged]"
-                                           value="{{ $oldDam }}"
-                                           required>
-                                </td>
-
-                                <td class="text-center align-middle">
-                                    <button type="button"
-                                            class="btn btn-sm btn-outline-primary btn-good-rack"
-                                            data-target="#goodAllocWrap-{{ $idx }}">
-                                        Good Racks
-                                    </button>
-                                </td>
-
-                                <td class="text-center align-middle">
-                                    <button type="button"
-                                            class="btn btn-sm btn-notes"
-                                            data-target="#perUnitWrap-{{ $idx }}">
-                                        Notes
-                                        <span class="ml-2 badge badge-pill badge-defect badge-defect-count">0</span>
-                                        <span class="ml-1 badge badge-pill badge-damaged badge-damaged-count">0</span>
-                                    </button>
-                                </td>
-
-                                <td class="text-center align-middle">
-                                    <span class="badge badge-secondary row-status">CHECK</span>
-                                    <div class="small text-muted mt-1 row-hint"></div>
-                                </td>
-
-                                <td class="text-center align-middle">
-                                    <button type="button" class="btn btn-sm btn-danger" wire:click="removeProduct({{ $idx }})">
-                                        <i class="bi bi-trash"></i>
-                                    </button>
-                                </td>
-                            </tr>
-
-                            {{-- GOOD ALLOCATION --}}
-                            <tr class="goodalloc-row" id="goodAllocWrap-{{ $idx }}" style="display:none;">
-                                <td colspan="9" class="perunit-td">
-                                    <div class="perunit-card">
-                                        <div class="perunit-card-header">
-                                            <div class="d-flex align-items-center justify-content-between">
-                                                <div class="font-weight-bold">
-                                                    Good Rack Allocation — {{ $pname }}
-                                                </div>
-                                                <button type="button"
-                                                        class="btn btn-sm btn-outline-secondary btn-close-goodalloc"
-                                                        data-target="#goodAllocWrap-{{ $idx }}">
-                                                    Close
-                                                </button>
-                                            </div>
-                                            <div class="text-muted mt-1">
-                                                <small>
-                                                    Total qty pada tabel ini harus sama dengan nilai <b>Good</b>.
-                                                    Kamu bisa split Good ke beberapa rack.
-                                                </small>
-                                            </div>
-                                        </div>
-
-                                        <div class="perunit-card-body">
-                                            <div class="d-flex justify-content-between align-items-center mb-2">
-                                                <div class="text-muted">
-                                                    <small>Rack wajib dipilih hanya untuk baris yang qty &gt; 0.</small>
-                                                </div>
-                                                <button type="button"
-                                                        class="btn btn-sm btn-primary btn-add-goodalloc"
-                                                        data-idx="{{ $idx }}">
-                                                    + Add Row
-                                                </button>
-                                            </div>
-
-                                            <div class="table-responsive">
-                                                <table class="table table-sm table-bordered mb-0 section-table">
-                                                    <thead>
-                                                        <tr>
-                                                            <th class="text-center" style="width: 55px;">#</th>
-                                                            <th style="width: 260px;">To Rack *</th>
-                                                            <th class="text-center" style="width: 160px;">Qty</th>
-                                                            <th class="text-center" style="width: 90px;">Action</th>
-                                                        </tr>
-                                                    </thead>
-                                                    <tbody class="goodalloc-tbody" data-idx="{{ $idx }}">
-                                                        {{-- built by JS --}}
-                                                    </tbody>
-                                                    <tfoot>
-                                                        <tr>
-                                                            <th colspan="2" class="text-right">Total</th>
-                                                            <th class="text-center">
-                                                                <span class="goodalloc-total" data-idx="{{ $idx }}">0</span>
-                                                            </th>
-                                                            <th></th>
-                                                        </tr>
-                                                    </tfoot>
-                                                </table>
-                                            </div>
-
-                                            <textarea class="d-none old-goodalloc-json" data-idx="{{ $idx }}">{{ json_encode($oldGoodAlloc) }}</textarea>
+                                        <div class="text-muted mt-1">
+                                            <small>
+                                                Total qty pada tabel ini harus sama dengan nilai <b>Good</b>.
+                                                Kamu bisa split Good ke beberapa rack.
+                                            </small>
                                         </div>
                                     </div>
-                                </td>
-                            </tr>
 
-                            {{-- PER-UNIT NOTES --}}
-                            <tr class="perunit-row" id="perUnitWrap-{{ $idx }}" style="display:none;">
-                                <td colspan="9" class="perunit-td">
-                                    <div class="perunit-card">
-                                        <div class="perunit-card-header">
-                                            <div class="d-flex align-items-center justify-content-between">
-                                                <div class="font-weight-bold">
-                                                    Per-Unit Notes — {{ $pname }}
-                                                </div>
-                                                <button type="button"
-                                                        class="btn btn-sm btn-outline-secondary btn-close-notes"
-                                                        data-target="#perUnitWrap-{{ $idx }}">
-                                                    Close
-                                                </button>
+                                    <div class="perunit-card-body">
+                                        <div class="d-flex justify-content-between align-items-center mb-2">
+                                            <div class="text-muted">
+                                                <small>Rack wajib dipilih hanya untuk baris yang qty &gt; 0.</small>
                                             </div>
-                                            <div class="text-muted mt-1">
-                                                <small>
-                                                    Defect/Damaged disimpan <b>per unit</b> (masing-masing baris qty = 1),
-                                                    jadi tiap unit bisa punya catatan + foto + rack sendiri.
-                                                </small>
-                                            </div>
+                                            <button type="button"
+                                                    class="btn btn-sm btn-primary btn-add-goodalloc"
+                                                    data-idx="{{ $idx }}">
+                                                + Add Row
+                                            </button>
                                         </div>
 
-                                        <div class="perunit-card-body">
-                                            <div class="row">
-                                                {{-- DEFECT --}}
-                                                <div class="col-lg-6">
-                                                    <div class="section-title defect-title">
-                                                        Defect Items (<span class="defect-count-text">0</span>)
-                                                    </div>
-                                                    <div class="table-responsive">
-                                                        <table class="table table-sm table-bordered mb-0 section-table">
-                                                            <thead>
-                                                                <tr>
-                                                                    <th style="width: 55px;" class="text-center">#</th>
-                                                                    <th style="width: 190px;">To Rack *</th>
-                                                                    <th style="min-width: 160px;">Defect Type *</th>
-                                                                    <th>Defect Description</th>
-                                                                    <th style="width: 190px;">Photo (optional)</th>
-                                                                </tr>
-                                                            </thead>
-                                                            <tbody class="defect-tbody">
-                                                                {{-- built by JS --}}
-                                                            </tbody>
-                                                        </table>
-                                                    </div>
-                                                    <div class="text-muted mt-2">
-                                                        <small>Contoh defect type: bubble, retak ringan, baret, distorsi.</small>
-                                                    </div>
-                                                </div>
+                                        <div class="table-responsive">
+                                            <table class="table table-sm table-bordered mb-0 section-table">
+                                                <thead>
+                                                    <tr>
+                                                        <th class="text-center" style="width: 55px;">#</th>
+                                                        <th style="width: 260px;">To Rack *</th>
+                                                        <th class="text-center" style="width: 160px;">Qty</th>
+                                                        <th class="text-center" style="width: 90px;">Action</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody class="goodalloc-tbody" data-idx="{{ $idx }}">
+                                                    {{-- built by JS --}}
+                                                </tbody>
+                                                <tfoot>
+                                                    <tr>
+                                                        <th colspan="2" class="text-right">Total</th>
+                                                        <th class="text-center">
+                                                            <span class="goodalloc-total" data-idx="{{ $idx }}">0</span>
+                                                        </th>
+                                                        <th></th>
+                                                    </tr>
+                                                </tfoot>
+                                            </table>
+                                        </div>
 
-                                                {{-- DAMAGED --}}
-                                                <div class="col-lg-6 mt-3 mt-lg-0">
-                                                    <div class="section-title damaged-title">
-                                                        Damaged Items (<span class="damaged-count-text">0</span>)
-                                                    </div>
-                                                    <div class="table-responsive">
-                                                        <table class="table table-sm table-bordered mb-0 section-table">
-                                                            <thead>
-                                                                <tr>
-                                                                    <th style="width: 55px;" class="text-center">#</th>
-                                                                    <th style="width: 190px;">To Rack *</th>
-                                                                    <th style="width: 160px;">Damaged Type *</th>
-                                                                    <th>Damage Description *</th>
-                                                                    <th style="width: 190px;">Photo (optional)</th>
-                                                                </tr>
-                                                            </thead>
-                                                            <tbody class="damaged-tbody">
-                                                                {{-- built by JS --}}
-                                                            </tbody>
-                                                        </table>
-                                                    </div>
-                                                    <div class="text-muted mt-2">
-                                                        <small>Damaged Type untuk sekarang: <b>damaged</b> / <b>missing</b>.</small>
-                                                    </div>
-                                                </div>
+                                        <textarea class="d-none old-goodalloc-json" data-idx="{{ $idx }}">{{ json_encode($oldGoodAlloc) }}</textarea>
+                                    </div>
+                                </div>
+                            </td>
+                        </tr>
+
+                        {{-- PER-UNIT NOTES --}}
+                        <tr class="perunit-row" id="perUnitWrap-{{ $idx }}" style="display:none;">
+                            <td colspan="9" class="perunit-td">
+                                <div class="perunit-card">
+                                    <div class="perunit-card-header">
+                                        <div class="d-flex align-items-center justify-content-between">
+                                            <div class="font-weight-bold">
+                                                Per-Unit Notes — {{ $pname }}
                                             </div>
-
-                                            <div class="text-muted mt-3">
-                                                <small>
-                                                    Tips: kalau defect/damaged tidak ada, biarkan qty = 0 dan notes tidak perlu diisi.
-                                                </small>
-                                            </div>
-
-                                            <textarea class="d-none old-defects-json" data-idx="{{ $idx }}">{{ json_encode($oldDefects) }}</textarea>
-                                            <textarea class="d-none old-damages-json" data-idx="{{ $idx }}">{{ json_encode($oldDamages) }}</textarea>
+                                            <button type="button"
+                                                    class="btn btn-sm btn-outline-secondary btn-close-notes"
+                                                    data-target="#perUnitWrap-{{ $idx }}">
+                                                Close
+                                            </button>
+                                        </div>
+                                        <div class="text-muted mt-1">
+                                            <small>
+                                                Defect/Damaged disimpan <b>per unit</b> (masing-masing baris qty = 1),
+                                                jadi tiap unit bisa punya catatan + foto + rack sendiri.
+                                            </small>
                                         </div>
                                     </div>
-                                </td>
-                            </tr>
 
-                        @endforeach
-                    </tbody>
-                </table>
-            </div>
+                                    <div class="perunit-card-body">
+                                        <div class="row">
+                                            {{-- DEFECT --}}
+                                            <div class="col-lg-6">
+                                                <div class="section-title defect-title">
+                                                    Defect Items (<span class="defect-count-text">0</span>)
+                                                </div>
+                                                <div class="table-responsive">
+                                                    <table class="table table-sm table-bordered mb-0 section-table">
+                                                        <thead>
+                                                            <tr>
+                                                                <th style="width: 55px;" class="text-center">#</th>
+                                                                <th style="width: 190px;">To Rack *</th>
+                                                                <th style="min-width: 160px;">Defect Type *</th>
+                                                                <th>Defect Description</th>
+                                                                <th style="width: 190px;">Photo (optional)</th>
+                                                            </tr>
+                                                        </thead>
+                                                        <tbody class="defect-tbody">
+                                                            {{-- built by JS --}}
+                                                        </tbody>
+                                                    </table>
+                                                </div>
+                                                <div class="text-muted mt-2">
+                                                    <small>Contoh defect type: bubble, retak ringan, baret, distorsi.</small>
+                                                </div>
+                                            </div>
 
-        @endif
+                                            {{-- DAMAGED --}}
+                                            <div class="col-lg-6 mt-3 mt-lg-0">
+                                                <div class="section-title damaged-title">
+                                                    Damaged Items (<span class="damaged-count-text">0</span>)
+                                                </div>
+                                                <div class="table-responsive">
+                                                    <table class="table table-sm table-bordered mb-0 section-table">
+                                                        <thead>
+                                                            <tr>
+                                                                <th style="width: 55px;" class="text-center">#</th>
+                                                                <th style="width: 190px;">To Rack *</th>
+                                                                <th style="width: 160px;">Damaged Type *</th>
+                                                                <th>Damage Description *</th>
+                                                                <th style="width: 190px;">Photo (optional)</th>
+                                                            </tr>
+                                                        </thead>
+                                                        <tbody class="damaged-tbody">
+                                                            {{-- built by JS --}}
+                                                        </tbody>
+                                                    </table>
+                                                </div>
+                                                <div class="text-muted mt-2">
+                                                    <small>Damaged Type untuk sekarang: <b>damaged</b> / <b>missing</b>.</small>
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        <div class="text-muted mt-3">
+                                            <small>
+                                                Tips: kalau defect/damaged tidak ada, biarkan qty = 0 dan notes tidak perlu diisi.
+                                            </small>
+                                        </div>
+
+                                        <textarea class="d-none old-defects-json" data-idx="{{ $idx }}">{{ json_encode($oldDefects) }}</textarea>
+                                        <textarea class="d-none old-damages-json" data-idx="{{ $idx }}">{{ json_encode($oldDamages) }}</textarea>
+                                    </div>
+                                </div>
+                            </td>
+                        </tr>
+
+                    @endforeach
+                </tbody>
+            </table>
+        </div>
 
         @push('page_scripts')
             <script>
@@ -894,67 +887,5 @@
             </script>
         @endpush
 
-    @else
-        {{-- QUALITY MODE (BIARKAN PUNYA KAMU) --}}
-        <div class="table-responsive">
-            <table class="table table-bordered">
-                <thead>
-                <tr>
-                    <th style="width:60px">#</th>
-                    <th>Product</th>
-                    <th style="width:160px">Code</th>
-                    <th style="width:140px" class="text-center">Stock</th>
-                    <th style="width:220px">Rack</th>
-                    <th style="width:90px" class="text-center">Action</th>
-                </tr>
-                </thead>
-                <tbody>
-                @if(!empty($products))
-                    @foreach($products as $key => $product)
-                        @php
-                            $stockLabel = (string)($product['stock_label'] ?? 'GOOD');
-                            $availableQty = (int)($product['available_qty'] ?? 0);
-
-                            $badgeClass = 'badge-success';
-                            if ($stockLabel === 'DEFECT') $badgeClass = 'badge-warning';
-                            if ($stockLabel === 'DAMAGED') $badgeClass = 'badge-danger';
-
-                            $selectedRackId = isset($product['rack_id']) ? (int)$product['rack_id'] : null;
-                        @endphp
-                        <tr>
-                            <td>{{ $key + 1 }}</td>
-                            <td>{{ $product['product_name'] }}</td>
-                            <td>{{ $product['product_code'] }}</td>
-                            <td class="text-center">
-                                <span class="badge {{ $badgeClass }}">
-                                    {{ $stockLabel }}: {{ $availableQty }}
-                                </span>
-                            </td>
-                            <td>
-                                <select class="form-control" name="rack_id" wire:model="products.{{ $key }}.rack_id" required>
-                                    <option value="">-- Select Rack --</option>
-                                    @foreach(($rackOptions ?? []) as $opt)
-                                        <option value="{{ $opt['id'] }}" {{ (int)$opt['id'] === (int)$selectedRackId ? 'selected' : '' }}>
-                                            {{ $opt['label'] }}
-                                        </option>
-                                    @endforeach
-                                </select>
-                                <small class="text-muted">Required (Quality)</small>
-                            </td>
-                            <td class="text-center">
-                                <button type="button" class="btn btn-danger" wire:click="removeProduct({{ $key }})">
-                                    <i class="bi bi-trash"></i>
-                                </button>
-                            </td>
-                        </tr>
-                    @endforeach
-                @else
-                    <tr>
-                        <td colspan="6" class="text-center text-danger">Please search & select products!</td>
-                    </tr>
-                @endif
-                </tbody>
-            </table>
-        </div>
     @endif
 </div>
