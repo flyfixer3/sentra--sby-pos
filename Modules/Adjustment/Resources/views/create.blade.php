@@ -146,13 +146,8 @@
                                 </div>
 
                                 {{-- SUB placeholder --}}
-                                <div id="stockSubWrap" style="display:none;">
-                                    <div class="alert alert-warning border">
-                                        <div class="font-weight-bold mb-1">SUB UI belum diaktifkan</div>
-                                        <div class="text-muted small">
-                                            Nanti kita bikin SUB setelah ADD beres dan stabil. (Biar nggak merusak logic lama).
-                                        </div>
-                                    </div>
+                                <div id="stockSubWrap">
+                                    <livewire:adjustment.product-table-stock-sub />
                                 </div>
 
                                 <hr>

@@ -22,5 +22,8 @@ Route::group(['middleware' => 'auth'], function () {
     Route::get('adjustments/quality/products', 'AdjustmentController@qualityProducts')
         ->name('adjustments.quality.products');
 
+    Route::get('adjustments/stock-sub/picker-data', 'AdjustmentController@stockSubPickerData')
+    ->name('adjustments.stock_sub.picker_data');
+
     Route::resource('adjustments', 'AdjustmentController');
 });
