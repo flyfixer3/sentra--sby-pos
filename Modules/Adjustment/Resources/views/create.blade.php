@@ -418,12 +418,9 @@
 @push('page_scripts')
 <script>
 (function(){
+    // ✅ IMPORTANT: racks mapping for stock table
+    window.RACKS_BY_WAREHOUSE = @json($racksByWarehouse ?? []);
 
-    function toastWarn(msg){
-        alert(msg);
-    }
-
-    // ================= STOCK =================
     function submitStockAdd(){
         const type = document.querySelector('input[name="adjustment_type"]:checked')?.value;
         if(type !== 'add'){
@@ -431,22 +428,31 @@
             return;
         }
 
-        const wh = document.getElementById('warehouse_id_stock').value;
+        const wh = document.getElementById('warehouse_id_stock')?.value;
         if(!wh){
             alert('Pilih warehouse dulu.');
             return;
         }
 
+        // optional validate row status (dari product-table-stock)
+        if(typeof window.validateAllAdjustmentRows === 'function'){
+            const ok = window.validateAllAdjustmentRows();
+            if(!ok){
+                alert('Masih ada item yang belum lengkap. Tolong cek status per item (NEED INFO).');
+                return;
+            }
+        }
+
         document.getElementById('adjustmentAddForm').submit();
     }
-
     window.submitStockAdd = submitStockAdd;
 
     // ================= QUALITY =================
-
     function syncQualityWarehouse(){
         const wq = document.getElementById('warehouse_id_quality');
         const hidden = document.getElementById('quality_warehouse_id');
+        if(!wq || !hidden) return;
+
         hidden.value = wq.value;
 
         if(window.Livewire){
@@ -454,33 +460,52 @@
         }
     }
 
+    // ✅ CHANGED: untuk type === 'damaged' pakai dropdown damaged|missing
     function buildUnits(qty, type){
         const tbody = document.getElementById('unit_tbody');
         const title = document.getElementById('unit_col_title');
+        if(!tbody || !title) return;
 
         qty = parseInt(qty || 0);
 
         let key = 'defect_type';
         let placeholder = 'bubble / scratch';
 
+        // default: defect input textbox
+        // khusus damaged (GOOD -> DAMAGED): dropdown damaged/missing (name tetap units[i][reason])
+        const isDamagedDropdown = (type === 'damaged');
+
         if(type === 'damaged'){
             key = 'reason';
-            placeholder = 'pecah sudut';
+            placeholder = 'damaged';
         }
 
         title.innerText = type.toUpperCase() + ' *';
-
         tbody.innerHTML = '';
 
         for(let i=0;i<qty;i++){
+
+            let firstColHtml = `
+                <input name="units[${i}][${key}]"
+                       class="form-control form-control-sm"
+                       required
+                       placeholder="${placeholder}">
+            `;
+
+            if(isDamagedDropdown){
+                firstColHtml = `
+                    <select name="units[${i}][reason]" class="form-control form-control-sm" required>
+                        <option value="damaged">damaged</option>
+                        <option value="missing">missing</option>
+                    </select>
+                `;
+            }
+
             tbody.insertAdjacentHTML('beforeend', `
                 <tr>
                     <td>${i+1}</td>
                     <td>
-                        <input name="units[${i}][${key}]"
-                               class="form-control form-control-sm"
-                               required
-                               placeholder="${placeholder}">
+                        ${firstColHtml}
                     </td>
                     <td>
                         <textarea name="units[${i}][description]"
@@ -499,14 +524,16 @@
     window.addEventListener('quality-table-updated', function(e){
         const d = e.detail || {};
 
-        document.getElementById('quality_product_id').value = d.product_id || '';
-        document.getElementById('quality_qty').value = d.qty || 0;
+        const pid = document.getElementById('quality_product_id');
+        const qty = document.getElementById('quality_qty');
+        if(pid) pid.value = d.product_id || '';
+        if(qty) qty.value = d.qty || 0;
 
-        buildUnits(d.qty, document.getElementById('quality_type').value);
+        buildUnits(d.qty, document.getElementById('quality_type')?.value || 'defect');
     });
 
     document.addEventListener('DOMContentLoaded', function () {
-        // ===== STOCK init (punya kamu) =====
+        // ===== STOCK init =====
         const stockWh = document.getElementById('warehouse_id_stock');
         if (stockWh && window.Livewire) {
             Livewire.emit('stockWarehouseChanged', parseInt(stockWh.value));
@@ -515,7 +542,7 @@
             });
         }
 
-        // ✅ NEW: QUALITY init (biar qualityWarehouseId pasti ke-set)
+        // ===== QUALITY init =====
         const qualityWh = document.getElementById('warehouse_id_quality');
         if (qualityWh && window.Livewire) {
             Livewire.emit('qualityWarehouseChanged', parseInt(qualityWh.value));
@@ -524,18 +551,19 @@
             });
         }
 
-        const form = document.querySelector('form#adjustment-form'); // sesuaikan id form kamu
-        if(!form) return;
-
-        form.addEventListener('submit', function(e){
-            if(typeof window.validateAllAdjustmentRows === 'function'){
-                const ok = window.validateAllAdjustmentRows();
-                if(!ok){
-                    e.preventDefault();
-                    alert('Masih ada item yang belum lengkap. Tolong cek status per item (NEED INFO).');
+        // ✅ FIX: form id yang bener
+        const form = document.querySelector('form#adjustmentAddForm');
+        if(form){
+            form.addEventListener('submit', function(e){
+                if(typeof window.validateAllAdjustmentRows === 'function'){
+                    const ok = window.validateAllAdjustmentRows();
+                    if(!ok){
+                        e.preventDefault();
+                        alert('Masih ada item yang belum lengkap. Tolong cek status per item (NEED INFO).');
+                    }
                 }
-            }
-        });
+            });
+        }
     });
 
     document.getElementById('warehouse_id_quality')
@@ -544,7 +572,7 @@
     document.getElementById('quality_type')
         ?.addEventListener('change', function(){
             buildUnits(
-                document.getElementById('quality_qty').value,
+                document.getElementById('quality_qty')?.value || 0,
                 this.value
             );
 

@@ -92,271 +92,255 @@ class AdjustmentController extends Controller
         abort_if(Gate::denies('create_adjustments'), 403);
 
         $active = session('active_branch');
-        if ($active === 'all' || $active === null) {
-            return redirect()->back()->with('message', 'Please choose specific branch first (cannot create adjustment in ALL branch).');
+        if ($active === 'all' || $active === null || (int)$active <= 0) {
+            return redirect()
+                ->back()
+                ->withInput()
+                ->with('message', 'Please select an active branch (not ALL) before creating adjustment.');
+        }
+
+        // hanya support ADD dulu sesuai UI
+        $adjType = $request->input('adjustment_type', 'add');
+        if ($adjType !== 'add') {
+            return redirect()
+                ->back()
+                ->withInput()
+                ->with('message', 'SUB adjustment is not enabled yet.');
         }
 
         $request->validate([
-            'reference' => ['required'],
             'date' => ['required', 'date'],
-            'warehouse_id' => ['required', 'integer'],
-            'adjustment_type' => ['required', 'in:add,sub'],
-
+            'warehouse_id' => ['required', 'integer', 'exists:warehouses,id'],
             'items' => ['required', 'array', 'min:1'],
-            'items.*.product_id' => ['required', 'integer'],
-
-            'items.*.qty_good' => ['required', 'integer', 'min:0'],
-            'items.*.qty_defect' => ['required', 'integer', 'min:0'],
-            'items.*.qty_damaged' => ['required', 'integer', 'min:0'],
-
-            // optional files (per-unit)
-            'items.*.defects.*.photo' => ['nullable', 'image', 'max:5120'],
-            'items.*.damaged_items.*.photo' => ['nullable', 'image', 'max:5120'],
+            'items.*.product_id' => ['required', 'integer', 'exists:products,id'],
+            'items.*.qty_good' => ['nullable', 'integer', 'min:0'],
+            'items.*.qty_defect' => ['nullable', 'integer', 'min:0'],
+            'items.*.qty_damaged' => ['nullable', 'integer', 'min:0'],
         ]);
 
-        if ($request->input('adjustment_type') !== 'add') {
-            return redirect()->back()->with('message', 'SUB mode is not enabled yet. Please use ADD for now.');
+        $warehouseId = (int) $request->warehouse_id;
+
+        // (opsional tapi disarankan) pastikan warehouse milik branch aktif
+        $wh = Warehouse::query()->where('id', $warehouseId)->first();
+        if (!$wh) {
+            return redirect()->back()->withInput()->with('message', 'Warehouse not found.');
+        }
+        if ((int)$wh->branch_id !== (int)$active) {
+            return redirect()
+                ->back()
+                ->withInput()
+                ->with('message', 'Selected warehouse is not in active branch.');
         }
 
-        $warehouseId = (int) $request->input('warehouse_id');
-
-        // ✅ warehouse must belong to active branch
-        $warehouseValid = Warehouse::query()
-            ->where('id', $warehouseId)
-            ->where('branch_id', (int) $active)
-            ->exists();
-
-        if (!$warehouseValid) {
-            return redirect()->back()->withInput()->with('message', 'Selected warehouse is invalid for active branch.');
-        }
-
-        $items = $request->input('items', []);
-
-        // ===============================
-        // BUSINESS VALIDATION (match UI)
-        // ===============================
-        foreach ($items as $idx => $row) {
-
-            $good   = (int) ($row['qty_good'] ?? 0);
-            $defect = (int) ($row['qty_defect'] ?? 0);
-            $damaged= (int) ($row['qty_damaged'] ?? 0);
-            $total  = $good + $defect + $damaged;
-
-            if ($total <= 0) {
-                return redirect()->back()
-                    ->withInput()
-                    ->with('message', "Row #".($idx+1)." must have at least 1 qty.");
-            }
-
-            // GOOD: allocation required + sum must equal
-            if ($good > 0) {
-                $allocs = $row['good_allocations'] ?? [];
-                if (!is_array($allocs) || count($allocs) < 1) {
-                    return redirect()->back()->withInput()->with('message', "Row #".($idx+1).": Good > 0 requires rack allocation.");
-                }
-
-                $sum = 0;
-                foreach ($allocs as $aIdx => $a) {
-                    $toRackId = (int) ($a['to_rack_id'] ?? 0);
-                    $qty = (int) ($a['qty'] ?? 0);
-
-                    if ($toRackId <= 0 || $qty <= 0) {
-                        return redirect()->back()->withInput()->with('message', "Row #".($idx+1).": Invalid Good allocation.");
-                    }
-
-                    $rackValid = DB::table('racks')
-                        ->where('id', $toRackId)
-                        ->where('warehouse_id', $warehouseId)
-                        ->exists();
-
-                    if (!$rackValid) {
-                        return redirect()->back()->withInput()->with('message', "Row #".($idx+1).": Selected rack does not belong to selected warehouse.");
-                    }
-
-                    $sum += $qty;
-                }
-
-                if ($sum !== $good) {
-                    return redirect()->back()->withInput()->with('message', "Row #".($idx+1).": Allocation total must equal Good qty.");
-                }
-            }
-
-            // DEFECT: per-unit rows must equal qty + rack + defect_type
-            if ($defect > 0) {
-                $defRows = $row['defects'] ?? [];
-                if (!is_array($defRows) || count($defRows) !== $defect) {
-                    return redirect()->back()->withInput()->with('message', "Row #".($idx+1).": Defect detail rows mismatch.");
-                }
-
-                foreach ($defRows as $dIdx => $d) {
-                    $toRackId = (int) ($d['to_rack_id'] ?? 0);
-                    $defType  = (string) ($d['defect_type'] ?? '');
-
-                    if ($toRackId <= 0) {
-                        return redirect()->back()->withInput()->with('message', "Row #".($idx+1).": Defect rack required.");
-                    }
-                    if (trim($defType) === '') {
-                        return redirect()->back()->withInput()->with('message', "Row #".($idx+1).": Defect type required.");
-                    }
-
-                    $rackValid = DB::table('racks')
-                        ->where('id', $toRackId)
-                        ->where('warehouse_id', $warehouseId)
-                        ->exists();
-
-                    if (!$rackValid) {
-                        return redirect()->back()->withInput()->with('message', "Row #".($idx+1).": Defect rack invalid.");
-                    }
-                }
-            }
-
-            // DAMAGED: per-unit rows must equal qty + rack + type valid + description required
-            if ($damaged > 0) {
-                $damRows = $row['damaged_items'] ?? [];
-                if (!is_array($damRows) || count($damRows) !== $damaged) {
-                    return redirect()->back()->withInput()->with('message', "Row #".($idx+1).": Damaged detail rows mismatch.");
-                }
-
-                foreach ($damRows as $mIdx => $m) {
-                    $toRackId = (int) ($m['to_rack_id'] ?? 0);
-                    $mType    = (string) ($m['damaged_type'] ?? '');
-                    $desc     = (string) ($m['damage_description'] ?? '');
-
-                    if ($toRackId <= 0) {
-                        return redirect()->back()->withInput()->with('message', "Row #".($idx+1).": Damaged rack required.");
-                    }
-                    if (!in_array($mType, ['damaged','missing'], true)) {
-                        return redirect()->back()->withInput()->with('message', "Row #".($idx+1).": Invalid damaged type.");
-                    }
-                    if (trim($desc) === '') {
-                        return redirect()->back()->withInput()->with('message', "Row #".($idx+1).": Damaged description is required.");
-                    }
-
-                    $rackValid = DB::table('racks')
-                        ->where('id', $toRackId)
-                        ->where('warehouse_id', $warehouseId)
-                        ->exists();
-
-                    if (!$rackValid) {
-                        return redirect()->back()->withInput()->with('message', "Row #".($idx+1).": Damaged rack invalid.");
-                    }
-                }
-            }
-        }
-
-        // ===============================
-        // SAVE DATA
-        // ===============================
-        DB::beginTransaction();
+        $date = $request->date;
+        $note = (string) ($request->note ?? '');
 
         try {
-            $adjustment = Adjustment::create([
-                'reference' => $request->input('reference'),
-                'date' => $request->input('date'),
-                'warehouse_id' => $warehouseId,
-                'note' => $request->input('note'),
-                'branch_id' => (int) $active,
-                'type' => 'add',
-                'created_by' => Auth::id(),
-            ]);
+            DB::transaction(function () use ($request, $warehouseId, $active, $date, $note) {
 
-            foreach ($items as $idx => $row) {
-                $productId = (int) $row['product_id'];
+                // 1) create header adjustment
+                $adjustment = Adjustment::query()->create([
+                    'date' => $date,
+                    'reference' => 'ADJ',
+                    'warehouse_id' => $warehouseId,
+                    'note' => $note,
+                    'user_id' => Auth::id(),
+                    'branch_id' => (int) $active,
+                    'type' => 'stock_add',
+                ]);
 
-                // GOOD allocations
-                foreach (($row['good_allocations'] ?? []) as $a) {
-                    $qty = (int) ($a['qty'] ?? 0);
-                    if ($qty <= 0) continue;
+                $items = $request->input('items', []);
 
-                    AdjustedProduct::create([
-                        'adjustment_id' => $adjustment->id,
-                        'product_id' => $productId,
-                        'warehouse_id' => $warehouseId,
-                        'rack_id' => (int) $a['to_rack_id'],
-                        'condition' => 'good',
-                        'quantity' => $qty,
-                    ]);
-                }
+                foreach ($items as $idx => $item) {
+                    $productId = (int) ($item['product_id'] ?? 0);
+                    $good      = (int) ($item['qty_good'] ?? 0);
+                    $defect    = (int) ($item['qty_defect'] ?? 0);
+                    $damaged   = (int) ($item['qty_damaged'] ?? 0);
 
-                // DEFECT per unit + photo
-                foreach (($row['defects'] ?? []) as $dIdx => $d) {
-                    $toRackId = (int) ($d['to_rack_id'] ?? 0);
-                    $defType  = (string) ($d['defect_type'] ?? '');
-                    $defDesc  = (string) ($d['defect_description'] ?? '');
-
-                    $ap = AdjustedProduct::create([
-                        'adjustment_id' => $adjustment->id,
-                        'product_id' => $productId,
-                        'warehouse_id' => $warehouseId,
-                        'rack_id' => $toRackId,
-                        'condition' => 'defect',
-                        'quantity' => 1,
-                        'note' => $defDesc ?: null,
-                    ]);
-
-                    $photoPath = null;
-                    $photo = data_get($request->file("items.$idx.defects.$dIdx.photo"), null);
-                    if ($photo) {
-                        $photoPath = $photo->store('adjustments/defects', 'public');
+                    $total = $good + $defect + $damaged;
+                    if ($total <= 0) {
+                        continue;
                     }
 
-                    ProductDefectItem::create([
-                        'adjustment_id' => $adjustment->id,
-                        'adjusted_product_id' => $ap->id,
-                        'product_id' => $productId,
-                        'warehouse_id' => $warehouseId,
-                        'rack_id' => $toRackId,
-                        'defect_type' => $defType,
-                        'description' => $defDesc ?: null,
-                        'photo_path' => $photoPath,
-                    ]);
-                }
+                    // 2) Validasi GOOD allocations harus sum = good (jika good>0)
+                    $goodAllocations = (array) ($item['good_allocations'] ?? []);
+                    if ($good > 0) {
+                        $sumAlloc = 0;
+                        foreach ($goodAllocations as $ga) {
+                            $gaQty = (int) ($ga['qty'] ?? 0);
+                            $sumAlloc += $gaQty;
 
-                // DAMAGED per unit + photo
-                foreach (($row['damaged_items'] ?? []) as $mIdx => $m) {
-                    $toRackId = (int) ($m['to_rack_id'] ?? 0);
-                    $mType    = (string) ($m['damaged_type'] ?? 'damaged');
-                    $mDesc    = (string) ($m['damage_description'] ?? '');
-
-                    $ap = AdjustedProduct::create([
-                        'adjustment_id' => $adjustment->id,
-                        'product_id' => $productId,
-                        'warehouse_id' => $warehouseId,
-                        'rack_id' => $toRackId,
-                        'condition' => 'damaged',
-                        'quantity' => 1,
-                        'note' => $mDesc ?: null,
-                    ]);
-
-                    $photoPath = null;
-                    $photo = data_get($request->file("items.$idx.damaged_items.$mIdx.photo"), null);
-                    if ($photo) {
-                        $photoPath = $photo->store('adjustments/damaged', 'public');
+                            if ($gaQty > 0 && empty($ga['to_rack_id'])) {
+                                throw new \RuntimeException("Row #{$idx}: GOOD allocation rack is required when qty > 0.");
+                            }
+                        }
+                        if ($sumAlloc !== $good) {
+                            throw new \RuntimeException("Row #{$idx}: GOOD allocation total ({$sumAlloc}) must equal GOOD ({$good}).");
+                        }
                     }
 
-                    ProductDamagedItem::create([
+                    // 3) Validasi per-unit rows count sesuai qty (kalau defect/damaged > 0)
+                    $defects = (array) ($item['defects'] ?? []);
+                    $damages = (array) ($item['damaged_items'] ?? []);
+
+                    if ($defect > 0 && count($defects) !== $defect) {
+                        throw new \RuntimeException("Row #{$idx}: Defect qty ({$defect}) not match defect detail rows (" . count($defects) . ").");
+                    }
+                    if ($damaged > 0 && count($damages) !== $damaged) {
+                        throw new \RuntimeException("Row #{$idx}: Damaged qty ({$damaged}) not match damaged detail rows (" . count($damages) . ").");
+                    }
+
+                    // 4) create adjusted product row (detail)
+                    $adjusted = AdjustedProduct::query()->create([
                         'adjustment_id' => $adjustment->id,
-                        'adjusted_product_id' => $ap->id,
                         'product_id' => $productId,
                         'warehouse_id' => $warehouseId,
-                        'rack_id' => $toRackId,
-                        'damaged_type' => $mType,
-                        'description' => $mDesc ?: null,
-                        'photo_path' => $photoPath,
+                        'qty_good' => $good,
+                        'qty_defect' => $defect,
+                        'qty_damaged' => $damaged,
+                        'qty' => $total,
+                        'branch_id' => (int) $active,
                     ]);
+
+                    // 5) Persist GOOD allocations
+                    if ($good > 0) {
+                        foreach ($goodAllocations as $gaIndex => $ga) {
+                            $gaQty = (int) ($ga['qty'] ?? 0);
+                            $toRackId = (int) ($ga['to_rack_id'] ?? 0);
+                            if ($gaQty <= 0) continue;
+
+                            DB::table('stock_racks')->updateOrInsert(
+                                [
+                                    'warehouse_id' => $warehouseId,
+                                    'product_id' => $productId,
+                                    'rack_id' => $toRackId,
+                                    'quality_status' => 'good',
+                                ],
+                                [
+                                    'qty' => DB::raw('qty + ' . $gaQty),
+                                    'updated_at' => now(),
+                                    'created_at' => now(),
+                                ]
+                            );
+                        }
+                    }
+
+                    // 6) Persist defects per-unit
+                    if ($defect > 0) {
+                        foreach ($defects as $i => $d) {
+                            $toRackId = (int) ($d['to_rack_id'] ?? 0);
+                            $defectType = (string) ($d['defect_type'] ?? '');
+                            $desc = (string) ($d['defect_description'] ?? '');
+
+                            if ($toRackId <= 0 || trim($defectType) === '') {
+                                throw new \RuntimeException("Row #{$idx}: defect detail #" . ($i + 1) . " rack/type is required.");
+                            }
+
+                            $photoPath = null;
+                            if ($request->hasFile("items.$idx.defects.$i.photo")) {
+                                $photo = $request->file("items.$idx.defects.$i.photo");
+                                $photoPath = $photo->store('adjustments/defects', 'public');
+                            }
+
+                            ProductDefectItem::query()->create([
+                                'adjusted_product_id' => $adjusted->id,
+                                'product_id' => $productId,
+                                'warehouse_id' => $warehouseId,
+                                'to_rack_id' => $toRackId,
+                                'defect_type' => $defectType,
+                                'description' => trim($desc) !== '' ? $desc : null,
+                                'photo_path' => $photoPath,
+                                'qty' => 1,
+                                'branch_id' => (int) $active,
+                            ]);
+
+                            DB::table('stock_racks')->updateOrInsert(
+                                [
+                                    'warehouse_id' => $warehouseId,
+                                    'product_id' => $productId,
+                                    'rack_id' => $toRackId,
+                                    'quality_status' => 'defect',
+                                ],
+                                [
+                                    'qty' => DB::raw('qty + 1'),
+                                    'updated_at' => now(),
+                                    'created_at' => now(),
+                                ]
+                            );
+                        }
+                    }
+
+                    // 7) Persist damaged per-unit  ✅ FIX DISINI
+                    if ($damaged > 0) {
+                        foreach ($damages as $i => $d) {
+                            $toRackId = (int) ($d['to_rack_id'] ?? 0);
+
+                            // ✅ type missing/damaged
+                            $damageType = strtolower(trim((string) ($d['damaged_type'] ?? 'damaged')));
+                            if (!in_array($damageType, ['damaged', 'missing'], true)) {
+                                $damageType = 'damaged';
+                            }
+
+                            // ✅ description -> masuk ke reason
+                            $desc = trim((string) ($d['damage_description'] ?? ''));
+
+                            if ($toRackId <= 0 || $desc === '') {
+                                throw new \RuntimeException("Row #{$idx}: damaged detail #" . ($i + 1) . " rack/description is required.");
+                            }
+
+                            $photoPath = null;
+                            if ($request->hasFile("items.$idx.damaged_items.$i.photo")) {
+                                $photo = $request->file("items.$idx.damaged_items.$i.photo");
+                                $photoPath = $photo->store('adjustments/damaged', 'public');
+                            }
+
+                            ProductDamagedItem::query()->create([
+                                'adjusted_product_id' => $adjusted->id,
+                                'product_id' => $productId,
+                                'warehouse_id' => $warehouseId,
+                                'to_rack_id' => $toRackId,
+
+                                // ✅ damage_type = missing/damaged
+                                'damage_type' => $damageType,
+
+                                // ✅ reason = free text description dari form
+                                'reason' => $desc,
+
+                                'photo_path' => $photoPath,
+                                'qty' => 1,
+                                'branch_id' => (int) $active,
+                            ]);
+
+                            DB::table('stock_racks')->updateOrInsert(
+                                [
+                                    'warehouse_id' => $warehouseId,
+                                    'product_id' => $productId,
+                                    'rack_id' => $toRackId,
+                                    'quality_status' => 'damaged',
+                                ],
+                                [
+                                    'qty' => DB::raw('qty + 1'),
+                                    'updated_at' => now(),
+                                    'created_at' => now(),
+                                ]
+                            );
+                        }
+                    }
+
+                    // 8) create mutation
+                    $this->mutationController->createFromAdjustmentAdd($adjustment, $adjusted);
                 }
-            }
+            });
 
-            DB::commit();
-
-            return redirect()->route('adjustments.index')
+            return redirect()
+                ->route('adjustments.index')
                 ->with('success', 'Adjustment created successfully.');
-        } catch (\Throwable $e) {
-            DB::rollBack();
 
-            return redirect()->back()
+        } catch (\Throwable $e) {
+            return redirect()
+                ->back()
                 ->withInput()
-                ->with('message', 'Failed to create adjustment: ' . $e->getMessage());
+                ->with('message', $e->getMessage());
         }
     }
 
@@ -1108,10 +1092,15 @@ class AdjustmentController extends Controller
                         return redirect()->back()->withInput()->with('error', "Defect Type is required for each unit (row #" . ($i + 1) . ").");
                     }
                 } else {
-                    $reason = trim((string) ($unit['reason'] ?? ''));
-                    if ($reason === '') {
-                        return redirect()->back()->withInput()->with('error', "Damaged Reason is required for each unit (row #" . ($i + 1) . ").");
+                    // ✅ Damaged: dropdown damaged|missing (key tetap 'reason')
+                    $damageType = strtolower(trim((string) ($unit['reason'] ?? '')));
+                    if ($damageType === '') {
+                        return redirect()->back()->withInput()->with('error', "Damaged Type is required for each unit (row #" . ($i + 1) . ").");
                     }
+                    if (!in_array($damageType, ['damaged', 'missing'], true)) {
+                        return redirect()->back()->withInput()->with('error', "Damaged must be either 'damaged' or 'missing' (row #" . ($i + 1) . ").");
+                    }
+                    // description optional -> nanti disimpan ke reason column
                 }
             } else {
                 $resReason = trim((string) ($unit['resolution_reason'] ?? ''));
@@ -1136,7 +1125,6 @@ class AdjustmentController extends Controller
 
             $product = Product::findOrFail($productId);
 
-            // ✅ ambil info rack untuk note (tanpa asumsi ada Rack model)
             $rackRow = DB::table('racks')
                 ->where('id', $rackId)
                 ->first(['code', 'name']);
@@ -1147,7 +1135,6 @@ class AdjustmentController extends Controller
             );
             if ($rackLabel === '') $rackLabel = 'Rack#' . $rackId;
 
-            // ✅ username untuk note
             $user = Auth::user();
             $userLabel = '';
             if ($user) {
@@ -1176,7 +1163,6 @@ class AdjustmentController extends Controller
                 default => "Quality Reclass ({$type})",
             };
 
-            // simpan alasan per-unit ke note adjustment supaya histori tetap ada walau row defect/damaged dihapus
             $reasons = [];
             for ($i = 0; $i < $qty; $i++) {
                 $unit = (array) $request->units[$i];
@@ -1214,15 +1200,6 @@ class AdjustmentController extends Controller
                 'note'          => $noteHuman . ' | NET-ZERO bucket log',
             ]);
 
-            // ✅ NET-ZERO but bucket-aware mutations
-            // mapping:
-            // defect: OUT GOOD, IN DEFECT
-            // damaged: OUT GOOD, IN DAMAGED
-            // defect_to_good: OUT DEFECT, IN GOOD
-            // damaged_to_good: OUT DAMAGED, IN GOOD
-            //
-            // IMPORTANT: tetap sisakan token `| OUT | GOOD` / `| IN | DEFECT` dst
-            // karena MutationController::applyInOutInternal() resolve bucket dari note.
             $noteBase = $noteHuman
                 . " | {$productLabel}"
                 . " | WH: {$warehouseLabel}"
@@ -1272,7 +1249,7 @@ class AdjustmentController extends Controller
             );
 
             // ==========================================================
-            // A) GOOD -> DEFECT / DAMAGED : create per-unit rows with rack_id
+            // A) GOOD -> DEFECT / DAMAGED
             // ==========================================================
             if ($type === 'defect' || $type === 'damaged') {
 
@@ -1300,6 +1277,15 @@ class AdjustmentController extends Controller
                             'created_by'     => (int) Auth::id(),
                         ]);
                     } else {
+                        // ✅ FIX: damage_type = dropdown, reason = description textarea
+                        $damageType = strtolower(trim((string) ($unit['reason'] ?? 'damaged')));
+                        if (!in_array($damageType, ['damaged', 'missing'], true)) {
+                            $damageType = 'damaged';
+                        }
+
+                        $desc = trim((string) ($unit['description'] ?? ''));
+                        $desc = $desc !== '' ? $desc : null;
+
                         ProductDamagedItem::create([
                             'branch_id'       => $branchId,
                             'warehouse_id'    => $warehouseId,
@@ -1308,7 +1294,13 @@ class AdjustmentController extends Controller
                             'reference_id'    => $adjustment->id,
                             'reference_type'  => Adjustment::class,
                             'quantity'        => 1,
-                            'reason'          => trim((string) ($unit['reason'] ?? '')),
+
+                            // ✅ type missing/damaged
+                            'damage_type'     => $damageType,
+
+                            // ✅ description masuk ke reason
+                            'reason'          => $desc,
+
                             'photo_path'      => $photoPath,
                             'created_by'      => (int) Auth::id(),
                             'mutation_in_id'  => (int) $mutationInId,
@@ -1321,7 +1313,7 @@ class AdjustmentController extends Controller
             }
 
             // ==========================================================
-            // B) DEFECT -> GOOD (DELETE FIFO) + rack filter
+            // B) DEFECT -> GOOD (DELETE FIFO)
             // ==========================================================
             if ($type === 'defect_to_good') {
 
@@ -1350,7 +1342,7 @@ class AdjustmentController extends Controller
             }
 
             // ==========================================================
-            // C) DAMAGED -> GOOD (DELETE FIFO) + rack filter
+            // C) DAMAGED -> GOOD (DELETE FIFO)
             // ==========================================================
             if ($type === 'damaged_to_good') {
 

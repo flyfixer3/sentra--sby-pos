@@ -95,7 +95,6 @@
         if ($defectItems->count() > 0 && $damagedItems->count() > 0) $qualityType = 'mixed';
 
         // helper parsing condition from adjustedProduct.note:
-        // note format example: "Item: ... | COND=DEFECT | DEFECT_TYPE=..."
         $parseCond = function (?string $note): string {
             $note = (string) $note;
             if ($note === '') return 'GOOD';
@@ -321,8 +320,13 @@
                                                 <tr>
                                                     <td class="text-center">{{ $i+1 }}</td>
                                                     <td>{{ $it->rack_id ?? '-' }}</td>
+
+                                                    {{-- ✅ FIX: Reason = damage_type (missing/damaged) --}}
+                                                    <td>{{ $it->damage_type ?? '-' }}</td>
+
+                                                    {{-- ✅ FIX: Description = reason (free text) --}}
                                                     <td>{{ $it->reason ?? '-' }}</td>
-                                                    <td>{{ $it->description ?? '-' }}</td>
+
                                                     <td class="text-center">
                                                         @if(!empty($it->photo_path))
                                                             @php $url = asset('storage/'.$it->photo_path); @endphp
