@@ -202,6 +202,130 @@ class MutationController extends Controller
     }
 
     /**
+     * Dipanggil dari AdjustmentController@store() untuk tipe stock_add.
+     * - Buat mutation log (In) untuk GOOD/DEFECT/DAMAGED per rack.
+     * - Sekalian update stocks + stock_racks via applyInOutInternal().
+     *
+     * NOTE:
+     * - GOOD: ambil dari request allocations tidak ada di DB -> jadi kita log berdasarkan stock_racks delta,
+     *   tapi di flow kamu saat ini GOOD allocations sudah di-increment langsung ke stock_racks tanpa mutation.
+     *   Supaya konsisten & aman, method ini akan baca dari per-unit tables (defect/damaged) dan
+     *   dari AdjustedProduct qty_good untuk GOOD namun perlu rack_id.
+     *
+     * Karena di store() kamu menyimpan GOOD allocations hanya ke stock_racks (bukan table detail),
+     * kita ambil GOOD per rack dari stock_racks rows yang barusan diinsert/update via incStockRack:
+     * -> kita log GOOD berdasarkan rack_id yang muncul pada defect/damaged + fallback ke 1 rack utama.
+     *
+     * REKOMENDASI (nanti): simpan GOOD allocations juga ke table detail biar bisa 100% akurat per rack.
+     */
+    public function createFromAdjustmentAdd(
+    \Modules\Adjustment\Entities\Adjustment $adjustment,
+    \Modules\Adjustment\Entities\AdjustedProduct $adjusted
+    ): void {
+        $branchId    = (int) ($adjustment->branch_id ?? 0);
+        $warehouseId = (int) ($adjustment->warehouse_id ?? 0);
+        $productId   = (int) ($adjusted->product_id ?? 0);
+
+        if ($branchId <= 0 || $warehouseId <= 0 || $productId <= 0) {
+            throw new \RuntimeException("Invalid adjustment data for mutation log.");
+        }
+
+        $date      = (string) ($adjustment->date ?? now()->toDateString());
+        $reference = (string) ($adjustment->reference ?? ('ADJ-' . (int) $adjustment->id));
+
+        $baseNote = trim(
+            'Adjustment Add #' . (int) $adjustment->id
+            . ($adjustment->note ? ' | ' . (string) $adjustment->note : '')
+        );
+
+        // =========================================================
+        // 1) DEFECT per rack (DB: reference_id/reference_type, quantity, rack_id)
+        // =========================================================
+        $defectGroups = \Modules\Product\Entities\ProductDefectItem::query()
+            ->where('reference_type', \Modules\Adjustment\Entities\Adjustment::class)
+            ->where('reference_id', (int) $adjustment->id)
+            ->where('branch_id', $branchId)
+            ->where('warehouse_id', $warehouseId)
+            ->where('product_id', $productId)
+            ->selectRaw('rack_id, COALESCE(SUM(quantity),0) as qty')
+            ->groupBy('rack_id')
+            ->get();
+
+        foreach ($defectGroups as $g) {
+            $rackId = (int) ($g->rack_id ?? 0);
+            $qty    = (int) ($g->qty ?? 0);
+            if ($rackId <= 0 || $qty <= 0) continue;
+
+            $this->applyInOut(
+                $branchId,
+                $warehouseId,
+                $productId,
+                'In',
+                $qty,
+                $reference,
+                $baseNote . ' | DEFECT',
+                $date,
+                $rackId
+            );
+        }
+
+        // =========================================================
+        // 2) DAMAGED per rack (DB: reference_id/reference_type, quantity, rack_id)
+        // =========================================================
+        $damagedGroups = \Modules\Product\Entities\ProductDamagedItem::query()
+            ->where('reference_type', \Modules\Adjustment\Entities\Adjustment::class)
+            ->where('reference_id', (int) $adjustment->id)
+            ->where('branch_id', $branchId)
+            ->where('warehouse_id', $warehouseId)
+            ->where('product_id', $productId)
+            ->selectRaw('rack_id, COALESCE(SUM(quantity),0) as qty')
+            ->groupBy('rack_id')
+            ->get();
+
+        foreach ($damagedGroups as $g) {
+            $rackId = (int) ($g->rack_id ?? 0);
+            $qty    = (int) ($g->qty ?? 0);
+            if ($rackId <= 0 || $qty <= 0) continue;
+
+            $this->applyInOut(
+                $branchId,
+                $warehouseId,
+                $productId,
+                'In',
+                $qty,
+                $reference,
+                $baseNote . ' | DAMAGED',
+                $date,
+                $rackId
+            );
+        }
+
+        // =========================================================
+        // 3) GOOD (fallback rack kalau tidak ada breakdown)
+        // =========================================================
+        $goodQty = (int) ($adjusted->qty_good ?? 0);
+        if ($goodQty > 0) {
+
+            $fallbackRackId = (int) (\DB::table('racks')
+                ->where('warehouse_id', $warehouseId)
+                ->orderBy('id', 'asc')
+                ->value('id') ?? 0);
+
+            $this->applyInOut(
+                $branchId,
+                $warehouseId,
+                $productId,
+                'In',
+                $goodQty,
+                $reference,
+                $baseNote . ' | GOOD',
+                $date,
+                $fallbackRackId > 0 ? $fallbackRackId : null
+            );
+        }
+    }
+
+    /**
      * PUBLIC: dipakai modul lain (Adjustment, Sale, Purchase, Transfer)
      * Bikin 1 mutation (In/Out) lalu update Stock table.
      */

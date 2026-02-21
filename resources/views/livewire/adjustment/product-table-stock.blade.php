@@ -249,8 +249,8 @@
                                                     <thead>
                                                     <tr>
                                                         <th style="width:60px" class="text-center">#</th>
+                                                        <th style="width:160px">Damage Type *</th>
                                                         <th>Reason *</th>
-                                                        <th>Description (optional)</th>
                                                         <th style="width:180px">Photo (optional)</th>
                                                         <th style="width:220px">Rack *</th>
                                                     </tr>
@@ -361,14 +361,14 @@
                 const currentDam = [];
                 perWrap.querySelectorAll('tbody.damaged-tbody tr').forEach(tr => {
                     const idx = asInt(tr.getAttribute('data-row'));
-                    const reason = tr.querySelector('input.damaged-reason')?.value || '';
-                    const description = tr.querySelector('textarea.damaged-desc')?.value || '';
+                    const damage_type = tr.querySelector('select.damaged-type')?.value || '';
+                    const reason = tr.querySelector('textarea.damaged-reason')?.value || '';
                     const rack_id = tr.querySelector('select.damaged-rack')?.value || '';
                     currentDam.push({
-                        row: idx,
-                        reason: reason,
-                        description: description,
-                        rack_id: rack_id
+                    row: idx,
+                    damage_type: damage_type,
+                    reason: reason,
+                    rack_id: rack_id
                     });
                 });
 
@@ -440,32 +440,38 @@
                     tbody.insertAdjacentHTML('beforeend', `
                         <tr data-row="${i}">
                             <td class="text-center">${i+1}</td>
+
                             <td>
-                                <input type="text"
-                                       class="form-control form-control-sm damaged-reason"
-                                       name="items[${idx}][damaged_items][${i}][damage_description]"
-                                       value="${(prev.reason || '').replace(/"/g,'&quot;')}"
-                                       placeholder="pecah sudut"
-                                       required>
+                            <select class="form-control form-control-sm damaged-type"
+                                    name="items[${idx}][damaged_items][${i}][damage_type]"
+                                    required>
+                                <option value="damaged" ${(String(prev.damage_type || 'damaged') === 'damaged') ? 'selected' : ''}>damaged</option>
+                                <option value="missing" ${(String(prev.damage_type || '') === 'missing') ? 'selected' : ''}>missing</option>
+                            </select>
                             </td>
+
                             <td>
-                                <textarea class="form-control form-control-sm damaged-desc"
-                                          name="items[${idx}][damaged_items][${i}][description]">${(prev.description || '')}</textarea>
+                            <textarea class="form-control form-control-sm damaged-reason"
+                                        name="items[${idx}][damaged_items][${i}][reason]"
+                                        placeholder="pecah sudut / retak / hilang saat shipping"
+                                        required>${(prev.reason || '')}</textarea>
                             </td>
+
                             <td>
-                                <input type="file"
-                                       class="form-control form-control-sm photo-input"
-                                       name="items[${idx}][damaged_items][${i}][photo]">
+                            <input type="file"
+                                    class="form-control form-control-sm photo-input"
+                                    name="items[${idx}][damaged_items][${i}][photo]">
                             </td>
+
                             <td>
-                                <select class="form-control form-control-sm damaged-rack"
-                                        name="items[${idx}][damaged_items][${i}][to_rack_id]"
-                                        required>
-                                    ${buildRackOptions(rackVal)}
-                                </select>
+                            <select class="form-control form-control-sm damaged-rack"
+                                    name="items[${idx}][damaged_items][${i}][to_rack_id]"
+                                    required>
+                                ${buildRackOptions(rackVal)}
+                            </select>
                             </td>
                         </tr>
-                    `);
+                        `);
                 }
             }
 
@@ -497,8 +503,8 @@
                     }));
                     oldDam = oldDam.map((x, i) => ({
                         row: i,
-                        reason: x.damage_description || x.reason || '',
-                        description: x.description || '',
+                        damage_type: x.damage_type || x.damaged_type || 'damaged',
+                        reason: x.reason || x.damage_description || '',
                         rack_id: x.to_rack_id || x.rack_id || ''
                     }));
                 }
@@ -707,8 +713,13 @@
 
                         perWrap.querySelectorAll('tbody.damaged-tbody tr').forEach(tr => {
                             const rackVal = tr.querySelector('select.damaged-rack')?.value || '';
-                            const reasonVal = tr.querySelector('input.damaged-reason')?.value || '';
+                            const typeVal = tr.querySelector('select.damaged-type')?.value || '';
+                            const reasonVal = tr.querySelector('textarea.damaged-reason')?.value || '';
                             if(dam > 0){
+                                if(String(typeVal).trim() === ''){
+                                    ok = false;
+                                    msg.push('DAMAGED: Damage Type wajib dipilih per unit.');
+                                }
                                 if(String(reasonVal).trim() === ''){
                                     ok = false;
                                     msg.push('DAMAGED: Reason wajib diisi per unit.');
@@ -772,112 +783,149 @@
             // events (delegation)
             // ==========================
             function bindDelegation(){
-                // ✅ guard: jangan bind berkali-kali (Livewire re-render)
-                if(window.__adj_stock_bindDelegation === true) return;
-                window.__adj_stock_bindDelegation = true;
+                // ==========================
+                // bind INPUT handler once (via document)
+                // ==========================
+                if(window.__adj_stock_input_bound !== true){
+                    window.__adj_stock_input_bound = true;
 
-                const table = document.getElementById('adjustment-add-table');
-                if(!table) return;
+                    document.addEventListener('input', function(e){
+                        const t = e.target;
 
-                table.addEventListener('input', function(e){
-                    const t = e.target;
+                        // hanya proses kalau event berasal dari area table adjustment
+                        const insideTable = t && t.closest && t.closest('#adjustment-add-table');
+                        if(!insideTable) return;
 
-                    // cari row dulu (fix scope)
-                    const row = t.closest('tr.adj-receive-row') ||
-                        (t.closest('tr.goodalloc-row')
-                            ? document.querySelector(`.adj-receive-row[data-index="${t.closest('tr.goodalloc-row').id.replace('goodAllocWrap-','')}"]`)
-                            : null);
+                        // cari main row terkait
+                        const row =
+                            t.closest('tr.adj-receive-row') ||
+                            (t.closest('tr.goodalloc-row')
+                                ? document.querySelector(`.adj-receive-row[data-index="${t.closest('tr.goodalloc-row').id.replace('goodAllocWrap-','')}"]`)
+                                : null) ||
+                            (t.closest('tr.perunit-row')
+                                ? document.querySelector(`.adj-receive-row[data-index="${t.closest('tr.perunit-row').id.replace('perUnitWrap-','')}"]`)
+                                : null);
 
-                    if(row){
-                        const perWrap = document.getElementById('perUnitWrap-' + row.dataset.index);
-                        if(perWrap && perWrap.dataset.hydrated === '1'){
-                            snapshotCurrentDomToDataset(perWrap);
+                        if(row){
+                            const perWrap = document.getElementById('perUnitWrap-' + row.dataset.index);
+                            if(perWrap && perWrap.dataset.hydrated === '1'){
+                                snapshotCurrentDomToDataset(perWrap);
+                            }
                         }
-                    }
 
-                    if(t.classList && t.classList.contains('qty-input')){
-                        if(!row) return;
-                        ensurePerUnitTablesBuilt(row);
-                        syncGoodAllocTotal(row.dataset.index);
-                        updateRowStatus(row);
-                        return;
-                    }
+                        // qty change
+                        if(t.classList && t.classList.contains('qty-input')){
+                            if(!row) return;
+                            ensurePerUnitTablesBuilt(row);
+                            syncGoodAllocTotal(row.dataset.index);
+                            updateRowStatus(row);
+                            return;
+                        }
 
-                    if(t.classList && (t.classList.contains('goodalloc-qty') || t.classList.contains('goodalloc-rack'))){
-                        if(!row) return;
-                        // sync total + status
-                        const idx = row.dataset.index;
-                        // update stored json in hidden textarea (so server side has it)
-                        const wrap = document.getElementById('goodAllocWrap-' + idx);
-                        if(wrap){
-                            const alloc = [];
-                            wrap.querySelectorAll('tbody.goodalloc-tbody tr').forEach(tr => {
-                                alloc.push({
-                                    to_rack_id: tr.querySelector('select.goodalloc-rack')?.value || '',
-                                    qty: asInt(tr.querySelector('input.goodalloc-qty')?.value)
+                        // good allocation change
+                        if(t.classList && (t.classList.contains('goodalloc-qty') || t.classList.contains('goodalloc-rack'))){
+                            if(!row) return;
+
+                            const idx = row.dataset.index;
+                            const wrap = document.getElementById('goodAllocWrap-' + idx);
+                            if(wrap){
+                                const alloc = [];
+                                wrap.querySelectorAll('tbody.goodalloc-tbody tr').forEach(tr => {
+                                    alloc.push({
+                                        to_rack_id: tr.querySelector('select.goodalloc-rack')?.value || '',
+                                        qty: asInt(tr.querySelector('input.goodalloc-qty')?.value)
+                                    });
                                 });
-                            });
-                            wrap.querySelector('.old-goodalloc-json').value = JSON.stringify(alloc);
+
+                                const hidden = wrap.querySelector('.old-goodalloc-json');
+                                if(hidden){
+                                    hidden.value = JSON.stringify(alloc);
+                                }
+                            }
+
+                            syncGoodAllocTotal(idx);
+                            return;
                         }
-                        syncGoodAllocTotal(idx);
-                        return;
-                    }
 
-                    if(t.classList && (t.classList.contains('defect-type') || t.classList.contains('defect-desc') || t.classList.contains('defect-rack') ||
-                        t.classList.contains('damaged-reason') || t.classList.contains('damaged-desc') || t.classList.contains('damaged-rack'))){
-                        if(!row) return;
-                        const perWrap = document.getElementById('perUnitWrap-' + row.dataset.index);
-                        if(perWrap){
-                            snapshotCurrentDomToDataset(perWrap);
+                        // per-unit change
+                        if(t.classList && (
+                            t.classList.contains('defect-type') ||
+                            t.classList.contains('defect-desc') ||
+                            t.classList.contains('defect-rack') ||
+                            t.classList.contains('damaged-type') ||
+                            t.classList.contains('damaged-reason') ||
+                            t.classList.contains('damaged-rack')
+                        )){
+                            if(!row) return;
+                            const perWrap = document.getElementById('perUnitWrap-' + row.dataset.index);
+                            if(perWrap){
+                                snapshotCurrentDomToDataset(perWrap);
+                            }
+                            updateRowStatus(row);
                         }
-                        updateRowStatus(row);
-                        return;
-                    }
-                });
-
-                document.addEventListener('click', function(e){
-                    const btn = e.target.closest('button');
-                    if(!btn) return;
-
-                    if(btn.classList.contains('btn-notes')){
-                        const row = btn.closest('tr.adj-receive-row');
-                        if(!row) return;
-                        ensurePerUnitTablesBuilt(row);
-                        toggleSection(btn.getAttribute('data-target'), true);
-                        updateRowStatus(row);
-                        return;
-                    }
-
-                    if(btn.classList.contains('btn-good-rack')){
-                        const row = btn.closest('tr.adj-receive-row');
-                        if(!row) return;
-                        rebuildGoodAlloc(row.dataset.index, true);
-                        syncGoodAllocTotal(row.dataset.index);
-                        toggleSection(btn.getAttribute('data-target'), true);
-                        return;
-                    }
-
-                    if(btn.classList.contains('btn-close-notes') || btn.classList.contains('btn-close-goodalloc')){
-                        toggleSection(btn.getAttribute('data-target'), false);
-                        return;
-                    }
-
-                    if(btn.classList.contains('btn-add-goodalloc')){
-                        addGoodAllocRow(asInt(btn.getAttribute('data-idx')));
-                        return;
-                    }
-
-                    if(btn.classList.contains('btn-remove-goodalloc')){
-                        removeGoodAllocRow(asInt(btn.getAttribute('data-idx')), asInt(btn.getAttribute('data-row')));
-                        return;
-                    }
-                });
-
-                const wh = document.getElementById('warehouse_id_stock');
-                if(wh){
-                    wh.addEventListener('change', function(){
-                        initAllRows();
                     });
+                }
+
+                // ==========================
+                // bind CLICK handler once (via document)
+                // ==========================
+                if(window.__adj_stock_click_bound !== true){
+                    window.__adj_stock_click_bound = true;
+
+                    document.addEventListener('click', function(e){
+                        const btn = e.target.closest && e.target.closest('button');
+                        if(!btn) return;
+
+                        // hanya proses kalau click berasal dari area table adjustment
+                        const insideTable = btn.closest('#adjustment-add-table');
+                        if(!insideTable) return;
+
+                        if(btn.classList.contains('btn-notes')){
+                            const row = btn.closest('tr.adj-receive-row');
+                            if(!row) return;
+                            ensurePerUnitTablesBuilt(row);
+                            toggleSection(btn.getAttribute('data-target'), true);
+                            updateRowStatus(row);
+                            return;
+                        }
+
+                        if(btn.classList.contains('btn-good-rack')){
+                            const row = btn.closest('tr.adj-receive-row');
+                            if(!row) return;
+                            rebuildGoodAlloc(row.dataset.index, true);
+                            syncGoodAllocTotal(row.dataset.index);
+                            toggleSection(btn.getAttribute('data-target'), true);
+                            return;
+                        }
+
+                        if(btn.classList.contains('btn-close-notes') || btn.classList.contains('btn-close-goodalloc')){
+                            toggleSection(btn.getAttribute('data-target'), false);
+                            return;
+                        }
+
+                        if(btn.classList.contains('btn-add-goodalloc')){
+                            addGoodAllocRow(asInt(btn.getAttribute('data-idx')));
+                            return;
+                        }
+
+                        if(btn.classList.contains('btn-remove-goodalloc')){
+                            removeGoodAllocRow(asInt(btn.getAttribute('data-idx')), asInt(btn.getAttribute('data-row')));
+                            return;
+                        }
+                    });
+                }
+
+                // ==========================
+                // warehouse change init (safe)
+                // ==========================
+                if(window.__adj_stock_wh_bound !== true){
+                    window.__adj_stock_wh_bound = true;
+                    const wh = document.getElementById('warehouse_id_stock');
+                    if(wh){
+                        wh.addEventListener('change', function(){
+                            initAllRows();
+                        });
+                    }
                 }
             }
 

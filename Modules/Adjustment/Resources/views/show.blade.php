@@ -17,7 +17,6 @@
         }
         .muted{ color:#6c757d; font-size:12px; }
 
-        /* ✅ Condition badges */
         .cond-badge{
             display:inline-flex;align-items:center;gap:6px;
             padding:6px 10px;border-radius:999px;font-size:12px;
@@ -94,7 +93,17 @@
         if ($damagedItems->count() > 0) $qualityType = 'damaged';
         if ($defectItems->count() > 0 && $damagedItems->count() > 0) $qualityType = 'mixed';
 
-        // helper parsing condition from adjustedProduct.note:
+        // ✅ rack label map (for QC section + fallback)
+        $rackLabelMap = \DB::table('racks')
+            ->where('warehouse_id', (int)($adjustment->warehouse_id ?? 0))
+            ->get(['id','code','name'])
+            ->mapWithKeys(function ($r) {
+                $label = trim((string)($r->code ?? '') . ((string)($r->name ?? '') !== '' ? ' - ' . (string)($r->name ?? '') : ''));
+                if ($label === '') $label = 'Rack#' . (int)$r->id;
+                return [(int)$r->id => $label];
+            })
+            ->toArray();
+
         $parseCond = function (?string $note): string {
             $note = (string) $note;
             if ($note === '') return 'GOOD';
@@ -175,7 +184,6 @@
                                 <td colspan="2">{{ $createdAt }}</td>
                             </tr>
 
-                            {{-- ✅ Item list --}}
                             <tr>
                                 <th>Product</th>
                                 <th>Rack</th>
@@ -253,7 +261,6 @@
                         </table>
                     </div>
 
-                    {{-- QC details only when quality reclass --}}
                     @if($isQuality)
                         <div class="mt-4">
 
@@ -278,9 +285,12 @@
                                         </thead>
                                         <tbody>
                                             @forelse($defectItems as $i => $it)
+                                                @php
+                                                    $rackText = $rackLabelMap[(int)($it->rack_id ?? 0)] ?? ('Rack#' . (int)($it->rack_id ?? 0));
+                                                @endphp
                                                 <tr>
                                                     <td class="text-center">{{ $i+1 }}</td>
-                                                    <td>{{ $it->rack_id ?? '-' }}</td>
+                                                    <td>{{ $rackText }}</td>
                                                     <td>{{ $it->defect_type ?? '-' }}</td>
                                                     <td>{{ $it->description ?? '-' }}</td>
                                                     <td class="text-center">
@@ -317,16 +327,14 @@
                                         </thead>
                                         <tbody>
                                             @forelse($damagedItems as $i => $it)
+                                                @php
+                                                    $rackText = $rackLabelMap[(int)($it->rack_id ?? 0)] ?? ('Rack#' . (int)($it->rack_id ?? 0));
+                                                @endphp
                                                 <tr>
                                                     <td class="text-center">{{ $i+1 }}</td>
-                                                    <td>{{ $it->rack_id ?? '-' }}</td>
-
-                                                    {{-- ✅ FIX: Reason = damage_type (missing/damaged) --}}
+                                                    <td>{{ $rackText }}</td>
                                                     <td>{{ $it->damage_type ?? '-' }}</td>
-
-                                                    {{-- ✅ FIX: Description = reason (free text) --}}
                                                     <td>{{ $it->reason ?? '-' }}</td>
-
                                                     <td class="text-center">
                                                         @if(!empty($it->photo_path))
                                                             @php $url = asset('storage/'.$it->photo_path); @endphp
