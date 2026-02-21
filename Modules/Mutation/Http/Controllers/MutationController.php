@@ -338,7 +338,8 @@ class MutationController extends Controller
         string $reference,
         string $note,
         string $date,
-        ?int $rackId = null // ✅ NEW
+        ?int $rackId = null,
+        ?string $bucket = null // ✅ NEW: good|defect|damaged
     ): void
     {
         $this->applyInOutInternal(
@@ -350,7 +351,8 @@ class MutationController extends Controller
             $reference,
             $note,
             $date,
-            $rackId
+            $rackId,
+            $bucket
         );
     }
 
@@ -359,15 +361,16 @@ class MutationController extends Controller
      * Ini dibutuhkan untuk kasus "damaged" agar bisa disimpan ke product_damaged_items.mutation_in_id/mutation_out_id.
      */
     public function applyInOutAndGetMutationId(
-        int $branchId,
-        int $warehouseId,
-        int $productId,
-        string $mutationType,
-        int $qty,
-        string $reference,
-        string $note,
-        string $date,
-        ?int $rackId = null // ✅ NEW
+    int $branchId,
+    int $warehouseId,
+    int $productId,
+    string $mutationType,
+    int $qty,
+    string $reference,
+    string $note,
+    string $date,
+    ?int $rackId = null,
+    ?string $bucket = null // ✅ NEW: good|defect|damaged
     ): int
     {
         $mutation = $this->applyInOutInternal(
@@ -379,28 +382,30 @@ class MutationController extends Controller
             $reference,
             $note,
             $date,
-            $rackId
+            $rackId,
+            $bucket
         );
 
         return (int) $mutation->id;
     }
 
-   
+
     /**
      * INTERNAL CORE: melakukan lock stock, hitung early/last, create mutation, update stock.
      * ✅ UPDATED: jika rack_id ada, sync juga ke stock_racks (qty_available + bucket).
      * ✅ STRICT: kalau OUT dan stock_racks tidak cukup => throw (jangan diam-diam clamp ke 0).
      */
     private function applyInOutInternal(
-        int $branchId,
-        int $warehouseId,
-        int $productId,
-        string $mutationType,
-        int $qty,
-        string $reference,
-        string $note,
-        string $date,
-        ?int $rackId = null
+    int $branchId,
+    int $warehouseId,
+    int $productId,
+    string $mutationType,
+    int $qty,
+    string $reference,
+    string $note,
+    string $date,
+    ?int $rackId = null,
+    ?string $bucket = null // ✅ NEW
     ): Mutation
     {
         if (!in_array($mutationType, ['In', 'Out'], true)) {
@@ -411,8 +416,19 @@ class MutationController extends Controller
         }
 
         // ---------------------------------------------
-        // 0) helper: resolve bucket dari note
+        // 0) helper: resolve bucket column
         // ---------------------------------------------
+        $resolveBucketFromExplicit = function (?string $b): ?string {
+            $b = strtolower(trim((string) $b));
+            return match ($b) {
+                'good'   => 'qty_good',
+                'defect' => 'qty_defect',
+                'damaged'=> 'qty_damaged',
+                default  => null,
+            };
+        };
+
+        // fallback lama (kalau bucket null) -> tetap ada biar backward compatible
         $resolveBucketFromNote = function (string $noteX): ?string {
             $n = strtoupper(trim($noteX));
             if (str_contains($n, '| GOOD')) return 'qty_good';
@@ -420,6 +436,9 @@ class MutationController extends Controller
             if (str_contains($n, '| DAMAGED')) return 'qty_damaged';
             return null;
         };
+
+        // ✅ prefer explicit bucket
+        $bucketCol = $resolveBucketFromExplicit($bucket) ?? $resolveBucketFromNote($note);
 
         // ---------------------------------------------
         // 1) lock + update STOCKS (source of truth)
@@ -468,7 +487,7 @@ class MutationController extends Controller
         $mutation = Mutation::create([
             'branch_id'     => $branchId,
             'warehouse_id'  => $warehouseId,
-            'rack_id'       => $rackId, // boleh null
+            'rack_id'       => $rackId,
             'product_id'    => $productId,
             'reference'     => $reference,
             'date'          => $date,
@@ -489,12 +508,9 @@ class MutationController extends Controller
         ]);
 
         // ---------------------------------------------
-        // 4) ✅ NEW: sync STOCK_RACKS jika rack_id ada
-        //    STRICT: Out harus cukup, kalau tidak => throw.
+        // 4) sync STOCK_RACKS jika rack_id ada
         // ---------------------------------------------
         if (!empty($rackId) && (int) $rackId > 0) {
-
-            $bucketCol = $resolveBucketFromNote($note);
 
             $sr = DB::table('stock_racks')
                 ->where('branch_id', (int) $branchId)
@@ -505,8 +521,6 @@ class MutationController extends Controller
                 ->first();
 
             if (!$sr) {
-                // kalau IN: boleh auto-create
-                // kalau OUT: ini red flag karena keluar dari rack yang tidak punya row
                 if ($mutationType === 'Out') {
                     throw new \RuntimeException(
                         "Stock rack row not found for OUT. " .
@@ -552,7 +566,9 @@ class MutationController extends Controller
                 'updated_at'    => now(),
             ];
 
+            // ✅ bucket update (EXPLICIT)
             if ($bucketCol && in_array($bucketCol, ['qty_good', 'qty_defect', 'qty_damaged'], true)) {
+
                 $curBucket = (int) ($sr->{$bucketCol} ?? 0);
 
                 if ($mutationType === 'Out' && $curBucket < $qty) {

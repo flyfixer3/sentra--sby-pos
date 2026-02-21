@@ -214,7 +214,7 @@
                                     @endif
                                 </div>
 
-                                {{-- ✅ Note (PATCH: jangan defer, biar gak ke-reset saat Livewire emit subSelectionSaved) --}}
+                                {{-- ✅ Note --}}
                                 <div class="mt-3">
                                     <label class="font-weight-bold mb-1">Item Note <span class="text-danger">*</span></label>
                                     <textarea
@@ -233,10 +233,24 @@
 
                                     {{-- base hidden ALWAYS present --}}
                                     <input type="hidden" name="items[{{ $idx }}][product_id]" value="{{ (int)($p['product_id'] ?? 0) }}" data-base="1">
-                                    <input type="hidden" name="items[{{ $idx }}][qty]" value="{{ $expected }}" data-hidden-qty="{{ $idx }}" data-base="1">
+                                    <input type="hidden" name="items[{{ $idx }}][qty]" value="{{ (int)($products[$idx]['expected_qty'] ?? 1) }}" data-hidden-qty="{{ $idx }}" data-base="1">
                                     <input type="hidden" name="items[{{ $idx }}][note]" value="{{ e((string)($sel['note'] ?? '')) }}" data-hidden-note="{{ $idx }}" data-base="1">
 
-                                    {{-- selection-generated inputs will be appended by JS --}}
+                                    {{-- ✅ FIX: selection hidden inputs MUST be server-rendered from Livewire state --}}
+                                    @foreach(($sel['good_allocations'] ?? []) as $k => $ga)
+                                        <input type="hidden" name="items[{{ $idx }}][good_allocations][{{ $k }}][warehouse_id]" value="{{ (int)($ga['warehouse_id'] ?? 0) }}">
+                                        <input type="hidden" name="items[{{ $idx }}][good_allocations][{{ $k }}][from_rack_id]" value="{{ (int)($ga['from_rack_id'] ?? 0) }}">
+                                        <input type="hidden" name="items[{{ $idx }}][good_allocations][{{ $k }}][qty]" value="{{ (int)($ga['qty'] ?? 0) }}">
+                                    @endforeach
+
+                                    @foreach(($sel['defect_ids'] ?? []) as $k => $id)
+                                        <input type="hidden" name="items[{{ $idx }}][selected_defect_ids][{{ $k }}]" value="{{ (int)$id }}">
+                                    @endforeach
+
+                                    @foreach(($sel['damaged_ids'] ?? []) as $k => $id)
+                                        <input type="hidden" name="items[{{ $idx }}][selected_damaged_ids][{{ $k }}]" value="{{ (int)$id }}">
+                                    @endforeach
+
                                 </div>
 
                             </div>
@@ -781,37 +795,16 @@
                     damaged_ids: modalDamagedIds,
                 };
 
-                const wrap = document.querySelector(`[data-hidden-wrap="${currentRowIndex}"]`);
-                if(!wrap) return;
-
-                wrap.querySelectorAll('[data-sub-generated="1"]').forEach(n => n.remove());
-
-                let html = '';
-
-                (modalGoodAlloc||[]).forEach((ga, k) => {
-                    html += `<input data-sub-generated="1" type="hidden" name="items[${currentRowIndex}][good_allocations][${k}][warehouse_id]" value="${parseInt(ga.warehouse_id||0)}">`;
-                    html += `<input data-sub-generated="1" type="hidden" name="items[${currentRowIndex}][good_allocations][${k}][from_rack_id]" value="${parseInt(ga.from_rack_id||0)}">`;
-                    html += `<input data-sub-generated="1" type="hidden" name="items[${currentRowIndex}][good_allocations][${k}][qty]" value="${parseInt(ga.qty||0)}">`;
-                });
-
-                (modalDefectIds||[]).forEach((id, k) => {
-                    html += `<input data-sub-generated="1" type="hidden" name="items[${currentRowIndex}][selected_defect_ids][${k}]" value="${parseInt(id)}">`;
-                });
-
-                (modalDamagedIds||[]).forEach((id, k) => {
-                    html += `<input data-sub-generated="1" type="hidden" name="items[${currentRowIndex}][selected_damaged_ids][${k}]" value="${parseInt(id)}">`;
-                });
-
-                wrap.insertAdjacentHTML('beforeend', html);
+                // ✅ FIX: jangan inject hidden inputs via JS (akan hilang kena Livewire rerender)
+                // cukup kirim ke Livewire state, nanti Blade yang render hidden inputs
+                if(window.Livewire){
+                    Livewire.emit('subSelectionSaved', currentRowIndex, window.__subSelections[currentRowIndex]);
+                }
 
                 $('#subPickModal').modal('hide');
 
                 if(typeof window.validateAllAdjustmentRows === 'function'){
                     window.validateAllAdjustmentRows();
-                }
-
-                if(window.Livewire){
-                    Livewire.emit('subSelectionSaved', currentRowIndex, window.__subSelections[currentRowIndex]);
                 }
             }
 
@@ -859,6 +852,7 @@
                     const selPreview = card.querySelector(`[data-selected-preview="${idx}"]`);
                     if(selPreview) selPreview.textContent = total;
 
+                    // keep base hidden sync (qty/note)
                     const qtyHidden = card.querySelector(`input[data-hidden-qty="${idx}"]`);
                     if(qtyHidden) qtyHidden.value = expected;
 
@@ -878,6 +872,7 @@
                 }
             }
 
+            // seed selections (for modal prefill)
             window.__subSelections = window.__subSelections || {};
             @foreach($selections as $i => $sel)
                 window.__subSelections[{{ $i }}] = {
@@ -924,7 +919,7 @@
 
                 bindRowListeners();
 
-                // ✅ Rebind lagi setelah Livewire rerender (biar event note gak putus)
+                // ✅ Rebind setelah Livewire rerender
                 if (window.Livewire && Livewire.hook) {
                     Livewire.hook('message.processed', () => {
                         bindRowListeners();

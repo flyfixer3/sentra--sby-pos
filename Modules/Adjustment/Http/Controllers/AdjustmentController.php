@@ -132,6 +132,15 @@ class AdjustmentController extends Controller
             })
             ->values();
 
+        // ✅ RESERVED (biar GOOD available sinkron dengan Inventory Stocks)
+        $stockHeader = \Modules\Inventory\Entities\Stock::withoutGlobalScopes()
+            ->where('branch_id', $branchId)
+            ->where('warehouse_id', $warehouseId)
+            ->where('product_id', $productId)
+            ->first(['qty_reserved', 'qty_available']);
+
+        $warehouseReserved = (int) ($stockHeader->qty_reserved ?? 0);
+
         // stock_racks by rack (qty_good/defect/damaged)
         $stockRows = DB::table('stock_racks')
             ->where('branch_id', $branchId)
@@ -185,7 +194,7 @@ class AdjustmentController extends Controller
             })
             ->values();
 
-        // ✅ damaged units (available only) — FIX: no 'photo' column, include damage_type
+        // damaged units (available only)
         $damaged = ProductDamagedItem::query()
             ->where('branch_id', $branchId)
             ->where('warehouse_id', $warehouseId)
@@ -193,7 +202,7 @@ class AdjustmentController extends Controller
             ->whereNull('moved_out_at')
             ->orderBy('rack_id')
             ->orderBy('id')
-            ->get(['id', 'rack_id', 'damage_type', 'reason']) // ✅ PATCH
+            ->get(['id', 'rack_id', 'damage_type', 'reason'])
             ->map(function ($d) {
                 return [
                     'id'          => (int) $d->id,
@@ -212,6 +221,10 @@ class AdjustmentController extends Controller
                 'product_id'    => $productId,
                 'racks'         => $racks,
                 'stock_by_rack' => $stockByRack,
+
+                // ✅ NEW
+                'warehouse_reserved' => $warehouseReserved,
+
                 'defect_units'  => $defects,
                 'damaged_units' => $damaged,
             ],
@@ -259,15 +272,12 @@ class AdjustmentController extends Controller
         $request->validate($rules);
 
         $date = (string) $request->date;
-
-        // decode header note
         $note = html_entity_decode((string) ($request->note ?? ''), ENT_QUOTES, 'UTF-8');
 
-        // Helper: normalize ids
         $normalizeIds = function ($arr): array {
             $arr = is_array($arr) ? $arr : [];
             $arr = array_map('intval', $arr);
-            $arr = array_values(array_unique(array_filter($arr, fn($x) => $x > 0)));
+            $arr = array_values(array_unique(array_filter($arr, fn ($x) => $x > 0)));
             return $arr;
         };
 
@@ -289,9 +299,9 @@ class AdjustmentController extends Controller
                 }
 
                 $request->validate([
-                    'items.*.qty_good'   => ['nullable', 'integer', 'min:0'],
-                    'items.*.qty_defect' => ['nullable', 'integer', 'min:0'],
-                    'items.*.qty_damaged'=> ['nullable', 'integer', 'min:0'],
+                    'items.*.qty_good'    => ['nullable', 'integer', 'min:0'],
+                    'items.*.qty_defect'  => ['nullable', 'integer', 'min:0'],
+                    'items.*.qty_damaged' => ['nullable', 'integer', 'min:0'],
                 ]);
 
                 DB::transaction(function () use ($request, $warehouseId, $branchId, $date, $note) {
@@ -326,9 +336,7 @@ class AdjustmentController extends Controller
                             . ($adjustment->note ? ' | ' . (string) $adjustment->note : '')
                         );
 
-                        // =========================================================
                         // A) GOOD allocations
-                        // =========================================================
                         $goodAllocations = (array) ($item['good_allocations'] ?? []);
 
                         if ($good > 0) {
@@ -362,7 +370,8 @@ class AdjustmentController extends Controller
                                     $reference,
                                     $baseNote . ' | GOOD',
                                     $date,
-                                    $toRackId
+                                    $toRackId,
+                                    'good'
                                 );
 
                                 AdjustedProduct::query()->create([
@@ -377,9 +386,7 @@ class AdjustmentController extends Controller
                             }
                         }
 
-                        // =========================================================
                         // B) DEFECT per-unit
-                        // =========================================================
                         $defects = (array) ($item['defects'] ?? []);
 
                         if ($defect > 0 && count($defects) !== $defect) {
@@ -424,6 +431,7 @@ class AdjustmentController extends Controller
                             }
 
                             foreach ($countByRack as $rackId => $qtyRack) {
+
                                 $this->mutationController->applyInOut(
                                     $branchId,
                                     $warehouseId,
@@ -433,7 +441,8 @@ class AdjustmentController extends Controller
                                     $reference,
                                     $baseNote . ' | DEFECT',
                                     $date,
-                                    (int) $rackId
+                                    (int) $rackId,
+                                    'defect'
                                 );
 
                                 AdjustedProduct::query()->create([
@@ -448,9 +457,7 @@ class AdjustmentController extends Controller
                             }
                         }
 
-                        // =========================================================
                         // C) DAMAGED per-unit
-                        // =========================================================
                         $damages = (array) ($item['damaged_items'] ?? []);
 
                         if ($damaged > 0 && count($damages) !== $damaged) {
@@ -515,7 +522,8 @@ class AdjustmentController extends Controller
                                     $reference,
                                     $baseNote . ' | DAMAGED',
                                     $date,
-                                    (int) $rackId
+                                    (int) $rackId,
+                                    'damaged'
                                 );
 
                                 foreach ($rows as $row) {
@@ -552,9 +560,7 @@ class AdjustmentController extends Controller
 
                 $items = $request->input('items', []);
 
-                // adjustments.warehouse_id kemungkinan NOT NULL → tetap butuh fallback
                 $fallbackWarehouseId = 0;
-
                 foreach ($items as $it) {
                     if (!empty($it['good_allocations']) && is_array($it['good_allocations'])) {
                         foreach ($it['good_allocations'] as $ga) {
@@ -610,7 +616,6 @@ class AdjustmentController extends Controller
                         . ' | Item: ' . $itemNote
                     );
 
-                    // ✅ PATCH: anggap pick mode juga valid kalau UI masih kirim defect_ids/damaged_ids
                     $hasPickMode =
                         isset($item['good_allocations']) ||
                         isset($item['selected_defect_ids']) || isset($item['defect_ids']) ||
@@ -620,16 +625,14 @@ class AdjustmentController extends Controller
                         throw new \RuntimeException("Row #{$idx}: SUB must use Pick Items mode (good_allocations / selected ids).");
                     }
 
-                    // =========================================================
-                    // 1) GOOD allocations (multi-warehouse)
-                    // =========================================================
+                    // 1) GOOD allocations
                     $goodAlloc = is_array($item['good_allocations'] ?? null) ? $item['good_allocations'] : [];
                     $goodAllocNormalized = [];
                     $goodTotal = 0;
 
                     foreach ($goodAlloc as $ga) {
                         $wid = (int) ($ga['warehouse_id'] ?? 0);
-                        $rid = (int) ($ga['from_rack_id'] ?? 0);
+                        $rid = (int) ($ga['from_rack_id'] ?? ($ga['rack_id'] ?? 0));
                         $q   = (int) ($ga['qty'] ?? 0);
 
                         if ($wid <= 0 || $rid <= 0 || $q <= 0) continue;
@@ -649,10 +652,7 @@ class AdjustmentController extends Controller
                         $goodTotal += $q;
                     }
 
-                    // =========================================================
-                    // 2) DEFECT/DAMAGED picked ids (multi-warehouse by DB)
-                    // =========================================================
-                    // ✅ PATCH: fallback ke defect_ids/damaged_ids
+                    // 2) DEFECT/DAMAGED picked ids
                     $defectIds  = $normalizeIds($item['selected_defect_ids'] ?? ($item['defect_ids'] ?? []));
                     $damagedIds = $normalizeIds($item['selected_damaged_ids'] ?? ($item['damaged_ids'] ?? []));
 
@@ -664,9 +664,7 @@ class AdjustmentController extends Controller
                         throw new \RuntimeException("Row #{$idx}: Total selected must equal Qty. Qty={$expected}, Selected={$totalSelected}.");
                     }
 
-                    // =========================================================
                     // Mutation OUT for GOOD allocations
-                    // =========================================================
                     foreach ($goodAllocNormalized as $ga) {
                         $wid = (int) $ga['warehouse_id'];
                         $rid = (int) $ga['rack_id'];
@@ -681,7 +679,8 @@ class AdjustmentController extends Controller
                             $reference,
                             $mutationNoteBase . ' | GOOD',
                             $date,
-                            $rid
+                            $rid,
+                            'good'
                         );
 
                         AdjustedProduct::query()->create([
@@ -695,9 +694,7 @@ class AdjustmentController extends Controller
                         ]);
                     }
 
-                    // =========================================================
-                    // DEFECT picked -> group by (warehouse_id, rack_id)
-                    // =========================================================
+                    // DEFECT picked
                     if ($defectTotal > 0) {
                         $itemsQ = ProductDefectItem::query()
                             ->where('branch_id', $branchId)
@@ -725,13 +722,14 @@ class AdjustmentController extends Controller
                             $key = $wid . ':' . $rid;
                             $group[$key]['warehouse_id'] = $wid;
                             $group[$key]['rack_id'] = $rid;
-                            $group[$key]['items'][] = $u;
+                            $group[$key]['ids'][] = (int) $u->id;
                         }
 
                         foreach ($group as $g) {
                             $wid = (int) $g['warehouse_id'];
                             $rid = (int) $g['rack_id'];
-                            $qtyRack = count($g['items'] ?? []);
+                            $ids = $g['ids'] ?? [];
+                            $qtyRack = count($ids);
 
                             $this->mutationController->applyInOut(
                                 $branchId,
@@ -742,17 +740,25 @@ class AdjustmentController extends Controller
                                 $reference,
                                 $mutationNoteBase . ' | DEFECT',
                                 $date,
-                                $rid
+                                $rid,
+                                'defect'
                             );
 
-                            foreach (($g['items'] ?? []) as $it) {
-                                $it->update([
+                            // ✅ IMPORTANT: bypass fillable (hard update)
+                            ProductDefectItem::query()
+                                ->where('branch_id', $branchId)
+                                ->where('warehouse_id', $wid)
+                                ->where('rack_id', $rid)
+                                ->where('product_id', $productId)
+                                ->whereNull('moved_out_at')
+                                ->whereIn('id', $ids)
+                                ->update([
                                     'moved_out_at'             => now(),
                                     'moved_out_by'             => (int) Auth::id(),
                                     'moved_out_reference_type' => Adjustment::class,
                                     'moved_out_reference_id'   => (int) $adjustment->id,
+                                    'updated_at'               => now(),
                                 ]);
-                            }
 
                             AdjustedProduct::query()->create([
                                 'adjustment_id' => (int) $adjustment->id,
@@ -766,9 +772,7 @@ class AdjustmentController extends Controller
                         }
                     }
 
-                    // =========================================================
-                    // DAMAGED picked -> group by (warehouse_id, rack_id)
-                    // =========================================================
+                    // DAMAGED picked
                     if ($damagedTotal > 0) {
                         $itemsQ = ProductDamagedItem::query()
                             ->where('branch_id', $branchId)
@@ -796,13 +800,14 @@ class AdjustmentController extends Controller
                             $key = $wid . ':' . $rid;
                             $group[$key]['warehouse_id'] = $wid;
                             $group[$key]['rack_id'] = $rid;
-                            $group[$key]['items'][] = $u;
+                            $group[$key]['ids'][] = (int) $u->id;
                         }
 
                         foreach ($group as $g) {
                             $wid = (int) $g['warehouse_id'];
                             $rid = (int) $g['rack_id'];
-                            $qtyRack = count($g['items'] ?? []);
+                            $ids = $g['ids'] ?? [];
+                            $qtyRack = count($ids);
 
                             $mutationOutId = $this->mutationController->applyInOutAndGetMutationId(
                                 $branchId,
@@ -813,18 +818,26 @@ class AdjustmentController extends Controller
                                 $reference,
                                 $mutationNoteBase . ' | DAMAGED',
                                 $date,
-                                $rid
+                                $rid,
+                                'damaged'
                             );
 
-                            foreach (($g['items'] ?? []) as $it) {
-                                $it->update([
+                            // ✅ IMPORTANT: bypass fillable (hard update)
+                            ProductDamagedItem::query()
+                                ->where('branch_id', $branchId)
+                                ->where('warehouse_id', $wid)
+                                ->where('rack_id', $rid)
+                                ->where('product_id', $productId)
+                                ->whereNull('moved_out_at')
+                                ->whereIn('id', $ids)
+                                ->update([
                                     'moved_out_at'             => now(),
                                     'moved_out_by'             => (int) Auth::id(),
                                     'moved_out_reference_type' => Adjustment::class,
                                     'moved_out_reference_id'   => (int) $adjustment->id,
                                     'mutation_out_id'          => (int) $mutationOutId,
+                                    'updated_at'               => now(),
                                 ]);
-                            }
 
                             AdjustedProduct::query()->create([
                                 'adjustment_id' => (int) $adjustment->id,

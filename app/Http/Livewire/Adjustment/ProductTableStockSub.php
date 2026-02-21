@@ -10,6 +10,8 @@ class ProductTableStockSub extends Component
 {
     protected $listeners = [
         'productSelected' => 'productSelected',
+
+        // ✅ NEW: SUB picker save
         'subSelectionSaved' => 'subSelectionSaved',
     ];
 
@@ -91,22 +93,24 @@ class ProductTableStockSub extends Component
         ];
     }
 
-    public function subSelectionSaved($rowIndex, $data)
+    public function subSelectionSaved(int $rowIndex, array $payload): void
     {
-        $rowIndex = (int) $rowIndex;
-        if (!isset($this->selections[$rowIndex])) return;
+        // Pastikan index valid
+        if (!isset($this->selections[$rowIndex])) {
+            $this->selections[$rowIndex] = [
+                'good_allocations' => [],
+                'defect_ids' => [],
+                'damaged_ids' => [],
+                'note' => '',
+            ];
+        }
 
-        $goodAlloc = is_array($data['good_allocations'] ?? null) ? $data['good_allocations'] : [];
-        $defIds    = is_array($data['defect_ids'] ?? null) ? $data['defect_ids'] : [];
-        $damIds    = is_array($data['damaged_ids'] ?? null) ? $data['damaged_ids'] : [];
+        $this->selections[$rowIndex]['good_allocations'] = $payload['good_allocations'] ?? [];
+        $this->selections[$rowIndex]['defect_ids'] = $payload['defect_ids'] ?? [];
+        $this->selections[$rowIndex]['damaged_ids'] = $payload['damaged_ids'] ?? [];
 
-        // normalize
-        $defIds = array_values(array_unique(array_map('intval', $defIds)));
-        $damIds = array_values(array_unique(array_map('intval', $damIds)));
-
-        $this->selections[$rowIndex]['good_allocations'] = $goodAlloc;
-        $this->selections[$rowIndex]['defect_ids'] = $defIds;
-        $this->selections[$rowIndex]['damaged_ids'] = $damIds;
+        // optional: biar langsung rerender summary card
+        $this->dispatchBrowserEvent('sub-selection-updated', ['rowIndex' => $rowIndex]);
     }
 
     public function render()
