@@ -16,6 +16,7 @@ class AdjustedProduct extends Model
     protected $fillable = [
         'adjustment_id',
         'product_id',
+        'warehouse_id',
         'rack_id',
         'quantity',
         'type',
@@ -39,5 +40,10 @@ class AdjustedProduct extends Model
     public function rack()
     {
         return $this->belongsTo(Rack::class, 'rack_id', 'id');
+    }
+
+    public function warehouse()
+    {
+        return $this->belongsTo(Warehouse::class, 'warehouse_id', 'id');
     }
 }

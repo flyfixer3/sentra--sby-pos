@@ -1,3 +1,5 @@
+{{-- FILE: resources/views/livewire/adjustment/product-table-stock-sub.blade.php --}}
+
 <div>
 
     <div class="mb-3">
@@ -5,7 +7,7 @@
             <div>
                 <div class="font-weight-bold">Stock SUB (Reduce Stock)</div>
                 <div class="text-muted small">
-                    Flow: Pick Items (Warehouse/Rack/Condition) → Auto total selected must match Expected.
+                    Flow: Pick Items (Warehouse/Rack/Condition) → Total selected must match Expected.
                 </div>
             </div>
 
@@ -18,7 +20,7 @@
     {{-- Step cards --}}
     <div class="row mb-3">
         <div class="col-lg-4 mb-2">
-            <div class="border rounded p-3 bg-white">
+            <div class="border rounded p-3 bg-white h-100">
                 <div class="d-flex align-items-center">
                     <span class="badge badge-pill badge-light border mr-2">1</span>
                     <div>
@@ -29,18 +31,18 @@
             </div>
         </div>
         <div class="col-lg-4 mb-2">
-            <div class="border rounded p-3 bg-white">
+            <div class="border rounded p-3 bg-white h-100">
                 <div class="d-flex align-items-center">
                     <span class="badge badge-pill badge-light border mr-2">2</span>
                     <div>
                         <div class="font-weight-bold">GOOD pakai Qty</div>
-                        <div class="text-muted small">GOOD bisa &gt; 1 (input qty, max = stock).</div>
+                        <div class="text-muted small">GOOD bisa &gt; 1 (max = stock di rack).</div>
                     </div>
                 </div>
             </div>
         </div>
         <div class="col-lg-4 mb-2">
-            <div class="border rounded p-3 bg-white">
+            <div class="border rounded p-3 bg-white h-100">
                 <div class="d-flex align-items-center">
                     <span class="badge badge-pill badge-light border mr-2">3</span>
                     <div>
@@ -62,6 +64,7 @@
             <li>GOOD: input qty per rack (allocation otomatis terbentuk).</li>
             <li>DEFECT/DAMAGED: pilih unit ID (1 ID = 1 pc).</li>
             <li>Warehouse dropdown di modal hanya untuk filter / fokus (optional).</li>
+            <li><b>Note per item wajib diisi</b> untuk SUB.</li>
         </ul>
     </div>
 
@@ -70,7 +73,7 @@
         <div class="font-weight-bold mb-1">
             <i class="bi bi-exclamation-triangle"></i> Masih ada item yang belum valid.
         </div>
-        <div class="small text-muted">Buka "Pick Items" per item, lalu pastikan total selected sama dengan Expected.</div>
+        <div class="small text-muted">Buka "Pick Items" per item, lalu pastikan total selected sama dengan Expected + note sudah diisi.</div>
     </div>
 
     {{-- LIST PRODUCT --}}
@@ -83,7 +86,9 @@
         @else
             @foreach($products as $idx => $p)
                 @php
-                    $expected = (int) ($p['expected_qty'] ?? 1);
+                    $expected = (int) ($products[$idx]['expected_qty'] ?? 1);
+                    if($expected <= 0) $expected = 1;
+
                     $sel = $selections[$idx] ?? [
                         'good_allocations' => [],
                         'defect_ids' => [],
@@ -105,8 +110,10 @@
 
                 <div class="card mb-3 {{ $isValid ? 'border' : 'border-danger' }}" data-sub-row="{{ $idx }}">
                     <div class="card-body">
+
+                        {{-- Top area --}}
                         <div class="d-flex align-items-start justify-content-between">
-                            <div>
+                            <div class="pr-3">
                                 <div class="font-weight-bold">
                                     {{ $p['product_name'] ?? 'Product' }}
                                 </div>
@@ -117,24 +124,62 @@
                                 </div>
                             </div>
 
-                            <div class="text-right">
-                                <div class="text-muted small mb-1">Expected</div>
-                                <span class="badge badge-secondary px-3 py-2">{{ $expected }}</span>
+                            {{-- ✅ Right area (1 row: Expected + Badge + Button) --}}
+                            <div class="d-flex align-items-center justify-content-end flex-wrap"
+                                 style="gap:10px; min-width:520px;">
+                                <div class="d-flex align-items-center" style="gap:10px;">
+                                    <div class="text-left">
+                                        <div class="text-muted small mb-1">Expected</div>
+                                        <input type="number"
+                                               class="form-control form-control-sm text-right"
+                                               style="width:110px;"
+                                               min="1"
+                                               wire:model.debounce.300ms="products.{{ $idx }}.expected_qty"
+                                               data-expected-input="{{ $idx }}"
+                                               oninput="window.onSubExpectedChanged && window.onSubExpectedChanged({{ $idx }})">
+                                    </div>
+
+                                    <div class="d-flex align-items-center" style="gap:10px;">
+                                        <div class="text-left">
+                                            <div class="text-muted small mb-1">Status</div>
+                                            @if($isValid)
+                                                <span class="badge badge-success row-status px-3 py-2">OK</span>
+                                            @else
+                                                <span class="badge badge-danger row-status px-3 py-2">Qty mismatch / Need note</span>
+                                            @endif
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div class="d-flex align-items-center" style="gap:10px;">
+                                    <div class="text-left">
+                                        <div class="text-muted small mb-1">Action</div>
+                                        <button type="button"
+                                                class="btn btn-outline-primary btn-sm"
+                                                onclick="openSubPickModal({{ $idx }}, {{ (int)($p['product_id'] ?? 0) }})">
+                                            <i class="bi bi-grid"></i> Pick Items
+                                        </button>
+                                    </div>
+                                </div>
                             </div>
                         </div>
 
-                        <hr>
+                        <hr class="my-3">
 
                         {{-- badges summary --}}
                         <div class="d-flex flex-wrap align-items-center" style="gap:8px;">
-                            <span class="badge badge-light border">Selected: <b>{{ $totalSelected }}</b> / {{ $expected }}</span>
+                            <span class="badge badge-light border">
+                                Selected: <b data-selected-preview="{{ $idx }}">{{ $totalSelected }}</b>
+                                / <span data-expected-preview="{{ $idx }}">{{ $expected }}</span>
+                            </span>
                             <span class="badge badge-light border">GOOD: <b>{{ $goodTotal }}</b></span>
                             <span class="badge badge-light border">DEFECT: <b>{{ $defTotal }}</b> (1 pc/ID)</span>
                             <span class="badge badge-light border">DAMAGED: <b>{{ $damTotal }}</b> (1 pc/ID)</span>
                         </div>
 
                         <div class="row mt-3">
-                            <div class="col-lg-8">
+                            <div class="col-lg-12">
+
                                 {{-- Preview allocations --}}
                                 <div class="small text-muted mb-1">GOOD Allocations (auto):</div>
                                 <div class="small">
@@ -169,48 +214,42 @@
                                     @endif
                                 </div>
 
+                                {{-- ✅ Note (PATCH: jangan defer, biar gak ke-reset saat Livewire emit subSelectionSaved) --}}
                                 <div class="mt-3">
                                     <label class="font-weight-bold mb-1">Item Note <span class="text-danger">*</span></label>
                                     <textarea
                                         class="form-control"
                                         rows="2"
                                         placeholder="Wajib isi alasan / catatan untuk SUB item ini..."
-                                        wire:model.defer="selections.{{ $idx }}.note"
+                                        wire:model.debounce.400ms="selections.{{ $idx }}.note"
                                         data-note="{{ $idx }}"
+                                        data-note-input="{{ $idx }}"
                                     ></textarea>
                                     <small class="text-muted">Catatan ini masuk ke mutation note & tampil di detail adjustment.</small>
                                 </div>
-                            </div>
 
-                            <div class="col-lg-4 d-flex flex-column justify-content-between">
-                                <div class="mb-2">
-                                    @if($isValid)
-                                        <span class="badge badge-success row-status px-3 py-2">OK</span>
-                                    @else
-                                        <span class="badge badge-danger row-status px-3 py-2">Qty mismatch / Need note</span>
-                                    @endif
+                                {{-- Hidden inputs for form submission --}}
+                                <div data-hidden-wrap="{{ $idx }}" class="mt-2">
+
+                                    {{-- base hidden ALWAYS present --}}
+                                    <input type="hidden" name="items[{{ $idx }}][product_id]" value="{{ (int)($p['product_id'] ?? 0) }}" data-base="1">
+                                    <input type="hidden" name="items[{{ $idx }}][qty]" value="{{ $expected }}" data-hidden-qty="{{ $idx }}" data-base="1">
+                                    <input type="hidden" name="items[{{ $idx }}][note]" value="{{ e((string)($sel['note'] ?? '')) }}" data-hidden-note="{{ $idx }}" data-base="1">
+
+                                    {{-- selection-generated inputs will be appended by JS --}}
                                 </div>
 
-                                <button type="button"
-                                        class="btn btn-secondary"
-                                        onclick="openSubPickModal({{ $idx }}, {{ (int)($p['product_id'] ?? 0) }})">
-                                    <i class="bi bi-grid"></i> Pick Items
-                                </button>
                             </div>
                         </div>
 
-                        {{-- Hidden inputs injected for form submission --}}
-                        <div data-hidden-wrap="{{ $idx }}"></div>
                     </div>
                 </div>
             @endforeach
         @endif
     </div>
 
-    {{-- =========================
-        MODAL PICK ITEMS (SUB)
-    ========================== --}}
-    <div class="modal fade" id="subPickModal" tabindex="-1" role="dialog" aria-labelledby="subPickModalLabel" aria-hidden="true">
+    {{-- MODAL PICK ITEMS (SUB) --}}
+    <div class="modal fade" id="subPickModal" tabindex="-1" role="dialog" aria-labelledby="subPickModalLabel" aria-hidden="true" wire:ignore.self>
         <div class="modal-dialog modal-xl" role="document">
             <div class="modal-content" style="border-radius:12px;">
                 <div class="modal-header">
@@ -278,7 +317,6 @@
                         </div>
                     </div>
 
-                    {{-- list container --}}
                     <div id="subPickListWrap">
                         <div class="text-muted">Loading...</div>
                     </div>
@@ -296,33 +334,22 @@
         </div>
     </div>
 
-    {{-- =========================
-        JS (SUB PICK MODAL)
-    ========================== --}}
+    {{-- JS (SUB PICK MODAL) --}}
+    @once
     <script>
         (function(){
-            // ====== endpoints ======
-            // kamu bisa ganti URL ini sesuai route kamu:
-            // contoh ideal: route('adjustments.stockSubPickerData')
             const SUB_PICK_URL = @json($stockSubPickerUrl);
 
-            // ====== runtime state ======
             let currentRowIndex = null;
             let currentProductId = null;
             let currentExpected = 0;
 
-            // selections inside modal
-            let modalGoodAlloc = []; // [{warehouse_id, warehouse_label, from_rack_id, rack_label, qty}]
-            let modalDefectIds = []; // [id]
-            let modalDamagedIds = []; // [id]
+            let modalGoodAlloc = [];
+            let modalDefectIds = [];
+            let modalDamagedIds = [];
 
-            // data cache by warehouse
-            let cache = {}; // wid => {racks, stock_by_rack, defect_units, damaged_units, wh_label}
-            let activeWarehouseId = ''; // filter
-            let activeRackId = '';
-            let activeCond = '';
+            let cache = {};
 
-            // ====== helpers ======
             function uniqInt(arr){
                 arr = Array.isArray(arr) ? arr : [];
                 const s = new Set();
@@ -337,6 +364,16 @@
                 let t = 0;
                 (modalGoodAlloc||[]).forEach(x => t += parseInt(x.qty||0));
                 return t;
+            }
+
+            function escapeHtml(str){
+                str = (str ?? '').toString();
+                return str
+                    .replaceAll('&', '&amp;')
+                    .replaceAll('<', '&lt;')
+                    .replaceAll('>', '&gt;')
+                    .replaceAll('"', '&quot;')
+                    .replaceAll("'", '&#039;');
             }
 
             function updateCounters(){
@@ -367,16 +404,6 @@
                         `<option value="${r.id}">${escapeHtml(r.label)}</option>`
                     );
                 });
-            }
-
-            function escapeHtml(str){
-                str = (str ?? '').toString();
-                return str
-                    .replaceAll('&', '&amp;')
-                    .replaceAll('<', '&lt;')
-                    .replaceAll('>', '&gt;')
-                    .replaceAll('"', '&quot;')
-                    .replaceAll("'", '&#039;');
             }
 
             async function fetchWarehouseData(wid){
@@ -410,21 +437,15 @@
                 const wrap = document.getElementById('subPickListWrap');
                 if(!wrap) return;
 
-                // decide warehouses to render:
                 const wids = [];
                 const whSel = document.getElementById('subFilterWarehouse').value || '';
                 if(whSel){
                     wids.push(whSel);
                 }else{
-                    // all from dropdown options
                     const opts = document.querySelectorAll('#subFilterWarehouse option');
-                    opts.forEach(o => {
-                        const v = o.value;
-                        if(v) wids.push(v);
-                    });
+                    opts.forEach(o => { if(o.value) wids.push(o.value); });
                 }
 
-                // build UI
                 let html = '';
                 html += `<div class="small text-muted mb-2">List item sesuai filter (GOOD pakai qty, DEFECT/DAMAGED 1pc per ID).</div>`;
 
@@ -434,7 +455,6 @@
                     return;
                 }
 
-                // render per warehouse section
                 wids.forEach(wid => {
                     const d = cache[wid];
                     if(!d){
@@ -458,7 +478,6 @@
 
                 wrap.innerHTML = html;
 
-                // bind inputs
                 bindDynamicEvents();
                 updateCounters();
             }
@@ -467,17 +486,12 @@
                 const rackFilter = document.getElementById('subFilterRack').value || '';
                 const condFilter = document.getElementById('subFilterCondition').value || '';
 
-                // build rack label map
                 const rackMap = {};
                 (d.racks||[]).forEach(r => rackMap[r.id] = r.label);
 
-                let rowsHtml = '';
-
-                // build rack IDs present in stock_by_rack
                 const stockByRack = d.stock_by_rack || {};
                 const rackIds = Object.keys(stockByRack).map(x => parseInt(x)).filter(x => x > 0);
 
-                // If no rack stock but there are defect/damaged units, we still want show racks from units
                 const racksFromDef = (d.defect_units||[]).map(u => parseInt(u.rack_id||0)).filter(x => x>0);
                 const racksFromDam = (d.damaged_units||[]).map(u => parseInt(u.rack_id||0)).filter(x => x>0);
 
@@ -486,6 +500,8 @@
                 if(allRackIds.length <= 0){
                     return `<div class="text-muted px-2 py-2">No stock found.</div>`;
                 }
+
+                let rowsHtml = '';
 
                 allRackIds.forEach(rid => {
                     if(rackFilter && parseInt(rackFilter) !== rid) return;
@@ -498,7 +514,6 @@
                     const defUnits = (d.defect_units||[]).filter(u => parseInt(u.rack_id||0) === rid);
                     const damUnits = (d.damaged_units||[]).filter(u => parseInt(u.rack_id||0) === rid);
 
-                    // condition filter
                     const showGood = (!condFilter || condFilter === 'good');
                     const showDef  = (!condFilter || condFilter === 'defect');
                     const showDam  = (!condFilter || condFilter === 'damaged');
@@ -514,10 +529,8 @@
 
                             <div class="p-3">
                                 ${showGood ? renderGoodRow(wid, rackLabel, rid, availGood) : ''}
-
-                                ${showDef ? renderDefectRows(wid, rid, defUnits, rackLabel) : ''}
-
-                                ${showDam ? renderDamagedRows(wid, rid, damUnits, rackLabel) : ''}
+                                ${showDef ? renderDefectRows(wid, rid, defUnits) : ''}
+                                ${showDam ? renderDamagedRows(wid, rid, damUnits) : ''}
                             </div>
                         </div>
                     `;
@@ -527,18 +540,19 @@
             }
 
             function renderGoodRow(wid, rackLabel, rid, availGood){
-                // find existing alloc qty
                 const found = (modalGoodAlloc||[]).find(x => parseInt(x.warehouse_id)===parseInt(wid) && parseInt(x.from_rack_id)===parseInt(rid));
                 const val = found ? parseInt(found.qty||0) : 0;
+
+                const whLabel = document.querySelector(`#subFilterWarehouse option[value="${wid}"]`)?.textContent || ('Warehouse #'+wid);
 
                 return `
                     <div class="d-flex align-items-center justify-content-between mb-2">
                         <div>
                             <div class="font-weight-bold">GOOD</div>
                             <div class="text-muted small">
-                                Warehouse: ${escapeHtml(document.querySelector(`#subFilterWarehouse option[value="${wid}"]`)?.textContent || ('#'+wid))}
+                                Warehouse: ${escapeHtml(whLabel)}
                                 | ${escapeHtml(rackLabel)}
-                                | Avail: <span class="badge badge-light border"> ${availGood} </span>
+                                | Avail: <span class="badge badge-light border">${availGood}</span>
                             </div>
                         </div>
                         <div class="d-flex align-items-center" style="gap:10px;">
@@ -558,18 +572,19 @@
                 `;
             }
 
-            function renderDefectRows(wid, rid, units, rackLabel){
+            function renderDefectRows(wid, rid, units){
                 if(!units || units.length<=0){
-                    return `
-                        <div class="text-muted small mb-2">DEFECT: -</div>
-                    `;
+                    return `<div class="text-muted small mb-2">DEFECT: -</div>`;
                 }
 
                 let html = `<div class="mt-2 mb-2"><span class="badge badge-primary">DEFECT</span> <span class="text-muted small">(pick ID = 1 pc)</span></div>`;
                 units.forEach(u => {
                     const id = parseInt(u.id||0);
                     const checked = (modalDefectIds||[]).includes(id) ? 'checked' : '';
-                    const label = `ID: ${id} | ${u.defect_type || ''} ${u.description ? ('| '+u.description) : ''}`;
+
+                    const dt = (u.defect_type || '').trim();
+                    const ds = (u.description || '').trim();
+                    const label = `ID: ${id}` + (dt ? ` | Type: ${dt}` : '') + (ds ? ` | Desc: ${ds}` : '');
 
                     html += `
                         <div class="custom-control custom-checkbox mb-1">
@@ -588,18 +603,19 @@
                 return html;
             }
 
-            function renderDamagedRows(wid, rid, units, rackLabel){
+            function renderDamagedRows(wid, rid, units){
                 if(!units || units.length<=0){
-                    return `
-                        <div class="text-muted small mb-2">DAMAGED: -</div>
-                    `;
+                    return `<div class="text-muted small mb-2">DAMAGED: -</div>`;
                 }
 
                 let html = `<div class="mt-2 mb-2"><span class="badge badge-danger">DAMAGED</span> <span class="text-muted small">(pick ID = 1 pc)</span></div>`;
                 units.forEach(u => {
                     const id = parseInt(u.id||0);
                     const checked = (modalDamagedIds||[]).includes(id) ? 'checked' : '';
-                    const label = `ID: ${id} | ${u.reason || ''}`;
+
+                    const tp = ((u.damage_type || 'damaged') + '').trim();
+                    const rs = (u.reason || '').trim();
+                    const label = `ID: ${id} | Type: ${tp}` + (rs ? ` | Reason: ${rs}` : '');
 
                     html += `
                         <div class="custom-control custom-checkbox mb-1">
@@ -619,7 +635,6 @@
             }
 
             function bindDynamicEvents(){
-                // GOOD input
                 document.querySelectorAll('input[data-good-input="1"]').forEach(inp => {
                     inp.addEventListener('input', function(){
                         const wid = this.getAttribute('data-wid');
@@ -627,17 +642,14 @@
                         let v = parseInt(this.value || 0);
                         if(v < 0) v = 0;
 
-                        // enforce max
                         const mx = parseInt(this.getAttribute('max')||0);
                         if(v > mx) v = mx;
                         this.value = v;
 
-                        // update alloc array (remove if 0)
                         modalGoodAlloc = (modalGoodAlloc||[]).filter(x => !(parseInt(x.warehouse_id)===parseInt(wid) && parseInt(x.from_rack_id)===parseInt(rid)));
 
                         if(v > 0){
                             const whLabel = document.querySelector(`#subFilterWarehouse option[value="${wid}"]`)?.textContent || ('Warehouse #'+wid);
-                            // rack label from cache
                             const d = cache[wid];
                             const rackLabel = (d?.racks||[]).find(r => parseInt(r.id)===parseInt(rid))?.label || ('Rack #'+rid);
 
@@ -654,36 +666,28 @@
                     });
                 });
 
-                // DEFECT checkbox
                 document.querySelectorAll('input[data-defect-id]').forEach(chk => {
                     chk.addEventListener('change', function(){
                         const id = parseInt(this.getAttribute('data-defect-id')||0);
                         if(id<=0) return;
 
-                        if(this.checked){
-                            modalDefectIds.push(id);
-                        }else{
-                            modalDefectIds = (modalDefectIds||[]).filter(x => parseInt(x)!==id);
-                        }
-                        modalDefectIds = uniqInt(modalDefectIds);
+                        if(this.checked) modalDefectIds.push(id);
+                        else modalDefectIds = (modalDefectIds||[]).filter(x => parseInt(x)!==id);
 
+                        modalDefectIds = uniqInt(modalDefectIds);
                         updateCounters();
                     });
                 });
 
-                // DAMAGED checkbox
                 document.querySelectorAll('input[data-damaged-id]').forEach(chk => {
                     chk.addEventListener('change', function(){
                         const id = parseInt(this.getAttribute('data-damaged-id')||0);
                         if(id<=0) return;
 
-                        if(this.checked){
-                            modalDamagedIds.push(id);
-                        }else{
-                            modalDamagedIds = (modalDamagedIds||[]).filter(x => parseInt(x)!==id);
-                        }
-                        modalDamagedIds = uniqInt(modalDamagedIds);
+                        if(this.checked) modalDamagedIds.push(id);
+                        else modalDamagedIds = (modalDamagedIds||[]).filter(x => parseInt(x)!==id);
 
+                        modalDamagedIds = uniqInt(modalDamagedIds);
                         updateCounters();
                     });
                 });
@@ -692,45 +696,34 @@
             async function ensureLoadedAndRender(){
                 const wid = document.getElementById('subFilterWarehouse').value || '';
 
-                // if choose specific warehouse => load it and build rack options
                 if(wid){
                     await fetchWarehouseData(wid);
                     buildRackOptions(wid);
                 }else{
-                    // load all warehouses for first render (only once)
                     const opts = document.querySelectorAll('#subFilterWarehouse option');
                     for(const o of opts){
                         if(!o.value) continue;
                         await fetchWarehouseData(o.value);
                     }
-                    // rack options empty because wid empty
                     buildRackOptions('');
                 }
 
                 renderList();
             }
 
-            // ====== exposed functions ======
             window.openSubPickModal = async function(rowIndex, productId){
                 currentRowIndex = rowIndex;
                 currentProductId = productId;
 
-                // expected qty comes from server-rendered card badge
                 const rowCard = document.querySelector(`[data-sub-row="${rowIndex}"]`);
-                const expectedText = rowCard?.querySelector('.badge-secondary')?.textContent || '0';
-                currentExpected = parseInt(expectedText || 0);
+                const expectedInput = rowCard?.querySelector(`input[data-expected-input="${rowIndex}"]`);
+                currentExpected = parseInt(expectedInput?.value || '0') || 0;
 
-                // reset cache per open (biar aman kalau product berubah)
                 cache = {};
-
-                // load existing selection from hidden wrap if exists:
-                // we keep state in Livewire too, tapi supaya modal re-open aman,
-                // kita ambil dari DOM hidden inputs jika ada.
                 modalGoodAlloc = [];
                 modalDefectIds = [];
                 modalDamagedIds = [];
 
-                // try read from dataset stored by blade injection:
                 const existing = window.__subSelections?.[rowIndex];
                 if(existing){
                     modalGoodAlloc = Array.isArray(existing.good_allocations) ? existing.good_allocations : [];
@@ -738,13 +731,10 @@
                     modalDamagedIds = uniqInt(existing.damaged_ids || []);
                 }
 
-                // init filters
                 resetSubFilters(true);
 
-                // show modal
                 $('#subPickModal').modal('show');
 
-                // load + render
                 try{
                     await ensureLoadedAndRender();
                 }catch(e){
@@ -759,13 +749,10 @@
                 document.getElementById('subFilterWarehouse').value = '';
                 document.getElementById('subFilterRack').innerHTML = `<option value="">All Racks</option>`;
                 document.getElementById('subFilterCondition').value = '';
-                if(!skipRender){
-                    renderList();
-                }
+                if(!skipRender) renderList();
             }
 
             window.applySubFilters = async function(){
-                // when warehouse chosen, ensure loaded and update rack dropdown
                 const wid = document.getElementById('subFilterWarehouse').value || '';
                 if(wid){
                     await fetchWarehouseData(wid);
@@ -787,7 +774,6 @@
                     return;
                 }
 
-                // save to global memory (for re-open modal without re-query Livewire)
                 window.__subSelections = window.__subSelections || {};
                 window.__subSelections[currentRowIndex] = {
                     good_allocations: modalGoodAlloc,
@@ -795,74 +781,48 @@
                     damaged_ids: modalDamagedIds,
                 };
 
-                // inject hidden inputs into the row wrapper
                 const wrap = document.querySelector(`[data-hidden-wrap="${currentRowIndex}"]`);
                 if(!wrap) return;
 
-                // build hidden HTML
+                wrap.querySelectorAll('[data-sub-generated="1"]').forEach(n => n.remove());
+
                 let html = '';
 
-                // items[idx][product_id]
-                html += `<input type="hidden" name="items[${currentRowIndex}][product_id]" value="${currentProductId}">`;
-
-                // items[idx][qty] expected
-                html += `<input type="hidden" name="items[${currentRowIndex}][qty]" value="${currentExpected}">`;
-
-                // GOOD allocations
-                // items[idx][good_allocations][k][warehouse_id], [from_rack_id], [qty]
                 (modalGoodAlloc||[]).forEach((ga, k) => {
-                    html += `<input type="hidden" name="items[${currentRowIndex}][good_allocations][${k}][warehouse_id]" value="${parseInt(ga.warehouse_id||0)}">`;
-                    html += `<input type="hidden" name="items[${currentRowIndex}][good_allocations][${k}][from_rack_id]" value="${parseInt(ga.from_rack_id||0)}">`;
-                    html += `<input type="hidden" name="items[${currentRowIndex}][good_allocations][${k}][qty]" value="${parseInt(ga.qty||0)}">`;
+                    html += `<input data-sub-generated="1" type="hidden" name="items[${currentRowIndex}][good_allocations][${k}][warehouse_id]" value="${parseInt(ga.warehouse_id||0)}">`;
+                    html += `<input data-sub-generated="1" type="hidden" name="items[${currentRowIndex}][good_allocations][${k}][from_rack_id]" value="${parseInt(ga.from_rack_id||0)}">`;
+                    html += `<input data-sub-generated="1" type="hidden" name="items[${currentRowIndex}][good_allocations][${k}][qty]" value="${parseInt(ga.qty||0)}">`;
                 });
 
-                // DEFECT ids
                 (modalDefectIds||[]).forEach((id, k) => {
-                    html += `<input type="hidden" name="items[${currentRowIndex}][selected_defect_ids][${k}]" value="${parseInt(id)}">`;
+                    html += `<input data-sub-generated="1" type="hidden" name="items[${currentRowIndex}][selected_defect_ids][${k}]" value="${parseInt(id)}">`;
                 });
 
-                // DAMAGED ids
                 (modalDamagedIds||[]).forEach((id, k) => {
-                    html += `<input type="hidden" name="items[${currentRowIndex}][selected_damaged_ids][${k}]" value="${parseInt(id)}">`;
+                    html += `<input data-sub-generated="1" type="hidden" name="items[${currentRowIndex}][selected_damaged_ids][${k}]" value="${parseInt(id)}">`;
                 });
 
-                wrap.innerHTML = html;
+                wrap.insertAdjacentHTML('beforeend', html);
 
-                // close modal
                 $('#subPickModal').modal('hide');
 
-                // re-check global invalid alert
                 if(typeof window.validateAllAdjustmentRows === 'function'){
                     window.validateAllAdjustmentRows();
-                }else{
-                    // fallback: show global alert if any mismatch exists
-                    recomputeGlobalInvalid();
                 }
 
-                // trigger livewire refresh (note + badges)
                 if(window.Livewire){
                     Livewire.emit('subSelectionSaved', currentRowIndex, window.__subSelections[currentRowIndex]);
                 }
             }
 
-            function recomputeGlobalInvalid(){
-                const cards = document.querySelectorAll('[data-sub-row]');
-                let invalid = false;
-                cards.forEach(c => {
-                    const selectedText = c.querySelector('.badge-light.border')?.textContent || '';
-                    // this is weak fallback; main validation uses validateAllAdjustmentRows()
-                });
-                document.getElementById('subGlobalInvalidAlert').style.display = invalid ? 'block' : 'none';
-            }
-
-            // expose validator for parent submit button (dipakai create.blade kamu)
             window.validateAllAdjustmentRows = function(){
                 let invalid = false;
 
                 document.querySelectorAll('[data-sub-row]').forEach(card => {
                     const idx = parseInt(card.getAttribute('data-sub-row')||0);
 
-                    const expected = parseInt(card.querySelector('.badge-secondary')?.textContent || '0');
+                    const expected = parseInt(card.querySelector(`input[data-expected-input="${idx}"]`)?.value || '0') || 0;
+
                     const sel = window.__subSelections?.[idx];
 
                     let good = 0;
@@ -874,11 +834,11 @@
 
                     const total = good + defc + damg;
 
-                    // note required
                     const noteEl = card.querySelector(`textarea[data-note="${idx}"]`);
                     const noteVal = (noteEl?.value || '').trim();
 
                     const ok = (total === expected) && (noteVal !== '');
+
                     card.classList.toggle('border-danger', !ok);
                     card.classList.toggle('border', ok);
 
@@ -893,27 +853,31 @@
                         }
                     }
 
-                    if(!ok) invalid = true;
+                    const expPreview = card.querySelector(`[data-expected-preview="${idx}"]`);
+                    if(expPreview) expPreview.textContent = expected;
 
-                    // sync note to hidden input
-                    const wrap = card.querySelector(`[data-hidden-wrap="${idx}"]`);
-                    if(wrap){
-                        // ensure note is submitted
-                        // we do not remove others; just append/replace note hidden
-                        const existing = wrap.querySelector(`input[name="items[${idx}][note]"]`);
-                        if(existing){
-                            existing.value = noteVal;
-                        }else{
-                            wrap.insertAdjacentHTML('beforeend', `<input type="hidden" name="items[${idx}][note]" value="${escapeHtml(noteVal)}">`);
-                        }
-                    }
+                    const selPreview = card.querySelector(`[data-selected-preview="${idx}"]`);
+                    if(selPreview) selPreview.textContent = total;
+
+                    const qtyHidden = card.querySelector(`input[data-hidden-qty="${idx}"]`);
+                    if(qtyHidden) qtyHidden.value = expected;
+
+                    const noteHidden = card.querySelector(`input[data-hidden-note="${idx}"]`);
+                    if(noteHidden) noteHidden.value = noteVal;
+
+                    if(!ok) invalid = true;
                 });
 
                 document.getElementById('subGlobalInvalidAlert').style.display = invalid ? 'block' : 'none';
                 return !invalid;
             }
 
-            // keep global selection state at first load
+            window.onSubExpectedChanged = function(idx){
+                if(typeof window.validateAllAdjustmentRows === 'function'){
+                    window.validateAllAdjustmentRows();
+                }
+            }
+
             window.__subSelections = window.__subSelections || {};
             @foreach($selections as $i => $sel)
                 window.__subSelections[{{ $i }}] = {
@@ -923,7 +887,25 @@
                 };
             @endforeach
 
-            // when warehouse filter changes, rebuild rack dropdown
+            function bindRowListeners(){
+                document.querySelectorAll('textarea[data-note-input]').forEach(t => {
+                    t.removeEventListener('input', t.__subInputHandler || function(){});
+                    t.__subInputHandler = function(){
+                        if(typeof window.validateAllAdjustmentRows === 'function'){
+                            window.validateAllAdjustmentRows();
+                        }
+                    };
+                    t.addEventListener('input', t.__subInputHandler);
+                });
+
+                document.querySelectorAll('input[data-expected-input]').forEach(inp => {
+                    inp.addEventListener('change', function(){
+                        const idx = parseInt(this.getAttribute('data-expected-input')||'0');
+                        if(window.onSubExpectedChanged) window.onSubExpectedChanged(idx);
+                    });
+                });
+            }
+
             document.addEventListener('DOMContentLoaded', function(){
                 const wh = document.getElementById('subFilterWarehouse');
                 if(wh){
@@ -933,25 +915,28 @@
                             try{
                                 await fetchWarehouseData(wid);
                                 buildRackOptions(wid);
-                            }catch(e){
-                                // ignore
-                            }
+                            }catch(e){}
                         }else{
                             buildRackOptions('');
                         }
                     });
                 }
 
-                // validate on typing note
-                document.querySelectorAll('textarea[data-note]').forEach(t => {
-                    t.addEventListener('input', function(){
+                bindRowListeners();
+
+                // ✅ Rebind lagi setelah Livewire rerender (biar event note gak putus)
+                if (window.Livewire && Livewire.hook) {
+                    Livewire.hook('message.processed', () => {
+                        bindRowListeners();
                         if(typeof window.validateAllAdjustmentRows === 'function'){
                             window.validateAllAdjustmentRows();
                         }
                     });
-                });
+                }
             });
 
         })();
     </script>
+    @endonce
+
 </div>

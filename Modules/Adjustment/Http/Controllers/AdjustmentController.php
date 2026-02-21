@@ -58,6 +58,9 @@ class AdjustmentController extends Controller
             ?? 0
         );
 
+        // ✅ NEW: explicit var for Stock tab (dipakai JS buat restore saat toggle ADD/SUB)
+        $defaultStockWarehouseId = $defaultWarehouseId;
+
         // ✅ NEW: racks mapping for stock_add UI (window.RACKS_BY_WAREHOUSE)
         $warehouseIds = $warehouses->pluck('id')->map(fn ($v) => (int) $v)->values()->all();
 
@@ -82,6 +85,7 @@ class AdjustmentController extends Controller
         return view('adjustment::create', compact(
             'warehouses',
             'defaultWarehouseId',
+            'defaultStockWarehouseId', // ✅ NEW
             'activeBranchId',
             'racksByWarehouse'
         ));
@@ -150,16 +154,15 @@ class AdjustmentController extends Controller
             $defect = (int) ($sr->qty_defect ?? 0);
             $dam    = (int) ($sr->qty_damaged ?? 0);
 
-            // some setups store total in qty_available; still keep breakdown above
             $total = (int) ($sr->qty_available ?? 0);
             if ($total <= 0) $total = $good + $defect + $dam;
 
             $stockByRack[$rid] = [
-                'rack_id'  => $rid,
-                'total'    => $total,
-                'good'     => $good,
-                'defect'   => $defect,
-                'damaged'  => $dam,
+                'rack_id' => $rid,
+                'total'   => $total,
+                'good'    => $good,
+                'defect'  => $defect,
+                'damaged' => $dam,
             ];
         }
 
@@ -182,7 +185,7 @@ class AdjustmentController extends Controller
             })
             ->values();
 
-        // damaged units (available only)
+        // ✅ damaged units (available only) — FIX: no 'photo' column, include damage_type
         $damaged = ProductDamagedItem::query()
             ->where('branch_id', $branchId)
             ->where('warehouse_id', $warehouseId)
@@ -190,13 +193,13 @@ class AdjustmentController extends Controller
             ->whereNull('moved_out_at')
             ->orderBy('rack_id')
             ->orderBy('id')
-            ->get(['id', 'rack_id', 'reason', 'photo'])
+            ->get(['id', 'rack_id', 'damage_type', 'reason']) // ✅ PATCH
             ->map(function ($d) {
                 return [
-                    'id'      => (int) $d->id,
-                    'rack_id' => (int) $d->rack_id,
-                    'reason'  => (string) ($d->reason ?? ''),
-                    'photo'   => (string) ($d->photo ?? ''),
+                    'id'          => (int) $d->id,
+                    'rack_id'     => (int) $d->rack_id,
+                    'damage_type' => (string) ($d->damage_type ?? 'damaged'),
+                    'reason'      => (string) ($d->reason ?? ''),
                 ];
             })
             ->values();
@@ -204,13 +207,13 @@ class AdjustmentController extends Controller
         return response()->json([
             'success' => true,
             'data' => [
-                'branch_id'      => $branchId,
-                'warehouse_id'   => $warehouseId,
-                'product_id'     => $productId,
-                'racks'          => $racks,
-                'stock_by_rack'  => $stockByRack,
-                'defect_units'   => $defects,
-                'damaged_units'  => $damaged,
+                'branch_id'     => $branchId,
+                'warehouse_id'  => $warehouseId,
+                'product_id'    => $productId,
+                'racks'         => $racks,
+                'stock_by_rack' => $stockByRack,
+                'defect_units'  => $defects,
+                'damaged_units' => $damaged,
             ],
         ]);
     }
@@ -242,30 +245,25 @@ class AdjustmentController extends Controller
         // =========================================================
         // 2) Base validation
         // =========================================================
-        // NOTE:
-        // - ADD butuh header warehouse_id
-        // - SUB: header warehouse_id boleh ada (buat UI lama), tapi logic picking pakai warehouse per item
         $rules = [
             'date' => ['required', 'date'],
             'items' => ['required', 'array', 'min:1'],
             'items.*.product_id' => ['required', 'integer', 'exists:products,id'],
         ];
 
+        // ✅ ONLY ADD requires header warehouse_id
         if ($adjType === 'add') {
             $rules['warehouse_id'] = ['required', 'integer', 'exists:warehouses,id'];
-        } else {
-            // SUB: optional, keep compatibility
-            $rules['warehouse_id'] = ['nullable', 'integer'];
         }
 
         $request->validate($rules);
 
         $date = (string) $request->date;
-        $note = (string) ($request->note ?? '');
 
-        // =========================================================
+        // decode header note
+        $note = html_entity_decode((string) ($request->note ?? ''), ENT_QUOTES, 'UTF-8');
+
         // Helper: normalize ids
-        // =========================================================
         $normalizeIds = function ($arr): array {
             $arr = is_array($arr) ? $arr : [];
             $arr = array_map('intval', $arr);
@@ -276,7 +274,7 @@ class AdjustmentController extends Controller
         try {
 
             // =========================================================
-            // ======================= ADD (NO CHANGE) =================
+            // ======================= ADD =============================
             // =========================================================
             if ($adjType === 'add') {
 
@@ -349,8 +347,8 @@ class AdjustmentController extends Controller
                             }
 
                             foreach ($goodAllocations as $ga) {
-                                $gaQty   = (int) ($ga['qty'] ?? 0);
-                                $toRackId= (int) ($ga['to_rack_id'] ?? 0);
+                                $gaQty    = (int) ($ga['qty'] ?? 0);
+                                $toRackId = (int) ($ga['to_rack_id'] ?? 0);
                                 if ($gaQty <= 0) continue;
 
                                 $this->assertRackBelongsToWarehouse($toRackId, $warehouseId);
@@ -370,6 +368,7 @@ class AdjustmentController extends Controller
                                 AdjustedProduct::query()->create([
                                     'adjustment_id' => (int) $adjustment->id,
                                     'product_id'    => (int) $productId,
+                                    'warehouse_id'  => (int) $warehouseId,
                                     'rack_id'       => (int) $toRackId,
                                     'quantity'      => (int) $gaQty,
                                     'type'          => 'add',
@@ -440,6 +439,7 @@ class AdjustmentController extends Controller
                                 AdjustedProduct::query()->create([
                                     'adjustment_id' => (int) $adjustment->id,
                                     'product_id'    => (int) $productId,
+                                    'warehouse_id'  => (int) $warehouseId,
                                     'rack_id'       => (int) $rackId,
                                     'quantity'      => (int) $qtyRack,
                                     'type'          => 'add',
@@ -525,6 +525,7 @@ class AdjustmentController extends Controller
                                 AdjustedProduct::query()->create([
                                     'adjustment_id' => (int) $adjustment->id,
                                     'product_id'    => (int) $productId,
+                                    'warehouse_id'  => (int) $warehouseId,
                                     'rack_id'       => (int) $rackId,
                                     'quantity'      => (int) $qtyRack,
                                     'type'          => 'add',
@@ -537,11 +538,10 @@ class AdjustmentController extends Controller
 
                 toast('Adjustment created successfully.', 'success');
                 return redirect()->route('adjustments.index');
-            
             }
 
             // =========================================================
-            // ======================= SUB (UPDATED) ===================
+            // ======================= SUB =============================
             // =========================================================
             $request->validate([
                 'items.*.qty'  => ['required', 'integer', 'min:1'],
@@ -552,9 +552,7 @@ class AdjustmentController extends Controller
 
                 $items = $request->input('items', []);
 
-                // ===== Determine header warehouse_id (fallback) =====
-                // because table adjustments biasanya punya warehouse_id NOT NULL.
-                // We pick first used warehouse from good_allocations / picked units.
+                // adjustments.warehouse_id kemungkinan NOT NULL → tetap butuh fallback
                 $fallbackWarehouseId = 0;
 
                 foreach ($items as $it) {
@@ -564,13 +562,9 @@ class AdjustmentController extends Controller
                             if ($wid > 0) { $fallbackWarehouseId = $wid; break 2; }
                         }
                     }
-                    if (!empty($it['selected_defect_ids']) || !empty($it['selected_damaged_ids'])) {
-                        // will be resolved later if still 0
-                    }
                 }
 
                 if ($fallbackWarehouseId <= 0) {
-                    // fallback to main warehouse of branch
                     $fallbackWarehouseId = (int) Warehouse::query()
                         ->where('branch_id', $branchId)
                         ->orderByDesc('is_main')
@@ -597,7 +591,8 @@ class AdjustmentController extends Controller
 
                     $productId = (int) ($item['product_id'] ?? 0);
                     $expected  = (int) ($item['qty'] ?? 0);
-                    $itemNote  = trim((string) ($item['note'] ?? ''));
+
+                    $itemNote  = trim(html_entity_decode((string) ($item['note'] ?? ''), ENT_QUOTES, 'UTF-8'));
 
                     if ($productId <= 0) continue;
                     if ($expected <= 0) {
@@ -615,10 +610,11 @@ class AdjustmentController extends Controller
                         . ' | Item: ' . $itemNote
                     );
 
+                    // ✅ PATCH: anggap pick mode juga valid kalau UI masih kirim defect_ids/damaged_ids
                     $hasPickMode =
                         isset($item['good_allocations']) ||
-                        isset($item['selected_defect_ids']) ||
-                        isset($item['selected_damaged_ids']);
+                        isset($item['selected_defect_ids']) || isset($item['defect_ids']) ||
+                        isset($item['selected_damaged_ids']) || isset($item['damaged_ids']);
 
                     if (!$hasPickMode) {
                         throw new \RuntimeException("Row #{$idx}: SUB must use Pick Items mode (good_allocations / selected ids).");
@@ -638,13 +634,11 @@ class AdjustmentController extends Controller
 
                         if ($wid <= 0 || $rid <= 0 || $q <= 0) continue;
 
-                        // warehouse must belong to branch
                         $wh = Warehouse::query()->where('id', $wid)->first();
                         if (!$wh || (int)$wh->branch_id !== $branchId) {
                             throw new \RuntimeException("Row #{$idx}: Invalid warehouse in GOOD allocation.");
                         }
 
-                        // rack belongs to that warehouse
                         $this->assertRackBelongsToWarehouse($rid, $wid);
 
                         $goodAllocNormalized[] = [
@@ -658,8 +652,9 @@ class AdjustmentController extends Controller
                     // =========================================================
                     // 2) DEFECT/DAMAGED picked ids (multi-warehouse by DB)
                     // =========================================================
-                    $defectIds  = $normalizeIds($item['selected_defect_ids'] ?? []);
-                    $damagedIds = $normalizeIds($item['selected_damaged_ids'] ?? []);
+                    // ✅ PATCH: fallback ke defect_ids/damaged_ids
+                    $defectIds  = $normalizeIds($item['selected_defect_ids'] ?? ($item['defect_ids'] ?? []));
+                    $damagedIds = $normalizeIds($item['selected_damaged_ids'] ?? ($item['damaged_ids'] ?? []));
 
                     $defectTotal  = count($defectIds);
                     $damagedTotal = count($damagedIds);
@@ -692,10 +687,11 @@ class AdjustmentController extends Controller
                         AdjustedProduct::query()->create([
                             'adjustment_id' => (int) $adjustment->id,
                             'product_id'    => (int) $productId,
+                            'warehouse_id'  => (int) $wid,
                             'rack_id'       => (int) $rid,
                             'quantity'      => (int) $q,
                             'type'          => 'sub',
-                            'note'          => trim('Item: ' . $itemNote . ' | COND=GOOD | WH=' . $wid),
+                            'note'          => trim('Item: ' . $itemNote . ' | COND=GOOD'),
                         ]);
                     }
 
@@ -720,7 +716,6 @@ class AdjustmentController extends Controller
                             $wid = (int) $u->warehouse_id;
                             $rid = (int) $u->rack_id;
 
-                            // validate belongs
                             $wh = Warehouse::query()->where('id', $wid)->first();
                             if (!$wh || (int)$wh->branch_id !== $branchId) {
                                 throw new \RuntimeException("Row #{$idx}: DEFECT unit warehouse invalid.");
@@ -762,10 +757,11 @@ class AdjustmentController extends Controller
                             AdjustedProduct::query()->create([
                                 'adjustment_id' => (int) $adjustment->id,
                                 'product_id'    => (int) $productId,
+                                'warehouse_id'  => (int) $wid,
                                 'rack_id'       => (int) $rid,
                                 'quantity'      => (int) $qtyRack,
                                 'type'          => 'sub',
-                                'note'          => trim('Item: ' . $itemNote . ' | COND=DEFECT | WH=' . $wid),
+                                'note'          => trim('Item: ' . $itemNote . ' | COND=DEFECT'),
                             ]);
                         }
                     }
@@ -833,10 +829,11 @@ class AdjustmentController extends Controller
                             AdjustedProduct::query()->create([
                                 'adjustment_id' => (int) $adjustment->id,
                                 'product_id'    => (int) $productId,
+                                'warehouse_id'  => (int) $wid,
                                 'rack_id'       => (int) $rid,
                                 'quantity'      => (int) $qtyRack,
                                 'type'          => 'sub',
-                                'note'          => trim('Item: ' . $itemNote . ' | COND=DAMAGED | WH=' . $wid),
+                                'note'          => trim('Item: ' . $itemNote . ' | COND=DAMAGED'),
                             ]);
                         }
                     }

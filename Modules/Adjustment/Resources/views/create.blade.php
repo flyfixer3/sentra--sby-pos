@@ -104,7 +104,8 @@
                                         </div>
                                     </div>
 
-                                    <div class="col-lg-4">
+                                    {{-- ✅ Warehouse header: ONLY for ADD --}}
+                                    <div class="col-lg-4" id="stockWarehouseHeader">
                                         <div class="form-group">
                                             <label class="font-weight-bold">Warehouse <span class="text-danger">*</span></label>
                                             <select name="warehouse_id" id="warehouse_id_stock" class="form-control" required>
@@ -124,28 +125,24 @@
                                     <label class="font-weight-bold d-block mb-2">Adjustment Type <span class="text-danger">*</span></label>
 
                                     <div class="btn-group btn-group-toggle" data-toggle="buttons" id="adjTypeToggle">
-                                        <label class="btn btn-outline-primary active">
+                                        <label class="btn btn-outline-primary active" id="lbl_adj_add">
                                             <input type="radio" name="adjustment_type" value="add" autocomplete="off" checked>
                                             ADD (Receive / Add Stock)
                                         </label>
-                                        <label class="btn btn-outline-secondary">
+                                        <label class="btn btn-outline-primary" id="lbl_adj_sub">
                                             <input type="radio" name="adjustment_type" value="sub" autocomplete="off">
                                             SUB (Reduce Stock)
                                         </label>
                                     </div>
-
-                                    <small class="text-muted d-block mt-2">
-                                        Untuk saat ini kita fokus dulu implement <b>ADD</b> sesuai UI Transfer::Confirm.
-                                    </small>
                                 </div>
 
-                                {{-- ADD UI --}}
+                                {{-- ✅ ADD UI (DEFAULT ON) --}}
                                 <div id="stockAddWrap">
-                                    {{-- Livewire stock table (NEW UI) --}}
+                                    {{-- PAKAI KOMPONEN YANG SEKARANG KAMU PAKAI (JANGAN DITURUNKAN) --}}
                                     <livewire:adjustment.product-table-stock mode="stock_add" :warehouseId="$defaultWarehouseId"/>
                                 </div>
 
-                                {{-- SUB placeholder --}}
+                                {{-- ✅ SUB UI (DEFAULT OFF) --}}
                                 <div id="stockSubWrap">
                                     <livewire:adjustment.product-table-stock-sub />
                                 </div>
@@ -158,8 +155,8 @@
                                 </div>
 
                                 <div class="d-flex justify-content-end mt-3">
-                                    <button type="button" class="btn btn-primary" onclick="submitStockAdd()">
-                                        Create Adjustment <i class="bi bi-check"></i>
+                                    <button type="button" class="btn btn-primary" onclick="submitStockForm()">
+                                        <span id="btnSubmitText">Create Adjustment</span> <i class="bi bi-check"></i>
                                     </button>
                                 </div>
                             </form>
@@ -167,15 +164,14 @@
 
                         {{-- =========================
                             TAB 2: QUALITY
-                            ⚠️ PERSIS seperti yang kamu punya sekarang (JANGAN DIUBAH)
                            ========================= --}}
                         <div class="tab-pane fade" id="pane-quality" role="tabpanel" aria-labelledby="tab-quality">
 
                             <div class="alert alert-info border mb-3">
-                                <div class="sa-help mb-1"><b>Info:</b> GOOD = TOTAL - defect - damaged (warehouse yang dipilih).</div>
+                                <div class="sa-help mb-1"><b>Info:</b> GOOD = TOTAL - defect - damaged (warehouse + rack yang dipilih).</div>
                                 <div class="sa-help">
                                     Reclass ini akan mengubah bucket di <b>StockRack</b> (GOOD/DEFECT/DAMAGED) tapi total stok tetap net-zero.
-                                    <br>✅ Pilih <b>Rack</b> per item (di tabel) seperti Stock Adjustment.
+                                    <br>✅ Pilih <b>Warehouse</b> & <b>Rack</b> dulu, lalu pilih product & qty.
                                 </div>
                             </div>
 
@@ -189,7 +185,7 @@
                                 <input type="hidden" name="date" value="{{ now()->format('Y-m-d') }}">
 
                                 <div class="form-row">
-                                    <div class="col-lg-6">
+                                    <div class="col-lg-4">
                                         <div class="form-group">
                                             <label class="sa-form-label">Warehouse <span class="text-danger">*</span></label>
 
@@ -209,7 +205,21 @@
                                         </div>
                                     </div>
 
-                                    <div class="col-lg-6">
+                                    <div class="col-lg-4">
+                                        <div class="form-group">
+                                            <label class="sa-form-label">Rack <span class="text-danger">*</span></label>
+
+                                            <select id="quality_rack_select" class="form-control" required></select>
+
+                                            <input type="hidden" name="rack_id" id="quality_rack_id" value="">
+
+                                            <small class="text-muted">
+                                                Rack wajib dipilih karena pergerakan bucket stock adalah per rack.
+                                            </small>
+                                        </div>
+                                    </div>
+
+                                    <div class="col-lg-4">
                                         <div class="form-group">
                                             <label class="sa-form-label">Type <span class="text-danger">*</span></label>
                                             <select name="type" id="quality_type" class="form-control" required>
@@ -218,8 +228,8 @@
                                                     <option value="damaged">Damaged (GOOD → DAMAGED)</option>
                                                 </optgroup>
                                                 <optgroup label="Quality Issue → GOOD">
-                                                    <option value="defect_to_good">Defect → Good (DELETE defect rows)</option>
-                                                    <option value="damaged_to_good">Damaged → Good (DELETE damaged rows)</option>
+                                                    <option value="defect_to_good">Defect → Good (PICK unit IDs, soft delete)</option>
+                                                    <option value="damaged_to_good">Damaged → Good (PICK unit IDs, soft delete)</option>
                                                 </optgroup>
                                             </select>
                                         </div>
@@ -240,6 +250,11 @@
                                                     <i class="bi bi-hash"></i>
                                                     Qty: <b id="quality_total_qty">0</b>
                                                 </span>
+
+                                                <span class="sa-mini-badge">
+                                                    <i class="bi bi-grid-3x3-gap"></i>
+                                                    Rack: <b id="quality_rack_text">-</b>
+                                                </span>
                                             </div>
                                             <small class="text-muted">Product & Qty diambil dari tabel list di bawah.</small>
                                         </div>
@@ -252,10 +267,20 @@
 
                                 <input type="hidden" name="product_id" id="quality_product_id" value="">
                                 <input type="hidden" name="qty" id="quality_qty" value="0">
+                                <input type="hidden" name="picked_unit_ids" id="quality_picked_unit_ids" value="">
 
                                 <div class="sa-divider"></div>
 
-                                <div class="unit-card mt-3">
+                                <div class="form-group">
+                                    <label class="font-weight-bold">User Note (Optional)</label>
+                                    <textarea name="user_note" id="quality_user_note" rows="3" class="form-control"
+                                              placeholder="Contoh: alasan reclass / info QC..."></textarea>
+                                    <small class="text-muted">
+                                        Untuk type <b>DEFECT/DAMAGED → GOOD</b>, note ini yang akan muncul di Adjustment detail (di note template).
+                                    </small>
+                                </div>
+
+                                <div class="unit-card mt-3" id="quality_unit_card">
                                     <div class="unit-head d-flex align-items-center justify-content-between">
                                         <div>Per-Unit Details & Photo (Optional)</div>
                                         <div class="text-muted"><small>Auto-build dari Qty + Type</small></div>
@@ -266,7 +291,7 @@
                                                 <thead>
                                                     <tr>
                                                         <th style="width:60px" class="text-center">#</th>
-                                                        <th id="unit_col_title">Defect Type / Reason *</th>
+                                                        <th id="unit_col_title">Defect Type / Type *</th>
                                                         <th>Description (optional)</th>
                                                         <th style="width:220px">Photo (optional)</th>
                                                     </tr>
@@ -274,13 +299,21 @@
                                                 <tbody id="unit_tbody"></tbody>
                                             </table>
                                         </div>
-                                        <div class="text-muted mt-2">
+                                        <div class="text-muted mt-2" id="quality_unit_hint">
                                             <small>
                                                 - Defect wajib isi <b>Defect Type</b> (bubble / scratch / distortion).<br>
-                                                - Damaged wajib isi <b>Reason</b> (pecah sudut / retak / shipping damage).<br>
+                                                - Damaged: pilih <b>Type</b> (damaged / missing). Description opsional (boleh isi reason).<br>
                                                 - Foto opsional, max 5MB.
                                             </small>
                                         </div>
+                                    </div>
+                                </div>
+
+                                <div class="alert alert-light border mt-3" id="quality_to_good_help" style="display:none;">
+                                    <div class="font-weight-bold mb-1">Quality Issue → GOOD</div>
+                                    <div class="text-muted small">
+                                        Mode ini <b>Wajib pick unit IDs</b> (per unit) lewat modal/table Quality kamu.
+                                        Setelah dipilih, sistem akan soft-delete (moved_out_at) unit tersebut dan membuat mutation net-zero.
                                     </div>
                                 </div>
 
@@ -307,155 +340,235 @@
 
 @push('page_css')
 <style>
-    /* ===== style “transfer confirm vibe” ===== */
-    .table-modern thead th {
-        background: #f8fafc;
-        font-weight: 600;
-        color: #334155;
-        border-bottom: 1px solid #e2e8f0;
-    }
-    .table-modern tbody td { vertical-align: middle; }
-
-    .btn-notes {
-        background: #ffffff;
-        border: 1px solid #dbeafe;
-        color: #1d4ed8;
-        border-radius: 999px;
-        padding: 6px 12px;
-        font-weight: 600;
-        box-shadow: 0 1px 2px rgba(0,0,0,0.04);
-        transition: all .15s ease;
-    }
-    .btn-notes:hover {
-        background: #eff6ff;
-        border-color: #93c5fd;
-        color: #1e40af;
-        transform: translateY(-1px);
-        box-shadow: 0 6px 14px rgba(29,78,216,0.10);
-    }
-
-    .badge-defect { background: #2563eb; color: #fff; font-weight: 700; padding: 5px 8px; }
-    .badge-damaged { background: #ef4444; color: #fff; font-weight: 700; padding: 5px 8px; }
-
-    .perunit-td {
-        background: #f1f5f9;
-        border-top: 0 !important;
-        padding: 14px !important;
-    }
-
-    .perunit-card {
-        background: #ffffff;
-        border-radius: 12px;
-        border: 1px solid #e2e8f0;
-        overflow: hidden;
-        box-shadow: 0 8px 22px rgba(15, 23, 42, 0.06);
-    }
-    .perunit-card-header {
-        padding: 12px 14px;
-        background: linear-gradient(90deg, #f8fafc, #ffffff);
-        border-bottom: 1px solid #e2e8f0;
-    }
-    .perunit-card-body { padding: 14px; }
-
-    .section-title {
-        font-weight: 800;
-        font-size: 14px;
-        margin-bottom: 10px;
-        display: inline-block;
-        padding: 6px 10px;
-        border-radius: 10px;
-    }
-    .defect-title {
-        background: #eff6ff;
-        color: #1d4ed8;
-        border: 1px solid #dbeafe;
-    }
-    .damaged-title {
-        background: #fef2f2;
-        color: #b91c1c;
-        border: 1px solid #fee2e2;
-    }
-
-    .section-table thead th {
-        background: #f8fafc;
-        color: #334155;
-        font-weight: 700;
-    }
-    .section-table td, .section-table th {
-        border-color: #e2e8f0 !important;
-    }
-
-    .row-status.badge-success { background: #16a34a; }
-    .row-status.badge-danger  { background: #ef4444; }
-    .row-status.badge-warning { background: #f59e0b; color: #111827; }
-    .row-status.badge-secondary { background: #64748b; }
-
-    .form-control-sm {
-        border-radius: 10px;
-        border-color: #e2e8f0;
-    }
-    .form-control-sm:focus {
-        border-color: #93c5fd;
-        box-shadow: 0 0 0 0.2rem rgba(147,197,253,0.25);
-    }
-
-    .photo-input {
-        border: 1px dashed #cbd5e1;
-        padding: 6px;
-        border-radius: 10px;
-        background: #fff;
-        width: 100%;
-        font-size: 12px;
-    }
+    /* ✅ FIX UTAMA: default hanya ADD yang tampil */
+    #stockSubWrap { display: none; }
 </style>
 @endpush
 
 @push('page_scripts')
 <script>
 (function(){
-    // ✅ IMPORTANT: racks mapping for stock table
     window.RACKS_BY_WAREHOUSE = @json($racksByWarehouse ?? []);
 
-    function submitStockAdd(){
-        const type = document.querySelector('input[name="adjustment_type"]:checked')?.value;
-        if(type !== 'add'){
-            alert('SUB belum aktif.');
+    // ✅ NEW: default stock warehouse id (buat restore value saat toggle ADD/SUB)
+    window.DEFAULT_STOCK_WAREHOUSE_ID = {{ (int)($defaultStockWarehouseId ?? $defaultWarehouseId ?? 0) }};
+
+    // ✅ NEW: remember last selected warehouse in Stock tab (biar UX enak)
+    let LAST_STOCK_WAREHOUSE_ID = parseInt(window.DEFAULT_STOCK_WAREHOUSE_ID || 0);
+
+    // =========================
+    // STOCK: Toggle ADD/SUB UI
+    // =========================
+    function getAdjType(){
+        return document.querySelector('input[name="adjustment_type"]:checked')?.value || 'add';
+    }
+
+    function ensureStockWarehouseSelected(){
+        const select = document.getElementById('warehouse_id_stock');
+        if(!select) return;
+
+        const current = parseInt(select.value || 0);
+        if(current > 0){
+            LAST_STOCK_WAREHOUSE_ID = current;
             return;
         }
 
-        const wh = document.getElementById('warehouse_id_stock')?.value;
-        if(!wh){
-            alert('Pilih warehouse dulu.');
-            return;
+        // kalau kosong, restore last -> default
+        const fallback = parseInt(LAST_STOCK_WAREHOUSE_ID || 0) || parseInt(window.DEFAULT_STOCK_WAREHOUSE_ID || 0);
+        if(fallback > 0){
+            select.value = String(fallback);
+            LAST_STOCK_WAREHOUSE_ID = fallback;
         }
+    }
 
-        // optional validate row status (dari product-table-stock)
-        if(typeof window.validateAllAdjustmentRows === 'function'){
-            const ok = window.validateAllAdjustmentRows();
-            if(!ok){
-                alert('Masih ada item yang belum lengkap. Tolong cek status per item (NEED INFO).');
+    function emitStockWarehouseChangedIfAdd(){
+        const select = document.getElementById('warehouse_id_stock');
+        if(!select) return;
+
+        const wid = parseInt(select.value || 0);
+        if(wid > 0 && window.Livewire){
+            Livewire.emit('stockWarehouseChanged', wid);
+        }
+    }
+
+    function setStockWarehouseHeaderVisible(isAdd){
+        const header = document.getElementById('stockWarehouseHeader');
+        const select = document.getElementById('warehouse_id_stock');
+        if(!header || !select) return;
+
+        if(isAdd){
+            header.style.display = '';
+            select.required = true;
+
+            // ✅ FIX: kalau sebelumnya SUB bikin value kosong, restore ke default/last
+            ensureStockWarehouseSelected();
+            emitStockWarehouseChangedIfAdd();
+
+        }else{
+            header.style.display = 'none';
+
+            // IMPORTANT: untuk SUB, cukup cabut required
+            // ❌ JANGAN kosongin value, karena nanti balik ADD jadi kehilangan selected option
+            select.required = false;
+
+            // simpan last selection
+            const cur = parseInt(select.value || 0);
+            if(cur > 0) LAST_STOCK_WAREHOUSE_ID = cur;
+        }
+    }
+
+    function setStockModeUI(mode){
+        const addWrap = document.getElementById('stockAddWrap');
+        const subWrap = document.getElementById('stockSubWrap');
+        const btnText = document.getElementById('btnSubmitText');
+
+        if (!addWrap || !subWrap) return;
+
+        if (mode === 'sub') {
+            addWrap.style.display = 'none';
+            subWrap.style.display = 'block';
+            if (btnText) btnText.textContent = 'Create Adjustment (SUB)';
+
+            // ✅ hide warehouse header in SUB
+            setStockWarehouseHeaderVisible(false);
+
+        } else {
+            addWrap.style.display = 'block';
+            subWrap.style.display = 'none';
+            if (btnText) btnText.textContent = 'Create Adjustment (ADD)';
+
+            // ✅ show warehouse header in ADD
+            setStockWarehouseHeaderVisible(true);
+        }
+    }
+
+    function bindAdjTypeToggle(){
+        const radios = document.querySelectorAll('input[name="adjustment_type"]');
+        if (!radios || radios.length === 0) return;
+
+        radios.forEach(r => {
+            r.addEventListener('change', function(){
+                setStockModeUI(getAdjType());
+            });
+        });
+
+        // init
+        setStockModeUI(getAdjType());
+    }
+
+    // =========================
+    // STOCK: submit handler
+    // =========================
+    function submitStockForm(){
+        const type = getAdjType();
+
+        // ✅ ONLY ADD needs warehouse header
+        if(type === 'add'){
+            ensureStockWarehouseSelected();
+
+            const wh = document.getElementById('warehouse_id_stock')?.value;
+            if(!wh){
+                alert('Pilih warehouse dulu (ADD).');
                 return;
+            }
+
+            if(typeof window.validateAllAdjustmentRows === 'function'){
+                const ok = window.validateAllAdjustmentRows();
+                if(!ok){
+                    alert('Masih ada item yang belum lengkap. Tolong cek status per item (NEED INFO).');
+                    return;
+                }
             }
         }
 
-        document.getElementById('adjustmentAddForm').submit();
+        document.getElementById('adjustmentAddForm')?.submit();
     }
-    window.submitStockAdd = submitStockAdd;
+    window.submitStockForm = submitStockForm;
 
-    // ================= QUALITY =================
+    // =========================
+    // QUALITY: Warehouse + Rack sync
+    // =========================
+    function getRackOptionsByWarehouse(warehouseId){
+        const map = window.RACKS_BY_WAREHOUSE || {};
+        const wid = parseInt(warehouseId || 0);
+        return Array.isArray(map[wid]) ? map[wid] : [];
+    }
+
+    function fillQualityRacks(warehouseId){
+        const select = document.getElementById('quality_rack_select');
+        const hidden = document.getElementById('quality_rack_id');
+        const rackText = document.getElementById('quality_rack_text');
+        if(!select || !hidden) return;
+
+        const opts = getRackOptionsByWarehouse(warehouseId);
+
+        select.innerHTML = '';
+        if(opts.length === 0){
+            select.insertAdjacentHTML('beforeend', `<option value="">-- No rack --</option>`);
+            hidden.value = '';
+            if(rackText) rackText.textContent = '-';
+            return;
+        }
+
+        select.insertAdjacentHTML('beforeend', `<option value="">-- Select rack --</option>`);
+        opts.forEach(o => {
+            select.insertAdjacentHTML('beforeend', `<option value="${o.id}">${o.label}</option>`);
+        });
+
+        if(!hidden.value){
+            const first = opts[0];
+            select.value = String(first.id);
+            hidden.value = String(first.id);
+            if(rackText) rackText.textContent = first.label || ('Rack#' + first.id);
+        }
+    }
+
     function syncQualityWarehouse(){
         const wq = document.getElementById('warehouse_id_quality');
         const hidden = document.getElementById('quality_warehouse_id');
         if(!wq || !hidden) return;
 
         hidden.value = wq.value;
+        fillQualityRacks(wq.value);
 
         if(window.Livewire){
             Livewire.emit('qualityWarehouseChanged', parseInt(wq.value));
         }
     }
 
-    // ✅ CHANGED: untuk type === 'damaged' pakai dropdown damaged|missing
+    function syncQualityRack(){
+        const select = document.getElementById('quality_rack_select');
+        const hidden = document.getElementById('quality_rack_id');
+        const rackText = document.getElementById('quality_rack_text');
+        if(!select || !hidden) return;
+
+        const wid = document.getElementById('warehouse_id_quality')?.value;
+        const opts = getRackOptionsByWarehouse(wid);
+        const rid = parseInt(select.value || 0);
+
+        hidden.value = rid > 0 ? String(rid) : '';
+
+        const found = opts.find(x => parseInt(x.id) === rid);
+        if(rackText) rackText.textContent = found ? (found.label || ('Rack#' + rid)) : '-';
+    }
+
+    function isToGood(type){
+        return type === 'defect_to_good' || type === 'damaged_to_good';
+    }
+
+    function toggleQualityModeUI(type){
+        const unitCard = document.getElementById('quality_unit_card');
+        const toGoodHelp = document.getElementById('quality_to_good_help');
+
+        if(isToGood(type)){
+            if(unitCard) unitCard.style.display = 'none';
+            if(toGoodHelp) toGoodHelp.style.display = '';
+        } else {
+            if(unitCard) unitCard.style.display = '';
+            if(toGoodHelp) toGoodHelp.style.display = 'none';
+        }
+    }
+
     function buildUnits(qty, type){
         const tbody = document.getElementById('unit_tbody');
         const title = document.getElementById('unit_col_title');
@@ -463,12 +576,16 @@
 
         qty = parseInt(qty || 0);
 
+        if(isToGood(type)){
+            tbody.innerHTML = '';
+            title.innerText = 'Per Unit';
+            return;
+        }
+
         let key = 'defect_type';
         let placeholder = 'bubble / scratch';
 
-        // default: defect input textbox
-        // khusus damaged (GOOD -> DAMAGED): dropdown damaged/missing (name tetap units[i][reason])
-        const isDamagedDropdown = (type === 'damaged');
+        const isDamagedType = (type === 'damaged');
 
         if(type === 'damaged'){
             key = 'reason';
@@ -487,7 +604,7 @@
                        placeholder="${placeholder}">
             `;
 
-            if(isDamagedDropdown){
+            if(isDamagedType){
                 firstColHtml = `
                     <select name="units[${i}][reason]" class="form-control form-control-sm" required>
                         <option value="damaged">damaged</option>
@@ -498,13 +615,12 @@
 
             tbody.insertAdjacentHTML('beforeend', `
                 <tr>
-                    <td>${i+1}</td>
-                    <td>
-                        ${firstColHtml}
-                    </td>
+                    <td class="text-center">${i+1}</td>
+                    <td>${firstColHtml}</td>
                     <td>
                         <textarea name="units[${i}][description]"
-                                  class="form-control form-control-sm"></textarea>
+                                  class="form-control form-control-sm"
+                                  placeholder="Optional..."></textarea>
                     </td>
                     <td>
                         <input type="file"
@@ -521,61 +637,97 @@
 
         const pid = document.getElementById('quality_product_id');
         const qty = document.getElementById('quality_qty');
+
         if(pid) pid.value = d.product_id || '';
         if(qty) qty.value = d.qty || 0;
 
-        buildUnits(d.qty, document.getElementById('quality_type')?.value || 'defect');
+        if(typeof d.product_text !== 'undefined'){
+            const t = document.getElementById('quality_selected_product_text');
+            if(t) t.textContent = d.product_text || 'No product selected';
+        }
+        const qLabel = document.getElementById('quality_total_qty');
+        if(qLabel) qLabel.textContent = String(d.qty || 0);
+
+        const type = document.getElementById('quality_type')?.value || 'defect';
+        toggleQualityModeUI(type);
+        buildUnits(d.qty, type);
+    });
+
+    window.addEventListener('quality-picked-updated', function(e){
+        const d = e.detail || {};
+        const picked = Array.isArray(d.picked_ids) ? d.picked_ids : [];
+        const input = document.getElementById('quality_picked_unit_ids');
+        if(input) input.value = JSON.stringify(picked);
     });
 
     document.addEventListener('DOMContentLoaded', function () {
-        // ===== STOCK init =====
+        bindAdjTypeToggle();
+
+        // ✅ Livewire stockWarehouseChanged hanya saat ADD & header visible
         const stockWh = document.getElementById('warehouse_id_stock');
-        if (stockWh && window.Livewire) {
-            Livewire.emit('stockWarehouseChanged', parseInt(stockWh.value));
+        if (stockWh) {
+            // init remember
+            const initVal = parseInt(stockWh.value || 0);
+            if(initVal > 0) LAST_STOCK_WAREHOUSE_ID = initVal;
+
             stockWh.addEventListener('change', () => {
-                Livewire.emit('stockWarehouseChanged', parseInt(stockWh.value));
+                const v = parseInt(stockWh.value || 0);
+                if(v > 0) LAST_STOCK_WAREHOUSE_ID = v;
+
+                if(getAdjType() === 'add' && window.Livewire){
+                    Livewire.emit('stockWarehouseChanged', v);
+                }
             });
         }
 
-        // ===== QUALITY init =====
+        // QUALITY init
         const qualityWh = document.getElementById('warehouse_id_quality');
-        if (qualityWh && window.Livewire) {
-            Livewire.emit('qualityWarehouseChanged', parseInt(qualityWh.value));
-            qualityWh.addEventListener('change', () => {
+        if (qualityWh) {
+            fillQualityRacks(qualityWh.value);
+
+            if (window.Livewire) {
                 Livewire.emit('qualityWarehouseChanged', parseInt(qualityWh.value));
-            });
+                qualityWh.addEventListener('change', () => syncQualityWarehouse());
+            } else {
+                qualityWh.addEventListener('change', () => syncQualityWarehouse());
+            }
         }
 
-        // ✅ FIX: form id yang bener
+        const rackSel = document.getElementById('quality_rack_select');
+        if(rackSel){
+            rackSel.addEventListener('change', syncQualityRack);
+            syncQualityRack();
+        }
+
+        document.getElementById('quality_type')
+            ?.addEventListener('change', function(){
+                const qtyVal = document.getElementById('quality_qty')?.value || 0;
+                toggleQualityModeUI(this.value);
+                buildUnits(qtyVal, this.value);
+
+                if(window.Livewire){
+                    Livewire.emit('qualityTypeChanged', this.value);
+                }
+            });
+
         const form = document.querySelector('form#adjustmentAddForm');
         if(form){
             form.addEventListener('submit', function(e){
-                if(typeof window.validateAllAdjustmentRows === 'function'){
-                    const ok = window.validateAllAdjustmentRows();
-                    if(!ok){
-                        e.preventDefault();
-                        alert('Masih ada item yang belum lengkap. Tolong cek status per item (NEED INFO).');
+                const type = getAdjType();
+                if(type === 'add'){
+                    if(typeof window.validateAllAdjustmentRows === 'function'){
+                        const ok = window.validateAllAdjustmentRows();
+                        if(!ok){
+                            e.preventDefault();
+                            alert('Masih ada item yang belum lengkap. Tolong cek status per item (NEED INFO).');
+                        }
                     }
                 }
             });
         }
+
+        toggleQualityModeUI(document.getElementById('quality_type')?.value || 'defect');
     });
-
-    document.getElementById('warehouse_id_quality')
-        ?.addEventListener('change', syncQualityWarehouse);
-
-    document.getElementById('quality_type')
-        ?.addEventListener('change', function(){
-            buildUnits(
-                document.getElementById('quality_qty')?.value || 0,
-                this.value
-            );
-
-            if(window.Livewire){
-                Livewire.emit('qualityTypeChanged', this.value);
-            }
-        });
-
 })();
 </script>
 @endpush
