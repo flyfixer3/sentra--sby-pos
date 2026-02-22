@@ -113,7 +113,7 @@ class StockController extends Controller
      *
      * Output: rows list (warehouse_name, rack_name, condition_label, qty)
      */
-   public function detailData(Request $request)
+    public function detailData(Request $request)
     {
         $productId = (int) $request->get('product_id');
         $branchId  = (int) $request->get('branch_id');

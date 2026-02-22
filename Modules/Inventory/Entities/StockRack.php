@@ -20,6 +20,9 @@ class StockRack extends BaseModel
         'warehouse_id',
         'branch_id',
         'qty_available',
+        'qty_good',
+        'qty_defect',
+        'qty_damaged',
         'created_by',
         'updated_by',
     ];
