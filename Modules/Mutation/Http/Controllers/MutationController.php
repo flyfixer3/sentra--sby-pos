@@ -5,6 +5,7 @@ namespace Modules\Mutation\Http\Controllers;
 use Modules\Mutation\DataTables\MutationsDataTable;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
+use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
 use Modules\Product\Entities\Product;
@@ -265,7 +266,8 @@ class MutationController extends Controller
                 $reference,
                 $baseNote . ' | DEFECT',
                 $date,
-                $rackId
+                $rackId,
+                'defect'
             );
         }
 
@@ -296,7 +298,8 @@ class MutationController extends Controller
                 $reference,
                 $baseNote . ' | DAMAGED',
                 $date,
-                $rackId
+                $rackId,
+                'damaged'
             );
         }
 
@@ -311,6 +314,10 @@ class MutationController extends Controller
                 ->orderBy('id', 'asc')
                 ->value('id') ?? 0);
 
+            if ($fallbackRackId <= 0) {
+                throw new \RuntimeException("No rack found for warehouse_id={$warehouseId} (required for GOOD).");
+            }
+
             $this->applyInOut(
                 $branchId,
                 $warehouseId,
@@ -320,7 +327,8 @@ class MutationController extends Controller
                 $reference,
                 $baseNote . ' | GOOD',
                 $date,
-                $fallbackRackId > 0 ? $fallbackRackId : null
+                $fallbackRackId,
+                'good' // ✅ bucket wajib
             );
         }
     }
@@ -333,29 +341,118 @@ class MutationController extends Controller
         int $branchId,
         int $warehouseId,
         int $productId,
-        string $mutationType,
+        string $inOut,           // 'In' | 'Out'
         int $qty,
         string $reference,
         string $note,
         string $date,
-        ?int $rackId = null,
-        ?string $bucket = null,
-        string $logMode = 'single' // ✅ NEW
-    ): void
-    {
-        $this->applyInOutInternal(
+        ?int $rackId = null,     // OPTIONAL (backward compatible)
+        ?string $bucket = null,  // OPTIONAL: good|defect|damaged (backward compatible)
+        string $mode = 'single'  // 'single' | 'summary'
+    ): void {
+        $inOut = ucfirst(strtolower(trim($inOut)));
+        if (!in_array($inOut, ['In', 'Out'], true)) {
+            throw new \RuntimeException("Invalid inOut: {$inOut}");
+        }
+        if ($qty <= 0) return;
+
+        $logMode = ($mode === 'summary') ? 'summary' : 'single';
+
+        DB::transaction(function () use (
             $branchId,
             $warehouseId,
             $productId,
-            $mutationType,
+            $inOut,
             $qty,
             $reference,
             $note,
             $date,
             $rackId,
             $bucket,
-            $logMode // ✅ pass-through
-        );
+            $logMode
+        ) {
+            $this->applyInOutInternal(
+                $branchId,
+                $warehouseId,
+                $productId,
+                $inOut,       // 'In' | 'Out'
+                $qty,
+                $reference,
+                $note,
+                $date,
+                $rackId,
+                $bucket,
+                $logMode
+            );
+        });
+    }
+
+    private function syncStocksFromRackAggregate(int $branchId, int $warehouseId, int $productId): void
+    {
+        // lock row stocks dulu biar gak race
+        $stockRow = DB::table('stocks')
+            ->where('branch_id', $branchId)
+            ->where('warehouse_id', $warehouseId)
+            ->where('product_id', $productId)
+            ->lockForUpdate()
+            ->first();
+
+        if (!$stockRow) {
+            DB::table('stocks')->insert([
+                'branch_id'     => $branchId,
+                'warehouse_id'  => $warehouseId,
+                'product_id'    => $productId,
+                'qty_available' => 0,
+                'qty_reserved'  => 0,
+                'qty_incoming'  => 0,
+                'min_stock'     => 0,
+                'note'          => null,
+                'created_by'    => Auth::id(),
+                'updated_by'    => Auth::id(),
+                'created_at'    => now(),
+                'updated_at'    => now(),
+            ]);
+
+            $stockRow = DB::table('stocks')
+                ->where('branch_id', $branchId)
+                ->where('warehouse_id', $warehouseId)
+                ->where('product_id', $productId)
+                ->lockForUpdate()
+                ->first();
+        }
+
+        $agg = DB::table('stock_racks')
+            ->where('branch_id', $branchId)
+            ->where('warehouse_id', $warehouseId)
+            ->where('product_id', $productId)
+            ->selectRaw('
+                COALESCE(SUM(qty_available),0) as s_avail,
+                COALESCE(SUM(qty_good),0) as s_good,
+                COALESCE(SUM(qty_defect),0) as s_def,
+                COALESCE(SUM(qty_damaged),0) as s_dam
+            ')
+            ->first();
+
+        $sumAvail = (int) ($agg->s_avail ?? 0);
+
+        // optional guard: kalau data legacy bikin qty_available gak sama dengan good+def+dam
+        $sumGood = (int) ($agg->s_good ?? 0);
+        $sumDef  = (int) ($agg->s_def ?? 0);
+        $sumDam  = (int) ($agg->s_dam ?? 0);
+
+        $computedAvail = $sumGood + $sumDef + $sumDam;
+        if ($computedAvail > 0 && $sumAvail !== $computedAvail) {
+            // pilih yang konsisten dengan bucket kalau bucket sudah ada
+            $sumAvail = $computedAvail;
+        }
+
+        DB::table('stocks')
+            ->where('id', $stockRow->id)
+            ->update([
+                'qty_available' => $sumAvail,
+                'updated_by'    => Auth::id(),
+                'updated_at'    => now(),
+            ]);
     }
 
     /**
@@ -366,31 +463,52 @@ class MutationController extends Controller
         int $branchId,
         int $warehouseId,
         int $productId,
-        string $mutationType,
+        string $inOut,
         int $qty,
         string $reference,
         string $note,
         string $date,
         ?int $rackId = null,
         ?string $bucket = null,
-        string $logMode = 'single' // ✅ NEW
-    ): int
-    {
-        $mutation = $this->applyInOutInternal(
+        string $mode = 'summary' // default summary biar 1 reference bisa merge
+    ): int {
+        $inOut = ucfirst(strtolower(trim($inOut)));
+        if (!in_array($inOut, ['In', 'Out'], true)) {
+            throw new \RuntimeException("Invalid inOut: {$inOut}");
+        }
+        if ($qty <= 0) return 0;
+
+        $logMode = ($mode === 'summary') ? 'summary' : 'single';
+
+        $mutation = DB::transaction(function () use (
             $branchId,
             $warehouseId,
             $productId,
-            $mutationType,
+            $inOut,
             $qty,
             $reference,
             $note,
             $date,
             $rackId,
             $bucket,
-            $logMode // ✅ pass-through
-        );
+            $logMode
+        ) {
+            return $this->applyInOutInternal(
+                $branchId,
+                $warehouseId,
+                $productId,
+                $inOut,
+                $qty,
+                $reference,
+                $note,
+                $date,
+                $rackId,
+                $bucket,
+                $logMode
+            );
+        });
 
-        return (int) $mutation->id;
+        return (int) ($mutation->id ?? 0);
     }
 
     /**
@@ -403,16 +521,15 @@ class MutationController extends Controller
         int $branchId,
         int $warehouseId,
         int $productId,
-        string $mutationType,
+        string $mutationType,     // 'In' | 'Out'
         int $qty,
         string $reference,
         string $note,
         string $date,
         ?int $rackId = null,
-        ?string $bucket = null, // good|defect|damaged
-        string $logMode = 'single' // ✅ NEW
-    ): \Modules\Mutation\Entities\Mutation
-    {
+        ?string $bucket = null,   // good|defect|damaged
+        string $logMode = 'single' // 'single' | 'summary'
+    ): \Modules\Mutation\Entities\Mutation {
         if (!in_array($mutationType, ['In', 'Out'], true)) {
             throw new \RuntimeException("Invalid mutationType: {$mutationType}");
         }
@@ -424,15 +541,15 @@ class MutationController extends Controller
         }
 
         // =========================================================
-        // 0) Resolve bucket column (prefer explicit bucket)
+        // 0) Resolve bucket column
         // =========================================================
         $resolveBucketFromExplicit = function (?string $b): ?string {
             $b = strtolower(trim((string) $b));
             return match ($b) {
-                'good'   => 'qty_good',
-                'defect' => 'qty_defect',
-                'damaged'=> 'qty_damaged',
-                default  => null,
+                'good'    => 'qty_good',
+                'defect'  => 'qty_defect',
+                'damaged' => 'qty_damaged',
+                default   => null,
             };
         };
 
@@ -447,7 +564,7 @@ class MutationController extends Controller
         $bucketCol = $resolveBucketFromExplicit($bucket) ?? $resolveBucketFromNote($note);
 
         // =========================================================
-        // 0.5) Resolve rackId fallback
+        // 0.5) Resolve rackId fallback (WAJIB)
         // =========================================================
         $resolvedRackId = (int) ($rackId ?? 0);
         if ($resolvedRackId <= 0) {
@@ -456,9 +573,12 @@ class MutationController extends Controller
                 ->orderBy('id', 'asc')
                 ->value('id') ?? 0);
         }
+        if ($resolvedRackId <= 0) {
+            throw new \RuntimeException("Rack default not found for warehouse {$warehouseId}");
+        }
 
         // =========================================================
-        // 1) LOCK + UPDATE STOCKS (header total)
+        // 1) LOCK STOCKS (header)
         // =========================================================
         $stock = \Modules\Inventory\Entities\Stock::withoutGlobalScopes()
             ->where('branch_id', $branchId)
@@ -500,16 +620,16 @@ class MutationController extends Controller
 
         // =========================================================
         // 2) CREATE / MERGE MUTATION LOG
+        //    ✅ FIX: SUMMARY MERGE PER RACK (bukan global)
         // =========================================================
         $mutation = null;
 
         if ($logMode === 'single') {
 
-            // behavior lama: create row baru
             $mutation = \Modules\Mutation\Entities\Mutation::create([
                 'branch_id'     => $branchId,
                 'warehouse_id'  => $warehouseId,
-                'rack_id'       => $resolvedRackId > 0 ? $resolvedRackId : null,
+                'rack_id'       => $resolvedRackId,
                 'product_id'    => $productId,
                 'reference'     => $reference,
                 'date'          => $date,
@@ -522,77 +642,33 @@ class MutationController extends Controller
             ]);
 
         } else {
-            /**
-             * ✅ SUMMARY MODE:
-             * - 1 row per reference+product+warehouse+date+mutation_type
-             * - note disimpan sebagai ringkasan + breakdown bucket
-             */
+
             $summaryPrefix = '[SUMMARY] ';
 
-            $existing = \Modules\Mutation\Entities\Mutation::withoutGlobalScopes()
-                ->where('branch_id', $branchId)
-                ->where('warehouse_id', $warehouseId)
-                ->where('product_id', $productId)
-                ->where('reference', $reference)
-                ->where('date', $date)
-                ->where('mutation_type', $mutationType)
-                ->where('note', 'like', $summaryPrefix . '%')
-                ->lockForUpdate()
-                ->first();
-
+            // bucketKey untuk summary note
             $bucketKey = null;
             if ($bucketCol === 'qty_good') $bucketKey = 'GOOD';
             if ($bucketCol === 'qty_defect') $bucketKey = 'DEFECT';
             if ($bucketCol === 'qty_damaged') $bucketKey = 'DAMAGED';
 
-            $bumpSummaryNote = function (string $noteText, ?string $bucketName, int $deltaQty, int $rackX = 0): string {
-                // format: [SUMMARY] ... | BKT:GOOD=3,DEFECT=1,DAMAGED=0 | RACKS:12(GOOD=3),15(DEFECT=1)
+            // helper bump BKT section (tanpa RACKS, karena row-nya sudah per rack)
+            $bumpSummaryNote = function (string $noteText, ?string $bucketName, int $deltaQty): string {
                 $noteText = trim($noteText);
 
-                $getMap = function (string $label, string $text): array {
-                    // label: "BKT:" or "RACKS:"
-                    $map = [];
-                    if (!preg_match('/\|\s*' . preg_quote($label, '/') . '\s*([^|]+)\s*/i', $text, $m)) {
-                        return $map;
-                    }
-                    $raw = trim($m[1] ?? '');
+                $getBkt = function (string $text): array {
+                    $map = ['GOOD' => 0, 'DEFECT' => 0, 'DAMAGED' => 0];
+                    if (!preg_match('/\|\s*BKT:\s*([^|]+)\s*/i', $text, $m)) return $map;
+                    $raw = trim((string)($m[1] ?? ''));
                     if ($raw === '') return $map;
 
-                    // BKT: "GOOD=3,DEFECT=1"
-                    if (strtoupper($label) === 'BKT:') {
-                        foreach (explode(',', $raw) as $pair) {
-                            $pair = trim($pair);
-                            if ($pair === '') continue;
-                            [$k, $v] = array_pad(explode('=', $pair, 2), 2, '0');
-                            $k = strtoupper(trim($k));
-                            $v = (int) trim($v);
-                            if ($k !== '') $map[$k] = $v;
-                        }
-                        return $map;
+                    foreach (explode(',', $raw) as $pair) {
+                        $pair = trim($pair);
+                        if ($pair === '') continue;
+                        [$k, $v] = array_pad(explode('=', $pair, 2), 2, '0');
+                        $k = strtoupper(trim($k));
+                        $v = (int) trim($v);
+                        if (isset($map[$k])) $map[$k] = $v;
                     }
-
-                    // RACKS: "12(GOOD=3;DEFECT=1),15(DAMAGED=2)"
-                    if (strtoupper($label) === 'RACKS:') {
-                        foreach (explode(',', $raw) as $chunk) {
-                            $chunk = trim($chunk);
-                            if ($chunk === '') continue;
-                            if (!preg_match('/^(\d+)\((.+)\)$/', $chunk, $mm)) continue;
-                            $rid = (int) $mm[1];
-                            $inside = (string) $mm[2];
-                            $insideMap = [];
-                            foreach (explode(';', $inside) as $pair) {
-                                $pair = trim($pair);
-                                if ($pair === '') continue;
-                                [$k, $v] = array_pad(explode('=', $pair, 2), 2, '0');
-                                $k = strtoupper(trim($k));
-                                $v = (int) trim($v);
-                                if ($k !== '') $insideMap[$k] = $v;
-                            }
-                            if ($rid > 0) $map[$rid] = $insideMap;
-                        }
-                        return $map;
-                    }
-
                     return $map;
                 };
 
@@ -603,63 +679,38 @@ class MutationController extends Controller
                     return rtrim($text) . ' | ' . $label . ' ' . $newValue;
                 };
 
-                // bump bucket totals
                 if ($bucketName) {
-                    $bkt = $getMap('BKT:', $noteText);
-                    $bkt['GOOD']   = (int) ($bkt['GOOD'] ?? 0);
-                    $bkt['DEFECT'] = (int) ($bkt['DEFECT'] ?? 0);
-                    $bkt['DAMAGED']= (int) ($bkt['DAMAGED'] ?? 0);
+                    $bkt = $getBkt($noteText);
+                    $bkt[$bucketName] = (int)($bkt[$bucketName] ?? 0) + $deltaQty;
 
-                    $bkt[$bucketName] = (int) ($bkt[$bucketName] ?? 0) + $deltaQty;
-
-                    $bktStr = 'GOOD=' . $bkt['GOOD'] . ',DEFECT=' . $bkt['DEFECT'] . ',DAMAGED=' . $bkt['DAMAGED'];
+                    $bktStr = 'GOOD=' . (int)$bkt['GOOD'] . ',DEFECT=' . (int)$bkt['DEFECT'] . ',DAMAGED=' . (int)$bkt['DAMAGED'];
                     $noteText = $setSection('BKT:', $noteText, $bktStr);
-
-                    // bump rack breakdown (optional)
-                    if ($rackX > 0) {
-                        $racks = $getMap('RACKS:', $noteText); // [rackId => [bucket=>qty]]
-                        if (!isset($racks[$rackX])) $racks[$rackX] = [];
-                        $racks[$rackX]['GOOD']   = (int) ($racks[$rackX]['GOOD'] ?? 0);
-                        $racks[$rackX]['DEFECT'] = (int) ($racks[$rackX]['DEFECT'] ?? 0);
-                        $racks[$rackX]['DAMAGED']= (int) ($racks[$rackX]['DAMAGED'] ?? 0);
-
-                        $racks[$rackX][$bucketName] = (int) ($racks[$rackX][$bucketName] ?? 0) + $deltaQty;
-
-                        $chunks = [];
-                        foreach ($racks as $rid => $map) {
-                            $rid = (int) $rid;
-                            if ($rid <= 0) continue;
-                            $g = (int) ($map['GOOD'] ?? 0);
-                            $d = (int) ($map['DEFECT'] ?? 0);
-                            $m = (int) ($map['DAMAGED'] ?? 0);
-
-                            $inside = [];
-                            if ($g > 0) $inside[] = 'GOOD=' . $g;
-                            if ($d > 0) $inside[] = 'DEFECT=' . $d;
-                            if ($m > 0) $inside[] = 'DAMAGED=' . $m;
-                            if (empty($inside)) continue;
-
-                            $chunks[] = $rid . '(' . implode(';', $inside) . ')';
-                        }
-
-                        if (!empty($chunks)) {
-                            $noteText = $setSection('RACKS:', $noteText, implode(',', $chunks));
-                        }
-                    }
                 }
 
                 return trim($noteText);
             };
 
+            // ✅ FIX: existing summary DIKUNCI per rack_id
+            $existing = \Modules\Mutation\Entities\Mutation::withoutGlobalScopes()
+                ->where('branch_id', $branchId)
+                ->where('warehouse_id', $warehouseId)
+                ->where('product_id', $productId)
+                ->where('reference', $reference)
+                ->where('date', $date)
+                ->where('mutation_type', $mutationType)
+                ->where('rack_id', $resolvedRackId) // ✅ INI FIX UTAMA
+                ->where('note', 'like', $summaryPrefix . '%')
+                ->lockForUpdate()
+                ->first();
+
             if (!$existing) {
-                // buat baru summary
                 $base = $summaryPrefix . trim($note);
-                $base = $bumpSummaryNote($base, $bucketKey, $qty, $resolvedRackId);
+                $base = $bumpSummaryNote($base, $bucketKey, $qty);
 
                 $existing = \Modules\Mutation\Entities\Mutation::create([
                     'branch_id'     => $branchId,
                     'warehouse_id'  => $warehouseId,
-                    'rack_id'       => null, // summary: tidak mengikat 1 rack
+                    'rack_id'       => $resolvedRackId, // ✅ FIX: simpan rack supaya kolom Rack terisi
                     'product_id'    => $productId,
                     'reference'     => $reference,
                     'date'          => $date,
@@ -671,14 +722,13 @@ class MutationController extends Controller
                     'stock_last'    => $last,
                 ]);
             } else {
-                $newNote = $bumpSummaryNote((string) ($existing->note ?? ($summaryPrefix . trim($note))), $bucketKey, $qty, $resolvedRackId);
+                $newNote = $bumpSummaryNote((string) ($existing->note ?? ($summaryPrefix . trim($note))), $bucketKey, $qty);
 
                 $existing->update([
-                    // stock_early: keep yang paling awal (jangan ditimpa)
-                    'stock_in'    => (int) ($existing->stock_in ?? 0) + $in,
-                    'stock_out'   => (int) ($existing->stock_out ?? 0) + $out,
-                    'stock_last'  => $last, // last selalu ikut kondisi terbaru
-                    'note'        => $newNote,
+                    'stock_in'   => (int) ($existing->stock_in ?? 0) + $in,
+                    'stock_out'  => (int) ($existing->stock_out ?? 0) + $out,
+                    'stock_last' => $last,
+                    'note'       => $newNote,
                 ]);
             }
 
@@ -686,93 +736,100 @@ class MutationController extends Controller
         }
 
         // =========================================================
-        // 3) UPDATE STOCKS (header)
+        // 3) UPDATE STOCK_RACKS (detail) - LOCK row, UPDATE by ID
         // =========================================================
-        $stock->update([
-            'qty_available' => $last,
-            'updated_by'    => auth()->id(),
-        ]);
+        $resolvedSrBranchExpr = 'COALESCE(sr.branch_id, w.branch_id)';
 
-        // =========================================================
-        // 4) UPDATE STOCK_RACKS (detail) + HARD SYNC BUCKETS
-        // =========================================================
-        if ($resolvedRackId > 0) {
+        $sr = DB::table('stock_racks as sr')
+            ->leftJoin('warehouses as w', 'w.id', '=', 'sr.warehouse_id')
+            ->where('sr.warehouse_id', (int) $warehouseId)
+            ->where('sr.rack_id', (int) $resolvedRackId)
+            ->where('sr.product_id', (int) $productId)
+            ->whereRaw($resolvedSrBranchExpr . ' = ?', [(int) $branchId])
+            ->select('sr.*')
+            ->lockForUpdate()
+            ->first();
 
-            $resolvedSrBranchExpr = 'COALESCE(sr.branch_id, w.branch_id)';
-
-            $sr = DB::table('stock_racks as sr')
-                ->leftJoin('warehouses as w', 'w.id', '=', 'sr.warehouse_id')
-                ->where('sr.warehouse_id', (int) $warehouseId)
-                ->where('sr.rack_id', (int) $resolvedRackId)
-                ->where('sr.product_id', (int) $productId)
-                ->whereRaw($resolvedSrBranchExpr . ' = ?', [(int) $branchId])
-                ->select('sr.*')
-                ->lockForUpdate()
-                ->first();
-
-            if (!$sr) {
-                if ($mutationType === 'Out') {
-                    throw new \RuntimeException(
-                        "Stock rack row not found for OUT. Branch {$branchId}, WH {$warehouseId}, Rack {$resolvedRackId}, Product {$productId}. Ref {$reference}"
-                    );
-                }
-
-                DB::table('stock_racks')->insert([
-                    'branch_id'     => (int) $branchId,
-                    'warehouse_id'  => (int) $warehouseId,
-                    'rack_id'       => (int) $resolvedRackId,
-                    'product_id'    => (int) $productId,
-                    'qty_available' => 0,
-                    'qty_good'      => 0,
-                    'qty_defect'    => 0,
-                    'qty_damaged'   => 0,
-                    'created_at'    => now(),
-                    'updated_at'    => now(),
-                ]);
-
-                $sr = (object) ['qty_available' => 0, 'qty_good' => 0, 'qty_defect' => 0, 'qty_damaged' => 0];
-            }
-
-            $curAvail = (int) ($sr->qty_available ?? 0);
-
-            if ($mutationType === 'Out' && $curAvail < $qty) {
+        if (!$sr) {
+            if ($mutationType === 'Out') {
                 throw new \RuntimeException(
-                    "Not enough rack qty_available for OUT. Need {$qty}, have {$curAvail}. Branch {$branchId}, WH {$warehouseId}, Rack {$resolvedRackId}, Product {$productId}. Ref {$reference}"
+                    "Stock rack row not found for OUT. Branch {$branchId}, WH {$warehouseId}, Rack {$resolvedRackId}, Product {$productId}. Ref {$reference}"
                 );
             }
 
-            $newAvail = $mutationType === 'In' ? ($curAvail + $qty) : ($curAvail - $qty);
-
-            $update = [
-                'qty_available' => (int) $newAvail,
+            DB::table('stock_racks')->insert([
+                'branch_id'     => (int) $branchId,
+                'warehouse_id'  => (int) $warehouseId,
+                'rack_id'       => (int) $resolvedRackId,
+                'product_id'    => (int) $productId,
+                'qty_available' => 0,
+                'qty_good'      => 0,
+                'qty_defect'    => 0,
+                'qty_damaged'   => 0,
+                'created_at'    => now(),
                 'updated_at'    => now(),
-            ];
+            ]);
 
-            if ($bucketCol && in_array($bucketCol, ['qty_good', 'qty_defect', 'qty_damaged'], true)) {
-                $curBucket = (int) ($sr->{$bucketCol} ?? 0);
-
-                if (!($mutationType === 'Out' && $curBucket < $qty)) {
-                    $newBucket = $mutationType === 'In' ? ($curBucket + $qty) : ($curBucket - $qty);
-                    if ($newBucket < 0) $newBucket = 0;
-                    $update[$bucketCol] = (int) $newBucket;
-                }
-            }
-
-            DB::table('stock_racks')
-                ->where('warehouse_id', (int) $warehouseId)
-                ->where('rack_id', (int) $resolvedRackId)
-                ->where('product_id', (int) $productId)
-                ->where(function ($q) use ($branchId) {
-                    $q->where('branch_id', (int) $branchId)->orWhereNull('branch_id');
-                })
-                ->update($update);
-
-            $this->syncStockRackQualityFromItems($branchId, $warehouseId, $productId, $resolvedRackId);
+            $sr = DB::table('stock_racks as sr')
+                ->where('sr.branch_id', (int) $branchId)
+                ->where('sr.warehouse_id', (int) $warehouseId)
+                ->where('sr.rack_id', (int) $resolvedRackId)
+                ->where('sr.product_id', (int) $productId)
+                ->lockForUpdate()
+                ->first();
         }
 
+        $curAvail = (int) ($sr->qty_available ?? 0);
+
+        if ($mutationType === 'Out' && $curAvail < $qty) {
+            throw new \RuntimeException(
+                "Not enough rack qty_available for OUT. Need {$qty}, have {$curAvail}. Branch {$branchId}, WH {$warehouseId}, Rack {$resolvedRackId}, Product {$productId}. Ref {$reference}"
+            );
+        }
+
+        $newAvail = $mutationType === 'In' ? ($curAvail + $qty) : ($curAvail - $qty);
+
+        $update = [
+            'qty_available' => (int) $newAvail,
+            'updated_at'    => now(),
+        ];
+
+        if ($bucketCol && in_array($bucketCol, ['qty_good', 'qty_defect', 'qty_damaged'], true)) {
+            $curBucket = (int) ($sr->{$bucketCol} ?? 0);
+            if (!($mutationType === 'Out' && $curBucket < $qty)) {
+                $newBucket = $mutationType === 'In' ? ($curBucket + $qty) : ($curBucket - $qty);
+                if ($newBucket < 0) $newBucket = 0;
+                $update[$bucketCol] = (int) $newBucket;
+            }
+        }
+
+        DB::table('stock_racks')
+            ->where('id', (int) $sr->id)
+            ->update($update);
+
+        $this->syncStockRackQualityFromItems($branchId, $warehouseId, $productId, $resolvedRackId);
+
         // =========================================================
-        // 5) GUARD total rack qty == stocks header
+        // 4) FINAL: sync STOCK HEADER dari SUM(stock_racks)
         // =========================================================
+        $rackSum = (int) DB::table('stock_racks as sr')
+            ->leftJoin('warehouses as w', 'w.id', '=', 'sr.warehouse_id')
+            ->where('sr.warehouse_id', (int) $warehouseId)
+            ->where('sr.product_id', (int) $productId)
+            ->whereRaw($resolvedSrBranchExpr . ' = ?', [(int) $branchId])
+            ->sum('sr.qty_available');
+
+        $stock->update([
+            'qty_available' => $rackSum,
+            'updated_by'    => auth()->id(),
+        ]);
+
+        if ($mutation) {
+            $mutation->update([
+                'stock_last' => $rackSum,
+            ]);
+        }
+
         $this->assertStockHeaderEqualsRackSum($branchId, $warehouseId, $productId);
 
         return $mutation;
@@ -786,8 +843,7 @@ class MutationController extends Controller
         string $reference,
         string $note,
         string $date
-    ): void
-    {
+    ): void {
         if ($qty <= 0) {
             throw new \RuntimeException("Qty must be > 0");
         }
@@ -824,13 +880,19 @@ class MutationController extends Controller
             return;
         }
 
-        $stockQty = (int) \Modules\Inventory\Entities\Stock::withoutGlobalScopes()
+        $stockRow = \Modules\Inventory\Entities\Stock::withoutGlobalScopes()
             ->where('branch_id', $branchId)
             ->where('warehouse_id', $warehouseId)
             ->where('product_id', $productId)
-            ->value('qty_available');
+            ->lockForUpdate()
+            ->first();
 
-        // support legacy sr.branch_id NULL
+        if (!$stockRow) {
+            return;
+        }
+
+        $stockQty = (int) ($stockRow->qty_available ?? 0);
+
         $resolvedSrBranchExpr = 'COALESCE(sr.branch_id, w.branch_id)';
 
         $rackSum = (int) DB::table('stock_racks as sr')
@@ -841,10 +903,14 @@ class MutationController extends Controller
             ->sum('sr.qty_available');
 
         if ($stockQty !== $rackSum) {
-            throw new \RuntimeException(
-                "Stock mismatch detected! stocks.qty_available ({$stockQty}) != SUM(stock_racks.qty_available) ({$rackSum}). " .
-                "Branch {$branchId}, WH {$warehouseId}, Product {$productId}."
-            );
+            // ✅ AUTO-HEAL: header selalu ikut rackSum
+            $stockRow->update([
+                'qty_available' => $rackSum,
+                'updated_by'    => auth()->id(),
+            ]);
+
+            // kalau kamu mau logging:
+            // \Log::warning("AUTO-SYNC stocks.qty_available {$stockQty} -> {$rackSum} (branch={$branchId}, wh={$warehouseId}, product={$productId})");
         }
     }
 
@@ -853,16 +919,13 @@ class MutationController extends Controller
         int $warehouseId,
         int $productId,
         int $rackId
-    ): void
-    {
+    ): void {
         if ($branchId <= 0 || $warehouseId <= 0 || $productId <= 0 || $rackId <= 0) {
             return;
         }
 
-        // support legacy sr.branch_id NULL
         $resolvedSrBranchExpr = 'COALESCE(sr.branch_id, w.branch_id)';
 
-        // lock sr row
         $sr = DB::table('stock_racks as sr')
             ->leftJoin('warehouses as w', 'w.id', '=', 'sr.warehouse_id')
             ->where('sr.warehouse_id', (int) $warehouseId)
@@ -874,7 +937,6 @@ class MutationController extends Controller
             ->first();
 
         if (!$sr) {
-            // create row if missing
             DB::table('stock_racks')->insert([
                 'branch_id'     => (int) $branchId,
                 'warehouse_id'  => (int) $warehouseId,
@@ -937,13 +999,12 @@ class MutationController extends Controller
         int $branchId,
         int $warehouseId,
         int $productId,
-        string $direction,
+        string $direction, // 'In' | 'Out'
         int $qty,
         string $reference,
         string $note,
         string $date
-    ): void
-    {
+    ): void {
         if (!in_array($direction, ['In', 'Out'], true)) {
             throw new \RuntimeException("Invalid transfer direction: {$direction}");
         }
@@ -956,6 +1017,10 @@ class MutationController extends Controller
             ->where('warehouse_id', $warehouseId)
             ->orderBy('id', 'asc')
             ->value('id') ?? 0);
+
+        if ($resolvedRackId <= 0) {
+            throw new \RuntimeException("Rack default not found for warehouse {$warehouseId}");
+        }
 
         $stock = Stock::withoutGlobalScopes()
             ->where('branch_id', $branchId)
@@ -998,7 +1063,7 @@ class MutationController extends Controller
         Mutation::create([
             'branch_id'     => $branchId,
             'warehouse_id'  => $warehouseId,
-            'rack_id'       => $resolvedRackId > 0 ? $resolvedRackId : null, // ✅ now stored
+            'rack_id'       => $resolvedRackId,
             'product_id'    => $productId,
             'reference'     => $reference,
             'date'          => $date,
@@ -1016,69 +1081,65 @@ class MutationController extends Controller
         ]);
 
         // ✅ update stock_racks juga (fallback rack)
-        if ($resolvedRackId > 0) {
-            $resolvedSrBranchExpr = 'COALESCE(sr.branch_id, w.branch_id)';
+        $resolvedSrBranchExpr = 'COALESCE(sr.branch_id, w.branch_id)';
 
-            $sr = DB::table('stock_racks as sr')
-                ->leftJoin('warehouses as w', 'w.id', '=', 'sr.warehouse_id')
-                ->where('sr.warehouse_id', (int) $warehouseId)
-                ->where('sr.rack_id', (int) $resolvedRackId)
-                ->where('sr.product_id', (int) $productId)
-                ->whereRaw($resolvedSrBranchExpr . ' = ?', [(int) $branchId])
-                ->select('sr.*')
-                ->lockForUpdate()
-                ->first();
+        $sr = DB::table('stock_racks as sr')
+            ->leftJoin('warehouses as w', 'w.id', '=', 'sr.warehouse_id')
+            ->where('sr.warehouse_id', (int) $warehouseId)
+            ->where('sr.rack_id', (int) $resolvedRackId)
+            ->where('sr.product_id', (int) $productId)
+            ->whereRaw($resolvedSrBranchExpr . ' = ?', [(int) $branchId])
+            ->select('sr.*')
+            ->lockForUpdate()
+            ->first();
 
-            if (!$sr) {
-                if ($direction === 'Out') {
-                    throw new \RuntimeException(
-                        "Stock rack row not found for Transfer OUT. Branch {$branchId}, WH {$warehouseId}, Rack {$resolvedRackId}, Product {$productId}. Ref {$reference}"
-                    );
-                }
-
-                DB::table('stock_racks')->insert([
-                    'branch_id'     => (int) $branchId,
-                    'warehouse_id'  => (int) $warehouseId,
-                    'rack_id'       => (int) $resolvedRackId,
-                    'product_id'    => (int) $productId,
-                    'qty_available' => 0,
-                    'qty_good'      => 0,
-                    'qty_defect'    => 0,
-                    'qty_damaged'   => 0,
-                    'created_at'    => now(),
-                    'updated_at'    => now(),
-                ]);
-
-                $sr = (object) [
-                    'qty_available' => 0,
-                ];
-            }
-
-            $curAvail = (int) ($sr->qty_available ?? 0);
-
-            if ($direction === 'Out' && $curAvail < $qty) {
+        if (!$sr) {
+            if ($direction === 'Out') {
                 throw new \RuntimeException(
-                    "Not enough rack qty_available for Transfer OUT. Need {$qty}, have {$curAvail}. Branch {$branchId}, WH {$warehouseId}, Rack {$resolvedRackId}, Product {$productId}. Ref {$reference}"
+                    "Stock rack row not found for Transfer OUT. Branch {$branchId}, WH {$warehouseId}, Rack {$resolvedRackId}, Product {$productId}. Ref {$reference}"
                 );
             }
 
-            $newAvail = $direction === 'In' ? ($curAvail + $qty) : ($curAvail - $qty);
+            DB::table('stock_racks')->insert([
+                'branch_id'     => (int) $branchId,
+                'warehouse_id'  => (int) $warehouseId,
+                'rack_id'       => (int) $resolvedRackId,
+                'product_id'    => (int) $productId,
+                'qty_available' => 0,
+                'qty_good'      => 0,
+                'qty_defect'    => 0,
+                'qty_damaged'   => 0,
+                'created_at'    => now(),
+                'updated_at'    => now(),
+            ]);
 
-            DB::table('stock_racks')
-                ->where('warehouse_id', (int) $warehouseId)
-                ->where('rack_id', (int) $resolvedRackId)
-                ->where('product_id', (int) $productId)
-                ->where(function ($q) use ($branchId) {
-                    $q->where('branch_id', (int) $branchId)->orWhereNull('branch_id');
-                })
-                ->update([
-                    'qty_available' => (int) $newAvail,
-                    'updated_at'    => now(),
-                ]);
-
-            // ✅ sync quality buckets & derive good
-            $this->syncStockRackQualityFromItems($branchId, $warehouseId, $productId, $resolvedRackId);
+            $sr = (object)['qty_available' => 0];
         }
+
+        $curAvail = (int) ($sr->qty_available ?? 0);
+
+        if ($direction === 'Out' && $curAvail < $qty) {
+            throw new \RuntimeException(
+                "Not enough rack qty_available for Transfer OUT. Need {$qty}, have {$curAvail}. Branch {$branchId}, WH {$warehouseId}, Rack {$resolvedRackId}, Product {$productId}. Ref {$reference}"
+            );
+        }
+
+        $newAvail = $direction === 'In' ? ($curAvail + $qty) : ($curAvail - $qty);
+
+        DB::table('stock_racks')
+            ->where('warehouse_id', (int) $warehouseId)
+            ->where('rack_id', (int) $resolvedRackId)
+            ->where('product_id', (int) $productId)
+            ->where(function ($q) use ($branchId) {
+                $q->where('branch_id', (int) $branchId)->orWhereNull('branch_id');
+            })
+            ->update([
+                'qty_available' => (int) $newAvail,
+                'updated_at'    => now(),
+            ]);
+
+        // ✅ sync quality buckets & derive good
+        $this->syncStockRackQualityFromItems($branchId, $warehouseId, $productId, $resolvedRackId);
 
         // ✅ guard totals
         $this->assertStockHeaderEqualsRackSum($branchId, $warehouseId, $productId);
@@ -1095,7 +1156,6 @@ class MutationController extends Controller
             ->lockForUpdate()
             ->get();
 
-        // helper: resolve bucket dari note (non-summary single rows)
         $resolveBucketFromNote = function (string $noteX): ?string {
             $n = strtoupper(trim($noteX));
             if (preg_match('/\bGOOD\b/', $n)) return 'qty_good';
@@ -1104,11 +1164,8 @@ class MutationController extends Controller
             return null;
         };
 
-        // helper: parse summary rack breakdown from note
-        // format produced by applyInOutInternal():
-        // | RACKS:12(GOOD=3;DEFECT=1),15(DAMAGED=2)
         $parseSummaryRacks = function (string $noteText): array {
-            $out = []; // [rackId => ['GOOD'=>x,'DEFECT'=>y,'DAMAGED'=>z]]
+            $out = [];
             if (!preg_match('/\|\s*RACKS:\s*([^|]+)\s*/i', $noteText, $m)) {
                 return $out;
             }
@@ -1182,15 +1239,59 @@ class MutationController extends Controller
             ]);
 
             // 2) rollback STOCK_RACKS
-            $noteText = (string)($m->note ?? '');
+            $noteText  = (string)($m->note ?? '');
             $isSummary = str_starts_with(trim($noteText), '[SUMMARY]');
 
-            $mutationTypeUpper = strtoupper((string)$m->mutation_type); // 'IN'/'OUT'/'TRANSFER' (case-insensitive)
+            $mutationTypeUpper = strtoupper((string)$m->mutation_type);
             $isIn  = $mutationTypeUpper === 'IN';
             $isOut = $mutationTypeUpper === 'OUT';
 
-            if ($isSummary && ($isIn || $isOut)) {
-                // summary row: rack_id is null => rollback per rack using RACKS breakdown in note
+            // ✅ FIX: summary row sekarang bisa punya rack_id (summary-per-rack)
+            $rackIdFromRow = (int)($m->rack_id ?? 0);
+
+            if ($isSummary && ($isIn || $isOut) && $rackIdFromRow > 0) {
+                // treat as normal rack rollback (pakai stock_in/stock_out)
+                $qty = $isIn ? (int)($m->stock_in ?? 0) : (int)($m->stock_out ?? 0);
+                if ($qty > 0) {
+                    $bucketCol = $resolveBucketFromNote($noteText);
+
+                    $sr = DB::table('stock_racks')
+                        ->where('branch_id', (int)$m->branch_id)
+                        ->where('warehouse_id', (int)$m->warehouse_id)
+                        ->where('rack_id', (int)$rackIdFromRow)
+                        ->where('product_id', (int)$m->product_id)
+                        ->lockForUpdate()
+                        ->first();
+
+                    if ($sr) {
+                        $curAvail = (int)($sr->qty_available ?? 0);
+
+                        $newAvail = $isIn ? ($curAvail - $qty) : ($curAvail + $qty);
+                        if ($newAvail < 0) $newAvail = 0;
+
+                        $update = [
+                            'qty_available' => (int)$newAvail,
+                            'updated_at'    => now(),
+                        ];
+
+                        if ($bucketCol && in_array($bucketCol, ['qty_good','qty_defect','qty_damaged'], true)) {
+                            $curBucket = (int)($sr->{$bucketCol} ?? 0);
+                            $newBucket = $isIn ? ($curBucket - $qty) : ($curBucket + $qty);
+                            if ($newBucket < 0) $newBucket = 0;
+                            $update[$bucketCol] = (int)$newBucket;
+                        }
+
+                        DB::table('stock_racks')
+                            ->where('branch_id', (int)$m->branch_id)
+                            ->where('warehouse_id', (int)$m->warehouse_id)
+                            ->where('rack_id', (int)$rackIdFromRow)
+                            ->where('product_id', (int)$m->product_id)
+                            ->update($update);
+                    }
+                }
+
+            } elseif ($isSummary && ($isIn || $isOut)) {
+                // legacy summary row: rack_id null => rollback per rack via RACKS breakdown
                 $rackMap = $parseSummaryRacks($noteText);
 
                 foreach ($rackMap as $rackId => $buckets) {
@@ -1204,9 +1305,6 @@ class MutationController extends Controller
 
                     if ($totalQty <= 0) continue;
 
-                    // sign rollback:
-                    // original IN  => stock_racks dulu +qty, rollback harus -qty
-                    // original OUT => stock_racks dulu -qty, rollback harus +qty
                     $sign = $isIn ? -1 : +1;
 
                     $sr = DB::table('stock_racks')
@@ -1218,7 +1316,6 @@ class MutationController extends Controller
                         ->first();
 
                     if (!$sr) {
-                        // kalau row tidak ada, create minimal row supaya update aman
                         DB::table('stock_racks')->insert([
                             'branch_id'     => (int)$m->branch_id,
                             'warehouse_id'  => (int)$m->warehouse_id,
@@ -1250,7 +1347,6 @@ class MutationController extends Controller
                     $newDef   = $curDef   + ($sign * $defQty);
                     $newDam   = $curDam   + ($sign * $damQty);
 
-                    // safety
                     if ($newAvail < 0) $newAvail = 0;
                     if ($newGood  < 0) $newGood  = 0;
                     if ($newDef   < 0) $newDef   = 0;
@@ -1269,8 +1365,9 @@ class MutationController extends Controller
                             'updated_at'    => now(),
                         ]);
                 }
+
             } else {
-                // non-summary: use rack_id column if exists
+                // non-summary row
                 $rackId = (int)($m->rack_id ?? 0);
                 if ($rackId > 0 && ($isIn || $isOut)) {
 
@@ -1289,9 +1386,6 @@ class MutationController extends Controller
                         if ($sr) {
                             $curAvail = (int)($sr->qty_available ?? 0);
 
-                            // reverse delta:
-                            // original IN  => rollback -qty
-                            // original OUT => rollback +qty
                             $newAvail = $isIn ? ($curAvail - $qty) : ($curAvail + $qty);
                             if ($newAvail < 0) $newAvail = 0;
 

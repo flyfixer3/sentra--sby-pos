@@ -577,6 +577,20 @@
         return html;
     }
 
+    function setOldGoodAllocJson(idx, allocations) {
+        const wrap = document.getElementById('goodAllocWrap-' + idx);
+        if (!wrap) return;
+
+        const ta = wrap.querySelector('.old-goodalloc-json');
+        if (!ta) return;
+
+        try {
+            ta.value = JSON.stringify(allocations || []);
+        } catch (e) {
+            ta.value = '[]';
+        }
+    }
+
     // ==========================
     // GOOD ALLOCATION
     // ==========================
@@ -679,52 +693,39 @@
     }
 
     function addGoodAllocRow(idx) {
-        const wrap = document.getElementById('goodAllocWrap-' + idx);
-        if (!wrap) return;
+        // 1) ambil kondisi allocations saat ini dari DOM
+        let allocations = readGoodAllocations(idx);
+        if (!Array.isArray(allocations)) allocations = [];
 
-        const tbody = wrap.querySelector('.goodalloc-tbody');
-        const rowCount = tbody.querySelectorAll('tr').length;
+        // 2) tambahkan 1 row baru
+        allocations.push({ to_rack_id: '', qty: 0 });
 
-        const whId = getWarehouseId();
+        // 3) simpan balik ke hidden JSON (source of truth)
+        setOldGoodAllocJson(idx, allocations);
 
-        const tr = document.createElement('tr');
-        tr.innerHTML = `
-            <td class="text-center align-middle">${rowCount + 1}</td>
-            <td class="align-middle">
-                <select class="form-control form-control-sm goodalloc-rack"
-                        name="items[${idx}][good_allocations][${rowCount}][to_rack_id]">
-                    ${buildRackOptionsHtml(whId, '')}
-                </select>
-            </td>
-            <td class="align-middle">
-                <input type="number"
-                       min="0"
-                       step="1"
-                       class="form-control form-control-sm text-center goodalloc-qty"
-                       name="items[${idx}][good_allocations][${rowCount}][qty]"
-                       value="0">
-            </td>
-            <td class="text-center align-middle">
-                <button type="button" class="btn btn-sm btn-danger btn-remove-goodalloc" data-idx="${idx}" data-row="${rowCount}">
-                    <i class="bi bi-trash"></i>
-                </button>
-            </td>
-        `;
-        tbody.appendChild(tr);
+        // 4) rebuild dari JSON terbaru
+        rebuildGoodAlloc(idx, true);
 
-        rebuildGoodAlloc(idx, false);
+        // 5) optional: update total & status row utama
+        syncGoodAllocTotal(idx);
     }
 
     function removeGoodAllocRow(idx, rowIndex) {
-        const wrap = document.getElementById('goodAllocWrap-' + idx);
-        if (!wrap) return;
+        let allocations = readGoodAllocations(idx);
+        if (!Array.isArray(allocations)) allocations = [];
 
-        const tbody = wrap.querySelector('.goodalloc-tbody');
-        const rows = Array.from(tbody.querySelectorAll('tr'));
-        if (rows.length <= 1) return;
+        // jangan boleh kosong total (minimal 1 row)
+        if (allocations.length <= 1) return;
 
-        if (rows[rowIndex]) rows[rowIndex].remove();
-        rebuildGoodAlloc(idx, false);
+        allocations.splice(rowIndex, 1);
+
+        // simpan balik ke hidden JSON
+        setOldGoodAllocJson(idx, allocations);
+
+        // rebuild dari JSON terbaru
+        rebuildGoodAlloc(idx, true);
+
+        syncGoodAllocTotal(idx);
     }
 
     // ==========================

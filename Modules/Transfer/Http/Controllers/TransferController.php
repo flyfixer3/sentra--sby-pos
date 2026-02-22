@@ -80,9 +80,9 @@ class TransferController extends Controller
 
     private function assertRackBelongsToWarehouse(int $rackId, int $warehouseId): void
     {
-        $ok = Rack::query()
-            ->where('id', $rackId)
-            ->where('warehouse_id', $warehouseId)
+        $ok = Rack::withoutGlobalScopes()
+            ->where('id', (int) $rackId)
+            ->where('warehouse_id', (int) $warehouseId)
             ->exists();
 
         if (!$ok) {
@@ -521,7 +521,7 @@ class TransferController extends Controller
     /**
      * ✅ NEW: Prepare Print (AJAX)
      * - HANYA pengirim bisa print
-     * - Print pertama: set shipped + generate delivery_code + mutation OUT (sekali saja)
+     * - Print pertama: set shipped + generate delivery_code + jangan jalanin Mutation OUT di FIRST PRINT
      * - Setiap print: create PrintLog
      * - Return JSON: pdf_url + copy_number + status
      */
@@ -555,118 +555,165 @@ class TransferController extends Controller
                     'delivery_code' => $code,
                 ]);
 
-                $alreadyOut = Mutation::withoutGlobalScopes()
-                    ->where('reference', $transfer->reference)
-                    ->where('note', 'like', 'Transfer OUT%')
-                    ->exists();
+                // =========================================================
+                // FIRST PRINT: reserve sender + lock per-unit defect/damaged
+                // =========================================================
+                $transfer->loadMissing(['items', 'fromWarehouse']);
+                $fromWarehouseId = (int) $transfer->from_warehouse_id;
+                $branchId        = (int) $transfer->branch_id;
 
-                if (!$alreadyOut) {
+                foreach ($transfer->items as $item) {
+                    $qty = (int) $item->quantity;
+                    if ($qty <= 0) continue;
 
-                    $transfer->loadMissing(['items', 'fromWarehouse']);
-                    $fromWarehouseId = (int) $transfer->from_warehouse_id;
-                    $branchId = (int) $transfer->branch_id;
+                    // reserve summary (stocks.qty_reserved)
+                    $this->adjustReservedStock(
+                        $branchId,
+                        $fromWarehouseId,
+                        (int) $item->product_id,
+                        +$qty
+                    );
 
-                    foreach ($transfer->items as $item) {
-                        $qty = (int) $item->quantity;
-                        if ($qty <= 0) continue;
-
-                        $fromRackId = (int) ($item->from_rack_id ?? 0);
-                        if ($fromRackId <= 0) {
-                            abort(422, "Missing FROM rack for transfer item ID {$item->id}. Please edit transfer and set rack.");
-                        }
-
-                        $this->assertRackBelongsToWarehouse($fromRackId, $fromWarehouseId);
-
-                        // ✅ NOTE: sekarang tidak menyimpan rack di note, rack masuk ke kolom rack_id mutation.
-                        $note = "Transfer OUT #{$transfer->reference} | From WH {$fromWarehouseId}";
-
-                        $this->mutationController->applyInOut(
-                            $branchId,
-                            $fromWarehouseId,
-                            (int) $item->product_id,
-                            'Out',
-                            $qty,
-                            (string) $transfer->reference,
-                            $note,
-                            (string) $transfer->getRawOriginal('date'),
-                            $fromRackId // ✅ rack masuk kolom rack_id (Mutations index)
-                        );
-
-                        // ✅ StockRack OUT
-                        $cond = strtolower((string) ($item->condition ?? 'good'));
-                        $dAll = -$qty;
-                        $dGood = 0; $dDef = 0; $dDmg = 0;
-
-                        if ($cond === 'good')   $dGood = -$qty;
-                        if ($cond === 'defect') $dDef  = -$qty;
-                        if ($cond === 'damaged')$dDmg  = -$qty;
-
-                        $this->adjustStockRack(
-                            $branchId,
-                            $fromWarehouseId,
-                            $fromRackId,
-                            (int) $item->product_id,
-                            $dAll,
-                            $dGood,
-                            $dDef,
-                            $dDmg
-                        );
-
-                        // ✅ tandai kualitas keluar (punya kamu, keep)
-                        if ($qty > 0 && in_array($cond, ['defect', 'damaged'], true)) {
-
-                            if ($cond === 'defect') {
-                                $ids = DB::table('product_defect_items')
-                                    ->where('branch_id', $branchId)
-                                    ->where('warehouse_id', $fromWarehouseId)
-                                    ->where('product_id', (int) $item->product_id)
-                                    ->whereNull('moved_out_at')
-                                    ->orderBy('id', 'asc')
-                                    ->limit($qty)
-                                    ->pluck('id')
-                                    ->toArray();
-
-                                if (count($ids) < $qty) {
-                                    abort(422, "Defect stock not enough to ship for product ID {$item->product_id}. Need {$qty}, found ".count($ids).".");
-                                }
-
-                                DB::table('product_defect_items')
-                                    ->whereIn('id', $ids)
-                                    ->update([
-                                        'moved_out_at' => now(),
-                                        'moved_out_by' => $user->id,
-                                        'moved_out_reference_type' => \Modules\Transfer\Entities\TransferRequest::class,
-                                        'moved_out_reference_id' => (int) $transfer->id,
-                                    ]);
-                            }
-
-                            if ($cond === 'damaged') {
-                                $ids = DB::table('product_damaged_items')
-                                    ->where('branch_id', $branchId)
-                                    ->where('warehouse_id', $fromWarehouseId)
-                                    ->where('product_id', (int) $item->product_id)
-                                    ->where('resolution_status', 'pending')
-                                    ->whereNull('moved_out_at')
-                                    ->orderBy('id', 'asc')
-                                    ->limit($qty)
-                                    ->pluck('id')
-                                    ->toArray();
-
-                                if (count($ids) < $qty) {
-                                    abort(422, "Damaged stock not enough to ship for product ID {$item->product_id}. Need {$qty}, found ".count($ids).".");
-                                }
-
-                                DB::table('product_damaged_items')
-                                    ->whereIn('id', $ids)
-                                    ->update([
-                                        'moved_out_at' => now(),
-                                        'moved_out_by' => $user->id,
-                                        'moved_out_reference_type' => \Modules\Transfer\Entities\TransferRequest::class,
-                                        'moved_out_reference_id' => (int) $transfer->id,
-                                    ]);
-                            }
-                        }
+                    // wajib punya from_rack_id
+                    $fromRackId = (int) ($item->from_rack_id ?? 0);
+                    if ($fromRackId <= 0) {
+                        abort(422, "Missing FROM rack for transfer item ID {$item->id}. Please edit transfer and set rack.");
                     }
+                    $this->assertRackBelongsToWarehouse($fromRackId, $fromWarehouseId);
+
+                    $cond = strtolower((string) ($item->condition ?? 'good'));
+
+                    // =====================================================
+                    // ✅ IMPORTANT FIX #1:
+                    // Reserve defect/damaged MUST be per rack (fromRackId)
+                    // =====================================================
+                    if ($qty > 0 && in_array($cond, ['defect', 'damaged'], true)) {
+
+                        if ($cond === 'defect') {
+                            $ids = DB::table('product_defect_items')
+                                ->where('branch_id', $branchId)
+                                ->where('warehouse_id', $fromWarehouseId)
+                                ->where('rack_id', $fromRackId) // ✅ FIX: per rack
+                                ->where('product_id', (int) $item->product_id)
+                                ->whereNull('moved_out_at')
+                                ->orderBy('id', 'asc')
+                                ->limit($qty)
+                                ->pluck('id')
+                                ->toArray();
+
+                            if (count($ids) < $qty) {
+                                abort(422, "Defect stock not enough to reserve for product ID {$item->product_id} on rack {$fromRackId}. Need {$qty}, found " . count($ids) . ".");
+                            }
+
+                            DB::table('product_defect_items')
+                                ->whereIn('id', $ids)
+                                ->update([
+                                    'moved_out_at' => now(),
+                                    'moved_out_by' => $user->id,
+                                    'moved_out_reference_type' => \Modules\Transfer\Entities\TransferRequest::class,
+                                    'moved_out_reference_id' => (int) $transfer->id,
+                                ]);
+                        }
+
+                        if ($cond === 'damaged') {
+                            $ids = DB::table('product_damaged_items')
+                                ->where('branch_id', $branchId)
+                                ->where('warehouse_id', $fromWarehouseId)
+                                ->where('rack_id', $fromRackId) // ✅ FIX: per rack
+                                ->where('product_id', (int) $item->product_id)
+                                ->where('resolution_status', 'pending')
+                                ->whereNull('moved_out_at')
+                                ->orderBy('id', 'asc')
+                                ->limit($qty)
+                                ->pluck('id')
+                                ->toArray();
+
+                            if (count($ids) < $qty) {
+                                abort(422, "Damaged stock not enough to reserve for product ID {$item->product_id} on rack {$fromRackId}. Need {$qty}, found " . count($ids) . ".");
+                            }
+
+                            DB::table('product_damaged_items')
+                                ->whereIn('id', $ids)
+                                ->update([
+                                    'moved_out_at' => now(),
+                                    'moved_out_by' => $user->id,
+                                    'moved_out_reference_type' => \Modules\Transfer\Entities\TransferRequest::class,
+                                    'moved_out_reference_id' => (int) $transfer->id,
+                                ]);
+                        }
+
+                        // =====================================================
+                        // ✅ IMPORTANT FIX #2:
+                        // moved_out_at berubah => sync stock_racks bucket utk rack tsb
+                        // =====================================================
+                        // lock stock_racks row (create if missing)
+                        $sr = StockRack::withoutGlobalScopes()->firstOrCreate([
+                            'branch_id'    => $branchId,
+                            'warehouse_id' => $fromWarehouseId,
+                            'rack_id'      => $fromRackId,
+                            'product_id'   => (int) $item->product_id,
+                        ], [
+                            'qty_available' => 0,
+                            'qty_good'      => 0,
+                            'qty_defect'    => 0,
+                            'qty_damaged'   => 0,
+                            'created_by'    => auth()->id(),
+                            'updated_by'    => auth()->id(),
+                        ]);
+
+                        // re-calc defect/damaged yg MASIH available (moved_out_at NULL)
+                        $defectQty = (int) DB::table('product_defect_items')
+                            ->where('branch_id', $branchId)
+                            ->where('warehouse_id', $fromWarehouseId)
+                            ->where('rack_id', $fromRackId)
+                            ->where('product_id', (int) $item->product_id)
+                            ->whereNull('moved_out_at')
+                            ->sum('quantity');
+
+                        $damagedQty = (int) DB::table('product_damaged_items')
+                            ->where('branch_id', $branchId)
+                            ->where('warehouse_id', $fromWarehouseId)
+                            ->where('rack_id', $fromRackId)
+                            ->where('product_id', (int) $item->product_id)
+                            ->whereNull('moved_out_at')
+                            ->where(function ($q) {
+                                $q->whereNull('resolution_status')
+                                ->orWhere('resolution_status', 'pending');
+                            })
+                            ->sum('quantity');
+
+                        if ($defectQty < 0) $defectQty = 0;
+                        if ($damagedQty < 0) $damagedQty = 0;
+
+                        $avail = (int) ($sr->qty_available ?? 0);
+                        $goodQty = $avail - $defectQty - $damagedQty;
+                        if ($goodQty < 0) $goodQty = 0;
+
+                        $sr->forceFill([
+                            'qty_defect'  => $defectQty,
+                            'qty_damaged' => $damagedQty,
+                            'qty_good'    => $goodQty,
+                            'updated_by'  => auth()->id(),
+                        ])->save();
+                    }
+                }
+
+                // =========================================================
+                // Tetap: tambah incoming stock di branch tujuan (FIRST PRINT ONLY)
+                // =========================================================
+                $toBranchId = (int) $transfer->to_branch_id;
+                $incomingWarehouseId = $this->resolveIncomingWarehouseId($toBranchId);
+
+                foreach ($transfer->items as $item) {
+                    $qty = (int) $item->quantity;
+                    if ($qty <= 0) continue;
+
+                    $this->adjustIncomingStock(
+                        $toBranchId,
+                        $incomingWarehouseId,
+                        (int) $item->product_id,
+                        +$qty
+                    );
                 }
             }
 
@@ -873,7 +920,108 @@ class TransferController extends Controller
                 ->with('error', $friendly);
         }
 
-        $warehouses = Warehouse::where('branch_id', (int) $active)->get();
+        // =========================================================
+        // ✅ FIX: Auto-reconcile stocks vs stock_racks (legacy data)
+        // - Tujuan: sum(stock_racks) harus sama dengan stocks
+        // - Kalau stocks > sum rack: selisihnya dimasukin ke rack pertama di WH tsb
+        // =========================================================
+        $branchId = (int) $active;
+
+        // ambil warehouse receiver di branch ini (tidak trigger stock check)
+        $warehouses = Warehouse::withoutGlobalScopes()
+            ->where('branch_id', $branchId)
+            ->get();
+
+        $warehouseIds = $warehouses->pluck('id')->map(fn ($x) => (int) $x)->toArray();
+
+        // produk yang ada di transfer ini saja
+        $productIds = $transfer->items
+            ->pluck('product_id')
+            ->map(fn ($x) => (int) $x)
+            ->unique()
+            ->values()
+            ->toArray();
+
+        // helper reconcile per (branch, warehouse, product)
+        $reconcile = function (int $bId, int $wId, int $pId) {
+
+            $stock = \Modules\Inventory\Entities\Stock::withoutGlobalScopes()
+                ->where('branch_id', $bId)
+                ->where('warehouse_id', $wId)
+                ->where('product_id', $pId)
+                ->first();
+
+            // kalau gak ada stock summary, gak perlu reconcile
+            if (!$stock) return;
+
+            $sAvail  = (int) ($stock->qty_available ?? 0);
+            $sDef    = (int) ($stock->qty_defect ?? 0);
+            $sDam    = (int) ($stock->qty_damaged ?? 0);
+
+            // beberapa data lama kadang qty_good gak ada / gak konsisten
+            $sGood = (int) ($stock->qty_good ?? ($sAvail - $sDef - $sDam));
+            if ($sGood < 0) $sGood = 0;
+
+            // sum rack
+            $rackSum = StockRack::withoutGlobalScopes()
+                ->where('branch_id', $bId)
+                ->where('warehouse_id', $wId)
+                ->where('product_id', $pId)
+                ->selectRaw('
+                    COALESCE(SUM(qty_available),0) as a,
+                    COALESCE(SUM(qty_good),0)      as g,
+                    COALESCE(SUM(qty_defect),0)    as d,
+                    COALESCE(SUM(qty_damaged),0)   as m
+                ')
+                ->first();
+
+            $rAvail = (int) ($rackSum->a ?? 0);
+            $rGood  = (int) ($rackSum->g ?? 0);
+            $rDef   = (int) ($rackSum->d ?? 0);
+            $rDam   = (int) ($rackSum->m ?? 0);
+
+            $diffAvail = $sAvail - $rAvail;
+            $diffGood  = $sGood  - $rGood;
+            $diffDef   = $sDef   - $rDef;
+            $diffDam   = $sDam   - $rDam;
+
+            // kalau sudah match, skip
+            if ($diffAvail === 0 && $diffGood === 0 && $diffDef === 0 && $diffDam === 0) {
+                return;
+            }
+
+            // cari rack target untuk menampung selisih (ambil rack pertama di warehouse tsb)
+            $targetRackId = Rack::withoutGlobalScopes()
+                ->where('warehouse_id', $wId)
+                ->orderBy('id', 'asc')
+                ->value('id');
+
+            if (!$targetRackId) {
+                // kalau warehouse belum punya rack sama sekali, ini memang harus dibikin dulu
+                throw new \RuntimeException("Stock mismatch auto-fix failed: Warehouse {$wId} has no racks. Please create at least 1 rack first.");
+            }
+
+            // masukkan selisih ke rack target supaya sum rack == stock
+            // (pakai method adjustStockRack yang kamu sudah punya)
+            $this->adjustStockRack(
+                $bId,
+                $wId,
+                (int) $targetRackId,
+                $pId,
+                $diffAvail,
+                $diffGood,
+                $diffDef,
+                $diffDam
+            );
+        };
+
+        DB::transaction(function () use ($warehouseIds, $productIds, $branchId, $reconcile) {
+            foreach ($warehouseIds as $whId) {
+                foreach ($productIds as $pid) {
+                    $reconcile($branchId, (int) $whId, (int) $pid);
+                }
+            }
+        });
 
         // ✅ Racks for receiver warehouses (untuk TO rack dropdown)
         $racksByWarehouse = Rack::query()
@@ -938,7 +1086,6 @@ class TransferController extends Controller
             'to_warehouse_id' => 'required|exists:warehouses,id',
             'delivery_code'   => 'required|string|size:6',
             'confirm_issue'   => 'nullable|in:0,1',
-
             'items'                 => 'required|array|min:1',
 
             'items.*.item_id'       => 'required|integer',
@@ -982,12 +1129,13 @@ class TransferController extends Controller
 
         $itemsById = $transfer->items->keyBy('id');
 
+        // ====== VALIDASI rack payload ======
         $rackIdsToValidate = [];
 
         foreach ($request->items as $rowIndex => $row) {
-            $good = (int) ($row['qty_received'] ?? 0);
+            $good   = (int) ($row['qty_received'] ?? 0);
             $defect = (int) ($row['qty_defect'] ?? 0);
-            $damaged = (int) ($row['qty_damaged'] ?? 0);
+            $damaged= (int) ($row['qty_damaged'] ?? 0);
 
             $goodAllocs = $row['good_allocations'] ?? [];
             if ($good > 0) {
@@ -1001,7 +1149,6 @@ class TransferController extends Controller
                     $rid = (int) ($a['to_rack_id'] ?? 0);
 
                     if ($q < 0) abort(422, "Row #".($rowIndex+1).": allocation qty cannot be negative.");
-
                     if ($q > 0 && $rid <= 0) {
                         abort(422, "Row #".($rowIndex+1).": allocation rack is required when allocation qty > 0.");
                     }
@@ -1045,13 +1192,15 @@ class TransferController extends Controller
         }
 
         $rackIdsToValidate = array_values(array_unique(array_filter($rackIdsToValidate)));
-
         foreach ($rackIdsToValidate as $rid) {
             $this->assertRackBelongsToWarehouse((int) $rid, $toWarehouseId);
         }
 
         DB::transaction(function () use ($request, $transfer, $itemsById, $toWarehouseId) {
 
+            // =========================================================
+            // ✅ Safety: jangan confirm 2x (IN)
+            // =========================================================
             $alreadyIn = Mutation::withoutGlobalScopes()
                 ->where('reference', $transfer->reference)
                 ->where('note', 'like', 'Transfer IN%')
@@ -1061,7 +1210,117 @@ class TransferController extends Controller
                 abort(422, 'Transfer already confirmed (stock movement exists).');
             }
 
+            // =========================================================
+            // ✅ Safety: jangan finalize OUT 2x
+            // =========================================================
+            $alreadyOut = Mutation::withoutGlobalScopes()
+                ->where('reference', $transfer->reference)
+                ->where('note', 'like', 'Transfer OUT%')
+                ->exists();
+
+            if ($alreadyOut) {
+                abort(422, 'Sender stock already finalized (OUT movement exists).');
+            }
+
+            // =========================================================
+            // ✅ NEW: Finalize sender OUT (grouped per rack+product+bucket)
+            // 1) Release reserved
+            // 2) Apply mutation OUT (digabung)
+            // =========================================================
+            $senderBranchId    = (int) $transfer->branch_id;
+            $senderWarehouseId = (int) $transfer->from_warehouse_id;
+
+            $transfer->loadMissing(['items', 'fromWarehouse']);
+
+            // (A) release reserved tetap per item (biar aman & simple)
+            foreach ($transfer->items as $item) {
+                $qty = (int) $item->quantity;
+                if ($qty <= 0) continue;
+
+                $this->adjustReservedStock(
+                    $senderBranchId,
+                    $senderWarehouseId,
+                    (int) $item->product_id,
+                    -$qty
+                );
+            }
+
+            // (B) GROUP mutation OUT
+            $outGroups = [];
+            foreach ($transfer->items as $item) {
+                $qty = (int) $item->quantity;
+                if ($qty <= 0) continue;
+
+                $fromRackId = (int) ($item->from_rack_id ?? 0);
+                if ($fromRackId <= 0) {
+                    abort(422, "Missing FROM rack for transfer item ID {$item->id}. Please edit transfer and set rack.");
+                }
+                $this->assertRackBelongsToWarehouse($fromRackId, $senderWarehouseId);
+
+                $cond = strtolower((string) ($item->condition ?? 'good'));
+                $bucketLabel = match ($cond) {
+                    'defect'  => 'DEFECT',
+                    'damaged' => 'DAMAGED',
+                    default   => 'GOOD',
+                };
+
+                $key = (int)$item->product_id . '|' . $fromRackId . '|' . $bucketLabel;
+
+                if (!isset($outGroups[$key])) {
+                    $outGroups[$key] = [
+                        'product_id' => (int) $item->product_id,
+                        'rack_id'    => (int) $fromRackId,
+                        'bucket'     => (string) $bucketLabel,
+                        'qty'        => 0,
+                    ];
+                }
+
+                $outGroups[$key]['qty'] += $qty;
+            }
+
+            foreach ($outGroups as $g) {
+                $noteOut = "Transfer OUT #{$transfer->reference} | From WH {$senderWarehouseId} | {$g['bucket']}";
+
+                $this->mutationController->applyInOut(
+                    $senderBranchId,
+                    $senderWarehouseId,
+                    (int) $g['product_id'],
+                    'Out',
+                    (int) $g['qty'],
+                    (string) $transfer->reference,
+                    $noteOut,
+                    (string) $transfer->getRawOriginal('date'),
+                    (int) $g['rack_id']
+                );
+            }
+
+            // =========================================================
+            // ✅ EXISTING: Kurangi incoming receiver saat confirm
+            // =========================================================
+            $toBranchId = (int) $transfer->to_branch_id;
+            $incomingWarehouseId = $this->resolveIncomingWarehouseId($toBranchId);
+
+            foreach ($request->items as $row) {
+                $productId = (int) ($row['product_id'] ?? 0);
+                $sentForm  = (int) ($row['qty_sent'] ?? 0);
+                if ($productId <= 0 || $sentForm <= 0) continue;
+
+                $this->adjustIncomingStock(
+                    $toBranchId,
+                    $incomingWarehouseId,
+                    $productId,
+                    -$sentForm
+                );
+            }
+
+            // =========================================================
+            // ✅ Receiver IN: proses per-unit tetap, tapi MUTATION-IN digabung
+            // =========================================================
             $hasIssue = false;
+
+            // group untuk mutation IN:
+            // key: product_id|to_rack_id|bucket
+            $inGroups = [];
 
             foreach ($request->items as $rowIndex => $row) {
 
@@ -1076,47 +1335,26 @@ class TransferController extends Controller
 
                 $totalIn = $qtyReceived + $qtyDefect + $qtyDamaged;
 
-                if ($totalIn > $sentForm) {
-                    abort(422, "Invalid input: Good + Defect + Damaged cannot be greater than Sent.");
-                }
-
-                if ($condForm === 'defect' && $qtyReceived > 0) {
-                    abort(422, "Invalid input: Item sent as DEFECT cannot be received as GOOD.");
-                }
-
-                if ($condForm === 'damaged' && ($qtyReceived > 0 || $qtyDefect > 0)) {
-                    abort(422, "Invalid input: Item sent as DAMAGED cannot be received as GOOD/DEFECT.");
-                }
+                if ($totalIn > $sentForm) abort(422, "Invalid input: Good + Defect + Damaged cannot be greater than Sent.");
+                if ($condForm === 'defect' && $qtyReceived > 0) abort(422, "Invalid input: Item sent as DEFECT cannot be received as GOOD.");
+                if ($condForm === 'damaged' && ($qtyReceived > 0 || $qtyDefect > 0)) abort(422, "Invalid input: Item sent as DAMAGED cannot be received as GOOD/DEFECT.");
 
                 $item = $itemsById->get($itemId);
-                if (!$item) {
-                    abort(422, "Invalid items payload: item_id {$itemId} not found in this transfer. Please reload.");
-                }
-
-                if ((int) $item->product_id !== $productId) {
-                    abort(422, "Invalid payload: product mismatch for item_id {$itemId}. Please reload.");
-                }
-
-                if ((int) $item->quantity !== $sentForm) {
-                    abort(422, "Invalid payload: qty_sent mismatch for item_id {$itemId}. Please reload.");
-                }
+                if (!$item) abort(422, "Invalid items payload: item_id {$itemId} not found in this transfer. Please reload.");
+                if ((int) $item->product_id !== $productId) abort(422, "Invalid payload: product mismatch for item_id {$itemId}. Please reload.");
+                if ((int) $item->quantity !== $sentForm) abort(422, "Invalid payload: qty_sent mismatch for item_id {$itemId}. Please reload.");
 
                 $missingQty = $sentForm - $totalIn;
                 if ($missingQty > 0) $hasIssue = true;
 
-                $toBranchId = (int) $transfer->to_branch_id;
-
-                // ✅ NOTE BASE: tidak memuat rack, karena rack ada di kolom rack_id mutation
                 $noteBase = "Transfer IN #{$transfer->reference} | To WH {$toWarehouseId}";
 
-                // 1) GOOD allocations
+                // 1) GOOD allocations (create allocations row, mutation digabung)
                 $goodAllocs = $row['good_allocations'] ?? [];
                 if ($qtyReceived > 0) {
-
                     foreach ($goodAllocs as $a) {
                         $allocQty = (int) ($a['qty'] ?? 0);
                         $toRackId = (int) ($a['to_rack_id'] ?? 0);
-
                         if ($allocQty <= 0) continue;
 
                         \Modules\Transfer\Entities\TransferReceiveAllocation::create([
@@ -1132,32 +1370,12 @@ class TransferController extends Controller
                             'created_by'               => auth()->id(),
                         ]);
 
-                        $this->mutationController->applyInOut(
-                            $toBranchId,
-                            $toWarehouseId,
-                            $productId,
-                            'In',
-                            $allocQty,
-                            $transfer->reference,
-                            "{$noteBase} | GOOD",
-                            now()->toDateString(),
-                            $toRackId
-                        );
-
-                        $this->adjustStockRack(
-                            $toBranchId,
-                            $toWarehouseId,
-                            $toRackId,
-                            $productId,
-                            +$allocQty,
-                            +$allocQty,
-                            0,
-                            0
-                        );
+                        $key = $productId . '|' . $toRackId . '|GOOD';
+                        $inGroups[$key] = ($inGroups[$key] ?? 0) + $allocQty;
                     }
                 }
 
-                // 2) DEFECT per unit
+                // 2) DEFECT per unit (create allocations + defect item, mutation digabung)
                 if ($qtyDefect > 0) {
                     $defectsPayload = $row['defects'] ?? [];
 
@@ -1167,9 +1385,7 @@ class TransferController extends Controller
 
                         if ($request->hasFile("items.$rowIndex.defects.$i.photo")) {
                             $file = $request->file("items.$rowIndex.defects.$i.photo");
-                            if ($file && $file->isValid()) {
-                                $photoPath = $file->store('defects', 'public');
-                            }
+                            if ($file && $file->isValid()) $photoPath = $file->store('defects', 'public');
                         }
 
                         \Modules\Transfer\Entities\TransferReceiveAllocation::create([
@@ -1185,29 +1401,6 @@ class TransferController extends Controller
                             'created_by'               => auth()->id(),
                         ]);
 
-                        $this->mutationController->applyInOut(
-                            $toBranchId,
-                            $toWarehouseId,
-                            $productId,
-                            'In',
-                            1,
-                            $transfer->reference,
-                            "{$noteBase} | DEFECT",
-                            now()->toDateString(),
-                            $toRackId
-                        );
-
-                        $this->adjustStockRack(
-                            $toBranchId,
-                            $toWarehouseId,
-                            $toRackId,
-                            $productId,
-                            +1,
-                            0,
-                            +1,
-                            0
-                        );
-
                         ProductDefectItem::create([
                             'branch_id'      => $toBranchId,
                             'warehouse_id'   => $toWarehouseId,
@@ -1221,10 +1414,13 @@ class TransferController extends Controller
                             'photo_path'     => $photoPath,
                             'created_by'     => auth()->id(),
                         ]);
+
+                        $key = $productId . '|' . $toRackId . '|DEFECT';
+                        $inGroups[$key] = ($inGroups[$key] ?? 0) + 1;
                     }
                 }
 
-                // 3) DAMAGED per unit
+                // 3) DAMAGED per unit (create allocations + damaged item, mutation digabung)
                 if ($qtyDamaged > 0) {
                     $damagedPayload = $row['damaged_items'] ?? [];
 
@@ -1234,9 +1430,7 @@ class TransferController extends Controller
 
                         if ($request->hasFile("items.$rowIndex.damaged_items.$i.photo")) {
                             $file = $request->file("items.$rowIndex.damaged_items.$i.photo");
-                            if ($file && $file->isValid()) {
-                                $photoPath = $file->store('damages', 'public');
-                            }
+                            if ($file && $file->isValid()) $photoPath = $file->store('damages', 'public');
                         }
 
                         \Modules\Transfer\Entities\TransferReceiveAllocation::create([
@@ -1251,29 +1445,6 @@ class TransferController extends Controller
                             'qty_damaged'              => 1,
                             'created_by'               => auth()->id(),
                         ]);
-
-                        $this->mutationController->applyInOut(
-                            $toBranchId,
-                            $toWarehouseId,
-                            $productId,
-                            'In',
-                            1,
-                            $transfer->reference,
-                            "{$noteBase} | DAMAGED",
-                            now()->toDateString(),
-                            $toRackId
-                        );
-
-                        $this->adjustStockRack(
-                            $toBranchId,
-                            $toWarehouseId,
-                            $toRackId,
-                            $productId,
-                            +1,
-                            0,
-                            0,
-                            +1
-                        );
 
                         ProductDamagedItem::create([
                             'branch_id'         => $toBranchId,
@@ -1292,6 +1463,9 @@ class TransferController extends Controller
                             'mutation_in_id'    => null,
                             'mutation_out_id'   => null,
                         ]);
+
+                        $key = $productId . '|' . $toRackId . '|DAMAGED';
+                        $inGroups[$key] = ($inGroups[$key] ?? 0) + 1;
                     }
                 }
 
@@ -1305,9 +1479,7 @@ class TransferController extends Controller
                         $photoPath = null;
                         if ($request->hasFile("items.$rowIndex.missing_items.$i.photo")) {
                             $file = $request->file("items.$rowIndex.missing_items.$i.photo");
-                            if ($file && $file->isValid()) {
-                                $photoPath = $file->store('missing', 'public');
-                            }
+                            if ($file && $file->isValid()) $photoPath = $file->store('missing', 'public');
                         }
 
                         ProductDamagedItem::create([
@@ -1331,6 +1503,31 @@ class TransferController extends Controller
                 }
             }
 
+            // Setelah semua row diproses, baru bikin mutation IN grouped per rack
+            foreach ($inGroups as $key => $qty) {
+                if ((int)$qty <= 0) continue;
+
+                [$pid, $rackId, $bucket] = explode('|', $key);
+                $pid = (int) $pid;
+                $rackId = (int) $rackId;
+                $bucket = strtoupper(trim((string)$bucket));
+
+                $noteBase = "Transfer IN #{$transfer->reference} | To WH {$toWarehouseId}";
+                $noteIn = "{$noteBase} | {$bucket}";
+
+                $this->mutationController->applyInOut(
+                    $toBranchId,
+                    $toWarehouseId,
+                    $pid,
+                    'In',
+                    (int) $qty,
+                    $transfer->reference,
+                    $noteIn,
+                    now()->toDateString(),
+                    $rackId
+                );
+            }
+
             if ($hasIssue && (string) $request->get('confirm_issue', '0') !== '1') {
                 abort(422, "There is a remaining/missing quantity. Please confirm 'Complete with issue' to proceed.");
             }
@@ -1347,6 +1544,59 @@ class TransferController extends Controller
         return redirect()->route('transfers.show', $transfer->id);
     }
 
+    /**
+     * Adjust qty_reserved pada stocks table (lockForUpdate, auto-create row kalau belum ada).
+     * Delta bisa + (saat FIRST PRINT) atau - (saat CONFIRM).
+     */
+    private function adjustReservedStock(int $branchId, int $warehouseId, int $productId, int $delta): void
+    {
+        if ($delta === 0) return;
+
+        $row = DB::table('stocks')
+            ->where('branch_id', (int) $branchId)
+            ->where('warehouse_id', (int) $warehouseId)
+            ->where('product_id', (int) $productId)
+            ->lockForUpdate()
+            ->first();
+
+        if (!$row) {
+            DB::table('stocks')->insert([
+                'branch_id'     => (int) $branchId,
+                'warehouse_id'  => (int) $warehouseId,
+                'product_id'    => (int) $productId,
+                'qty_available' => 0,
+                'qty_reserved'  => 0,
+                'qty_incoming'  => 0,
+                'min_stock'     => 0,
+                'note'          => null,
+                'created_by'    => auth()->id(),
+                'updated_by'    => auth()->id(),
+                'created_at'    => now(),
+                'updated_at'    => now(),
+            ]);
+
+            $row = DB::table('stocks')
+                ->where('branch_id', (int) $branchId)
+                ->where('warehouse_id', (int) $warehouseId)
+                ->where('product_id', (int) $productId)
+                ->lockForUpdate()
+                ->first();
+        }
+
+        $cur = (int) ($row->qty_reserved ?? 0);
+        $new = $cur + $delta;
+
+        if ($new < 0) $new = 0; // clamp
+
+        DB::table('stocks')
+            ->where('id', (int) $row->id)
+            ->update([
+                'qty_reserved' => (int) $new,
+                'updated_by'   => auth()->id(),
+                'updated_at'   => now(),
+            ]);
+    }
+
     public function destroy($id)
     {
         abort_if(Gate::denies('delete_transfers'), 403);
@@ -1361,6 +1611,80 @@ class TransferController extends Controller
 
         $transfer->delete();
         return response()->json(['message' => 'Transfer deleted successfully']);
+    }
+
+    /**
+     * Receiver incoming stock disimpan di warehouse utama (is_main) branch tujuan.
+     * Fallback: warehouse pertama kalau tidak ada is_main.
+     */
+    private function resolveIncomingWarehouseId(int $toBranchId): int
+    {
+        $wid = Warehouse::withoutGlobalScopes()
+            ->where('branch_id', (int) $toBranchId)
+            ->orderByDesc('is_main')   // kalau kolom is_main ada
+            ->orderBy('id', 'asc')
+            ->value('id');
+
+        $wid = (int) ($wid ?? 0);
+
+        if ($wid <= 0) {
+            throw new \RuntimeException("Incoming warehouse not found for destination branch_id={$toBranchId}. Please create at least 1 warehouse for that branch.");
+        }
+
+        return $wid;
+    }
+
+    /**
+     * Adjust qty_incoming pada stocks table (lockForUpdate, auto-create row kalau belum ada).
+     * Delta bisa + (saat ship) atau - (saat confirm).
+     */
+    private function adjustIncomingStock(int $branchId, int $warehouseId, int $productId, int $delta): void
+    {
+        if ($delta === 0) return;
+
+        $row = DB::table('stocks')
+            ->where('branch_id', (int) $branchId)
+            ->where('warehouse_id', (int) $warehouseId)
+            ->where('product_id', (int) $productId)
+            ->lockForUpdate()
+            ->first();
+
+        if (!$row) {
+            DB::table('stocks')->insert([
+                'branch_id'     => (int) $branchId,
+                'warehouse_id'  => (int) $warehouseId,
+                'product_id'    => (int) $productId,
+                'qty_available' => 0,
+                'qty_reserved'  => 0,
+                'qty_incoming'  => 0,
+                'min_stock'     => 0,
+                'note'          => null,
+                'created_by'    => auth()->id(),
+                'updated_by'    => auth()->id(),
+                'created_at'    => now(),
+                'updated_at'    => now(),
+            ]);
+
+            $row = DB::table('stocks')
+                ->where('branch_id', (int) $branchId)
+                ->where('warehouse_id', (int) $warehouseId)
+                ->where('product_id', (int) $productId)
+                ->lockForUpdate()
+                ->first();
+        }
+
+        $cur = (int) ($row->qty_incoming ?? 0);
+        $new = $cur + $delta;
+
+        if ($new < 0) $new = 0; // clamp
+
+        DB::table('stocks')
+            ->where('id', (int) $row->id)
+            ->update([
+                'qty_incoming' => (int) $new,
+                'updated_by'   => auth()->id(),
+                'updated_at'   => now(),
+            ]);
     }
 
     public function cancel(Request $request, int $id)

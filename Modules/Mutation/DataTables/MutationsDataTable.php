@@ -15,38 +15,39 @@ class MutationsDataTable extends DataTable
         return datatables()
             ->eloquent($query)
 
-            ->addColumn('warehouse_name', function ($row) {
-                return optional($row->warehouse)->warehouse_name ?? '-';
+            // sekarang warehouse_name sudah hasil JOIN (alias), jadi tinggal pakai langsung
+            ->editColumn('warehouse_name', function ($row) {
+                $name = trim((string)($row->warehouse_name ?? ''));
+                return $name !== '' ? $name : '-';
             })
 
-            // ✅ NEW: Rack Code/Name label
-            ->addColumn('rack_label', function ($row) {
-                $rack = $row->rack ?? null;
-                if (!$rack) return '-';
-
-                $code = trim((string) ($rack->code ?? ''));
+            // rack_label juga dari JOIN (rack_code / rack_name)
+            ->editColumn('rack_label', function ($row) {
+                $code = trim((string)($row->rack_code ?? ''));
                 if ($code !== '') return $code;
 
-                $name = trim((string) ($rack->name ?? ''));
+                $name = trim((string)($row->rack_name ?? ''));
                 if ($name !== '') return $name;
 
-                return 'Rack#' . (int) $rack->id;
+                $rid = (int)($row->rack_id ?? 0);
+                return $rid > 0 ? ('Rack#' . $rid) : '-';
             })
 
-            ->addColumn('product_code', function ($row) {
-                return optional($row->product)->product_code ?? '-';
+            // product_code & product_name sudah dari JOIN juga
+            ->editColumn('product_code', function ($row) {
+                $v = trim((string)($row->product_code ?? ''));
+                return $v !== '' ? $v : '-';
             })
-            ->addColumn('product_name', function ($row) {
-                return optional($row->product)->product_name ?? '-';
+            ->editColumn('product_name', function ($row) {
+                $v = trim((string)($row->product_name ?? ''));
+                return $v !== '' ? $v : '-';
             })
 
-            // ✅ FORMAT NOTE: jadi Item note #1, #2, dst
+            // ✅ FORMAT NOTE: jadi Item note #1, #2, dst (ini tetap sama, tapi aku pindah jadi editColumn biar konsisten)
             ->editColumn('note', function ($row) {
                 $note = trim((string) ($row->note ?? ''));
                 if ($note === '') return '-';
 
-                // Normalisasi separator biar gampang diproses
-                // Kita treat: " | " sebagai pemisah segmen
                 $parts = preg_split('/\s*\|\s*/', $note);
 
                 $headerParts = [];
@@ -56,7 +57,6 @@ class MutationsDataTable extends DataTable
                     $p = trim((string) $p);
                     if ($p === '') continue;
 
-                    // Deteksi item: "Item: xxx" (case-insensitive)
                     if (preg_match('/^item\s*:\s*(.+)$/i', $p, $m)) {
                         $items[] = trim((string) $m[1]);
                     } else {
@@ -66,12 +66,10 @@ class MutationsDataTable extends DataTable
 
                 $html = '';
 
-                // header tetap ditampilkan (kalau ada)
                 if (!empty($headerParts)) {
                     $html .= '<div class="text-muted small mb-1">' . e(implode(' | ', $headerParts)) . '</div>';
                 }
 
-                // kalau ada item -> tampilkan bernomor
                 if (!empty($items)) {
                     $html .= '<ol class="mb-0 ps-3">';
                     foreach ($items as $i => $it) {
@@ -82,7 +80,6 @@ class MutationsDataTable extends DataTable
                     return $html;
                 }
 
-                // fallback kalau ga ada "Item:" sama sekali
                 return e($note);
             })
 
@@ -93,20 +90,74 @@ class MutationsDataTable extends DataTable
                 return $row->created_at ? Carbon::parse($row->created_at)->format('d-m-Y H:i:s') : '-';
             })
 
-            // ✅ karena note sekarang HTML (ol/li)
-            ->rawColumns(['note']);
+            // ✅ Karena note HTML
+            ->rawColumns(['note'])
+
+            /**
+             * ✅ INI PENTING:
+             * - Biar DataTables bisa search/sort untuk kolom computed,
+             *   kita map kolom virtual ke kolom DB hasil join.
+             */
+            ->filterColumn('warehouse_name', function ($q, $keyword) {
+                $keyword = trim((string)$keyword);
+                if ($keyword === '') return;
+                $q->where('warehouses.warehouse_name', 'like', "%{$keyword}%");
+            })
+            ->orderColumn('warehouse_name', function ($q, $order) {
+                $q->orderBy('warehouses.warehouse_name', $order);
+            })
+
+            ->filterColumn('rack_label', function ($q, $keyword) {
+                $keyword = trim((string)$keyword);
+                if ($keyword === '') return;
+
+                $q->where(function ($x) use ($keyword) {
+                    $x->where('racks.code', 'like', "%{$keyword}%")
+                    ->orWhere('racks.name', 'like', "%{$keyword}%");
+                });
+            })
+            ->orderColumn('rack_label', function ($q, $order) {
+                // prefer code, fallback name
+                $q->orderByRaw("COALESCE(NULLIF(racks.code,''), NULLIF(racks.name,''), '') {$order}");
+            })
+
+            ->filterColumn('product_code', function ($q, $keyword) {
+                $keyword = trim((string)$keyword);
+                if ($keyword === '') return;
+                $q->where('products.product_code', 'like', "%{$keyword}%");
+            })
+            ->orderColumn('product_code', function ($q, $order) {
+                $q->orderBy('products.product_code', $order);
+            })
+
+            ->filterColumn('product_name', function ($q, $keyword) {
+                $keyword = trim((string)$keyword);
+                if ($keyword === '') return;
+                $q->where('products.product_name', 'like', "%{$keyword}%");
+            })
+            ->orderColumn('product_name', function ($q, $order) {
+                $q->orderBy('products.product_name', $order);
+            });
     }
 
     public function query(Mutation $model)
     {
         $active = session('active_branch');
-        $table  = $model->getTable();
+        $table  = $model->getTable(); // mutations
 
-        // base query + eager load
-        // ✅ NEW: include rack eager load
+        // ✅ base query: JOIN supaya sorting/search untuk kolom warehouse/rack/product bisa jalan
         $q = $model->newQuery()
-            ->with(['product', 'warehouse', 'rack'])
-            ->orderByDesc($table.'.id');
+            ->select([
+                $table . '.*',
+                'warehouses.warehouse_name as warehouse_name',
+                'products.product_code as product_code',
+                'products.product_name as product_name',
+                'racks.code as rack_code',
+                'racks.name as rack_name',
+            ])
+            ->leftJoin('warehouses', 'warehouses.id', '=', $table . '.warehouse_id')
+            ->leftJoin('products', 'products.id', '=', $table . '.product_id')
+            ->leftJoin('racks', 'racks.id', '=', $table . '.rack_id');
 
         // kalau active_branch = 'all' => jangan pakai global scope branch
         if ($active === 'all') {
@@ -115,55 +166,44 @@ class MutationsDataTable extends DataTable
 
         /**
          * ===== FILTERS (dibaca dari request Ajax DataTables) =====
-         * - car (keyword mobil)
-         * - warehouse_id
-         * - mutation_type
-         * - reference
-         * - date_from, date_to
-         * - rack_id (optional kalau mau dipakai nanti)
          */
-
         if (request()->filled('warehouse_id')) {
-            $q->where($table.'.warehouse_id', (int) request('warehouse_id'));
+            $q->where($table . '.warehouse_id', (int) request('warehouse_id'));
         }
 
         if (request()->filled('mutation_type')) {
             $type = request('mutation_type');
-            if (in_array($type, ['In','Out','Transfer'], true)) {
-                $q->where($table.'.mutation_type', $type);
+            if (in_array($type, ['In', 'Out', 'Transfer'], true)) {
+                $q->where($table . '.mutation_type', $type);
             }
         }
 
         if (request()->filled('reference')) {
             $ref = trim((string) request('reference'));
-            $q->where($table.'.reference', 'like', "%{$ref}%");
+            $q->where($table . '.reference', 'like', "%{$ref}%");
         }
 
-        // optional rack filter (kalau UI nanti ditambah)
         if (request()->filled('rack_id')) {
-            $q->where($table.'.rack_id', (int) request('rack_id'));
+            $q->where($table . '.rack_id', (int) request('rack_id'));
         }
 
-        // date range pakai kolom mutations.date (karena ada di tabel)
+        // date range pakai kolom mutations.date
         if (request()->filled('date_from')) {
             $from = Carbon::parse(request('date_from'))->toDateString();
-            $q->whereDate($table.'.date', '>=', $from);
+            $q->whereDate($table . '.date', '>=', $from);
         }
 
         if (request()->filled('date_to')) {
             $to = Carbon::parse(request('date_to'))->toDateString();
-            $q->whereDate($table.'.date', '<=', $to);
+            $q->whereDate($table . '.date', '<=', $to);
         }
 
-        // filter "mobil" => cari di product_code / product_name
+        // filter "mobil" => cari di product_code / product_name (join)
         if (request()->filled('car')) {
             $car = trim((string) request('car'));
-
-            $q->whereHas('product', function ($p) use ($car) {
-                $p->where(function ($x) use ($car) {
-                    $x->where('product_code', 'like', "%{$car}%")
-                      ->orWhere('product_name', 'like', "%{$car}%");
-                });
+            $q->where(function ($x) use ($car) {
+                $x->where('products.product_code', 'like', "%{$car}%")
+                ->orWhere('products.product_name', 'like', "%{$car}%");
             });
         }
 
@@ -177,10 +217,10 @@ class MutationsDataTable extends DataTable
             ->columns($this->getColumns())
             ->minifiedAjax()
             ->dom("<'row'<'col-md-3'l><'col-md-5 mb-2'B><'col-md-4'f>> .
-                  'tr' .
-                  <'row'<'col-md-5'i><'col-md-7 mt-2'p>>")
-            // ✅ created_at sekarang index kolom terakhir (cek getColumns)
-            ->orderBy(11, 'desc')
+                'tr' .
+                <'row'<'col-md-5'i><'col-md-7 mt-2'p>>")
+            // ✅ created_at kolom terakhir (0-based = 12)
+            ->orderBy(12, 'desc')
             ->buttons(
                 Button::make('excel')->text('<i class="bi bi-file-earmark-excel-fill"></i> Excel'),
                 Button::make('print')->text('<i class="bi bi-printer-fill"></i> Print'),
@@ -192,25 +232,98 @@ class MutationsDataTable extends DataTable
     protected function getColumns()
     {
         return [
-            Column::make('warehouse_name')->title('Warehouse')->orderable(false)->searchable(false)->className('text-center align-middle'),
+            Column::make('warehouse_name')
+                ->title('Warehouse')
+                ->name('warehouses.warehouse_name')
+                ->orderable(true)
+                ->searchable(true)
+                ->className('text-center align-middle'),
 
-            // ✅ NEW column
-            Column::make('rack_label')->title('Rack')->orderable(false)->searchable(false)->className('text-center align-middle'),
+            Column::make('rack_label')
+                ->title('Rack')
+                // sorting/search rack_label kita mapping via orderColumn/filterColumn,
+                // tapi tetap kasih name biar DataTables gak bikin order by "rack_label" mentah
+                ->name('racks.code')
+                ->orderable(true)
+                ->searchable(true)
+                ->className('text-center align-middle'),
 
-            Column::make('product_code')->title('Code')->orderable(false)->searchable(false)->className('text-center align-middle'),
-            Column::make('product_name')->title('Product / Mobil')->orderable(false)->searchable(false)->className('text-start align-middle'),
+            Column::make('product_code')
+                ->title('Code')
+                ->name('products.product_code')
+                ->orderable(true)
+                ->searchable(true)
+                ->className('text-center align-middle'),
 
-            Column::make('mutation_type')->className('text-center align-middle'),
-            Column::make('reference')->className('text-center align-middle'),
-            Column::make('note')->className('text-start align-middle'),
+            Column::make('product_name')
+                ->title('Product / Mobil')
+                ->name('products.product_name')
+                ->orderable(true)
+                ->searchable(true)
+                ->className('text-start align-middle'),
 
-            Column::make('stock_early')->className('text-center align-middle'),
-            Column::make('stock_in')->className('text-center align-middle'),
-            Column::make('stock_out')->className('text-center align-middle'),
-            Column::make('stock_last')->className('text-center align-middle'),
+            Column::make('mutation_type')
+                ->title('Mutation Type')
+                ->name('mutations.mutation_type')
+                ->orderable(true)
+                ->searchable(true)
+                ->className('text-center align-middle'),
 
-            Column::make('date')->title('Date')->className('text-center align-middle'),
-            Column::make('created_at')->title('Created At')->className('text-center align-middle'),
+            Column::make('reference')
+                ->title('Reference')
+                ->name('mutations.reference')
+                ->orderable(true)
+                ->searchable(true)
+                ->className('text-center align-middle'),
+
+            Column::make('note')
+                ->title('Note')
+                ->name('mutations.note')
+                ->orderable(false)
+                ->searchable(true)
+                ->className('text-start align-middle'),
+
+            Column::make('stock_early')
+                ->title('Stock Early')
+                ->name('mutations.stock_early')
+                ->orderable(true)
+                ->searchable(false)
+                ->className('text-center align-middle'),
+
+            Column::make('stock_in')
+                ->title('Stock In')
+                ->name('mutations.stock_in')
+                ->orderable(true)
+                ->searchable(false)
+                ->className('text-center align-middle'),
+
+            Column::make('stock_out')
+                ->title('Stock Out')
+                ->name('mutations.stock_out')
+                ->orderable(true)
+                ->searchable(false)
+                ->className('text-center align-middle'),
+
+            Column::make('stock_last')
+                ->title('Stock Last')
+                ->name('mutations.stock_last')
+                ->orderable(true)
+                ->searchable(false)
+                ->className('text-center align-middle'),
+
+            Column::make('date')
+                ->title('Date')
+                ->name('mutations.date')
+                ->orderable(true)
+                ->searchable(false)
+                ->className('text-center align-middle'),
+
+            Column::make('created_at')
+                ->title('Created At')
+                ->name('mutations.created_at')
+                ->orderable(true)
+                ->searchable(false)
+                ->className('text-center align-middle'),
         ];
     }
 
