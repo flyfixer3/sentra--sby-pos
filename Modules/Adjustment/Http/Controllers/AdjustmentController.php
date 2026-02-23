@@ -1636,7 +1636,6 @@ class AdjustmentController extends Controller
     public function storeQuality(Request $request)
     {
         $activeBranchId = (int) session('active_branch');
-
         if ($activeBranchId <= 0) {
             return redirect()->back()->with('error', 'Active branch not set.');
         }
@@ -1651,21 +1650,17 @@ class AdjustmentController extends Controller
         // VALIDATION
         // =========================
         if ($isClassic) {
-            // ✅ UPDATED: classic sekarang multi items + qty per item + rack per item (tanpa rack header)
             $request->validate([
                 'date' => ['required', 'date'],
                 'type' => ['required', 'in:defect,damaged'],
                 'warehouse_id' => ['required', 'integer', 'min:1'],
-
                 'items' => ['required', 'array', 'min:1'],
                 'items.*.product_id' => ['required', 'integer', 'min:1'],
                 'items.*.rack_id' => ['required', 'integer', 'min:1'],
                 'items.*.qty' => ['required', 'integer', 'min:1'],
-
-                // global note optional (sesuai UI kamu)
                 'user_note' => ['nullable', 'string', 'max:1000'],
 
-                // detail per unit (auto-validated manual)
+                // ✅ FIX: pastikan ini array biar ngga random (string/json/duplikat)
                 'items.*.defects' => ['nullable', 'array'],
                 'items.*.damaged_items' => ['nullable', 'array'],
             ]);
@@ -1674,16 +1669,14 @@ class AdjustmentController extends Controller
             $request->validate([
                 'date' => ['required', 'date'],
                 'type' => ['required', 'in:defect_to_good,damaged_to_good'],
-
                 'items' => ['required', 'array', 'min:1'],
                 'items.*.product_id' => ['required', 'integer', 'min:1'],
                 'items.*.qty' => ['required', 'integer', 'min:1'],
                 'items.*.selected_unit_ids' => ['required', 'array', 'min:1'],
                 'items.*.selected_unit_ids.*' => ['required', 'integer', 'min:1'],
-
                 'items.*.item_note' => ['nullable', 'string', 'max:255'],
-                'items.*.user_note' => ['nullable', 'string', 'max:255'], // backward compat
-                'user_note' => ['nullable', 'string', 'max:255'], // fallback global
+                'items.*.user_note' => ['nullable', 'string', 'max:255'],
+                'user_note' => ['nullable', 'string', 'max:255'],
             ]);
         }
 
@@ -1695,6 +1688,20 @@ class AdjustmentController extends Controller
 
         $warehouseId = $isClassic ? (int) $request->input('warehouse_id') : 0;
 
+        // helper: normalize detail array (support array OR json string OR null)
+        $normalizeDetailArray = function ($raw): array {
+            if ($raw === null) return [];
+            if (is_array($raw)) return array_values($raw);
+
+            $rawStr = trim((string) $raw);
+            if ($rawStr === '') return [];
+
+            $decoded = json_decode($rawStr, true);
+            if (is_array($decoded)) return array_values($decoded);
+
+            return [];
+        };
+
         try {
             DB::beginTransaction();
 
@@ -1702,32 +1709,28 @@ class AdjustmentController extends Controller
             // Create adjustment header
             // =========================
             $adjustment = new \Modules\Adjustment\Entities\Adjustment();
-            $adjustment->date         = (string) $request->input('date');
-            $adjustment->reference    = $this->generateQualityReclassReference($type);
-            $adjustment->branch_id    = $activeBranchId;
-            $adjustment->created_by   = Auth::id();
+            $adjustment->date = (string) $request->input('date');
+            $adjustment->reference = $this->generateQualityReclassReference($type);
+            $adjustment->branch_id = $activeBranchId;
+            $adjustment->created_by = Auth::id();
             $adjustment->warehouse_id = $isClassic ? $warehouseId : null;
 
-            // note header
             if ($isClassic) {
                 $adjustment->note = trim(
-                    'Quality Reclass GOOD -> ' . strtoupper($type)
-                    . ($globalNote ? ' | ' . $globalNote : '')
+                    'Quality Reclass GOOD -> ' . strtoupper($type) . ($globalNote ? ' | ' . $globalNote : '')
                 );
             } else {
                 $adjustment->note = trim(
-                    'Quality Reclass ' . strtoupper(str_replace('_to_good', '', $type)) . ' -> GOOD'
-                    . ($globalNote ? ' | ' . $globalNote : '')
+                    'Quality Reclass ' . strtoupper(str_replace('_to_good', '', $type)) . ' -> GOOD' . ($globalNote ? ' | ' . $globalNote : '')
                 );
             }
 
             $adjustment->save();
 
             // =========================
-            // (A) CLASSIC: GOOD -> DEFECT / DAMAGED  ✅ UPDATED
+            // (A) CLASSIC: GOOD -> DEFECT / DAMAGED ✅ FIXED
             // =========================
             if ($isClassic) {
-
                 // guard: warehouse must belong to branch
                 $wh = Warehouse::query()->where('id', $warehouseId)->first();
                 if (!$wh) {
@@ -1746,7 +1749,6 @@ class AdjustmentController extends Controller
                 $date = (string) $adjustment->date;
 
                 foreach ($items as $idx => $it) {
-
                     $productId = (int) ($it['product_id'] ?? 0);
                     $rackId    = (int) ($it['rack_id'] ?? 0);
                     $qty       = (int) ($it['qty'] ?? 0);
@@ -1757,19 +1759,26 @@ class AdjustmentController extends Controller
 
                     // validate rack belongs to warehouse
                     $this->assertRackBelongsToWarehouse($rackId, $warehouseId);
-
                     Product::findOrFail($productId);
 
-                    // validate per-unit detail count must match qty
+                    $itemNote = trim(
+                        'Quality Reclass #' . (int) $adjustment->id . ' | GOOD->' . strtoupper($type) . ($globalNote ? ' | ' . $globalNote : '')
+                    );
+
                     if ($type === 'defect') {
-                        $defects = (array) ($it['defects'] ?? []);
+
+                        // ✅ IMPORTANT: normalize detail array
+                        $defects = $normalizeDetailArray($it['defects'] ?? null);
+
+                        // ✅ MUST match qty exactly (ini kunci supaya qty>1 kepakai semua)
                         if (count($defects) !== $qty) {
                             throw new \RuntimeException(
                                 "Line #" . ($idx + 1) . ": Defect detail rows must match Qty. Qty={$qty}, Details=" . count($defects)
                             );
                         }
-                        foreach ($defects as $i => $d) {
-                            $d = (array) $d;
+
+                        for ($i = 0; $i < $qty; $i++) {
+                            $d = (array) ($defects[$i] ?? []);
                             $defectType = trim((string) ($d['defect_type'] ?? ''));
                             if ($defectType === '') {
                                 throw new \RuntimeException(
@@ -1777,63 +1786,27 @@ class AdjustmentController extends Controller
                                 );
                             }
                         }
-                    }
 
-                    if ($type === 'damaged') {
-                        $damagedItems = (array) ($it['damaged_items'] ?? []);
-                        if (count($damagedItems) !== $qty) {
-                            throw new \RuntimeException(
-                                "Line #" . ($idx + 1) . ": Damaged detail rows must match Qty. Qty={$qty}, Details=" . count($damagedItems)
-                            );
-                        }
-                        foreach ($damagedItems as $i => $d) {
-                            $d = (array) $d;
-                            $reason = trim((string) ($d['reason'] ?? ''));
-                            if ($reason === '') {
-                                throw new \RuntimeException(
-                                    "Line #" . ($idx + 1) . ": damaged reason is required for unit #" . ($i + 1)
-                                );
-                            }
-                        }
-                    }
+                        // 1) OUT GOOD dulu
+                        $this->mutationController->applyInOut(
+                            $activeBranchId,
+                            $warehouseId,
+                            $productId,
+                            'Out',
+                            $qty,
+                            $reference,
+                            $itemNote,
+                            $date,
+                            $rackId,
+                            'good',
+                            'summary'
+                        );
 
-                    // mutation note (per item)
-                    $itemNote = trim(
-                        'Quality Reclass #' . (int) $adjustment->id
-                        . ' | GOOD->' . strtoupper($type)
-                        . ($globalNote ? ' | ' . $globalNote : '')
-                    );
-
-                    // =========================================================
-                    // 1) OUT GOOD dulu (kurangi GOOD bucket)
-                    // =========================================================
-                    $this->mutationController->applyInOut(
-                        $activeBranchId,
-                        $warehouseId,
-                        $productId,
-                        'Out',
-                        $qty,
-                        $reference,
-                        $itemNote,
-                        $date,
-                        $rackId,
-                        'good',
-                        'summary'
-                    );
-
-                    // =========================================================
-                    // 2) Create per-unit rows (defect / damaged)
-                    // =========================================================
-                    $mutationInId = 0;
-
-                    if ($type === 'defect') {
-
-                        $defects = (array) ($it['defects'] ?? []);
-
+                        // 2) Create per-unit rows (DEFECT)
                         for ($i = 0; $i < $qty; $i++) {
                             $d = (array) ($defects[$i] ?? []);
                             $defectType = trim((string) ($d['defect_type'] ?? ''));
-                            $desc = trim((string) ($d['description'] ?? ''));
+                            $desc       = trim((string) ($d['description'] ?? ''));
 
                             $photoPath = null;
                             if ($request->hasFile("items.$idx.defects.$i.photo")) {
@@ -1855,9 +1828,7 @@ class AdjustmentController extends Controller
                             ]);
                         }
 
-                        // =========================================================
-                        // 3) IN DEFECT (balikin qty_available net-zero)
-                        // =========================================================
+                        // 3) IN DEFECT (net-zero)
                         $this->mutationController->applyInOut(
                             $activeBranchId,
                             $warehouseId,
@@ -1874,9 +1845,41 @@ class AdjustmentController extends Controller
 
                     } else {
 
-                        $damagedItems = (array) ($it['damaged_items'] ?? []);
+                        // type === 'damaged'
+                        $damagedItems = $normalizeDetailArray($it['damaged_items'] ?? null);
 
-                        // IN dulu -> ambil mutation id untuk mutation_in_id
+                        if (count($damagedItems) !== $qty) {
+                            throw new \RuntimeException(
+                                "Line #" . ($idx + 1) . ": Damaged detail rows must match Qty. Qty={$qty}, Details=" . count($damagedItems)
+                            );
+                        }
+
+                        for ($i = 0; $i < $qty; $i++) {
+                            $d = (array) ($damagedItems[$i] ?? []);
+                            $reason = trim((string) ($d['reason'] ?? ''));
+                            if ($reason === '') {
+                                throw new \RuntimeException(
+                                    "Line #" . ($idx + 1) . ": damaged reason is required for unit #" . ($i + 1)
+                                );
+                            }
+                        }
+
+                        // 1) OUT GOOD dulu
+                        $this->mutationController->applyInOut(
+                            $activeBranchId,
+                            $warehouseId,
+                            $productId,
+                            'Out',
+                            $qty,
+                            $reference,
+                            $itemNote,
+                            $date,
+                            $rackId,
+                            'good',
+                            'summary'
+                        );
+
+                        // 2) IN damaged dulu -> ambil mutation id untuk mutation_in_id
                         $mutationInId = $this->mutationController->applyInOutAndGetMutationId(
                             $activeBranchId,
                             $warehouseId,
@@ -1891,9 +1894,9 @@ class AdjustmentController extends Controller
                             'summary'
                         );
 
+                        // 3) Create per-unit rows (DAMAGED)
                         for ($i = 0; $i < $qty; $i++) {
                             $d = (array) ($damagedItems[$i] ?? []);
-
                             $damageType = strtolower(trim((string) ($d['damage_type'] ?? 'damaged')));
                             if (!in_array($damageType, ['damaged', 'missing'], true)) $damageType = 'damaged';
 
@@ -1913,7 +1916,7 @@ class AdjustmentController extends Controller
                                 'reference_id'        => (int) $adjustment->id,
                                 'reference_type'      => Adjustment::class,
                                 'quantity'            => 1,
-                                'damage_type'         => $damageType, // default damaged
+                                'damage_type'         => $damageType,
                                 'reason'              => $reason,
                                 'photo_path'          => $photoPath,
                                 'cause'               => null,
@@ -1927,10 +1930,7 @@ class AdjustmentController extends Controller
                         }
                     }
 
-                    // =========================================================
-                    // 4) ✅ FIX: create AdjustedProduct log (biar gak kosong)
-                    //    (1 row per item)
-                    // =========================================================
+                    // log ke AdjustedProduct (1 row per item)
                     $noteQrc = 'QRC GOOD->' . strtoupper($type) . ($globalNote ? ' | ' . $globalNote : '');
                     if (mb_strlen($noteQrc) > 255) $noteQrc = mb_substr($noteQrc, 0, 255);
 
@@ -1940,7 +1940,7 @@ class AdjustmentController extends Controller
                         'warehouse_id'  => (int) $warehouseId,
                         'rack_id'       => (int) $rackId,
                         'quantity'      => (int) $qty,
-                        'type'          => 'add', // net-zero event tapi log di list tetap muncul
+                        'type'          => 'add',
                         'note'          => $noteQrc,
                     ]);
                 }
@@ -1950,11 +1950,8 @@ class AdjustmentController extends Controller
             }
 
             // =========================
-            // (B) TO-GOOD: DEFECT/DAMAGED -> GOOD  (BIARKAN PUNYA KAMU)
+            // (B) TO-GOOD: DEFECT/DAMAGED -> GOOD (BIARKAN PUNYA KAMU)
             // =========================
-            // ✅ DI SINI: copy logic kamu yang sekarang, TANPA DIUBAH
-            // (aku tidak rewrite ulang di sini supaya tidak resiko beda)
-            // ---------------------------------------------------------
             $items = (array) $request->input('items', []);
             $fromCondition = ($type === 'damaged_to_good') ? 'damaged' : 'defect';
 
@@ -1975,9 +1972,9 @@ class AdjustmentController extends Controller
             foreach ($items as $rowIdx => $row) {
                 if (!is_array($row)) continue;
 
-                $productId   = (int) ($row['product_id'] ?? 0);
+                $productId = (int) ($row['product_id'] ?? 0);
                 $expectedQty = (int) ($row['qty'] ?? 0);
-                $pickedIds   = $row['selected_unit_ids'] ?? [];
+                $pickedIds = $row['selected_unit_ids'] ?? [];
 
                 $itemNote = '';
                 if (isset($row['item_note'])) {
@@ -1994,7 +1991,6 @@ class AdjustmentController extends Controller
                 if ($productId <= 0 || $expectedQty <= 0 || !is_array($pickedIds)) {
                     throw new \RuntimeException("Invalid items row at index #" . ($rowIdx + 1));
                 }
-
                 if ($itemNote === '') {
                     throw new \RuntimeException("Item note is required at line #" . ($rowIdx + 1));
                 }
@@ -2039,10 +2035,11 @@ class AdjustmentController extends Controller
                     if (!isset($groups[$key])) {
                         $groups[$key] = [
                             'warehouse_id' => $wid,
-                            'rack_id'      => $rid,
-                            'ids'          => [],
+                            'rack_id' => $rid,
+                            'ids' => [],
                         ];
                     }
+
                     $groups[$key]['ids'][] = (int) $u->id;
 
                     if ($headerWarehouseId === null && $wid > 0) {
@@ -2059,19 +2056,16 @@ class AdjustmentController extends Controller
                 $now = now();
 
                 foreach ($groups as $g) {
-                    $wid      = (int) $g['warehouse_id'];
-                    $rid      = (int) $g['rack_id'];
+                    $wid = (int) $g['warehouse_id'];
+                    $rid = (int) $g['rack_id'];
                     $groupIds = (array) $g['ids'];
-                    $qty      = count($groupIds);
-
+                    $qty = count($groupIds);
                     if ($qty <= 0) continue;
 
                     $this->assertRackBelongsToWarehouse($rid, $wid);
 
                     $mutationNote = trim(
-                        'Quality Reclass #' . (int) $adjustment->id
-                        . ' | ' . strtoupper($fromCondition) . '->GOOD'
-                        . ' | ' . $itemNote
+                        'Quality Reclass #' . (int) $adjustment->id . ' | ' . strtoupper($fromCondition) . '->GOOD' . ' | ' . $itemNote
                     );
 
                     // moved_out dulu
@@ -2082,11 +2076,11 @@ class AdjustmentController extends Controller
                             ->whereIn('id', $groupIds)
                             ->whereNull('moved_out_at')
                             ->update([
-                                'moved_out_at'             => $now,
-                                'moved_out_by'             => (int) Auth::id(),
+                                'moved_out_at' => $now,
+                                'moved_out_by' => (int) Auth::id(),
                                 'moved_out_reference_type' => Adjustment::class,
-                                'moved_out_reference_id'   => (int) $adjustment->id,
-                                'updated_at'               => $now,
+                                'moved_out_reference_id' => (int) $adjustment->id,
+                                'updated_at' => $now,
                             ]);
                     } else {
                         ProductDamagedItem::query()
@@ -2095,11 +2089,11 @@ class AdjustmentController extends Controller
                             ->whereIn('id', $groupIds)
                             ->whereNull('moved_out_at')
                             ->update([
-                                'moved_out_at'             => $now,
-                                'moved_out_by'             => (int) Auth::id(),
+                                'moved_out_at' => $now,
+                                'moved_out_by' => (int) Auth::id(),
                                 'moved_out_reference_type' => Adjustment::class,
-                                'moved_out_reference_id'   => (int) $adjustment->id,
-                                'updated_at'               => $now,
+                                'moved_out_reference_id' => (int) $adjustment->id,
+                                'updated_at' => $now,
                             ]);
                     }
 
@@ -2135,12 +2129,12 @@ class AdjustmentController extends Controller
 
                     AdjustedProduct::query()->create([
                         'adjustment_id' => (int) $adjustment->id,
-                        'product_id'    => (int) $productId,
-                        'warehouse_id'  => (int) $wid,
-                        'rack_id'       => (int) $rid,
-                        'quantity'      => (int) $qty,
-                        'type'          => 'add',
-                        'note'          => $noteQrc,
+                        'product_id' => (int) $productId,
+                        'warehouse_id' => (int) $wid,
+                        'rack_id' => (int) $rid,
+                        'quantity' => (int) $qty,
+                        'type' => 'add',
+                        'note' => $noteQrc,
                     ]);
 
                     if ($fromCondition === 'damaged' && (int) $mutationOutId > 0) {
@@ -2150,7 +2144,7 @@ class AdjustmentController extends Controller
                             ->whereIn('id', $groupIds)
                             ->update([
                                 'mutation_out_id' => (int) $mutationOutId,
-                                'updated_at'      => now(),
+                                'updated_at' => now(),
                             ]);
                     }
                 }
@@ -2158,6 +2152,7 @@ class AdjustmentController extends Controller
 
             DB::commit();
             return redirect()->route('adjustments.index')->with('success', 'Quality Issue → Good saved.');
+
         } catch (\Throwable $e) {
             DB::rollBack();
             return redirect()->back()->withInput()->with('error', $e->getMessage());

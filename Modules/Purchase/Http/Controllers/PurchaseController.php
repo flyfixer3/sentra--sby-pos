@@ -22,59 +22,14 @@ use Modules\Purchase\Http\Requests\StorePurchaseRequest;
 use Modules\Purchase\Http\Requests\UpdatePurchaseRequest;
 use Illuminate\Support\Facades\Schema;
 use Modules\PurchaseDelivery\Entities\PurchaseDeliveryDetails;
-use Modules\Mutation\Http\Controllers\MutationController;
 
 class PurchaseController extends Controller
 {
-    private MutationController $mutationController;
-
-    public function __construct(MutationController $mutationController)
-    {
-        $this->mutationController = $mutationController;
-    }
 
     public function index(PurchaseDataTable $dataTable) {
         abort_if(Gate::denies('access_purchases'), 403);
 
         return $dataTable->render('purchase::index');
-    }
-
-    private function createMutationsForWalkInPurchaseDelivery(PurchaseDelivery $pd, Purchase $purchase): void
-    {
-        // konsisten sama PurchaseDeliveryController::confirmStore
-        $reference = 'PD-' . (int) $pd->id;
-
-        // anti double (kalau somehow kepanggil 2x)
-        $alreadyIn = Mutation::withoutGlobalScopes()
-            ->where('reference', $reference)
-            ->where('note', 'like', 'Purchase Delivery IN%')
-            ->exists();
-
-        if ($alreadyIn) {
-            return;
-        }
-
-        // ambil detail PD (yang qty_received sudah terisi)
-        $pd->loadMissing(['purchaseDeliveryDetails']);
-
-        foreach ($pd->purchaseDeliveryDetails as $d) {
-            $qty = (int) $d->qty_received + (int) $d->qty_defect + (int) $d->qty_damaged;
-            if ($qty <= 0) continue;
-
-            $noteIn = "Purchase Delivery IN #{$reference} | WH {$pd->warehouse_id} (walk-in auto received)";
-
-            // pakai engine yang sama dengan confirm PD
-            $this->mutationController->applyInOutAndGetMutationId(
-                (int) $pd->branch_id,
-                (int) $pd->warehouse_id,
-                (int) $d->product_id,
-                'In',
-                (int) $qty,
-                (string) $reference,
-                (string) $noteIn,
-                (string) $pd->getRawOriginal('date')
-            );
-        }
     }
 
     public function createFromDelivery(PurchaseDelivery $purchaseDelivery)
