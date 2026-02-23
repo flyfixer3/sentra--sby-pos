@@ -524,7 +524,17 @@ class ProductTable extends Component
         if (!empty($this->products)) {
             $row = $this->products[0];
             $productId = (string) ($row['id'] ?? '');
-            $qty = (int) ($row['quantity'] ?? 0);
+
+            /**
+             * ✅ FIX UTAMA:
+             * Sebelumnya pakai $row['quantity'] (key tidak dipakai di quality table)
+             * Harusnya pakai $row['qty'] biar konsisten dengan:
+             * - input name="items[..][qty]"
+             * - wire:model="products..qty"
+             * - backend baca items.*.qty
+             */
+            $qty = (int) ($row['qty'] ?? 0);
+
             $name = trim((string) ($row['product_name'] ?? ''));
             $code = trim((string) ($row['product_code'] ?? ''));
             $productText = trim($name . ' | ' . $code);

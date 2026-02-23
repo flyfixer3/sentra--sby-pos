@@ -1649,12 +1649,12 @@ class AdjustmentController extends Controller
         /**
          * =========================================================
          * ✅ PATCH #1 (PENTING): Normalize payload untuk Classic flow
-         * Problem kamu: UI pakai "quantity" tapi backend baca "qty" -> kebaca 0 -> dipaksa jadi 1.
-         * Jadi kita mapping:
-         * - quantity -> qty
-         * - productId -> product_id
-         * - rackId -> rack_id
-         * - defects/damaged_items kalau JSON string -> array
+         * Tujuan:
+         * - Pastikan qty benar-benar kebaca ketika user input > 1.
+         * - Support alias key (quantity -> qty, productId -> product_id, rackId -> rack_id).
+         * - Support defects/damaged_items yang kadang terkirim string JSON.
+         * - ✅ EXTRA SAFETY: kalau qty kebaca 1 tapi detail rows sudah >1,
+         *   maka qty akan disamakan dengan jumlah detail rows (khusus classic flow).
          * =========================================================
          */
         if ($isClassic) {
@@ -1673,27 +1673,65 @@ class AdjustmentController extends Controller
                         $it['rack_id'] = $it['rackId'];
                     }
 
-                    // qty aliases (INI KUNCI BUG KAMU)
+                    // qty aliases (INI KUNCI BUG)
                     if (!isset($it['qty']) && isset($it['quantity'])) {
                         $it['qty'] = $it['quantity'];
                     }
 
-                    // normalize numeric
+                    // normalize numeric qty
                     if (isset($it['qty'])) {
                         $it['qty'] = (int) $it['qty'];
                     }
 
-                    // normalize defects / damaged_items (support json-string)
+                    // normalize defects (support json-string)
                     if (isset($it['defects']) && is_string($it['defects'])) {
-                        $raw = trim($it['defects']);
+                        $raw = trim((string) $it['defects']);
                         $decoded = $raw !== '' ? json_decode($raw, true) : [];
                         if (is_array($decoded)) $it['defects'] = $decoded;
                     }
 
+                    // normalize damaged_items (support json-string)
                     if (isset($it['damaged_items']) && is_string($it['damaged_items'])) {
-                        $raw = trim($it['damaged_items']);
+                        $raw = trim((string) $it['damaged_items']);
                         $decoded = $raw !== '' ? json_decode($raw, true) : [];
                         if (is_array($decoded)) $it['damaged_items'] = $decoded;
+                    }
+
+                    /**
+                     * ✅ EXTRA SAFETY (FIX BUG UTAMA KAMU):
+                     * Kasus yang kamu laporkan:
+                     * - UI sudah bikin detail rows = 2 (atau lebih)
+                     * - Tapi qty yang kebaca di backend masih 1
+                     *
+                     * Maka untuk classic flow:
+                     * - kalau type=defect dan defects sudah array
+                     * - atau type=damaged dan damaged_items sudah array
+                     * dan qty != jumlah detail,
+                     * maka qty dipaksa mengikuti jumlah detail rows.
+                     *
+                     * Ini tidak mengubah logic flow lain, hanya menormalkan
+                     * agar backend tidak menolak input yang sebenarnya valid.
+                     */
+                    $qtyNow = (int) ($it['qty'] ?? 0);
+
+                    if ($type === 'defect') {
+                        $defArr = isset($it['defects']) && is_array($it['defects']) ? array_values($it['defects']) : [];
+                        $defCount = count($defArr);
+
+                        // kalau detail sudah ada dan mismatch dengan qty → trust details
+                        if ($defCount > 0 && $qtyNow !== $defCount) {
+                            $it['qty'] = $defCount;
+                        }
+                    }
+
+                    if ($type === 'damaged') {
+                        $damArr = isset($it['damaged_items']) && is_array($it['damaged_items']) ? array_values($it['damaged_items']) : [];
+                        $damCount = count($damArr);
+
+                        // kalau detail sudah ada dan mismatch dengan qty → trust details
+                        if ($damCount > 0 && $qtyNow !== $damCount) {
+                            $it['qty'] = $damCount;
+                        }
                     }
 
                     $itemsPatch[$idx] = $it;
@@ -1706,7 +1744,6 @@ class AdjustmentController extends Controller
         /**
          * =========================================================
          * ✅ PATCH #2 (tetap seperti kamu): AUTO-ASSIGN rack_id untuk classic GOOD->ISSUE
-         * tapi jangan “memaksa qty jadi 1” karena sekarang qty sudah ternormalisasi
          * =========================================================
          */
         if ($isClassic) {
@@ -1724,9 +1761,6 @@ class AdjustmentController extends Controller
                         $rackId    = (int) ($it['rack_id'] ?? 0);
                         $qty       = (int) ($it['qty'] ?? 0);
 
-                        // ❗ Jangan default qty=1 kalau qty sebenarnya belum kebaca karena key beda.
-                        // Karena PATCH #1 sudah mapping quantity->qty.
-                        // Di sini kalau qty <=0, biarkan ketangkep validation (biar jelas).
                         if ($qty <= 0) {
                             continue;
                         }
