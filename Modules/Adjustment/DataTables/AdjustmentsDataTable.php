@@ -41,6 +41,16 @@ class AdjustmentsDataTable extends DataTable
                 return $this->formatDateWithCreatedTime($row, 'date');
             })
 
+            /**
+             * ✅ FIX: field hasil withSum adalah adjusted_products_sum_quantity
+             * BUKAN adjusted_products_quantity_sum
+             */
+            ->editColumn('adjusted_products_sum_quantity', function ($row) {
+                $v = $row->adjusted_products_sum_quantity ?? 0;
+                // kadang driver DB ngasih string/decimal, kita paksa int
+                return (int) $v;
+            })
+
             ->addColumn('action', function ($data) {
                 return view('adjustment::partials.actions', compact('data'));
             });
@@ -48,7 +58,13 @@ class AdjustmentsDataTable extends DataTable
 
     public function query(Adjustment $model)
     {
-        return $model->query()->withCount('adjustedProducts');
+        /**
+         * adjusted_products_count        = jumlah baris/line item di adjusted_products
+         * adjusted_products_sum_quantity = total pcs (SUM adjusted_products.quantity)
+         */
+        return $model->query()
+            ->withCount('adjustedProducts')
+            ->withSum('adjustedProducts', 'quantity');
     }
 
     public function html()
@@ -62,7 +78,8 @@ class AdjustmentsDataTable extends DataTable
                 "tr" .
                 "<'row'<'col-md-5'i><'col-md-7 mt-2'p>>"
             )
-            ->orderBy(4)
+            // ✅ kolom created_at hidden ada di index terakhir (lihat getColumns)
+            ->orderBy(5)
             ->buttons(
                 Button::make('excel')->text('<i class="bi bi-file-earmark-excel-fill"></i> Excel'),
                 Button::make('print')->text('<i class="bi bi-printer-fill"></i> Print'),
@@ -81,8 +98,13 @@ class AdjustmentsDataTable extends DataTable
             Column::make('reference')
                 ->className('text-center align-middle'),
 
+            // ✅ GANTI TITLE SAJA
             Column::make('adjusted_products_count')
-                ->title('Products')
+                ->title('Product Variations')
+                ->className('text-center align-middle'),
+
+            Column::make('adjusted_products_sum_quantity')
+                ->title('Total Qty')
                 ->className('text-center align-middle'),
 
             Column::computed('action')
