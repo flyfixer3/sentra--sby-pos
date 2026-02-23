@@ -29,9 +29,6 @@ Route::group(['middleware' => 'auth'], function () {
 
     Route::resource('adjustments', 'AdjustmentController');
 
-
-    Route::middleware(['auth'])->group(function () {
-        Route::get('adjustments/quality/to-good/picker', [AdjustmentController::class, 'qualityToGoodPicker'])
-            ->name('adjustments.quality.to_good.picker');
-    });
+    Route::get('/adjustments/quality/to-good/picker', [\Modules\Adjustment\Http\Controllers\AdjustmentController::class, 'qualityToGoodPicker'])
+    ->name('adjustments.quality.to_good.picker');
 });

@@ -289,26 +289,9 @@
                                    ========================= --}}
                                 <div id="qualityIssueToGoodWrap">
                                     <livewire:adjustment.product-table-quality-to-good />
-
-                                    <div class="alert alert-light border mt-3">
-                                        <div class="font-weight-bold mb-1">Quality Issue → GOOD</div>
-                                        <div class="text-muted small">
-                                            Mode ini akan mengambil unit defect/damaged berdasarkan <b>Unit IDs</b> yang kamu pick (bisa lintas warehouse/rack),
-                                            lalu sistem akan mengubah bucket stock menjadi GOOD (net-zero) dan menandai unit tersebut moved_out (soft).
-                                        </div>
-                                    </div>
                                 </div>
 
                                 <div class="sa-divider"></div>
-
-                                <div class="form-group">
-                                    <label class="font-weight-bold">User Note <span class="text-danger">*</span></label>
-                                    <textarea name="user_note" id="quality_user_note" rows="3" class="form-control"
-                                              placeholder="Contoh: alasan reclass / info QC..." required></textarea>
-                                    <small class="text-muted">
-                                        Untuk type <b>DEFECT/DAMAGED → GOOD</b>, note ini <b>wajib</b>.
-                                    </small>
-                                </div>
 
                                 <div class="d-flex justify-content-end mt-3">
                                     <button type="submit" class="btn btn-primary">
@@ -481,20 +464,20 @@
         return type === 'defect_to_good' || type === 'damaged_to_good';
     }
 
+    // ✅ FIX: tampilkan toGoodWrap harus override CSS (display:none)
     function toggleQualityUIMode(type){
         const classic = document.getElementById('qualityClassicWrap');
         const toGoodWrap = document.getElementById('qualityIssueToGoodWrap');
 
         if(isToGood(type)){
             if(classic) classic.style.display = 'none';
-            if(toGoodWrap) toGoodWrap.style.display = '';
+            if(toGoodWrap) toGoodWrap.style.display = 'block';
 
-            // inform livewire new condition
             if(window.Livewire){
                 Livewire.emit('qualityToGoodTypeChanged', type);
             }
         }else{
-            if(classic) classic.style.display = '';
+            if(classic) classic.style.display = 'block';
             if(toGoodWrap) toGoodWrap.style.display = 'none';
         }
     }
@@ -608,13 +591,11 @@
             `;
 
             if(isDamaged){
-                // fixed damage_type (no dropdown)
                 firstColHtml = `
                     <input type="hidden" name="units[${i}][damage_type]" value="damaged">
                     <span class="badge badge-light border px-2 py-1">damaged</span>
                 `;
 
-                // reason required
                 secondColHtml = `
                     <input name="units[${i}][reason]"
                         class="form-control form-control-sm"
@@ -680,7 +661,6 @@
             qualityType.addEventListener('change', function(){
                 toggleQualityUIMode(this.value);
 
-                // classic-only: rebuild unit rows if needed
                 const qtyVal = document.getElementById('quality_qty')?.value || 0;
                 buildUnits(qtyVal, this.value);
 
@@ -732,7 +712,6 @@
             qForm.addEventListener('submit', function(e){
                 const type = document.getElementById('quality_type')?.value || 'defect';
 
-                // to-good: wajib valid semua row table
                 if(isToGood(type)){
                     if(typeof window.validateAllQtgRows === 'function'){
                         const ok = window.validateAllQtgRows();
@@ -743,7 +722,6 @@
                         }
                     }
                 }else{
-                    // classic: pastikan product & qty ada
                     const pid = parseInt(document.getElementById('quality_product_id')?.value || 0);
                     const qty = parseInt(document.getElementById('quality_qty')?.value || 0);
                     if(pid <= 0 || qty <= 0){
@@ -755,7 +733,6 @@
             });
         }
 
-        // initial unit build
         buildUnits(document.getElementById('quality_qty')?.value || 0, document.getElementById('quality_type')?.value || 'defect');
     });
 })();

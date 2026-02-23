@@ -66,14 +66,6 @@
         </ul>
     </div>
 
-    {{-- Alert global kalau ada invalid --}}
-    <div class="alert alert-danger border mt-3" style="display:none;" id="qtgGlobalInvalidAlert">
-        <div class="font-weight-bold mb-1">
-            <i class="bi bi-exclamation-triangle"></i> Masih ada item yang belum valid.
-        </div>
-        <div class="small text-muted">Buka "Pick Items" per item, lalu pastikan total selected sama dengan Expected.</div>
-    </div>
-
     {{-- LIST PRODUCT --}}
     <div class="mt-3">
         @if(empty($products))
@@ -93,9 +85,14 @@
 
                     $pickedTotal = is_array($sel['unit_ids'] ?? null) ? count($sel['unit_ids']) : 0;
                     $isValid = ($pickedTotal === $expected);
+                    $pid = (int) ($p['product_id'] ?? 0);
                 @endphp
 
-                <div class="card mb-3 {{ $isValid ? 'border' : 'border-danger' }}" data-qtg-row="{{ $idx }}">
+                <div
+                    class="card mb-3 {{ $isValid ? 'border' : 'border-danger' }}"
+                    data-qtg-row="{{ $idx }}"
+                    wire:key="qtg-row-{{ $idx }}-pid-{{ $pid }}"
+                >
                     <div class="card-body">
 
                         {{-- Top area --}}
@@ -107,7 +104,7 @@
                                 <div class="text-muted small">
                                     Code: {{ $p['product_code'] ?? '-' }}
                                     &nbsp; <span class="text-muted">|</span> &nbsp;
-                                    product_id: {{ (int) ($p['product_id'] ?? 0) }}
+                                    product_id: {{ $pid }}
                                 </div>
                             </div>
 
@@ -136,13 +133,23 @@
                                     </div>
                                 </div>
 
-                                <div class="text-left">
+                               <div class="text-left">
                                     <div class="text-muted small mb-1">Action</div>
-                                    <button type="button"
-                                            class="btn btn-outline-primary btn-sm"
-                                            onclick="openQtgPickModal({{ $idx }}, {{ (int)($p['product_id'] ?? 0) }})">
-                                        <i class="bi bi-grid"></i> Pick Items
-                                    </button>
+
+                                    <div class="d-flex" style="gap:8px;">
+                                        <button type="button"
+                                                class="btn btn-outline-primary btn-sm"
+                                                onclick="openQtgPickModal({{ $idx }}, {{ $pid }})">
+                                            <i class="bi bi-grid"></i> Pick Items
+                                        </button>
+
+                                        <button type="button"
+                                                class="btn btn-outline-danger btn-sm"
+                                                wire:click="removeProduct({{ $idx }})"
+                                                onclick="return confirm('Remove product ini dari list?')">
+                                            <i class="bi bi-x-circle"></i> Cancel
+                                        </button>
+                                    </div>
                                 </div>
                             </div>
                         </div>
@@ -169,12 +176,29 @@
                             @endif
                         </div>
 
+                        <div class="mt-3">
+                            <label class="small text-muted mb-1">Item Note <span class="text-danger">*</span></label>
+                            <textarea class="form-control"
+                                    rows="2"
+                                    placeholder="Contoh: alasan reclass / info QC..."
+                                    wire:model.defer="products.{{ $idx }}.user_note"
+                                    oninput="window.onQtgExpectedChanged && window.onQtgExpectedChanged({{ $idx }})"></textarea>
+                            <small class="text-muted">
+                                Note wajib untuk Issue → GOOD (per item).
+                            </small>
+                        </div>
+
                         {{-- Hidden inputs for form submission --}}
                         <div data-qtg-hidden-wrap="{{ $idx }}" class="mt-2">
 
-                            <input type="hidden" name="items[{{ $idx }}][product_id]" value="{{ (int)($p['product_id'] ?? 0) }}" data-qtg-base="1">
+                            <input type="hidden" name="items[{{ $idx }}][product_id]" value="{{ $pid }}" data-qtg-base="1">
                             <input type="hidden" name="items[{{ $idx }}][qty]" value="{{ (int)($products[$idx]['expected_qty'] ?? 1) }}" data-qtg-hidden-qty="{{ $idx }}" data-qtg-base="1">
 
+                            <input type="hidden"
+                                name="items[{{ $idx }}][user_note]"
+                                value="{{ (string)($products[$idx]['user_note'] ?? '') }}"
+                                data-qtg-hidden-note="{{ $idx }}"
+                                data-qtg-base="1">
                             @foreach(($sel['unit_ids'] ?? []) as $k => $id)
                                 <input type="hidden" name="items[{{ $idx }}][selected_unit_ids][{{ $k }}]" value="{{ (int)$id }}">
                             @endforeach
@@ -233,7 +257,7 @@
 
                             <div class="col-lg-4 mb-2">
                                 <label class="small text-muted mb-1">Actions</label>
-                                <div class="mt-4 d-flex justify-content-end" style="gap:8px;">
+                                <div class="d-flex" style="gap:8px;">
                                     <button type="button" class="btn btn-light border" onclick="resetQtgFilters()">Reset</button>
                                     <button type="button" class="btn btn-primary" onclick="applyQtgFilters()">Apply</button>
                                 </div>
@@ -413,7 +437,6 @@
                 const rackMap = {};
                 (d.racks||[]).forEach(r => rackMap[r.id] = r.label);
 
-                // group unit by rack
                 const byRack = {};
                 (d.units||[]).forEach(u => {
                     const rid = parseInt(u.rack_id||0);
@@ -496,7 +519,6 @@
 
                         modalUnitIds = uniqInt(modalUnitIds);
 
-                        // enforce max = expected
                         if(modalUnitIds.length > currentExpected){
                             this.checked = false;
                             modalUnitIds = modalUnitIds.filter(x => x !== id);
@@ -530,7 +552,6 @@
                 currentRowIndex = rowIndex;
                 currentProductId = productId;
 
-                // condition ambil dari global select #quality_type (biar selalu sync)
                 const qType = document.getElementById('quality_type')?.value || 'defect_to_good';
                 currentCondition = (qType === 'damaged_to_good') ? 'damaged' : 'defect';
                 setCondHint();
@@ -634,14 +655,19 @@
                     const selPreview = card.querySelector(`[data-qtg-selected-preview="${idx}"]`);
                     if(selPreview) selPreview.textContent = total;
 
-                    // keep qty hidden sync
                     const qtyHidden = card.querySelector(`input[data-qtg-hidden-qty="${idx}"]`);
                     if(qtyHidden) qtyHidden.value = expected;
+
+                    const noteHidden = card.querySelector(`input[data-qtg-hidden-note="${idx}"]`);
+                    if(noteHidden){
+                    // ambil textarea note yang ada di card
+                    const noteEl = card.querySelector('textarea');
+                    noteHidden.value = (noteEl?.value || '').toString();
+                    }
 
                     if(!ok) invalid = true;
                 });
 
-                document.getElementById('qtgGlobalInvalidAlert').style.display = invalid ? 'block' : 'none';
                 return !invalid;
             }
 
@@ -651,7 +677,6 @@
                 }
             }
 
-            // seed selections (for modal prefill)
             window.__qtgSelections = window.__qtgSelections || {};
             @foreach($selections as $i => $sel)
                 window.__qtgSelections[{{ $i }}] = {
