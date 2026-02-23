@@ -940,7 +940,7 @@ class SaleController extends Controller
             'branch_id' => $branchId,
             'quotation_id' => $quotationId,
             'sale_id' => (int) $sale->id,
-            'sale_order_id' => null,
+            'sale_order_id' => null, // walk-in invoice (not from SO)
             'customer_id' => (int) $sale->customer_id,
             'date' => (string) $sale->getRawOriginal('date'),
             'status' => 'pending',
@@ -955,19 +955,82 @@ class SaleController extends Controller
 
         $delivery = SaleDelivery::create($deliveryData);
 
+        // ======================================================
+        // Create SaleDeliveryItems (grouped by product)
+        // ======================================================
         $grouped = $details->groupBy('product_id');
+
+        // ✅ NEW: build qty map untuk reserved pool
+        $reservedAddByProduct = [];
+
         foreach ($grouped as $productId => $productRows) {
+            $pid = (int) $productId;
             $qty = (int) $productRows->sum('quantity');
-            if ($qty <= 0) continue;
+            if ($pid <= 0 || $qty <= 0) continue;
 
             $price = (int) ($productRows->first()->price ?? 0);
 
             SaleDeliveryItem::create([
                 'sale_delivery_id' => (int) $delivery->id,
-                'product_id' => (int) $productId,
+                'product_id' => $pid,
                 'quantity' => $qty,
                 'price' => $price > 0 ? $price : null,
             ]);
+
+            // ✅ accumulate reserved increase
+            if (!isset($reservedAddByProduct[$pid])) $reservedAddByProduct[$pid] = 0;
+            $reservedAddByProduct[$pid] += $qty;
+        }
+
+        // ======================================================
+        // ✅ NEW: increment qty_reserved on POOL STOCK (warehouse_id NULL)
+        // This is required for WALK-IN flow:
+        // Invoice -> auto SaleDelivery (pending) -> later Confirm will DECREMENT reserved.
+        // ======================================================
+        if ($branchId > 0 && !empty($reservedAddByProduct)) {
+            foreach ($reservedAddByProduct as $pid => $qtyAdd) {
+                $pid = (int) $pid;
+                $qtyAdd = (int) $qtyAdd;
+
+                if ($pid <= 0 || $qtyAdd <= 0) continue;
+
+                $row = DB::table('stocks')
+                    ->where('branch_id', (int) $branchId)
+                    ->whereNull('warehouse_id')
+                    ->where('product_id', (int) $pid)
+                    ->lockForUpdate()
+                    ->first();
+
+                if ($row) {
+                    $currentReserved = (int) ($row->qty_reserved ?? 0);
+
+                    DB::table('stocks')
+                        ->where('id', (int) $row->id)
+                        ->update([
+                            'qty_reserved' => $currentReserved + $qtyAdd,
+                            'updated_by'   => auth()->id(),
+                            'updated_at'   => now(),
+                        ]);
+                } else {
+                    DB::table('stocks')->insert([
+                        'product_id'     => (int) $pid,
+                        'branch_id'      => (int) $branchId,
+                        'warehouse_id'   => null,
+
+                        // pool row: available/incoming default 0, reserved = qty invoice
+                        'qty_available'  => 0,
+                        'qty_reserved'   => (int) $qtyAdd,
+                        'qty_incoming'   => 0,
+                        'min_stock'      => 0,
+
+                        'note'           => null,
+                        'created_by'     => auth()->id(),
+                        'updated_by'     => auth()->id(),
+                        'created_at'     => now(),
+                        'updated_at'     => now(),
+                    ]);
+                }
+            }
         }
 
         if (empty($delivery->reference)) {
