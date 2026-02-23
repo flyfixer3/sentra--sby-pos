@@ -25,6 +25,7 @@
                 <th style="width:90px" class="text-center">Action</th>
             </tr>
             </thead>
+
             <tbody>
             @if(!empty($products))
                 @foreach($products as $key => $product)
@@ -32,14 +33,14 @@
                         // Classic Quality: selalu ambil GOOD available
                         $stockLabel    = 'GOOD';
                         $availableQty  = (int)($product['available_qty'] ?? 0);
-
-                        $badgeClass = 'badge-success';
+                        $badgeClass    = 'badge-success';
 
                         $selectedRackId = isset($product['rack_id']) ? (int)$product['rack_id'] : null;
+
                         $qty = (int)($product['qty'] ?? 1);
                         if ($qty < 1) $qty = 1;
 
-                        $isDefectMode = (($qualityType ?? 'defect') === 'defect');
+                        $isDefectMode  = (($qualityType ?? 'defect') === 'defect');
                         $isDamagedMode = (($qualityType ?? 'defect') === 'damaged');
 
                         $defects = (array)($product['defects'] ?? []);
@@ -49,7 +50,7 @@
                         $damagedItems = array_values($damagedItems);
                     @endphp
 
-                    {{-- ✅ Hidden field product_id tetap perlu --}}
+                    {{-- ✅ Hidden product_id wajib untuk backend --}}
                     <input type="hidden"
                            name="items[{{ $key }}][product_id]"
                            value="{{ (int)($product['id'] ?? 0) }}">
@@ -58,6 +59,7 @@
                         <td>{{ $key + 1 }}</td>
                         <td>{{ $product['product_name'] }}</td>
                         <td>{{ $product['product_code'] }}</td>
+
                         <td class="text-center">
                             <span class="badge {{ $badgeClass }}">
                                 {{ $stockLabel }}: {{ $availableQty }}
@@ -65,14 +67,14 @@
                         </td>
 
                         <td>
-                            {{-- ✅ FIX: kasih name agar ikut POST --}}
+                            {{-- ✅ PENTING: select harus punya name supaya ikut POST --}}
                             <select class="form-control"
                                     name="items[{{ $key }}][rack_id]"
                                     wire:model="products.{{ $key }}.rack_id"
                                     required>
                                 <option value="">-- Select Rack --</option>
                                 @foreach(($rackOptions ?? []) as $opt)
-                                    <option value="{{ $opt['id'] }}" {{ (int)$opt['id'] === (int)$selectedRackId ? 'selected' : '' }}>
+                                    <option value="{{ (int)$opt['id'] }}" {{ (int)$opt['id'] === (int)$selectedRackId ? 'selected' : '' }}>
                                         {{ $opt['label'] }}
                                     </option>
                                 @endforeach
@@ -82,14 +84,16 @@
                         </td>
 
                         <td class="text-center">
-                            {{-- ✅ FIX: kasih name agar qty yang user ketik pasti terkirim --}}
+                            {{-- ✅ PENTING: input qty harus punya name supaya ikut POST --}}
                             <input type="number"
                                    name="items[{{ $key }}][qty]"
                                    min="1"
                                    class="form-control text-center"
                                    style="max-width:110px;margin:0 auto;"
-                                   wire:model="products.{{ $key }}.qty"
-                                   value="{{ (int)$qty }}">
+                                   wire:model.lazy="products.{{ $key }}.qty"
+                                   value="{{ (int)$qty }}"
+                                   required>
+
                             <small class="text-muted d-block mt-1">
                                 Max: {{ (int)$availableQty }}
                             </small>
@@ -106,7 +110,9 @@
                     <tr>
                         <td colspan="7">
                             @if($isDefectMode)
-                                <div class="mb-2 font-weight-bold">Defect Details (per unit) — Qty: {{ (int)$qty }}</div>
+                                <div class="mb-2 font-weight-bold">
+                                    Defect Details (per unit) — Qty: {{ (int)$qty }}
+                                </div>
 
                                 @for($i = 0; $i < $qty; $i++)
                                     @php
@@ -155,7 +161,9 @@
                             @endif
 
                             @if($isDamagedMode)
-                                <div class="mb-2 font-weight-bold">Damaged Details (per unit) — Qty: {{ (int)$qty }}</div>
+                                <div class="mb-2 font-weight-bold">
+                                    Damaged Details (per unit) — Qty: {{ (int)$qty }}
+                                </div>
 
                                 @for($i = 0; $i < $qty; $i++)
                                     @php
@@ -221,7 +229,6 @@
                             @endif
                         </td>
                     </tr>
-
                 @endforeach
             @else
                 <tr>

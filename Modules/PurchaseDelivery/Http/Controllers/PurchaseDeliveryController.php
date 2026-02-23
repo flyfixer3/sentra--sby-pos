@@ -387,41 +387,6 @@ class PurchaseDeliveryController extends Controller
         ]);
     }
 
-    private function upsertStockRack(
-        int $branchId,
-        int $warehouseId,
-        int $rackId,
-        int $productId,
-        int $qtyAll,
-        int $qtyGood,
-        int $qtyDefect,
-        int $qtyDamaged
-    ): void {
-        $row = StockRack::withoutGlobalScopes()->firstOrNew([
-            'branch_id'    => $branchId,
-            'warehouse_id' => $warehouseId,
-            'rack_id'      => $rackId,
-            'product_id'   => $productId,
-        ]);
-
-        $row->qty_available = (int) ($row->qty_available ?? 0);
-        $row->qty_good      = (int) ($row->qty_good ?? 0);
-        $row->qty_defect    = (int) ($row->qty_defect ?? 0);
-        $row->qty_damaged   = (int) ($row->qty_damaged ?? 0);
-
-        $row->qty_available += $qtyAll;
-        $row->qty_good      += $qtyGood;
-        $row->qty_defect    += $qtyDefect;
-        $row->qty_damaged   += $qtyDamaged;
-
-        if ($row->qty_available < 0) $row->qty_available = 0;
-        if ($row->qty_good < 0)      $row->qty_good = 0;
-        if ($row->qty_defect < 0)    $row->qty_defect = 0;
-        if ($row->qty_damaged < 0)   $row->qty_damaged = 0;
-
-        $row->save();
-    }
-
     private function assertRackBelongsToWarehouse(int $rackId, int $warehouseId): void
     {
         $ok = Rack::query()
@@ -647,30 +612,14 @@ class PurchaseDeliveryController extends Controller
                     }
                 }
 
-                // ✅ MUTATION IN: per rack
-                $mutationInByRack = [];
-                foreach ($rackAgg as $rackId => $agg) {
-                    $qtyRackTotal = (int) ($agg['total'] ?? 0);
-                    if ($qtyRackTotal <= 0) continue;
+                // =========================================================
+                // ✅ (1) INSERT DEFECT/DAMAGED ITEMS DULU
+                //     - mutation_in_id untuk damaged boleh null dulu
+                //     - kita simpan ID damaged yang dibuat untuk di-update setelah mutation dibuat
+                // =========================================================
+                $createdDamagedIdsByRack = [];
 
-                    $noteIn = "Purchase Delivery IN #{$reference} | WH {$purchaseDelivery->warehouse_id}";
-
-                    $mid = $this->mutationController->applyInOutAndGetMutationId(
-                        (int) $purchaseDelivery->branch_id,
-                        (int) $purchaseDelivery->warehouse_id,
-                        $productId,
-                        'In',
-                        $qtyRackTotal,
-                        $reference,
-                        $noteIn,
-                        (string) $purchaseDelivery->getRawOriginal('date'),
-                        (int) $rackId
-                    );
-
-                    $mutationInByRack[(int) $rackId] = (int) $mid;
-                }
-
-                // ✅ Defect per unit
+                // Defect per unit
                 if ($addDefect > 0) {
                     foreach ($defRows as $k => $d) {
                         $photoPath = null;
@@ -696,7 +645,7 @@ class PurchaseDeliveryController extends Controller
                     }
                 }
 
-                // ✅ Damaged per unit
+                // Damaged per unit (mutation_in_id diisi belakangan)
                 if ($addDamaged > 0) {
                     foreach ($damRows as $k => $d) {
                         $photoPath = null;
@@ -705,9 +654,8 @@ class PurchaseDeliveryController extends Controller
                         }
 
                         $rackId = (int) ($d['rack_id'] ?? 0);
-                        $mutationInId = $rackId > 0 ? (int) ($mutationInByRack[$rackId] ?? 0) : 0;
 
-                        ProductDamagedItem::create([
+                        $created = ProductDamagedItem::create([
                             'branch_id'       => (int) $purchaseDelivery->branch_id,
                             'warehouse_id'    => (int) $purchaseDelivery->warehouse_id,
                             'rack_id'         => $rackId > 0 ? $rackId : null,
@@ -718,27 +666,101 @@ class PurchaseDeliveryController extends Controller
                             'reason'          => $d['damaged_reason'] ?? null,
                             'photo_path'      => $photoPath,
                             'created_by'      => auth()->id(),
-                            'mutation_in_id'  => $mutationInId > 0 ? $mutationInId : null,
+                            'mutation_in_id'  => null, // ✅ isi setelah mutation dibuat
                             'mutation_out_id' => null,
                         ]);
+
+                        $rid = $rackId > 0 ? $rackId : 0;
+                        if ($rid > 0) {
+                            if (!isset($createdDamagedIdsByRack[$rid])) $createdDamagedIdsByRack[$rid] = [];
+                            $createdDamagedIdsByRack[$rid][] = (int) $created->id;
+                        }
                     }
                 }
 
-                // ✅ UPDATE stock_racks per rack
+                // =========================================================
+                // ✅ (2) MUTATION IN: ABSOLUT lewat MutationController
+                //     - per rack
+                //     - per bucket: good/defect/damaged (biar stock_racks bucket ke-update)
+                //     - mode summary (merge 1 row per rack & reference)
+                // =========================================================
                 foreach ($rackAgg as $rackId => $agg) {
-                    $this->upsertStockRack(
-                        (int) $purchaseDelivery->branch_id,
-                        (int) $purchaseDelivery->warehouse_id,
-                        (int) $rackId,
-                        (int) $productId,
-                        (int) $agg['total'],
-                        (int) $agg['good'],
-                        (int) $agg['defect'],
-                        (int) $agg['damaged']
-                    );
+
+                    $rackId = (int) $rackId;
+                    $qtyGood   = (int) ($agg['good'] ?? 0);
+                    $qtyDefect = (int) ($agg['defect'] ?? 0);
+                    $qtyDam    = (int) ($agg['damaged'] ?? 0);
+
+                    if (($qtyGood + $qtyDefect + $qtyDam) <= 0) continue;
+
+                    $noteBase = "Purchase Delivery IN #{$reference} | WH " . (int) $purchaseDelivery->warehouse_id;
+
+                    // Kita butuh mutation id untuk damaged rows (pakai id hasil call terakhir/merged).
+                    $mutationIdForRack = 0;
+
+                    if ($qtyGood > 0) {
+                        $mutationIdForRack = (int) $this->mutationController->applyInOutAndGetMutationId(
+                            (int) $purchaseDelivery->branch_id,
+                            (int) $purchaseDelivery->warehouse_id,
+                            $productId,
+                            'In',
+                            $qtyGood,
+                            $reference,
+                            $noteBase . ' | GOOD',
+                            (string) $purchaseDelivery->getRawOriginal('date'),
+                            $rackId,
+                            'good',
+                            'summary'
+                        );
+                    }
+
+                    if ($qtyDefect > 0) {
+                        $mutationIdForRack = (int) $this->mutationController->applyInOutAndGetMutationId(
+                            (int) $purchaseDelivery->branch_id,
+                            (int) $purchaseDelivery->warehouse_id,
+                            $productId,
+                            'In',
+                            $qtyDefect,
+                            $reference,
+                            $noteBase . ' | DEFECT',
+                            (string) $purchaseDelivery->getRawOriginal('date'),
+                            $rackId,
+                            'defect',
+                            'summary'
+                        );
+                    }
+
+                    if ($qtyDam > 0) {
+                        $mutationIdForRack = (int) $this->mutationController->applyInOutAndGetMutationId(
+                            (int) $purchaseDelivery->branch_id,
+                            (int) $purchaseDelivery->warehouse_id,
+                            $productId,
+                            'In',
+                            $qtyDam,
+                            $reference,
+                            $noteBase . ' | DAMAGED',
+                            (string) $purchaseDelivery->getRawOriginal('date'),
+                            $rackId,
+                            'damaged',
+                            'summary'
+                        );
+                    }
+
+                    // ✅ isi mutation_in_id untuk damaged items yang tadi dibuat di rack ini
+                    if ($mutationIdForRack > 0 && !empty($createdDamagedIdsByRack[$rackId])) {
+                        ProductDamagedItem::withoutGlobalScopes()
+                            ->whereIn('id', array_map('intval', $createdDamagedIdsByRack[$rackId]))
+                            ->update([
+                                'mutation_in_id' => $mutationIdForRack,
+                                'updated_at'     => now(),
+                            ]);
+                    }
                 }
 
-                // ✅ FIX: TURUNKAN INCOMING POOL (warehouse_id = NULL)
+                // =========================================================
+                // ✅ (3) TURUNKAN INCOMING POOL (warehouse_id = NULL)
+                //     (tetap, karena MutationController tidak handle "incoming pool")
+                // =========================================================
                 $branchId = (int) $purchaseDelivery->branch_id;
 
                 $poolRow = DB::table('stocks')

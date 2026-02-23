@@ -322,6 +322,56 @@ class PurchaseController extends Controller
                 ]);
             }
 
+            // =========================================================
+            // ✅ NEW (WALK-IN): INCREASE qty_incoming (stocks pool)
+            // - hanya kalau TIDAK lewat PO dan TIDAK fromDelivery
+            // - karena PO sudah handle incoming-nya
+            // =========================================================
+            if (!$purchase_order && !$fromDelivery) {
+
+                // aggregate qty per product dari cart
+                $qtyByProduct = [];
+                foreach (Cart::instance('purchase')->content() as $it) {
+                    $pid = (int) ($it->id ?? 0);
+                    $qty = (int) ($it->qty ?? 0);
+                    if ($pid <= 0 || $qty <= 0) continue;
+
+                    if (!isset($qtyByProduct[$pid])) $qtyByProduct[$pid] = 0;
+                    $qtyByProduct[$pid] += $qty;
+                }
+
+                foreach ($qtyByProduct as $pid => $qty) {
+
+                    $poolRow = DB::table('stocks')
+                        ->where('branch_id', (int) $branchId)
+                        ->whereNull('warehouse_id')
+                        ->where('product_id', (int) $pid)
+                        ->lockForUpdate()
+                        ->first();
+
+                    if ($poolRow) {
+                        DB::table('stocks')
+                            ->where('id', (int) $poolRow->id)
+                            ->update([
+                                'qty_incoming' => (int) ($poolRow->qty_incoming ?? 0) + (int) $qty,
+                                'updated_at'   => now(),
+                            ]);
+                    } else {
+                        DB::table('stocks')->insert([
+                            'branch_id'     => (int) $branchId,
+                            'warehouse_id'  => null,
+                            'product_id'    => (int) $pid,
+                            'qty_available' => 0,
+                            'qty_reserved'  => 0,
+                            'qty_incoming'  => (int) $qty,
+                            'min_stock'     => 0,
+                            'created_at'    => now(),
+                            'updated_at'    => now(),
+                        ]);
+                    }
+                }
+            }
+
             // =========================
             // 2) AUTO CREATE PURCHASE DELIVERY (WALK-IN)
             // =========================

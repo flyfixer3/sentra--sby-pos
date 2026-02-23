@@ -1,4 +1,4 @@
-{{-- Modules/Adjustment/Resources/views/partials/quality_reclass_good_to_issue.blade.php --}}
+<!-- {{-- Modules/Adjustment/Resources/views/partials/quality_reclass_good_to_issue.blade.php --}} -->
 
 <div class="card mt-3">
     <div class="card-header">

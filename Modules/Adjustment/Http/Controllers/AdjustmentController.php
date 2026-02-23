@@ -1646,6 +1646,135 @@ class AdjustmentController extends Controller
         $isToGood = in_array($type, ['defect_to_good', 'damaged_to_good'], true);
         $isClassic = !$isToGood;
 
+        /**
+         * =========================================================
+         * ✅ PATCH #1 (PENTING): Normalize payload untuk Classic flow
+         * Problem kamu: UI pakai "quantity" tapi backend baca "qty" -> kebaca 0 -> dipaksa jadi 1.
+         * Jadi kita mapping:
+         * - quantity -> qty
+         * - productId -> product_id
+         * - rackId -> rack_id
+         * - defects/damaged_items kalau JSON string -> array
+         * =========================================================
+         */
+        if ($isClassic) {
+            $itemsPatch = $request->input('items', []);
+            if (is_array($itemsPatch)) {
+                foreach ($itemsPatch as $idx => $it) {
+                    if (!is_array($it)) continue;
+
+                    // product_id aliases
+                    if (!isset($it['product_id']) && isset($it['productId'])) {
+                        $it['product_id'] = $it['productId'];
+                    }
+
+                    // rack_id aliases
+                    if (!isset($it['rack_id']) && isset($it['rackId'])) {
+                        $it['rack_id'] = $it['rackId'];
+                    }
+
+                    // qty aliases (INI KUNCI BUG KAMU)
+                    if (!isset($it['qty']) && isset($it['quantity'])) {
+                        $it['qty'] = $it['quantity'];
+                    }
+
+                    // normalize numeric
+                    if (isset($it['qty'])) {
+                        $it['qty'] = (int) $it['qty'];
+                    }
+
+                    // normalize defects / damaged_items (support json-string)
+                    if (isset($it['defects']) && is_string($it['defects'])) {
+                        $raw = trim($it['defects']);
+                        $decoded = $raw !== '' ? json_decode($raw, true) : [];
+                        if (is_array($decoded)) $it['defects'] = $decoded;
+                    }
+
+                    if (isset($it['damaged_items']) && is_string($it['damaged_items'])) {
+                        $raw = trim($it['damaged_items']);
+                        $decoded = $raw !== '' ? json_decode($raw, true) : [];
+                        if (is_array($decoded)) $it['damaged_items'] = $decoded;
+                    }
+
+                    $itemsPatch[$idx] = $it;
+                }
+
+                $request->merge(['items' => $itemsPatch]);
+            }
+        }
+
+        /**
+         * =========================================================
+         * ✅ PATCH #2 (tetap seperti kamu): AUTO-ASSIGN rack_id untuk classic GOOD->ISSUE
+         * tapi jangan “memaksa qty jadi 1” karena sekarang qty sudah ternormalisasi
+         * =========================================================
+         */
+        if ($isClassic) {
+            $warehouseIdPatch = (int) $request->input('warehouse_id', 0);
+
+            // only attempt if warehouse is selected
+            if ($warehouseIdPatch > 0) {
+                $itemsPatch = $request->input('items', []);
+                if (is_array($itemsPatch)) {
+
+                    foreach ($itemsPatch as $idx => $it) {
+                        if (!is_array($it)) continue;
+
+                        $productId = (int) ($it['product_id'] ?? 0);
+                        $rackId    = (int) ($it['rack_id'] ?? 0);
+                        $qty       = (int) ($it['qty'] ?? 0);
+
+                        // ❗ Jangan default qty=1 kalau qty sebenarnya belum kebaca karena key beda.
+                        // Karena PATCH #1 sudah mapping quantity->qty.
+                        // Di sini kalau qty <=0, biarkan ketangkep validation (biar jelas).
+                        if ($qty <= 0) {
+                            continue;
+                        }
+
+                        // kalau sudah ada rack_id -> skip
+                        if ($productId > 0 && $rackId > 0) {
+                            continue;
+                        }
+
+                        // kalau product_id kosong -> biarkan nanti ketangkep validation
+                        if ($productId <= 0) {
+                            continue;
+                        }
+
+                        // cari rack berdasarkan stock GOOD
+                        $best = DB::table('stock_racks')
+                            ->where('branch_id', $activeBranchId)
+                            ->where('warehouse_id', $warehouseIdPatch)
+                            ->where('product_id', $productId)
+                            ->where('qty_good', '>', 0)
+                            ->orderByDesc('qty_good')
+                            ->orderBy('rack_id')
+                            ->first(['rack_id', 'qty_good']);
+
+                        if (!$best || (int)($best->rack_id ?? 0) <= 0) {
+                            throw new \RuntimeException(
+                                "Line #" . ($idx + 1) . ": Rack is required, but no GOOD stock rack found for this product in selected warehouse."
+                            );
+                        }
+
+                        $autoRackId = (int) $best->rack_id;
+                        $goodQtyOnRack = (int) ($best->qty_good ?? 0);
+
+                        if ($qty > $goodQtyOnRack) {
+                            throw new \RuntimeException(
+                                "Line #" . ($idx + 1) . ": Qty={$qty} exceeds GOOD stock on auto rack (Rack ID={$autoRackId}, GOOD={$goodQtyOnRack}). Please choose rack manually or reduce qty."
+                            );
+                        }
+
+                        // assign
+                        $itemsPatch[$idx]['rack_id'] = $autoRackId;
+                    }
+
+                    $request->merge(['items' => $itemsPatch]);
+                }
+            }
+        }
+
         // =========================
         // VALIDATION
         // =========================
@@ -1659,13 +1788,10 @@ class AdjustmentController extends Controller
                 'items.*.rack_id' => ['required', 'integer', 'min:1'],
                 'items.*.qty' => ['required', 'integer', 'min:1'],
                 'user_note' => ['nullable', 'string', 'max:1000'],
-
-                // ✅ FIX: pastikan ini array biar ngga random (string/json/duplikat)
                 'items.*.defects' => ['nullable', 'array'],
                 'items.*.damaged_items' => ['nullable', 'array'],
             ]);
         } else {
-            // ✅ biarkan seperti kamu sekarang
             $request->validate([
                 'date' => ['required', 'date'],
                 'type' => ['required', 'in:defect_to_good,damaged_to_good'],
@@ -1728,10 +1854,9 @@ class AdjustmentController extends Controller
             $adjustment->save();
 
             // =========================
-            // (A) CLASSIC: GOOD -> DEFECT / DAMAGED ✅ FIXED
+            // (A) CLASSIC: GOOD -> DEFECT / DAMAGED
             // =========================
             if ($isClassic) {
-                // guard: warehouse must belong to branch
                 $wh = Warehouse::query()->where('id', $warehouseId)->first();
                 if (!$wh) {
                     throw new \RuntimeException("Warehouse not found.");
@@ -1757,7 +1882,6 @@ class AdjustmentController extends Controller
                         throw new \RuntimeException("Invalid item at line #" . ($idx + 1));
                     }
 
-                    // validate rack belongs to warehouse
                     $this->assertRackBelongsToWarehouse($rackId, $warehouseId);
                     Product::findOrFail($productId);
 
@@ -1766,11 +1890,8 @@ class AdjustmentController extends Controller
                     );
 
                     if ($type === 'defect') {
-
-                        // ✅ IMPORTANT: normalize detail array
                         $defects = $normalizeDetailArray($it['defects'] ?? null);
 
-                        // ✅ MUST match qty exactly (ini kunci supaya qty>1 kepakai semua)
                         if (count($defects) !== $qty) {
                             throw new \RuntimeException(
                                 "Line #" . ($idx + 1) . ": Defect detail rows must match Qty. Qty={$qty}, Details=" . count($defects)
@@ -1787,7 +1908,7 @@ class AdjustmentController extends Controller
                             }
                         }
 
-                        // 1) OUT GOOD dulu
+                        // OUT GOOD dulu
                         $this->mutationController->applyInOut(
                             $activeBranchId,
                             $warehouseId,
@@ -1802,7 +1923,7 @@ class AdjustmentController extends Controller
                             'summary'
                         );
 
-                        // 2) Create per-unit rows (DEFECT)
+                        // Create per-unit rows
                         for ($i = 0; $i < $qty; $i++) {
                             $d = (array) ($defects[$i] ?? []);
                             $defectType = trim((string) ($d['defect_type'] ?? ''));
@@ -1828,7 +1949,7 @@ class AdjustmentController extends Controller
                             ]);
                         }
 
-                        // 3) IN DEFECT (net-zero)
+                        // IN DEFECT (net-zero)
                         $this->mutationController->applyInOut(
                             $activeBranchId,
                             $warehouseId,
@@ -1844,8 +1965,6 @@ class AdjustmentController extends Controller
                         );
 
                     } else {
-
-                        // type === 'damaged'
                         $damagedItems = $normalizeDetailArray($it['damaged_items'] ?? null);
 
                         if (count($damagedItems) !== $qty) {
@@ -1864,7 +1983,7 @@ class AdjustmentController extends Controller
                             }
                         }
 
-                        // 1) OUT GOOD dulu
+                        // OUT GOOD dulu
                         $this->mutationController->applyInOut(
                             $activeBranchId,
                             $warehouseId,
@@ -1879,7 +1998,7 @@ class AdjustmentController extends Controller
                             'summary'
                         );
 
-                        // 2) IN damaged dulu -> ambil mutation id untuk mutation_in_id
+                        // IN damaged dulu -> ambil mutation id untuk mutation_in_id
                         $mutationInId = $this->mutationController->applyInOutAndGetMutationId(
                             $activeBranchId,
                             $warehouseId,
@@ -1894,7 +2013,7 @@ class AdjustmentController extends Controller
                             'summary'
                         );
 
-                        // 3) Create per-unit rows (DAMAGED)
+                        // Create per-unit rows
                         for ($i = 0; $i < $qty; $i++) {
                             $d = (array) ($damagedItems[$i] ?? []);
                             $damageType = strtolower(trim((string) ($d['damage_type'] ?? 'damaged')));
