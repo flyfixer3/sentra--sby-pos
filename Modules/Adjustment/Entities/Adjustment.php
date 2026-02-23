@@ -22,10 +22,11 @@ class Adjustment extends BaseModel
         'reference',
         'date',
         'note',
-        'status',
         'branch_id',
         'warehouse_id',
         'created_by',
+        'created_at',
+        'updated_at',
     ];
 
     public function branch(): BelongsTo

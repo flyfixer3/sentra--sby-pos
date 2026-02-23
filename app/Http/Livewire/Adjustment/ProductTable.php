@@ -46,12 +46,7 @@ class ProductTable extends Component
         $active = session('active_branch');
         $this->branchId = is_numeric($active) ? (int) $active : 0;
 
-        // Set default type for quality
-        if ($this->mode === 'quality') {
-            $this->qualityType = 'defect';
-        }
-
-        // ✅ NEW: set initial warehouse id (passed from blade)
+        // ✅ initial warehouse id (passed from blade)
         $warehouseId = is_numeric($warehouseId) ? (int) $warehouseId : null;
 
         if ($this->mode === 'stock_add') {
@@ -59,9 +54,10 @@ class ProductTable extends Component
         }
 
         if ($this->mode === 'quality') {
-            $this->qualityWarehouseId = ($warehouseId && $warehouseId > 0) ? $warehouseId : null;
+            // default (akan di-update dari dropdown #quality_type via event)
+            $this->qualityType = 'defect';
 
-            // preload racks for quality dropdown
+            $this->qualityWarehouseId = ($warehouseId && $warehouseId > 0) ? $warehouseId : null;
             $this->rackOptions = $this->loadRacksForWarehouse($this->qualityWarehouseId);
         }
 
@@ -89,14 +85,10 @@ class ProductTable extends Component
                     'defects' => (array) ($row['defects'] ?? []),
                     'damaged_items' => (array) ($row['damaged_items'] ?? []),
 
-                    // quality defaults
-                    'quantity' => (int) ($row['quantity'] ?? 1),
+                    // ✅ quality classic (GOOD -> issue)
+                    'qty' => (int) ($row['qty'] ?? 1),
                     'rack_id' => isset($row['rack_id']) ? (int) $row['rack_id'] : null,
-                    'stock_label' => (string) ($row['stock_label'] ?? 'GOOD'),
                     'available_qty' => (int) ($row['available_qty'] ?? 0),
-
-                    // display stock
-                    'stock_qty' => (int) ($row['stock_qty'] ?? 0),
                 ];
             }
         }
@@ -173,7 +165,6 @@ class ProductTable extends Component
         if ($this->mode !== 'quality') return;
 
         $type = '';
-
         if (is_array($payload)) {
             $type = (string) ($payload['type'] ?? $payload['value'] ?? '');
         } else {
@@ -187,33 +178,16 @@ class ProductTable extends Component
 
         $this->qualityType = $type;
 
-        // recalc jika sudah ada product
-        if (!empty($this->products) && $this->qualityWarehouseId) {
-            $productId = (int) ($this->products[0]['id'] ?? 0);
-            $rackId    = (int) ($this->products[0]['rack_id'] ?? 0);
+        // ✅ Kalau sedang mode Issue->Good, table classic ini harus "diam"
+        if (in_array($this->qualityType, ['defect_to_good','damaged_to_good'], true)) {
+            $this->products = [];
+            $this->dispatchQualitySummary();
+            return;
+        }
 
-            if ($productId > 0) {
-                $info = $this->getAvailableInfoForProduct(
-                    $this->branchId,
-                    (int) $this->qualityWarehouseId,
-                    $rackId > 0 ? $rackId : null,
-                    $productId,
-                    $this->qualityType
-                );
-
-                $this->products[0]['stock_label'] = $info['label'];
-                $this->products[0]['available_qty'] = (int) $info['available_qty'];
-
-                $currentQty = (int) ($this->products[0]['quantity'] ?? 0);
-                if ($currentQty > (int) $info['available_qty']) {
-                    $this->products[0]['quantity'] = (int) $info['available_qty'];
-                }
-
-                if ((int) $info['available_qty'] <= 0) {
-                    $this->products = [];
-                    session()->flash('message', 'Selected product has no available quantity for this type in selected rack/warehouse.');
-                }
-            }
+        // ✅ Re-sync all rows (clamp qty + rebuild detail arrays)
+        foreach ($this->products as $idx => $row) {
+            $this->syncQualityRow((int)$idx);
         }
 
         $this->dispatchQualitySummary();
@@ -227,18 +201,17 @@ class ProductTable extends Component
         $productId = is_array($product) ? (int) ($product['id'] ?? 0) : (int) $product;
         if (!$productId) return;
 
+        // ✅ quality: kalau type sedang Issue->Good, jangan masuk table ini
+        if ($this->mode === 'quality' && in_array($this->qualityType, ['defect_to_good','damaged_to_good'], true)) {
+            return;
+        }
+
         foreach ($this->products as $row) {
             if ((int) $row['id'] === $productId) {
                 session()->flash('message', 'Product already added!');
                 $this->dispatchQualitySummary();
                 return;
             }
-        }
-
-        if ($this->mode === 'quality' && count($this->products) >= 1) {
-            session()->flash('message', 'Quality Reclass currently supports only 1 product per submit. Please remove existing product first.');
-            $this->dispatchQualitySummary();
-            return;
         }
 
         if ($this->mode === 'quality') {
@@ -264,10 +237,11 @@ class ProductTable extends Component
         }
 
         // =========================
-        // STOCK qty display (FIX: use stock_racks)
+        // STOCK_ADD (tetap seperti kamu)
         // =========================
-        $stockQty = 0;
         if ($this->mode === 'stock_add') {
+            $stockQty = 0;
+
             $row = DB::table('stock_racks')
                 ->where('branch_id', $this->branchId)
                 ->where('warehouse_id', (int) $this->stockWarehouseId)
@@ -282,18 +256,32 @@ class ProductTable extends Component
 
             $qtyAvailable = (int) ($row->qty_available ?? 0);
             $fallbackTotal = (int) (($row->qty_good ?? 0) + ($row->qty_defect ?? 0) + ($row->qty_damaged ?? 0));
-
             $stockQty = $qtyAvailable > 0 ? $qtyAvailable : $fallbackTotal;
+
+            $this->products[] = [
+                'id' => $p->id,
+                'product_name' => $p->product_name,
+                'product_code' => $p->product_code,
+                'product_quantity' => $p->product_quantity,
+                'product_unit' => $p->product_unit,
+
+                'stock_qty' => $stockQty,
+
+                'qty_good' => 0,
+                'qty_defect' => 0,
+                'qty_damaged' => 0,
+                'good_allocations' => [],
+                'defects' => [],
+                'damaged_items' => [],
+            ];
+
+            return;
         }
 
         // =========================
-        // QUALITY mode info
+        // QUALITY CLASSIC (GOOD -> issue)
         // =========================
-        $stockLabel = 'GOOD';
-        $availableQty = 0;
-
         if ($this->mode === 'quality') {
-            // load rack options once if not loaded
             if (empty($this->rackOptions) && $this->qualityWarehouseId) {
                 $this->rackOptions = $this->loadRacksForWarehouse($this->qualityWarehouseId);
             }
@@ -306,14 +294,12 @@ class ProductTable extends Component
                 (int) $this->qualityWarehouseId,
                 $defaultRackId ? (int) $defaultRackId : null,
                 (int) $p->id,
-                $this->qualityType
+                'defect' // untuk classic, available GOOD (qty_good)
             );
 
-            $stockLabel = $info['label'];
-            $availableQty = (int) $info['available_qty'];
-
-            if ($availableQty <= 0) {
-                session()->flash('message', "This product has no {$stockLabel} quantity in selected rack/warehouse.");
+            $availableGood = (int) ($info['available_qty'] ?? 0);
+            if ($availableGood <= 0) {
+                session()->flash('message', "This product has no GOOD quantity in selected rack/warehouse.");
                 $this->dispatchQualitySummary();
                 return;
             }
@@ -325,41 +311,21 @@ class ProductTable extends Component
                 'product_quantity' => $p->product_quantity,
                 'product_unit' => $p->product_unit,
 
-                // quality
-                'quantity' => 1,
                 'rack_id' => $defaultRackId,
-                'stock_label' => $stockLabel,
-                'available_qty' => $availableQty,
+                'available_qty' => $availableGood,
 
-                // display stock
-                'stock_qty' => 0,
+                // ✅ qty + detail arrays
+                'qty' => 1,
+                'defects' => [
+                    ['defect_type' => '', 'description' => '']
+                ],
+                'damaged_items' => [
+                    ['reason' => '', 'description' => '']
+                ],
             ];
 
             $this->dispatchQualitySummary();
             return;
-        }
-
-        // =========================
-        // STOCK_ADD row init (fields must match blade)
-        // =========================
-        if ($this->mode === 'stock_add') {
-            $this->products[] = [
-                'id' => $p->id,
-                'product_name' => $p->product_name,
-                'product_code' => $p->product_code,
-                'product_quantity' => $p->product_quantity,
-                'product_unit' => $p->product_unit,
-
-                'stock_qty' => $stockQty,
-
-                // UI expects these fields
-                'qty_good' => 0,
-                'qty_defect' => 0,
-                'qty_damaged' => 0,
-                'good_allocations' => [],
-                'defects' => [],
-                'damaged_items' => [],
-            ];
         }
     }
 
@@ -463,43 +429,88 @@ class ProductTable extends Component
     {
         if ($this->mode !== 'quality') return;
 
+        // kalau sedang issue->good, table ini off
+        if (in_array($this->qualityType, ['defect_to_good','damaged_to_good'], true)) {
+            $this->products = [];
+            $this->dispatchQualitySummary();
+            return;
+        }
+
         if (empty($this->products) || !$this->qualityWarehouseId) {
             $this->dispatchQualitySummary();
             return;
         }
 
-        $productId = (int) ($this->products[0]['id'] ?? 0);
-        $rackId    = (int) ($this->products[0]['rack_id'] ?? 0);
+        // detect row index from $name: "products.2.qty" / "products.2.rack_id"
+        $idx = null;
+        if (is_string($name) && preg_match('/^products\.(\d+)\./', $name, $m)) {
+            $idx = (int) $m[1];
+        }
 
-        if ($productId > 0) {
-            $info = $this->getAvailableInfoForProduct(
-                $this->branchId,
-                (int) $this->qualityWarehouseId,
-                $rackId > 0 ? $rackId : null,
-                $productId,
-                $this->qualityType
-            );
-
-            $this->products[0]['stock_label'] = $info['label'];
-            $this->products[0]['available_qty'] = (int) $info['available_qty'];
-
-            $max = (int) ($this->products[0]['available_qty'] ?? 0);
-            $qty = (int) ($this->products[0]['quantity'] ?? 0);
-
-            if ($max > 0 && $qty > $max) {
-                $this->products[0]['quantity'] = $max;
-            }
-            if ($qty < 1) {
-                $this->products[0]['quantity'] = 1;
-            }
-
-            if ($max <= 0) {
-                $this->products = [];
-                session()->flash('message', 'Selected product has no available quantity for this type in selected rack/warehouse.');
+        if ($idx !== null) {
+            $this->syncQualityRow($idx);
+        } else {
+            // fallback: sync all
+            foreach ($this->products as $k => $row) {
+                $this->syncQualityRow((int)$k);
             }
         }
 
         $this->dispatchQualitySummary();
+    }
+
+    private function syncQualityRow(int $idx): void
+    {
+        if (!isset($this->products[$idx])) return;
+
+        $row = $this->products[$idx];
+
+        $productId = (int) ($row['id'] ?? 0);
+        $rackId    = (int) ($row['rack_id'] ?? 0);
+        if ($productId <= 0) return;
+
+        $info = $this->getAvailableInfoForProduct(
+            $this->branchId,
+            (int) $this->qualityWarehouseId,
+            $rackId > 0 ? $rackId : null,
+            $productId,
+            'defect' // classic: available GOOD
+        );
+
+        $availableGood = (int) ($info['available_qty'] ?? 0);
+        $this->products[$idx]['available_qty'] = $availableGood;
+
+        // clamp qty
+        $qty = (int) ($this->products[$idx]['qty'] ?? 1);
+        if ($qty < 1) $qty = 1;
+        if ($availableGood > 0 && $qty > $availableGood) $qty = $availableGood;
+        $this->products[$idx]['qty'] = $qty;
+
+        // rebuild arrays length based on qty
+        if ($this->qualityType === 'defect') {
+            $arr = (array) ($this->products[$idx]['defects'] ?? []);
+            $arr = array_values($arr);
+
+            for ($i = 0; $i < $qty; $i++) {
+                if (!isset($arr[$i])) $arr[$i] = ['defect_type' => '', 'description' => ''];
+                if (!isset($arr[$i]['defect_type'])) $arr[$i]['defect_type'] = '';
+                if (!isset($arr[$i]['description'])) $arr[$i]['description'] = '';
+            }
+            $arr = array_slice($arr, 0, $qty);
+            $this->products[$idx]['defects'] = $arr;
+
+        } elseif ($this->qualityType === 'damaged') {
+            $arr = (array) ($this->products[$idx]['damaged_items'] ?? []);
+            $arr = array_values($arr);
+
+            for ($i = 0; $i < $qty; $i++) {
+                if (!isset($arr[$i])) $arr[$i] = ['reason' => '', 'description' => ''];
+                if (!isset($arr[$i]['reason'])) $arr[$i]['reason'] = '';
+                if (!isset($arr[$i]['description'])) $arr[$i]['description'] = '';
+            }
+            $arr = array_slice($arr, 0, $qty);
+            $this->products[$idx]['damaged_items'] = $arr;
+        }
     }
 
     private function dispatchQualitySummary(): void
