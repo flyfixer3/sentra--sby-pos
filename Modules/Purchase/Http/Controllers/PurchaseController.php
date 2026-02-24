@@ -46,7 +46,7 @@ class PurchaseController extends Controller
 
         $purchaseOrder = $purchaseDelivery->purchaseOrder;
 
-        // ✅ HARD GUARD: 1 PO = 1 INVOICE (boleh partial, tapi invoice cuma 1)
+        // ✅ HARD GUARD: 1 PO = 1 INVOICE
         if ($purchaseDelivery->purchase_order_id) {
             $existingPurchase = Purchase::where('purchase_order_id', (int) $purchaseDelivery->purchase_order_id)
                 ->whereNull('deleted_at')
@@ -65,22 +65,30 @@ class PurchaseController extends Controller
                 ->with('error', 'This Purchase Delivery already has an invoice.');
         }
 
-        // =========================
-        // PREPARE CART (DEFAULT QTY)
-        // ✅ SUMBER QTY: PurchaseDeliveryDetails.quantity (expected PD)
-        // =========================
         Cart::instance('purchase')->destroy();
         $cart = Cart::instance('purchase');
 
         $branchId = $this->getActiveBranchId();
 
-        // warehouse untuk kebutuhan stock display (kalau PD sudah pilih warehouse, pakai itu)
-        $warehouseId = $this->resolveDefaultWarehouseId($branchId);
-        if (!empty($purchaseDelivery->warehouse_id)) {
+        // ✅ Status-based warehouse resolve:
+        // - PD Pending => warehouse_id boleh null => stock harus ALL warehouses (branch)
+        // - PD Partial/Received/Completed => warehouse_id wajibnya sudah ada => stock per warehouse
+        $pdStatus = strtolower(trim((string) ($purchaseDelivery->status ?? 'pending')));
+        $isConfirmed = in_array($pdStatus, ['partial', 'received', 'completed'], true);
+
+        $warehouseId = null;
+        if ($isConfirmed && !empty($purchaseDelivery->warehouse_id)) {
             $warehouseId = (int) $purchaseDelivery->warehouse_id;
         }
 
-        // map PO detail by product_id (buat ambil price/diskon/tax)
+        // ✅ stock mode untuk Livewire
+        $stock_mode = $warehouseId ? 'warehouse' : 'branch_all';
+
+        // defaultWarehouseId hanya untuk “loading warehouse” UI / fallback display,
+        // tapi TIDAK dipakai untuk paksa scope stock kalau PD belum confirmed.
+        $defaultWarehouseId = $this->resolveDefaultWarehouseId($branchId);
+
+        // map PO detail by product_id (ambil price/diskon/tax)
         $poDetailMap = [];
         if ($purchaseOrder) {
             foreach ($purchaseOrder->purchaseOrderDetails as $d) {
@@ -88,9 +96,30 @@ class PurchaseController extends Controller
             }
         }
 
+        // helper local: sum stock_last last-per-warehouse (active branch)
+        $getStockAllWarehousesInBranch = function (int $productId) use ($branchId): int {
+            $warehouseIds = DB::table('warehouses')
+                ->where('branch_id', (int) $branchId)
+                ->pluck('id')
+                ->toArray();
+
+            if (empty($warehouseIds)) return 0;
+
+            $sum = 0;
+            foreach ($warehouseIds as $wid) {
+                $last = Mutation::where('product_id', (int) $productId)
+                    ->where('warehouse_id', (int) $wid)
+                    ->latest()
+                    ->value('stock_last');
+
+                $sum += (int) ($last ?? 0);
+            }
+
+            return (int) $sum;
+        };
+
         foreach ($purchaseDelivery->purchaseDeliveryDetails as $pdItem) {
 
-            // ✅ qty default = yang diinput pada PD (expected)
             $qty = (int) ($pdItem->quantity ?? 0);
             if ($qty <= 0) continue;
 
@@ -100,20 +129,25 @@ class PurchaseController extends Controller
             $productCode = $pdItem->product_code ?: ($product?->product_code ?? 'UNKNOWN');
             $productName = $pdItem->product_name ?: ($product?->product_name ?? '-');
 
-            // pricing dari PO kalau ada
             $poD = $poDetailMap[(int) $pdItem->product_id] ?? null;
 
             $price     = (int) ($poD->price ?? 0);
             $unitPrice = (int) ($poD->unit_price ?? 0);
 
-            // stock display: per warehouse PD (kalau ada)
-            $stockLast = 0;
-            $mutation = Mutation::where('product_id', (int) $pdItem->product_id)
-                ->where('warehouse_id', (int) $warehouseId)
-                ->latest()
-                ->first();
-
-            if ($mutation) $stockLast = (int) $mutation->stock_last;
+            // ✅ stock display:
+            // - confirmed => per warehouse PD
+            // - pending   => ALL warehouses (branch)
+            if ($warehouseId) {
+                $last = Mutation::where('product_id', (int) $pdItem->product_id)
+                    ->where('warehouse_id', (int) $warehouseId)
+                    ->latest()
+                    ->value('stock_last');
+                $stockLast = (int) ($last ?? 0);
+                $stockScope = 'warehouse';
+            } else {
+                $stockLast = (int) $getStockAllWarehousesInBranch((int) $pdItem->product_id);
+                $stockScope = 'branch';
+            }
 
             $cart->add([
                 'id'     => (int) $pdItem->product_id,
@@ -125,24 +159,25 @@ class PurchaseController extends Controller
                     'sub_total'   => $qty * $price,
                     'code'        => (string) $productCode,
                     'unit_price'  => $unitPrice,
-                    'warehouse_id'=> (int) $warehouseId,
+
+                    // ✅ warehouse_id hanya ada kalau PD sudah confirmed
+                    'warehouse_id'=> $warehouseId ? (int) $warehouseId : null,
+
                     'branch_id'   => (int) $branchId,
                     'stock'       => $stockLast,
+                    'stock_scope' => $stockScope, // branch|warehouse
                     'unit'        => $product?->product_unit,
+
                     'product_discount'      => (float) ($poD->product_discount_amount ?? 0),
                     'product_discount_type' => (string) ($poD->product_discount_type ?? 'fixed'),
                     'product_tax'           => (float) ($poD->product_tax_amount ?? 0),
 
-                    // ✅ fallback safety buat store() kalau hidden input gagal terkirim
                     'purchase_delivery_id'  => (int) $purchaseDelivery->id,
                     'purchase_order_id'     => $purchaseOrder ? (int) $purchaseOrder->id : null,
                 ]
             ]);
         }
 
-        // =========================
-        // PREFILL HEADER FORM
-        // =========================
         $prefillSupplierId = 0;
         if ($purchaseOrder && $purchaseOrder->supplier_id) {
             $prefillSupplierId = (int) $purchaseOrder->supplier_id;
@@ -151,8 +186,9 @@ class PurchaseController extends Controller
         $prefillDate = (string) ($purchaseDelivery->getRawOriginal('date') ?? now()->format('Y-m-d'));
 
         return view('purchase::create', [
-            'activeBranchId'        => $branchId,
-            'defaultWarehouseId'    => $warehouseId,
+            'activeBranchId'     => $branchId,
+            'defaultWarehouseId' => $defaultWarehouseId,
+            'stock_mode'         => $stock_mode,
 
             'prefill' => [
                 'purchase_order_id'    => $purchaseOrder ? (int) $purchaseOrder->id : null,
@@ -164,7 +200,8 @@ class PurchaseController extends Controller
         ]);
     }
 
-    public function create() {
+    public function create()
+    {
         abort_if(Gate::denies('create_purchases'), 403);
 
         Cart::instance('purchase')->destroy();
@@ -172,9 +209,13 @@ class PurchaseController extends Controller
         $activeBranchId = $this->getActiveBranchId();
         $defaultWarehouseId = $this->resolveDefaultWarehouseId($activeBranchId);
 
+        // ✅ Purchase dibuat duluan (belum ada PD) => stock ALL warehouses
+        $stock_mode = 'branch_all';
+
         return view('purchase::create', [
-            'activeBranchId' => $activeBranchId,
+            'activeBranchId'     => $activeBranchId,
             'defaultWarehouseId' => $defaultWarehouseId,
+            'stock_mode'         => $stock_mode,
         ]);
     }
 
@@ -184,19 +225,7 @@ class PurchaseController extends Controller
 
             $branchId = $this->getActiveBranchId();
 
-            $warehouseId = $request->warehouse_id
-                ? (int) $request->warehouse_id
-                : $this->resolveDefaultWarehouseId($branchId);
-
-            $this->assertWarehouseBelongsToBranch($warehouseId, $branchId);
-            $this->ensureCartItemsHaveWarehouse($warehouseId);
-
-            $due_amount = ($request->total_amount * 1) - ($request->paid_amount * 1);
-            $payment_status = $due_amount == ($request->total_amount * 1)
-                ? 'Unpaid'
-                : ($due_amount > 0 ? 'Partial' : 'Paid');
-
-            // ✅ fromDelivery detection (reliable)
+            // ✅ fromDelivery detection
             $purchaseDeliveryId = $request->purchase_delivery_id ? (int) $request->purchase_delivery_id : null;
 
             if (empty($purchaseDeliveryId)) {
@@ -220,8 +249,10 @@ class PurchaseController extends Controller
                 }
             }
 
-            // kalau fromDelivery, validasi delivery & belum ada purchase
+            // ✅ resolve warehouse from PD ONLY if PD already confirmed
+            $warehouseId = null;
             $delivery = null;
+
             if ($fromDelivery) {
                 $delivery = PurchaseDelivery::findOrFail($purchaseDeliveryId);
 
@@ -236,7 +267,32 @@ class PurchaseController extends Controller
                 if ($purchase_order && (int) $delivery->purchase_order_id !== (int) $purchase_order->id) {
                     throw new \RuntimeException("Purchase Delivery does not belong to the selected Purchase Order.");
                 }
+
+                $pdStatus = strtolower(trim((string) ($delivery->status ?? 'pending')));
+                $isConfirmed = in_array($pdStatus, ['partial', 'received', 'completed'], true);
+
+                if ($isConfirmed && !empty($delivery->warehouse_id)) {
+                    $warehouseId = (int) $delivery->warehouse_id;
+                } else {
+                    // PD pending => warehouse tetap null (sesuai requirement kamu)
+                    $warehouseId = null;
+                }
+            } else {
+                // ✅ Walk-in purchase (invoice dibuat duluan) => warehouse null
+                $warehouseId = null;
             }
+
+            // ✅ kalau warehouseId ada, validasi belong & pastikan cart items punya warehouse_id
+            if (!empty($warehouseId)) {
+                $this->assertWarehouseBelongsToBranch((int) $warehouseId, (int) $branchId);
+                $this->ensureCartItemsHaveWarehouse((int) $warehouseId);
+            }
+            // kalau warehouseId null => jangan paksa ensureCartItemsHaveWarehouse()
+
+            $due_amount = ($request->total_amount * 1) - ($request->paid_amount * 1);
+            $payment_status = $due_amount == ($request->total_amount * 1)
+                ? 'Unpaid'
+                : ($due_amount > 0 ? 'Partial' : 'Paid');
 
             $supplier = Supplier::findOrFail($request->supplier_id);
 
@@ -251,12 +307,11 @@ class PurchaseController extends Controller
                 }
             }
 
-            // ✅ Invoice status tetap ikutin request (atau default Pending)
             $finalStatus = $request->status ?: 'Pending';
 
             $purchase = Purchase::create([
-                'purchase_order_id'     => $purchase_order ? (int) $purchase_order->id : ($request->purchase_order_id ?? null),
-                'purchase_delivery_id'  => $fromDelivery ? $purchaseDeliveryId : null,
+                'purchase_order_id'    => $purchase_order ? (int) $purchase_order->id : ($request->purchase_order_id ?? null),
+                'purchase_delivery_id' => $fromDelivery ? $purchaseDeliveryId : null,
 
                 'date' => $request->date,
                 'due_date' => $request->due_date,
@@ -280,26 +335,36 @@ class PurchaseController extends Controller
                 'discount_amount' => Cart::instance('purchase')->discount() * 1,
 
                 'branch_id' => $branchId,
-                'warehouse_id' => $warehouseId,
+
+                // ✅ warehouse boleh null saat invoice dibuat duluan
+                'warehouse_id' => $warehouseId ? (int) $warehouseId : null,
             ]);
 
-            // ✅ NEW: setelah invoice dibuat, status PO harus jadi Completed
             if ($purchase_order) {
                 $purchase_order->refreshStatus();
             }
 
             // =========================
-            // 1) CREATE PURCHASE DETAILS (NO MUTATION / NO FULFILLED)
+            // 1) CREATE PURCHASE DETAILS
             // =========================
             foreach (Cart::instance('purchase')->content() as $cart_item) {
 
+                // ✅ itemWarehouseId ikut warehouseId (bisa null)
                 $itemWarehouseId = isset($cart_item->options->warehouse_id)
-                    ? (int) $cart_item->options->warehouse_id
-                    : $warehouseId;
+                    ? (int) ($cart_item->options->warehouse_id ?: 0)
+                    : 0;
 
-                $this->assertWarehouseBelongsToBranch($itemWarehouseId, $branchId);
+                // kalau header warehouse null => jangan maksa detail punya warehouse
+                if (!empty($warehouseId)) {
+                    $itemWarehouseId = (int) $warehouseId;
+                } else {
+                    $itemWarehouseId = $itemWarehouseId > 0 ? $itemWarehouseId : 0;
+                }
 
-                // ✅ product_code jangan null
+                if ($itemWarehouseId > 0) {
+                    $this->assertWarehouseBelongsToBranch($itemWarehouseId, $branchId);
+                }
+
                 $productCode = $cart_item->options->code ?? null;
                 if (empty($productCode)) {
                     $p = Product::select('product_code')->find($cart_item->id);
@@ -318,18 +383,17 @@ class PurchaseController extends Controller
                     'product_discount_amount' => ($cart_item->options->product_discount ?? 0) * 1,
                     'product_discount_type' => $cart_item->options->product_discount_type ?? 'fixed',
                     'product_tax_amount' => ($cart_item->options->product_tax ?? 0) * 1,
-                    'warehouse_id' => $itemWarehouseId,
+
+                    // ✅ warehouse_id boleh null
+                    'warehouse_id' => $itemWarehouseId > 0 ? $itemWarehouseId : null,
                 ]);
             }
 
             // =========================================================
-            // ✅ NEW (WALK-IN): INCREASE qty_incoming (stocks pool)
-            // - hanya kalau TIDAK lewat PO dan TIDAK fromDelivery
-            // - karena PO sudah handle incoming-nya
+            // WALK-IN: INCREASE qty_incoming (stocks pool) (tetap sama)
             // =========================================================
             if (!$purchase_order && !$fromDelivery) {
 
-                // aggregate qty per product dari cart
                 $qtyByProduct = [];
                 foreach (Cart::instance('purchase')->content() as $it) {
                     $pid = (int) ($it->id ?? 0);
@@ -377,6 +441,7 @@ class PurchaseController extends Controller
             // =========================
             if (!$fromDelivery && empty($purchase->purchase_delivery_id)) {
 
+                // ✅ PD auto akan ikut warehouse_id purchase (null) => sesuai requirement kamu
                 $autoPD = $this->createPendingPurchaseDeliveryForWalkIn($purchase);
 
                 $purchase->purchase_delivery_id = (int) $autoPD->id;
@@ -389,7 +454,6 @@ class PurchaseController extends Controller
 
             Cart::instance('purchase')->destroy();
 
-            // ✅ PAYMENT + JOURNAL (tetap)
             if ($purchase->paid_amount > 0) {
                 $created_payment = PurchasePayment::create([
                     'date' => $request->date,
@@ -793,10 +857,16 @@ class PurchaseController extends Controller
 
         $autoNote = 'Auto-created from Purchase (invoice). Please confirm receipt manually.';
 
+        // ✅ IMPORTANT: jangan cast null menjadi 0
+        $warehouseId = !empty($purchase->warehouse_id) ? (int) $purchase->warehouse_id : null;
+
         $autoPD = PurchaseDelivery::create([
             'purchase_order_id' => $purchase->purchase_order_id ?? null,
             'branch_id'         => (int) $purchase->branch_id,
-            'warehouse_id'      => (int) $purchase->warehouse_id,
+
+            // ✅ boleh null untuk Pending PD (walk-in / PD pending)
+            'warehouse_id'      => $warehouseId,
+
             'date'              => (string) $purchase->date,
             'note'              => $autoNote,
             'ship_via'          => null,
@@ -809,7 +879,7 @@ class PurchaseController extends Controller
             'note_updated_at'   => now(),
         ]);
 
-        // ✅ SUMBER PALING AMAN: purchase_details (SUDAH DIPAKSA product_code TIDAK NULL)
+        // ✅ SUMBER PALING AMAN: purchase_details
         $purchase->loadMissing(['purchaseDetails']);
 
         foreach ($purchase->purchaseDetails as $pd) {

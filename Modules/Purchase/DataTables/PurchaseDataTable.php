@@ -15,11 +15,11 @@ class PurchaseDataTable extends DataTable
         return datatables()
             ->eloquent($query)
 
-            // ✅ tampilkan Transaction Date (purchases.date) format d-m-Y
-            ->editColumn('date', function ($data) {
-                if (empty($data->date)) return '-';
-                return Carbon::parse($data->date)->format('d-m-Y');
-            })
+            // ✅ (REMOVED) kolom Transaction Date (purchases.date)
+            // ->editColumn('date', function ($data) {
+            //     if (empty($data->date)) return '-';
+            //     return Carbon::parse($data->date)->format('d-m-Y');
+            // })
 
             ->addColumn('total_amount', function ($data) {
                 return format_currency($data->total_amount);
@@ -53,26 +53,22 @@ class PurchaseDataTable extends DataTable
                 return format_currency($data->due_amount);
             })
 
-            // ->editColumn('status', function ($data) {
-            //     return view('purchase::partials.status', compact('data'));
-            // })
-
             ->editColumn('payment_status', function ($data) {
                 return view('purchase::partials.payment-status', compact('data'));
             })
 
-            // ✅ NEW: Created At (DateTime) -> ambil dari created_at (timestamp)
+            // ✅ Created At (DateTime) -> ambil dari created_at (timestamp)
             ->addColumn('created_datetime', function ($data) {
                 if (empty($data->created_at)) return '-';
                 return Carbon::parse($data->created_at)->format('d-m-Y H:i');
             })
 
-            // ✅ Tambahan: Created By (nama user)
+            // ✅ Created By (nama user)
             ->addColumn('created_by_name', function ($data) {
                 return $data->created_by_name ?? '-';
             })
 
-            // ✅ Tambahan: Last Updated By (nama user)
+            // ✅ Last Updated By (nama user)
             ->addColumn('updated_by_name', function ($data) {
                 return $data->updated_by_name ?? '-';
             })
@@ -84,7 +80,6 @@ class PurchaseDataTable extends DataTable
 
     public function query(Purchase $model)
     {
-        // ✅ Query lama kamu tetap, cuma ditambah join users buat created_by & updated_by
         return $model->newQuery()
             ->withTrashed()
             ->select([
@@ -112,27 +107,22 @@ class PurchaseDataTable extends DataTable
             )
 
             /**
-             * ✅ PENTING BANGET:
-             * Karena kita nambah kolom, index created_at (hidden) bergeser.
-             *
-             * URUTAN KOLOM di getColumns() sekarang:
+             * ✅ URUTAN KOLOM di getColumns() sekarang:
              * 0 reference
-             * 1 date
-             * 2 reference_supplier
-             * 3 supplier_name
-             * 4 status
-             * 5 total_amount
-             * 6 due_amount
-             * 7 due_date
-             * 8 payment_status
-             * 9 deleted_at (hidden)
-             * 10 created_datetime
-             * 11 created_by_name
-             * 12 updated_by_name
-             * 13 action
-             * 14 created_at (hidden)  <-- ini yang dipakai sorting
+             * 1 reference_supplier
+             * 2 supplier_name
+             * 3 total_amount
+             * 4 due_amount
+             * 5 due_date
+             * 6 payment_status
+             * 7 deleted_at (hidden)
+             * 8 created_datetime
+             * 9 created_by_name
+             * 10 updated_by_name
+             * 11 action
+             * 12 created_at (hidden)  <-- ini yang dipakai sorting
              */
-            ->orderBy(13, 'desc')
+            ->orderBy(12, 'desc')
 
             ->buttons(
                 Button::make('excel')->text('<i class="bi bi-file-earmark-excel-fill"></i> Excel'),
@@ -148,10 +138,10 @@ class PurchaseDataTable extends DataTable
             Column::make('reference')
                 ->className('text-center align-middle'),
 
-            // ✅ tampilkan date (tanpa jam) dari kolom purchases.date
-            Column::make('date')
-                ->title('Date')
-                ->className('text-center align-middle'),
+            // ✅ (REMOVED) kolom date karena redundant dengan Created At
+            // Column::make('date')
+            //     ->title('Date')
+            //     ->className('text-center align-middle'),
 
             Column::make('reference_supplier')
                 ->title('Invoice')
@@ -160,9 +150,6 @@ class PurchaseDataTable extends DataTable
             Column::make('supplier_name')
                 ->title('Supplier')
                 ->className('text-center align-middle'),
-
-            // Column::make('status')
-            //     ->className('text-center align-middle'),
 
             Column::computed('total_amount')
                 ->className('text-center align-middle'),
@@ -179,7 +166,7 @@ class PurchaseDataTable extends DataTable
             // hidden - tetap ada kalau kamu butuh logic soft delete
             Column::make('deleted_at')->visible(false),
 
-            // ✅ NEW: Created At (datetime)
+            // ✅ Created At (datetime)
             Column::computed('created_datetime')
                 ->title('Created At')
                 ->className('text-center align-middle')

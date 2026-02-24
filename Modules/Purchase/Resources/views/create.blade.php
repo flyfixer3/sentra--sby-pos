@@ -28,6 +28,9 @@
             ->first();
 
         $defaultWarehouseId = $defaultWarehouse ? (int) $defaultWarehouse->id : ($defaultWarehouseId ?? null);
+
+        // ✅ from controller: branch_all | warehouse
+        $stock_mode = $stock_mode ?? 'branch_all';
     @endphp
 
     <div class="container-fluid mb-4">
@@ -46,7 +49,6 @@
                         <form id="purchase-form" action="{{ route('purchases.store') }}" method="POST">
                             @csrf
 
-                            {{-- ✅ hidden link: supaya store() tau ini invoice dari delivery/PO --}}
                             @if(!empty($prefillPurchaseOrderId))
                                 <input type="hidden" name="purchase_order_id" value="{{ (int) $prefillPurchaseOrderId }}">
                             @endif
@@ -114,11 +116,11 @@
                                 </div>
                             </div>
 
-                            {{-- ✅ Cart sudah diisi di controller (createFromDelivery), jadi qty default otomatis muncul --}}
                             <livewire:product-cart-purchase
                                 :cartInstance="'purchase'"
                                 :data="null"
                                 :loading_warehouse="$defaultWarehouseId"
+                                :stock_mode="'{{ $stock_mode }}'"
                             />
 
                             <div class="form-row">
@@ -166,6 +168,9 @@
                                                 </button>
                                             </div>
                                         </div>
+                                        <small class="text-muted">
+                                            Click the check button to auto-fill the amount due (Grand Total).
+                                        </small>
                                     </div>
                                 </div>
                             </div>
@@ -200,13 +205,23 @@ $(function () {
         precision: 0,
     });
 
+    // ✅ FIX: isi Amount Paid pakai hidden input total_amount (grand total + shipping)
     $('#getTotalAmount').click(function () {
-        $('#paid_amount').maskMoney('mask', {{ Cart::instance('purchase')->total() }});
+        var raw = $('input[name="total_amount"]').val();
+        var num = 0;
+
+        if (raw !== undefined && raw !== null && raw !== '') {
+            num = Number(raw);
+            if (Number.isNaN(num)) num = 0;
+        }
+
+        $('#paid_amount').maskMoney('mask', num);
     });
 
     $('#purchase-form').on('submit', function () {
         var paid_amount = $('#paid_amount').maskMoney('destroy')[0];
-        var new_number = parseInt((paid_amount.value || '').toString().replaceAll(/[Rp.]/g, "")) || 0;
+        var digits = (paid_amount.value || '').toString().replace(/[^\d]/g, '');
+        var new_number = parseInt(digits || '0', 10) || 0;
         $('#paid_amount').val(new_number);
     });
 });

@@ -42,10 +42,14 @@
                 @if(isset($cart_items) && $cart_items->isNotEmpty())
                     @foreach($cart_items as $cart_item)
                         @php
-                            $scope = (string)($cart_item->options->stock_scope ?? 'warehouse'); // warehouse | branch
+                            $scope = (string)($cart_item->options->stock_scope ?? 'branch'); // branch | warehouse
                             $scopeNote = $scope === 'branch'
                                 ? 'Stock shown is total from ALL warehouses (active branch).'
                                 : 'Stock shown is from the selected/assigned warehouse.';
+
+                            $placementText = $scope === 'branch'
+                                ? 'ALL WAREHOUSES'
+                                : ($loading_warehouse ? ($loading_warehouse->warehouse_name ?? '-') : '-');
                         @endphp
 
                         <tr>
@@ -62,8 +66,7 @@
                             </td>
 
                             <td class="align-middle text-center">
-                                {{-- kalau warehouse belum jelas, tampilkan ALL --}}
-                                {{ $loading_warehouse ? ($loading_warehouse->warehouse_name ?? '-') : 'ALL WAREHOUSES' }}
+                                {{ $placementText }}
                             </td>
 
                             <td class="align-middle text-center">
@@ -116,13 +119,6 @@
         <div class="col-md-4">
             <div class="table-responsive">
                 <table class="table table-striped">
-                    @if($cart_instance == 'sale')
-                        <tr>
-                            <th>Platform Fee</th>
-                            <input type="hidden" value="{{ (float)($platform_fee ?? 0) }}" name="fee_amount">
-                            <td>(+) {{ format_currency((float)($platform_fee ?? 0)) }}</td>
-                        </tr>
-                    @endif
                     <tr>
                         <th>Order Tax ({{ (float)($global_tax ?? 0) }}%)</th>
                         <td>(+) {{ format_currency(Cart::instance($cart_instance)->tax()) }}</td>
@@ -140,8 +136,7 @@
                         <th>Grand Total</th>
                         @php
                             $total_with_shipping = (float)Cart::instance($cart_instance)->total()
-                                + (float)($shipping ?? 0)
-                                + (float)($platform_fee ?? 0);
+                                + (float)($shipping ?? 0);
                         @endphp
                         <th>
                             (=) {{ format_currency($total_with_shipping) }}
@@ -156,7 +151,7 @@
     <input type="hidden" name="total_quantity" value="{{ (int)($global_qty ?? 0) }}">
 
     <div class="form-row">
-        <div class="{{ $cart_instance == 'sale' ? 'col-lg-2' : 'col-lg-4' }}">
+        <div class="col-lg-4">
             <div class="form-group">
                 <label for="tax_percentage">Order Tax (%)</label>
                 <input wire:model.lazy="global_tax"
@@ -169,7 +164,7 @@
             </div>
         </div>
 
-        <div class="{{ $cart_instance == 'sale' ? 'col-lg-2' : 'col-lg-4' }}">
+        <div class="col-lg-4">
             <div class="form-group">
                 <label for="discount_percentage">Discount (%)</label>
                 <input wire:model.lazy="global_discount"
@@ -181,21 +176,6 @@
                        required>
             </div>
         </div>
-
-        @if($cart_instance == 'sale')
-            <div class="col-lg-4">
-                <div class="form-group">
-                    <label for="fee_amount">Platform Fee</label>
-                    <input wire:model.lazy="platform_fee"
-                           type="number"
-                           class="form-control"
-                           name="fee_amount"
-                           min="0"
-                           value="0"
-                           required>
-                </div>
-            </div>
-        @endif
 
         <div class="col-lg-4">
             <div class="form-group">
