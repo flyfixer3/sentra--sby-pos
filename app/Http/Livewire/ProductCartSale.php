@@ -144,7 +144,9 @@ class ProductCartSale extends Component
         $cart = Cart::instance($this->cart_instance);
         $product = $result;
 
-        $stockTotal = $this->getTotalStockByBranch((int) $product['id']);
+        // ✅ SALE CREATE (walk-in) defaultnya: stock ditampilkan dari TOTAL branch (gabungan semua warehouse)
+        // karena warehouse baru dipilih saat Confirm Sale Delivery.
+        $stockTotal = $this->getTotalStockByBranch((int) ($product['id'] ?? 0));
 
         if ($stockTotal <= 0 && ($this->cart_instance === 'sale' || $this->cart_instance === 'purchase_return')) {
             session()->flash('message', 'The requested quantity is not available in stock (Branch Total Stock = 0).');
@@ -153,31 +155,49 @@ class ProductCartSale extends Component
         $calc = $this->calculate($product);
 
         $cart->add([
-            'id'      => (int) $product['id'],
-            'name'    => (string) $product['product_name'],
+            'id'      => (int) ($product['id'] ?? 0),
+            'name'    => (string) ($product['product_name'] ?? '-'),
             'qty'     => 1,
-            'price'   => (int) $calc['price'],
+            'price'   => (int) ($calc['price'] ?? 0),
             'weight'  => 1,
             'options' => [
                 'product_discount'      => 0.00,
                 'product_discount_type' => 'fixed',
-                'sub_total'             => (int) $calc['sub_total'],
-                'code'                  => (string) $product['product_code'],
+                'sub_total'             => (int) ($calc['sub_total'] ?? 0),
+                'code'                  => (string) ($product['product_code'] ?? ''),
+
+                // ✅ stock ditampilkan sebagai total branch
                 'stock'                 => (int) $stockTotal,
-                'unit'                  => (string) $product['product_unit'],
+
+                // ✅ FIX UTAMA BIAR UI NOTE GAK RANCU:
+                // kalau ini kosong, blade kamu fallback ke 'warehouse' => "Stock shown is from warehouse..."
+                'stock_scope'           => 'branch',
+
+                'unit'                  => (string) ($product['product_unit'] ?? ''),
+
+                // ✅ tetap null karena warehouse dipilih saat confirm delivery
                 'warehouse_id'          => null,
-                'product_tax'           => (int) $calc['product_tax'],
-                'product_cost'          => (int) $calc['product_cost'],
-                'unit_price'            => (int) $calc['unit_price']
+
+                // ✅ supaya blade gak bikin "from warehouse: (kosong)" juga
+                'warehouse_name'        => '',
+
+                'product_tax'           => (int) ($calc['product_tax'] ?? 0),
+                'product_cost'          => (int) ($calc['product_cost'] ?? 0),
+                'unit_price'            => (int) ($calc['unit_price'] ?? 0),
             ]
         ]);
 
+        $pid = (int) ($product['id'] ?? 0);
+
         $this->global_qty = $cart->count();
-        $this->check_quantity[(int) $product['id']] = (int) $stockTotal;
-        $this->quantity[(int) $product['id']] = 1;
-        $this->discount_type[(int) $product['id']] = 'fixed';
-        $this->item_discount[(int) $product['id']] = null;
-        $this->item_cost_konsyinasi[(int) $product['id']] = 0;
+        $this->check_quantity[$pid] = (int) $stockTotal;
+        $this->quantity[$pid] = 1;
+        $this->discount_type[$pid] = 'fixed';
+        $this->item_discount[$pid] = null;
+        $this->item_cost_konsyinasi[$pid] = 0;
+
+        // ✅ safety biar state gak blank setelah rerender
+        $this->syncQuantityDefaults();
     }
 
     public function removeItem($row_id)
