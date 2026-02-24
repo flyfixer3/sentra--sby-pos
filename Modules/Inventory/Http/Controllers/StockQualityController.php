@@ -10,7 +10,6 @@ use Modules\Product\Entities\ProductDefectItem;
 use Modules\Product\Entities\ProductDamagedItem;
 use Modules\Mutation\Http\Controllers\MutationController;
 
-use Modules\Inventory\Entities\StockRack;
 use Modules\PurchaseDelivery\Entities\PurchaseDelivery;
 use Modules\PurchaseDelivery\Entities\PurchaseDeliveryDetails;
 
@@ -68,50 +67,7 @@ class StockQualityController extends Controller
         return null;
     }
 
-    private function decreaseStockRack(
-        int $branchId,
-        int $warehouseId,
-        int $rackId,
-        int $productId,
-        int $qty,
-        string $qualityColumn // 'qty_defect' or 'qty_damaged' (or 'qty_good' later)
-    ): void {
-        if ($qty <= 0) return;
-
-        $row = StockRack::withoutGlobalScopes()
-            ->where('branch_id', $branchId)
-            ->where('warehouse_id', $warehouseId)
-            ->where('rack_id', $rackId)
-            ->where('product_id', $productId)
-            ->lockForUpdate()
-            ->first();
-
-        if (!$row) {
-            // kalau gak ada row-nya, ya skip aja (jangan bikin minus / create baru)
-            return;
-        }
-
-        $row->qty_available = (int) ($row->qty_available ?? 0);
-        $row->qty_good      = (int) ($row->qty_good ?? 0);
-        $row->qty_defect    = (int) ($row->qty_defect ?? 0);
-        $row->qty_damaged   = (int) ($row->qty_damaged ?? 0);
-
-        // total always decreases
-        $row->qty_available -= $qty;
-        if ($row->qty_available < 0) $row->qty_available = 0;
-
-        // decrease specific quality bucket
-        if (in_array($qualityColumn, ['qty_good', 'qty_defect', 'qty_damaged'], true)) {
-            $row->{$qualityColumn} = (int) ($row->{$qualityColumn} ?? 0);
-            $row->{$qualityColumn} -= $qty;
-            if ($row->{$qualityColumn} < 0) $row->{$qualityColumn} = 0;
-        }
-
-        $row->updated_by = auth()->id();
-        $row->save();
-    }
-
-   public function deleteDefect(int $id)
+    public function deleteDefect(int $id)
     {
         abort_if(Gate::denies('delete_inventory'), 403);
 
@@ -130,12 +86,16 @@ class StockQualityController extends Controller
             $qty = (int) ($item->quantity ?? 0);
             if ($qty <= 0) $qty = 1;
 
-            $rackId = $this->resolveRackId($item); // ✅ pakai item.rack_id dulu
+            $rackId = $this->resolveRackId($item); // prefer item.rack_id, fallback legacy
 
             $ref  = 'DEF-SOLD-' . $item->id;
             $note = "Defect SOLD | defect_item_id={$item->id}";
 
-            // 1) stok global OUT + mutation log (sekalian simpan rack_id di mutation)
+            // ✅ SINGLE SOURCE OF TRUTH:
+            // MutationController akan:
+            // - create/merge mutation log (summary per rack)
+            // - update stocks.qty_available (header)
+            // - update stock_racks.qty_available + bucket (defect)
             $this->mutationController->applyInOut(
                 (int) $item->branch_id,
                 (int) $item->warehouse_id,
@@ -145,22 +105,12 @@ class StockQualityController extends Controller
                 $ref,
                 $note,
                 now()->toDateString(),
-                $rackId // ✅
+                $rackId,        // keep per-rack correctness
+                'defect',       // ✅ bucket
+                'summary'       // ✅ merge log per rack
             );
 
-            // 2) stok rack OUT
-            if ($rackId) {
-                $this->decreaseStockRack(
-                    (int) $item->branch_id,
-                    (int) $item->warehouse_id,
-                    (int) $rackId,
-                    (int) $item->product_id,
-                    $qty,
-                    'qty_defect'
-                );
-            }
-
-            // 3) soft delete bisnis (move out marker)
+            // ✅ soft delete bisnis (move out marker)
             $item->moved_out_at = now();
             $item->moved_out_by = auth()->id();
             $item->moved_out_reference_type = 'sold';
@@ -197,6 +147,7 @@ class StockQualityController extends Controller
             $ref  = 'DMG-SOLD-' . $item->id;
             $note = "Damaged SOLD | damaged_item_id={$item->id}";
 
+            // ✅ SINGLE SOURCE OF TRUTH (MutationController handle stocks + stock_racks)
             $this->mutationController->applyInOut(
                 (int) $item->branch_id,
                 (int) $item->warehouse_id,
@@ -206,19 +157,10 @@ class StockQualityController extends Controller
                 $ref,
                 $note,
                 now()->toDateString(),
-                $rackId // ✅
+                $rackId,
+                'damaged',      // ✅ bucket
+                'summary'       // ✅ merge log per rack
             );
-
-            if ($rackId) {
-                $this->decreaseStockRack(
-                    (int) $item->branch_id,
-                    (int) $item->warehouse_id,
-                    (int) $rackId,
-                    (int) $item->product_id,
-                    $qty,
-                    'qty_damaged'
-                );
-            }
 
             $item->moved_out_at = now();
             $item->moved_out_by = auth()->id();

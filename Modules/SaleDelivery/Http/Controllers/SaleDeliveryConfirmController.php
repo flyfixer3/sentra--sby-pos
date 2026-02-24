@@ -848,7 +848,7 @@ class SaleDeliveryConfirmController extends Controller
                 // 7) Update Sale Delivery status & note
                 // ------------------------------------------------------------------
                 $saleDelivery->update([
-                    'status' => 'completed',
+                    'status' => 'confirmed',
                     'confirm_note' => (string) ($request->input('confirm_note') ?? ''),
                     'confirmed_by' => auth()->id(),
                     'confirmed_at' => now(),

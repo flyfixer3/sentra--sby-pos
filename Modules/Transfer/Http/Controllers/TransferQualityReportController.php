@@ -83,6 +83,14 @@ class TransferQualityReportController extends Controller
         $purchaseDeliveryClass  = PurchaseDelivery::class;
         $adjustmentClass        = Adjustment::class;
 
+        // helper filter: item dianggap "masih ada" kalau belum moved out
+        $applyNotMovedOut = function ($qr, string $alias) {
+            // robust: wajib moved_out_at NULL (utama), dan kalau ada legacy isi reference_type doang, kita exclude juga
+            $qr->whereNull($alias . '.moved_out_at')
+            ->whereNull($alias . '.moved_out_reference_type');
+            return $qr;
+        };
+
         // =========================
         // DEFECT QUERY (WITH MULTI REFERENCE)
         // =========================
@@ -134,7 +142,6 @@ class TransferQualityReportController extends Controller
                 'd.defect_type',
                 'd.description',
 
-                // ✅ IMPORTANT: biar bisa tampil foto defect
                 'd.photo_path',
 
                 'd.reference_id',
@@ -170,6 +177,12 @@ class TransferQualityReportController extends Controller
                     END as reference_source
                 "),
             ])
+
+            // ✅ FILTER: jangan tampilkan yang sudah moved out (soft delete bisnis)
+            ->tap(function ($qr) use ($applyNotMovedOut) {
+                $applyNotMovedOut($qr, 'd');
+            })
+
             ->when($branchId !== null, fn($qr) => $qr->where('d.branch_id', $branchId))
             ->when($warehouseId !== null, fn($qr) => $qr->where('d.warehouse_id', $warehouseId))
             ->when($dateFrom, fn($qr) => $qr->whereDate('d.created_at', '>=', $dateFrom))
@@ -244,8 +257,6 @@ class TransferQualityReportController extends Controller
                 'dm.resolution_note',
 
                 'dm.reason',
-
-                // ✅ IMPORTANT: biar bisa tampil foto issue
                 'dm.photo_path',
 
                 'dm.mutation_in_id',
@@ -285,6 +296,11 @@ class TransferQualityReportController extends Controller
             ])
 
             ->where('dm.resolution_status', 'pending')
+
+            // ✅ FILTER: jangan tampilkan yang sudah moved out (soft delete bisnis)
+            ->tap(function ($qr) use ($applyNotMovedOut) {
+                $applyNotMovedOut($qr, 'dm');
+            })
 
             ->when($branchId !== null, fn($qr) => $qr->where('dm.branch_id', $branchId))
             ->when($warehouseId !== null, fn($qr) => $qr->where('dm.warehouse_id', $warehouseId))

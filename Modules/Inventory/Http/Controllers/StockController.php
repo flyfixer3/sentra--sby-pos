@@ -237,14 +237,38 @@ class StockController extends Controller
         // warehouses & racks dari item quality table
         $table = ($type === 'defect') ? 'product_defect_items' : 'product_damaged_items';
 
+        /**
+         * ✅ FIX UTAMA:
+         * Anggap "BELUM moved out" hanya jika moved_out_at:
+         * - NULL, atau
+         * - '', atau
+         * - '0000-00-00 00:00:00'
+         */
+        $applyNotMovedOut = function ($q) {
+            $q->where(function ($qq) {
+                $qq->whereNull('i.moved_out_at')
+                    ->orWhere('i.moved_out_at', '=', '')
+                    ->orWhere('i.moved_out_at', '=', '0000-00-00 00:00:00');
+            });
+            return $q;
+        };
+
+        $baseFilter = function ($q) use ($productId, $branchId, $type, $applyNotMovedOut) {
+            $q->where('i.product_id', $productId)
+                ->where('i.branch_id', $branchId);
+
+            $applyNotMovedOut($q);
+
+            if ($type === 'damaged') {
+                $q->where('i.resolution_status', 'pending');
+            }
+
+            return $q;
+        };
+
         $whRows = DB::table($table . ' as i')
             ->leftJoin('warehouses as w', 'w.id', '=', 'i.warehouse_id')
-            ->where('i.product_id', $productId)
-            ->where('i.branch_id', $branchId)
-            ->whereNull('i.moved_out_at')
-            ->when($type === 'damaged', function ($q) {
-                $q->where('i.resolution_status', 'pending');
-            })
+            ->tap($baseFilter)
             ->selectRaw('i.warehouse_id, MAX(w.warehouse_name) as warehouse_name')
             ->groupBy('i.warehouse_id')
             ->orderByRaw('MAX(w.warehouse_name) asc')
@@ -259,12 +283,7 @@ class StockController extends Controller
 
         $rackRows = DB::table($table . ' as i')
             ->leftJoin('racks as r', 'r.id', '=', 'i.rack_id')
-            ->where('i.product_id', $productId)
-            ->where('i.branch_id', $branchId)
-            ->whereNull('i.moved_out_at')
-            ->when($type === 'damaged', function ($q) {
-                $q->where('i.resolution_status', 'pending');
-            })
+            ->tap($baseFilter)
             ->selectRaw('i.rack_id, MAX(r.code) as rack_code, MAX(r.name) as rack_name')
             ->groupBy('i.rack_id')
             ->orderByRaw('MAX(r.code) asc')
@@ -310,24 +329,34 @@ class StockController extends Controller
         $warehouseId = $request->filled('warehouse_id') ? (int) $request->warehouse_id : null;
         $rackId = $request->filled('rack_id') ? (int) $request->rack_id : null;
 
-        // helper kecil untuk normalize URL foto supaya gak double "storage/storage"
         $toPhotoUrl = function (?string $photoPath): ?string {
             $photoPath = $photoPath ? trim($photoPath) : null;
             if (empty($photoPath)) return null;
 
-            // kalau sudah URL penuh
             if (preg_match('~^https?://~i', $photoPath)) return $photoPath;
 
-            // buang leading slash
             $photoPath = ltrim($photoPath, '/');
 
-            // jika sudah diawali "storage/", langsung asset(path)
             if (str_starts_with($photoPath, 'storage/')) {
                 return asset($photoPath);
             }
 
-            // default: file disimpan relative di storage/app/public/*
             return asset('storage/' . $photoPath);
+        };
+
+        /**
+         * ✅ FIX UTAMA:
+         * Anggap "BELUM moved out" hanya jika moved_out_at:
+         * - NULL, atau
+         * - '', atau
+         * - '0000-00-00 00:00:00'
+         */
+        $applyNotMovedOutFilter = function ($q) {
+            return $q->where(function ($qq) {
+                $qq->whereNull('i.moved_out_at')
+                    ->orWhere('i.moved_out_at', '=', '')
+                    ->orWhere('i.moved_out_at', '=', '0000-00-00 00:00:00');
+            });
         };
 
         // ======================
@@ -339,14 +368,10 @@ class StockController extends Controller
                 ->leftJoin('warehouses as w', 'w.id', '=', 'i.warehouse_id')
                 ->leftJoin('racks as r', 'r.id', '=', 'i.rack_id')
                 ->where('i.product_id', $productId)
-                ->whereNull('i.moved_out_at')
+                ->tap($applyNotMovedOutFilter)
                 ->select([
-                    // ✅ expose explicit id supaya UI bisa tampil "ID#xxx"
                     DB::raw('i.id as product_defect_id'),
-
-                    // keep juga id existing (biar backward compatible kalau ada pemakaian lain)
                     'i.id',
-
                     'i.branch_id',
                     'i.warehouse_id',
                     'i.rack_id',
@@ -367,14 +392,8 @@ class StockController extends Controller
             if (!$isAllBranchMode && is_numeric($activeBranch)) {
                 $q->where('i.branch_id', (int) $activeBranch);
             }
-
-            if (!empty($warehouseId)) {
-                $q->where('i.warehouse_id', $warehouseId);
-            }
-
-            if (!empty($rackId)) {
-                $q->where('i.rack_id', $rackId);
-            }
+            if (!empty($warehouseId)) $q->where('i.warehouse_id', $warehouseId);
+            if (!empty($rackId)) $q->where('i.rack_id', $rackId);
 
             $rows = $q->get()->map(function ($r) use ($toPhotoUrl) {
                 $r->photo_url = $toPhotoUrl($r->photo_path ?? null);
@@ -397,14 +416,10 @@ class StockController extends Controller
             ->leftJoin('racks as r', 'r.id', '=', 'i.rack_id')
             ->where('i.product_id', $productId)
             ->where('i.resolution_status', 'pending')
-            ->whereNull('i.moved_out_at')
+            ->tap($applyNotMovedOutFilter)
             ->select([
-                // ✅ expose explicit id supaya UI bisa tampil "ID#xxx"
                 DB::raw('i.id as product_damaged_id'),
-
-                // keep juga id existing
                 'i.id',
-
                 'i.branch_id',
                 'i.warehouse_id',
                 'i.rack_id',
@@ -429,14 +444,8 @@ class StockController extends Controller
         if (!$isAllBranchMode && is_numeric($activeBranch)) {
             $q->where('i.branch_id', (int) $activeBranch);
         }
-
-        if (!empty($warehouseId)) {
-            $q->where('i.warehouse_id', $warehouseId);
-        }
-
-        if (!empty($rackId)) {
-            $q->where('i.rack_id', $rackId);
-        }
+        if (!empty($warehouseId)) $q->where('i.warehouse_id', $warehouseId);
+        if (!empty($rackId)) $q->where('i.rack_id', $rackId);
 
         $rows = $q->get()->map(function ($r) use ($toPhotoUrl) {
             $r->photo_url = $toPhotoUrl($r->photo_path ?? null);
