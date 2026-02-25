@@ -155,6 +155,11 @@ class PermissionsTableSeeder extends Seeder
             'create_racks',
             'edit_racks',
             'delete_racks',
+
+            // Rack Movements (move stock between racks within same branch)
+            'access_rack_movements',
+            'create_rack_movements',
+            'show_rack_movements',
         ];
 
         foreach ($permissions as $permission) {

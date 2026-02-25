@@ -2,6 +2,7 @@
 
 use Illuminate\Support\Facades\Route;
 use Modules\Inventory\Http\Controllers\RackController;
+use Modules\Inventory\Http\Controllers\RackMovementController;
 use Modules\Inventory\Http\Controllers\StockController;
 use Modules\Inventory\Http\Controllers\StockQualityController;
 
@@ -57,4 +58,23 @@ Route::middleware(['auth'])
         Route::get('/racks/{rack}/edit', [RackController::class, 'edit'])->name('racks.edit');
         Route::put('/racks/{rack}', [RackController::class, 'update'])->name('racks.update');
         Route::delete('/racks/{rack}', [RackController::class, 'destroy'])->name('racks.destroy');
+
+        // =========================================================
+        // Rack Movements (Move stock between racks within same branch)
+        // =========================================================
+        Route::get('/rack-movements', [RackMovementController::class, 'index'])
+            ->name('rack-movements.index');
+
+        Route::get('/rack-movements/create', [RackMovementController::class, 'create'])
+            ->name('rack-movements.create');
+
+        Route::post('/rack-movements', [RackMovementController::class, 'store'])
+            ->name('rack-movements.store');
+
+        Route::get('/rack-movements/{rackMovement}', [RackMovementController::class, 'show'])
+            ->name('rack-movements.show');
+
+        // AJAX: racks by warehouse
+        Route::get('/rack-movements/racks/by-warehouse', [RackMovementController::class, 'racksByWarehouse'])
+            ->name('rack-movements.racks.by-warehouse');
     });
