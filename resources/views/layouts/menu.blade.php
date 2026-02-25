@@ -94,6 +94,14 @@
                 </a>
             </li>
         @endcan
+
+        @can('access_rack_movements')
+            <li class="c-sidebar-nav-item">
+                <a class="c-sidebar-nav-link {{ request()->routeIs('inventory.rack-movements.*') ? 'c-active' : '' }}" href="{{ route('inventory.rack-movements.index') }}">
+                    <i class="c-sidebar-nav-icon bi bi-arrow-left-right"></i> Rack Movements
+                </a>
+            </li>
+        @endcan
         {{-- kalau nanti ada menu lain (Stock Opname, Stock Movement, dsb), tambahkan di sini --}}
     </ul>
 </li>

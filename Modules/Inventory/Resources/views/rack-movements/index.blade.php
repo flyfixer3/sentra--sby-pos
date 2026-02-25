@@ -93,7 +93,9 @@
                                     : (string)($mv->toRack->name ?? '-');
                             @endphp
                             <tr>
-                                <td>{{ optional($mv->date)->format('Y-m-d') }}</td>
+                                <td>
+                                    {{ optional($mv->date)->format('Y-m-d') }} {{ optional($mv->created_at)->format('H:i') }}
+                                </td>
                                 <td><span class="font-weight-bold">{{ $mv->reference }}</span></td>
                                 @if($isAll)
                                     <td>{{ $mv->branch->name ?? '-' }}</td>
