@@ -60,6 +60,28 @@ Route::middleware(['auth'])
         Route::delete('/racks/{rack}', [RackController::class, 'destroy'])->name('racks.destroy');
 
         // =========================================================
+        // ✅ NEW: Racks Import
+        // URL:
+        //   GET  /inventory/racks/import
+        //   GET  /inventory/racks/import/template
+        //   POST /inventory/racks/import
+        // =========================================================
+        Route::get('/racks/import', [RackImportController::class, 'index'])->name('racks.import.index');
+        Route::get('/racks/import/template', [RackImportController::class, 'downloadTemplate'])->name('racks.import.template');
+        Route::post('/racks/import', [RackImportController::class, 'import'])->name('racks.import.store');
+
+        // =========================================================
+        // ✅ NEW: Opening Stock Import (via Mutation)
+        // URL:
+        //   GET  /inventory/stocks/import-opening
+        //   GET  /inventory/stocks/import-opening/template
+        //   POST /inventory/stocks/import-opening
+        // =========================================================
+        Route::get('/stocks/import-opening', [OpeningStockImportController::class, 'index'])->name('stocks.import-opening.index');
+        Route::get('/stocks/import-opening/template', [OpeningStockImportController::class, 'downloadTemplate'])->name('stocks.import-opening.template');
+        Route::post('/stocks/import-opening', [OpeningStockImportController::class, 'import'])->name('stocks.import-opening.store');
+
+        // =========================================================
         // Rack Movements (Move stock between racks within same branch)
         // =========================================================
         Route::get('/rack-movements', [RackMovementController::class, 'index'])
