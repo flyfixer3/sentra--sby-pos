@@ -162,6 +162,7 @@ class PermissionsTableSeeder extends Seeder
             'access_rack_movements',
             'create_rack_movements',
             'show_rack_movements',
+            'import_opening_stock',
         ];
 
         foreach ($permissions as $permission) {

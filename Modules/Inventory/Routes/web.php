@@ -1,6 +1,7 @@
 <?php
 
 use Illuminate\Support\Facades\Route;
+use Modules\Inventory\Http\Controllers\OpeningStockImportController;
 use Modules\Inventory\Http\Controllers\RackController;
 use Modules\Inventory\Http\Controllers\RackImportController;
 use Modules\Inventory\Http\Controllers\RackMovementController;

@@ -86,6 +86,13 @@
                 <i class="c-sidebar-nav-icon bi bi-stack" style="line-height: 1;"></i> Stocks
             </a>
         </li>
+        @can('import_opening_stock')
+            <li class="c-sidebar-nav-item">
+                <a class="c-sidebar-nav-link {{ request()->routeIs('inventory.stocks.import-opening.index') ? 'c-active' : '' }}" href="{{ route('inventory.stocks.import-opening.index') }}">
+                    <i class="c-sidebar-nav-icon bi bi-file-earmark-arrow-up" style="line-height: 1;"></i> Import Opening Stock
+                </a>
+            </li>
+        @endcan
         @can('access_racks')
             <li class="c-sidebar-nav-item">
                 <a class="c-sidebar-nav-link {{ request()->routeIs('inventory.racks.*') ? 'c-active' : '' }}"
