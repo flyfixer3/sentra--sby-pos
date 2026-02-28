@@ -36,12 +36,20 @@
                     <h4 class="mb-0">Racks</h4>
                     <div class="text-muted small">Manage racks per warehouse (branch mengikuti warehouse).</div>
                 </div>
+                <div class="mt-2 mt-md-0">
+                    @can('create_racks')
+                        <a href="{{ route('inventory.racks.create') }}" class="btn btn-primary">
+                            <i class="bi bi-plus-circle mr-1"></i> Create Rack
+                        </a>
+                    @endcan
 
-                @can('create_racks')
-                    <a href="{{ route('inventory.racks.create') }}" class="btn btn-primary">
-                        <i class="bi bi-plus-circle mr-1"></i> Create Rack
-                    </a>
-                @endcan
+                    @can('import_racks')
+                        <a href="{{ route('inventory.racks.import.index') }}" class="btn btn-secondary">
+                            <i class="bi bi-file-earmark-arrow-up mr-1"></i> Import Racks
+                        </a>
+                    @endcan
+                </div>
+
             </div>
 
             <hr class="my-3">

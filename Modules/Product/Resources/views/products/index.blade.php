@@ -23,6 +23,10 @@
                             Add Product <i class="bi bi-plus"></i>
                         </a>
 
+                        <a href="{{ route('products.import.index') }}" class="btn btn-secondary">
+                            Import Products <i class="bi bi-file-earmark-arrow-up"></i>
+                        </a>
+
                         <hr>
 
                         <div class="table-responsive">

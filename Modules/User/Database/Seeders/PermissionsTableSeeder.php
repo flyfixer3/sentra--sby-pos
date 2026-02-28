@@ -37,6 +37,7 @@ class PermissionsTableSeeder extends Seeder
             'show_products',
             'edit_products',
             'delete_products',
+            'import_products',
 
             //Product Categories
             'access_product_categories',
@@ -155,6 +156,7 @@ class PermissionsTableSeeder extends Seeder
             'create_racks',
             'edit_racks',
             'delete_racks',
+            'import_racks',
 
             // Rack Movements (move stock between racks within same branch)
             'access_rack_movements',
