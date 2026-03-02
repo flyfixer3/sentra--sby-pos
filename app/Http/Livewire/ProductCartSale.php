@@ -6,6 +6,7 @@ use App\Support\BranchContext;
 use Gloudemans\Shoppingcart\Facades\Cart;
 use Livewire\Component;
 use Modules\Mutation\Entities\Mutation;
+use Modules\Product\Services\HppService;
 
 class ProductCartSale extends Component
 {
@@ -306,13 +307,27 @@ class ProductCartSale extends Component
         $this->syncQuantityDefaults();
     }
 
+    /**
+     * ✅ HPP-aware calculation.
+     * product_cost = current HPP dari tabel product_hpps berdasarkan branch aktif.
+     */
     private function calculate($product): array
     {
         $price = (int) ($product['product_price'] ?? 0);
         $sub_total = $price;
         $product_tax = 0;
-        $product_cost = (int) ($product['product_cost'] ?? 0);
         $unit_price = $price;
+
+        $branchId = (int) BranchContext::id();
+        $productId = (int) ($product['id'] ?? 0);
+
+        $hpp = 0.0;
+        if ($branchId > 0 && $productId > 0) {
+            $hppService = new HppService();
+            $hpp = (float) $hppService->getCurrentHpp($branchId, $productId);
+        }
+
+        $product_cost = (int) round(max(0.0, $hpp), 0);
 
         return [
             'price' => $price,

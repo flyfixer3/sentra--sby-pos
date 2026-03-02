@@ -124,6 +124,12 @@ class PermissionsTableSeeder extends Seeder
             'edit_purchases',
             'delete_purchases',
 
+            // Purchase Deliveries
+            'access_purchase_deliveries',
+            'show_purchase_deliveries',
+            'edit_purchase_deliveries',
+            'confirm_purchase_deliveries',
+
             //Purchase Payments
             'access_purchase_payments',
 

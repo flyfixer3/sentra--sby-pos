@@ -415,7 +415,15 @@ class PurchaseDeliveryController extends Controller
     {
         abort_if(Gate::denies('confirm_purchase_deliveries'), 403);
 
+        // ✅ Branch guard (sesuai pola kamu)
+        $activeBranchId = $this->activeBranchIdOrFail('purchase-deliveries.index');
+        if ((int) $purchaseDelivery->branch_id !== (int) $activeBranchId) {
+            abort(403, 'Active branch mismatch for this Purchase Delivery.');
+        }
+
+        // ✅ VALIDASI: tetap pakai format LAMA (sesuai UI kamu)
         $request->validate([
+            'warehouse_id' => 'nullable|integer|exists:warehouses,id',
             'confirm_note' => 'nullable|string|max:1000',
 
             'items' => 'required|array|min:1',
@@ -438,37 +446,230 @@ class PurchaseDeliveryController extends Controller
             'items.*.damaged_items'      => 'nullable|array',
         ]);
 
-        DB::transaction(function () use ($request, $purchaseDelivery) {
+        // ✅ HPP service
+        $hppService = new \Modules\Product\Services\HppService();
+
+        DB::transaction(function () use ($request, $purchaseDelivery, $activeBranchId, $hppService) {
 
             $purchaseDelivery = PurchaseDelivery::withoutGlobalScopes()
                 ->lockForUpdate()
                 ->findOrFail($purchaseDelivery->id);
 
+            // ✅ allow confirm multiple batches: pending + partial
             $statusNow = $this->normalizeStatus((string) $purchaseDelivery->status);
             if (!in_array($statusNow, ['pending', 'partial'], true)) {
                 abort(422, 'This delivery can no longer be confirmed.');
             }
 
-            if (empty($purchaseDelivery->warehouse_id)) {
+            // =========================================================
+            // ✅ FIX UTAMA WAREHOUSE:
+            // =========================================================
+            $warehouseId = (int) ($request->warehouse_id ?? 0);
+            if ($warehouseId <= 0) {
+                $warehouseId = (int) ($purchaseDelivery->warehouse_id ?? 0);
+            }
+
+            if ($warehouseId <= 0) {
                 abort(422, 'Please select Warehouse first before confirming this Purchase Delivery.');
+            }
+
+            $wh = Warehouse::findOrFail($warehouseId);
+            if ((int) $wh->branch_id !== (int) $purchaseDelivery->branch_id) {
+                abort(403, 'Warehouse must belong to the same branch as this Purchase Delivery.');
+            }
+
+            // ✅ set warehouse_id kalau PD masih null / berbeda
+            if ((int) ($purchaseDelivery->warehouse_id ?? 0) !== $warehouseId) {
+                $purchaseDelivery->update([
+                    'warehouse_id' => $warehouseId,
+                    'updated_by'   => auth()->id(),
+                ]);
             }
 
             $purchaseDelivery->loadMissing([
                 'purchaseOrder.purchaseOrderDetails',
                 'purchaseDeliveryDetails',
                 'warehouse',
+                'purchase', // ✅ boleh ada, tapi jangan DIANDALKAN karena PD kamu memang tidak simpan purchase_id
             ]);
 
-            $activeBranchId = $this->activeBranchIdOrFail('purchase-deliveries.index');
-            if ((int) $purchaseDelivery->branch_id !== (int) $activeBranchId) {
-                abort(403, 'Active branch mismatch for this Purchase Delivery.');
+            // =========================================================
+            // ✅ FIX: Resolve Purchase (invoice) dari tabel purchases
+            // Karena purchases punya purchase_delivery_id (bukan PD punya purchase_id)
+            // =========================================================
+            $purchaseObj = $purchaseDelivery->purchase ?? null;
+
+            // 1) PRIORITY: cari purchase berdasarkan purchase_delivery_id
+            if (!$purchaseObj) {
+                try {
+                    $purchaseObj = \Modules\Purchase\Entities\Purchase::withoutGlobalScopes()
+                        ->where('purchase_delivery_id', (int) $purchaseDelivery->id)
+                        ->orderByDesc('id')
+                        ->first();
+                } catch (\Throwable $e) {
+                    $purchaseObj = null;
+                }
             }
 
-            $wh = Warehouse::findOrFail((int) $purchaseDelivery->warehouse_id);
-            if ((int) $wh->branch_id !== (int) $purchaseDelivery->branch_id) {
-                abort(403, 'Warehouse must belong to the same branch as this Purchase Delivery.');
+            // 2) fallback: kalau belum ketemu dan punya PO, cari purchase by purchase_order_id
+            if (
+                !$purchaseObj
+                && !empty($purchaseDelivery->purchase_order_id)
+            ) {
+                try {
+                    $purchaseObj = \Modules\Purchase\Entities\Purchase::withoutGlobalScopes()
+                        ->where('purchase_order_id', (int) $purchaseDelivery->purchase_order_id)
+                        ->where('branch_id', (int) $purchaseDelivery->branch_id)
+                        ->orderByDesc('id')
+                        ->first();
+                } catch (\Throwable $e) {
+                    $purchaseObj = null;
+                }
             }
 
+            $purchaseId = (int) ($purchaseObj->id ?? 0);
+
+            // =========================================================
+            // ✅ Helper: ambil unit cost dari "detail row" (PO/Purchase)
+            // =========================================================
+            $extractUnitCost = function ($d): float {
+                if (!$d) return 0.0;
+
+                $candidates = [
+                    'unit_cost',
+                    'cost',
+                    'purchase_cost',
+                    'purchase_price',
+                    'net_unit_cost',
+                    'net_price',
+                    'unit_price',
+                    'price',
+                ];
+
+                foreach ($candidates as $f) {
+                    $v = (float) data_get($d, $f, 0);
+                    if ($v > 0) return $v;
+                }
+
+                $qty = (float) data_get($d, 'quantity', 0);
+                if ($qty <= 0) $qty = (float) data_get($d, 'qty', 0);
+
+                $sub = (float) data_get($d, 'sub_total', 0);
+                if ($sub <= 0) $sub = (float) data_get($d, 'subtotal', 0);
+                if ($sub <= 0) $sub = (float) data_get($d, 'total', 0);
+                if ($sub <= 0) $sub = (float) data_get($d, 'total_price', 0);
+
+                if ($qty > 0 && $sub > 0) return $sub / $qty;
+
+                return 0.0;
+            };
+
+            // =========================================================
+            // ✅ Map PO detail -> unit cost (kalau ada PO)
+            // =========================================================
+            $poDetailMap = [];
+            if (!empty($purchaseDelivery->purchase_order_id) && $purchaseDelivery->purchaseOrder) {
+                foreach ($purchaseDelivery->purchaseOrder->purchaseOrderDetails as $d) {
+                    $pid = (int) ($d->product_id ?? 0);
+                    if ($pid > 0) $poDetailMap[$pid] = $d;
+                }
+            }
+
+            // =========================================================
+            // ✅ Map Purchase detail -> unit cost (kalau ada Purchase/Invoice)
+            // =========================================================
+            $purchaseDetailMap = [];
+
+            // 1) coba via relation di model Purchase (kalau ada di project kamu)
+            if ($purchaseId > 0 && $purchaseObj) {
+                $possibleRelations = ['purchaseDetails', 'purchase_details', 'details', 'items', 'purchaseItems'];
+
+                foreach ($possibleRelations as $rel) {
+                    try {
+                        if (method_exists($purchaseObj, $rel)) {
+                            $rows = $purchaseObj->{$rel}()->get();
+                            foreach ($rows as $r) {
+                                $pid = (int) ($r->product_id ?? 0);
+                                if ($pid > 0) $purchaseDetailMap[$pid] = $r;
+                            }
+                            if (!empty($purchaseDetailMap)) break;
+                        }
+                    } catch (\Throwable $e) {
+                        // ignore
+                    }
+                }
+            }
+
+            // 2) fallback: baca langsung dari DB table detail purchase (auto-discovery)
+            if ($purchaseId > 0 && empty($purchaseDetailMap)) {
+                $schema = DB::getSchemaBuilder();
+
+                $tableCandidates = [
+                    'purchase_details',
+                    'purchase_items',
+                    'purchase_detail',
+                    'purchase_products',
+                    'purchases_details',
+                    'purchases_items',
+                ];
+
+                $foundTable = null;
+                foreach ($tableCandidates as $t) {
+                    if ($schema->hasTable($t)) {
+                        if ($schema->hasColumn($t, 'purchase_id') && $schema->hasColumn($t, 'product_id')) {
+                            $foundTable = $t;
+                            break;
+                        }
+                    }
+                }
+
+                if ($foundTable) {
+                    $rows = DB::table($foundTable)
+                        ->where('purchase_id', $purchaseId)
+                        ->get();
+
+                    foreach ($rows as $r) {
+                        $pid = (int) ($r->product_id ?? 0);
+                        if ($pid > 0) $purchaseDetailMap[$pid] = $r;
+                    }
+                }
+            }
+
+            // =========================================================
+            // ✅ Resolver final: PO -> Purchase -> error
+            // =========================================================
+            $resolveUnitCost = function (int $productId) use (
+                $poDetailMap,
+                $purchaseDetailMap,
+                $extractUnitCost,
+                $purchaseDelivery,
+                $purchaseId
+            ): float {
+                // priority 1: PO detail
+                if (isset($poDetailMap[$productId])) {
+                    $c = (float) $extractUnitCost($poDetailMap[$productId]);
+                    if ($c > 0) return $c;
+                }
+
+                // priority 2: Purchase detail (invoice)
+                if (isset($purchaseDetailMap[$productId])) {
+                    $c = (float) $extractUnitCost($purchaseDetailMap[$productId]);
+                    if ($c > 0) return $c;
+                }
+
+                $poId = (int) ($purchaseDelivery->purchase_order_id ?? 0);
+                $pId  = (int) ($purchaseId ?? 0);
+
+                throw new \RuntimeException(
+                    "HPP cannot be updated because unit cost is missing/0 for product_id={$productId}. " .
+                    "This PD has purchase_order_id={$poId} and resolved_purchase_id={$pId}. " .
+                    "Please ensure the item has a valid cost/price in PO Detail or Purchase (invoice) Detail."
+                );
+            };
+
+            // =========================================================
+            // ✅ Reference batch (compat dengan show summary kamu)
+            // =========================================================
             $baseRef = 'PD-' . (int) $purchaseDelivery->id;
             $batchNo = (int) Mutation::withoutGlobalScopes()
                 ->where('reference', 'like', $baseRef . '-B%')
@@ -600,7 +801,7 @@ class PurchaseDeliveryController extends Controller
                     'qty_damaged'  => (int) ($pdDetail->qty_damaged ?? 0) + $addDamaged,
                 ]);
 
-                // ✅ Update fulfilled qty PO detail
+                // ✅ Update fulfilled qty PO detail (hanya kalau PD memang punya PO)
                 if (!empty($purchaseDelivery->purchase_order_id) && $purchaseDelivery->purchaseOrder) {
                     $po = $purchaseDelivery->purchaseOrder;
                     $poDetail = $po->purchaseOrderDetails->firstWhere('product_id', $productId);
@@ -613,13 +814,10 @@ class PurchaseDeliveryController extends Controller
                 }
 
                 // =========================================================
-                // ✅ (1) INSERT DEFECT/DAMAGED ITEMS DULU
-                //     - mutation_in_id untuk damaged boleh null dulu
-                //     - kita simpan ID damaged yang dibuat untuk di-update setelah mutation dibuat
+                // ✅ INSERT DEFECT/DAMAGED ITEMS
                 // =========================================================
                 $createdDamagedIdsByRack = [];
 
-                // Defect per unit
                 if ($addDefect > 0) {
                     foreach ($defRows as $k => $d) {
                         $photoPath = null;
@@ -645,7 +843,6 @@ class PurchaseDeliveryController extends Controller
                     }
                 }
 
-                // Damaged per unit (mutation_in_id diisi belakangan)
                 if ($addDamaged > 0) {
                     foreach ($damRows as $k => $d) {
                         $photoPath = null;
@@ -666,7 +863,7 @@ class PurchaseDeliveryController extends Controller
                             'reason'          => $d['damaged_reason'] ?? null,
                             'photo_path'      => $photoPath,
                             'created_by'      => auth()->id(),
-                            'mutation_in_id'  => null, // ✅ isi setelah mutation dibuat
+                            'mutation_in_id'  => null,
                             'mutation_out_id' => null,
                         ]);
 
@@ -679,10 +876,7 @@ class PurchaseDeliveryController extends Controller
                 }
 
                 // =========================================================
-                // ✅ (2) MUTATION IN: ABSOLUT lewat MutationController
-                //     - per rack
-                //     - per bucket: good/defect/damaged (biar stock_racks bucket ke-update)
-                //     - mode summary (merge 1 row per rack & reference)
+                // ✅ MUTATION IN (via MutationController) per rack & bucket
                 // =========================================================
                 foreach ($rackAgg as $rackId => $agg) {
 
@@ -695,7 +889,6 @@ class PurchaseDeliveryController extends Controller
 
                     $noteBase = "Purchase Delivery IN #{$reference} | WH " . (int) $purchaseDelivery->warehouse_id;
 
-                    // Kita butuh mutation id untuk damaged rows (pakai id hasil call terakhir/merged).
                     $mutationIdForRack = 0;
 
                     if ($qtyGood > 0) {
@@ -746,7 +939,6 @@ class PurchaseDeliveryController extends Controller
                         );
                     }
 
-                    // ✅ isi mutation_in_id untuk damaged items yang tadi dibuat di rack ini
                     if ($mutationIdForRack > 0 && !empty($createdDamagedIdsByRack[$rackId])) {
                         ProductDamagedItem::withoutGlobalScopes()
                             ->whereIn('id', array_map('intval', $createdDamagedIdsByRack[$rackId]))
@@ -758,8 +950,7 @@ class PurchaseDeliveryController extends Controller
                 }
 
                 // =========================================================
-                // ✅ (3) TURUNKAN INCOMING POOL (warehouse_id = NULL)
-                //     (tetap, karena MutationController tidak handle "incoming pool")
+                // ✅ TURUNKAN INCOMING POOL (warehouse_id = NULL)
                 // =========================================================
                 $branchId = (int) $purchaseDelivery->branch_id;
 
@@ -792,6 +983,23 @@ class PurchaseDeliveryController extends Controller
                         'qty_incoming' => DB::raw("GREATEST(COALESCE(qty_incoming,0) - {$batchTotal}, 0)"),
                         'updated_at'   => now(),
                     ]);
+
+                // =========================================================
+                // ✅ UPDATE HPP (moving average)
+                // - PO -> Purchase(by purchase_delivery_id) -> error
+                // - kompatibel untuk multi-confirm batch
+                // =========================================================
+                $unitCost = (float) $resolveUnitCost($productId);
+
+                $hppService->applyIncoming(
+                    (int) $purchaseDelivery->branch_id,
+                    (int) $productId,
+                    (int) $batchTotal,
+                    (float) $unitCost,
+                    (int) $addGood,
+                    (int) $addDefect,
+                    (int) $addDamaged
+                );
             }
 
             if (!$anyConfirmedInThisBatch) {
@@ -820,7 +1028,6 @@ class PurchaseDeliveryController extends Controller
                 'confirm_note_updated_at'   => $confirmNote ? now() : null,
             ]);
 
-            // ✅ UPDATE STATUS PO sesuai rule baru (Pending/Partial/Delivered/Completed)
             if (!empty($purchaseDelivery->purchase_order_id)) {
                 $po = PurchaseOrder::lockForUpdate()->findOrFail((int) $purchaseDelivery->purchase_order_id);
                 $po->refreshStatus();
