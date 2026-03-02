@@ -11,6 +11,10 @@
 @endsection
 
 @section('content')
+    @php
+        $canViewHpp = auth()->check() && auth()->user()->can('view_sale_hpp');
+    @endphp
+
     <div class="container-fluid">
         <div class="row">
             <div class="col-lg-12">
@@ -136,10 +140,18 @@
                                 <tr>
                                     <th class="align-middle">Product</th>
                                     <th class="align-middle">Net Unit Price</th>
-                                    <th class="align-middle">HPP / Unit</th>
-                                    <th class="align-middle">Profit / Unit</th>
+
+                                    @if($canViewHpp)
+                                        <th class="align-middle">HPP / Unit</th>
+                                        <th class="align-middle">Profit / Unit</th>
+                                    @endif
+
                                     <th class="align-middle">Qty</th>
-                                    <th class="align-middle">Profit Total</th>
+
+                                    @if($canViewHpp)
+                                        <th class="align-middle">Profit Total</th>
+                                    @endif
+
                                     <th class="align-middle">Discount</th>
                                     <th class="align-middle">Tax</th>
                                     <th class="align-middle">Sub Total</th>
@@ -148,15 +160,18 @@
                                 <tbody>
                                 @foreach($sale->saleDetails as $item)
                                     @php
-                                        $sellUnit = (int) ($item->price ?? 0); // net unit price
+                                        $sellUnit = (int) ($item->price ?? 0); // net unit price (snapshot)
                                         $hppUnit  = (int) ($item->product_cost ?? 0); // snapshot HPP
                                         $qty      = (int) ($item->quantity ?? 0);
 
                                         $profitUnit = $sellUnit - $hppUnit;
                                         $profitTotal = $profitUnit * $qty;
 
-                                        $totalProfit += $profitTotal;
+                                        if ($canViewHpp) {
+                                            $totalProfit += $profitTotal;
+                                        }
                                     @endphp
+
                                     <tr>
                                         <td class="align-middle">
                                             {{ $item->product_name }} <br>
@@ -167,27 +182,31 @@
 
                                         <td class="align-middle">{{ format_currency($item->unit_price) }}</td>
 
-                                        <td class="align-middle">{{ format_currency($hppUnit) }}</td>
+                                        @if($canViewHpp)
+                                            <td class="align-middle">{{ format_currency($hppUnit) }}</td>
 
-                                        <td class="align-middle">
-                                            @if($profitUnit >= 0)
-                                                <span class="text-success">{{ format_currency($profitUnit) }}</span>
-                                            @else
-                                                <span class="text-danger">{{ format_currency($profitUnit) }}</span>
-                                            @endif
-                                        </td>
+                                            <td class="align-middle">
+                                                @if($profitUnit >= 0)
+                                                    <span class="text-success">{{ format_currency($profitUnit) }}</span>
+                                                @else
+                                                    <span class="text-danger">{{ format_currency($profitUnit) }}</span>
+                                                @endif
+                                            </td>
+                                        @endif
 
                                         <td class="align-middle">
                                             {{ $qty }}
                                         </td>
 
-                                        <td class="align-middle">
-                                            @if($profitTotal >= 0)
-                                                <span class="text-success"><strong>{{ format_currency($profitTotal) }}</strong></span>
-                                            @else
-                                                <span class="text-danger"><strong>{{ format_currency($profitTotal) }}</strong></span>
-                                            @endif
-                                        </td>
+                                        @if($canViewHpp)
+                                            <td class="align-middle">
+                                                @if($profitTotal >= 0)
+                                                    <span class="text-success"><strong>{{ format_currency($profitTotal) }}</strong></span>
+                                                @else
+                                                    <span class="text-danger"><strong>{{ format_currency($profitTotal) }}</strong></span>
+                                                @endif
+                                            </td>
+                                        @endif
 
                                         <td class="align-middle">
                                             {{ format_currency($item->product_discount_amount) }}
@@ -225,16 +244,18 @@
 
                                 <table class="table">
                                     <tbody>
-                                        <tr>
-                                            <td class="left"><strong>Total Profit (Internal)</strong></td>
-                                            <td class="right">
-                                                @if($totalProfit >= 0)
-                                                    <span class="text-success"><strong>{{ format_currency($totalProfit) }}</strong></span>
-                                                @else
-                                                    <span class="text-danger"><strong>{{ format_currency($totalProfit) }}</strong></span>
-                                                @endif
-                                            </td>
-                                        </tr>
+                                        @if($canViewHpp)
+                                            <tr>
+                                                <td class="left"><strong>Total Profit (Internal)</strong></td>
+                                                <td class="right">
+                                                    @if($totalProfit >= 0)
+                                                        <span class="text-success"><strong>{{ format_currency($totalProfit) }}</strong></span>
+                                                    @else
+                                                        <span class="text-danger"><strong>{{ format_currency($totalProfit) }}</strong></span>
+                                                    @endif
+                                                </td>
+                                            </tr>
+                                        @endif
 
                                         <tr>
                                             <td class="left"><strong>Discount ({{ $sale->discount_percentage }}%)</strong></td>
@@ -283,10 +304,12 @@
                             </div>
                         </div>
 
-                        {{-- Important: ini hanya tampil di web (internal). Print PDF tidak pakai view ini. --}}
-                        <div class="alert alert-warning mt-3 d-print-none" style="font-size: 13px;">
-                            <strong>Catatan Internal:</strong> Kolom HPP & Profit hanya untuk internal, tidak akan ikut tercetak di invoice PDF customer.
-                        </div>
+                        @if($canViewHpp)
+                            {{-- Important: ini hanya tampil di web (internal). Print PDF tidak pakai view ini. --}}
+                            <div class="alert alert-warning mt-3 d-print-none" style="font-size: 13px;">
+                                <strong>Catatan Internal:</strong> Kolom HPP & Profit hanya untuk internal, tidak akan ikut tercetak di invoice PDF customer.
+                            </div>
+                        @endif
 
                     </div>
                 </div>

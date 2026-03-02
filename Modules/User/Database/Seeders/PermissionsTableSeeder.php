@@ -155,7 +155,7 @@ class PermissionsTableSeeder extends Seeder
             //Settings
             'access_settings',
 
-            // ✅ TRANSFER (tambahkan permission baru kamu di sini)
+            // ✅ TRANSFER
             'cancel_transfers',
 
             'access_racks',
@@ -171,7 +171,21 @@ class PermissionsTableSeeder extends Seeder
             'import_opening_stock',
         ];
 
+        // ✅ Permission khusus internal (HPP/Profit)
+        // Penting: jangan dimasukin ke $permissions (karena kamu auto-sync semua ke role Admin)
+        // Biar yang punya cuma role Administrator.
+        $internalPermissions = [
+            'view_sale_hpp',
+        ];
+
         foreach ($permissions as $permission) {
+            Permission::firstOrCreate([
+                'name' => $permission,
+                'guard_name' => 'web',
+            ]);
+        }
+
+        foreach ($internalPermissions as $permission) {
             Permission::firstOrCreate([
                 'name' => $permission,
                 'guard_name' => 'web',
@@ -184,11 +198,24 @@ class PermissionsTableSeeder extends Seeder
             'guard_name' => 'web',
         ]);
 
-        // Beri semua permission ke Admin (pola kamu)
+        // Beri semua permission standar ke Admin (pola kamu)
         $role->syncPermissions($permissions);
 
         // Tetap revoke ini sesuai pola kamu
         $role->revokePermissionTo('access_user_management');
+
+        // ✅ Pastikan role Administrator ada, dan hanya role ini yang boleh lihat HPP/Profit
+        $administratorRole = Role::firstOrCreate([
+            'name' => 'Administrator',
+            'guard_name' => 'web',
+        ]);
+
+        // Jangan pakai syncPermissions di sini biar tidak overwrite permission Administrator yang mungkin sudah ada.
+        foreach ($internalPermissions as $permission) {
+            if (!$administratorRole->hasPermissionTo($permission)) {
+                $administratorRole->givePermissionTo($permission);
+            }
+        }
 
         // Clear cache lagi biar aman
         app(PermissionRegistrar::class)->forgetCachedPermissions();
