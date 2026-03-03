@@ -6,6 +6,7 @@ use App\Http\Livewire\Adjustment\ProductTable;
 use App\Http\Livewire\Adjustment\ProductTableQualityToGood;
 use App\Http\Livewire\Adjustment\ProductTableStockSub;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Pagination\Paginator;
 use Illuminate\Support\ServiceProvider;
 use Livewire\Livewire;
 
@@ -32,6 +33,7 @@ class AppServiceProvider extends ServiceProvider
         Livewire::component('adjustment.product-table-quality', ProductTable::class);
         Livewire::component('adjustment.product-table-stock-sub', ProductTableStockSub::class);
         Livewire::component('adjustment.product-table-quality-to-good', ProductTableQualityToGood::class);
+        Paginator::useBootstrap();
         // Model::preventLazyLoading(!app()->isProduction());
     }
 }
