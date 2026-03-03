@@ -11,9 +11,9 @@ use Modules\People\Entities\Customer;
 use Modules\Product\Entities\Warehouse;
 use Modules\Sale\Entities\Sale;
 
-class SaleDelivery extends Model
+class SaleDelivery extends BaseModel
 {
-    use HasFactory, HasBranchScope;
+    use HasFactory;
 
     protected $fillable = [
         'branch_id',

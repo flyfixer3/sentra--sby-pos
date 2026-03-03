@@ -40,8 +40,26 @@
                         <select name="table" id="table" class="form-control">
                             <option value="">All Tables</option>
                             @foreach($tables as $table)
+                                @php
+                                    // Label lebih jelas buat user
+                                    $tableLabel = ucfirst($table);
+
+                                    // Kalau Mutation, tampilkan jadi Stock Log (tapi value tetap "Mutation" supaya filter tetap jalan)
+                                    if ($table === 'Mutation') {
+                                        $tableLabel = 'Stock Log';
+                                    }
+
+                                    // Opsional rapihin nama gabungan (biar enak dibaca)
+                                    if ($table === 'PurchaseDelivery') {
+                                        $tableLabel = 'Purchase Delivery';
+                                    }
+                                    if ($table === 'SaleDelivery') {
+                                        $tableLabel = 'Sale Delivery';
+                                    }
+                                @endphp
+
                                 <option value="{{ $table }}" {{ request('table') == $table ? 'selected' : '' }}>
-                                    {{ ucfirst($table) }}
+                                    {{ $tableLabel }}
                                 </option>
                             @endforeach
                         </select>
@@ -87,9 +105,9 @@
                             <th style="width: 160px;">Date</th>
                             <th style="width: 200px;">User</th>
                             <th>Action</th>
-                            <th style="width: 160px;">Table</th>
-                            <th style="width: 160px;">Record</th>
-                            <th style="width: 280px;">Changes</th>
+                            <th style="width: 180px;">Table</th>
+                            <th style="width: 180px;">Record</th>
+                            <th style="width: 320px;">Changes</th>
                         </tr>
                     </thead>
 
@@ -99,32 +117,68 @@
                                 $subjectType = $log->subject_type ? class_basename($log->subject_type) : null;
                                 $modelName = $subjectType ? strtolower($subjectType) : null;
 
+                                // ✅ UI Label table
+                                $tableLabel = $subjectType ?? '-';
+                                if ($tableLabel === 'Mutation') {
+                                    $tableLabel = 'Stock Log'; // biar jelas bahwa ini hanya log
+                                }
+                                if ($tableLabel === 'PurchaseDelivery') {
+                                    $tableLabel = 'Purchase Delivery';
+                                }
+                                if ($tableLabel === 'SaleDelivery') {
+                                    $tableLabel = 'Sale Delivery';
+                                }
+
                                 $oldValues = $log->properties['old'] ?? [];
                                 $newValues = $log->properties['attributes'] ?? [];
 
-                                // ✅ tentukan route berdasarkan model
-                                // NOTE: jangan pakai "use" di blade (bikin parse error)
-                                $routeName = null;
-
-                                if ($modelName) {
-                                    $routeName = match ($modelName) {
-                                        'sale'     => 'sales.show',
-                                        'product'  => 'products.show',
-                                        'purchase' => 'purchases.show',
-                                        'mutation' => 'mutations.show',
-                                        'stock'    => 'stocks.index', // contoh index (tanpa param)
-                                        default    => $modelName . 's.show',
-                                    };
-                                }
-
+                                // ✅ subject id
                                 $subjectId = null;
                                 if ($log->subject && method_exists($log->subject, 'getAttribute')) {
                                     $subjectId = $log->subject->getAttribute('id');
                                 }
 
+                                // ✅ label record
                                 $label = $subjectId ?? '-';
-                                if ($modelName === 'sale' && $log->subject && method_exists($log->subject, 'getAttribute')) {
-                                    $label = $log->subject->getAttribute('reference') ?? $subjectId ?? '-';
+
+                                // kalau punya reference, pakai reference biar lebih enak
+                                if ($log->subject && method_exists($log->subject, 'getAttribute')) {
+                                    $ref = $log->subject->getAttribute('reference');
+                                    if (!empty($ref)) {
+                                        $label = $ref;
+                                    }
+                                }
+
+                                /**
+                                 * ✅ RULE UTAMA:
+                                 * - Mutation = LOG saja -> jangan ada link ke detail
+                                 * - Adjustment -> boleh link (adjustments.show)
+                                 * - PurchaseDelivery -> boleh link (purchase-deliveries.show)
+                                 * - SaleDelivery -> boleh link (sale-deliveries.show)
+                                 * - Sale/Purchase/Product dll tetap jalan
+                                 */
+
+                                $routeName = null;
+
+                                if ($modelName) {
+                                    $routeName = match ($modelName) {
+                                        'sale'           => 'sales.show',
+                                        'purchase'        => 'purchases.show',
+                                        'product'         => 'products.show',
+                                        'adjustment'      => 'adjustments.show',
+
+                                        // ✅ ini yang kamu minta ditambahin
+                                        'purchasedelivery'=> 'purchase-deliveries.show',
+                                        'saledelivery'    => 'sale-deliveries.show',
+
+                                        // ❌ MUTATION JANGAN ADA SHOW LINK (log only)
+                                        'mutation'        => null,
+
+                                        // contoh index (tanpa param)
+                                        'stock'           => 'stocks.index',
+
+                                        default           => $modelName . 's.show',
+                                    };
                                 }
 
                                 $noParamRoutes = ['stocks.index'];
@@ -164,13 +218,14 @@
 
                                 <td>
                                     @if($subjectType)
-                                        <span class="badge bg-light text-dark border">{{ $subjectType }}</span>
+                                        <span class="badge bg-light text-dark border">{{ $tableLabel }}</span>
                                     @else
                                         -
                                     @endif
                                 </td>
 
                                 <td>
+                                    {{-- ✅ kalau route null (mutation), atau tidak ada subjectId, tampilkan text saja --}}
                                     @if($hasRoute && $subjectId)
                                         @if($needsParam)
                                             <a href="{{ route($routeName, $subjectId) }}" class="text-primary text-decoration-none fw-semibold">
@@ -182,7 +237,7 @@
                                             </a>
                                         @endif
                                     @else
-                                        <span class="text-muted">{{ $label }}</span>
+                                        <span class="text-muted fw-semibold">{{ $label }}</span>
                                     @endif
                                 </td>
 
@@ -234,6 +289,8 @@
                         Showing {{ $logs->firstItem() ?? 0 }} - {{ $logs->lastItem() ?? 0 }} of {{ $logs->total() ?? 0 }}
                     @endif
                 </div>
+
+                {{-- ✅ pagination BIARKAN seperti sekarang (JANGAN DIUBAH) --}}
                 <div>
                     {{ $logs->links() }}
                 </div>
