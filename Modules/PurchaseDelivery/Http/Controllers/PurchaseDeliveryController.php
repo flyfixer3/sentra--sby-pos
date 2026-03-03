@@ -985,11 +985,18 @@ class PurchaseDeliveryController extends Controller
                     ]);
 
                 // =========================================================
-                // ✅ UPDATE HPP (moving average)
-                // - PO -> Purchase(by purchase_delivery_id) -> error
-                // - kompatibel untuk multi-confirm batch
+                // ✅ UPDATE HPP (moving average) -> LEDGER (INSERT NEW ROW)
                 // =========================================================
                 $unitCost = (float) $resolveUnitCost($productId);
+
+                // ✅ effectiveAt: pakai tanggal PD (date) + jam sekarang biar urutan antar batch aman
+                $effectiveAt = null;
+                try {
+                    $effectiveAt = \Carbon\Carbon::parse((string) $purchaseDelivery->getRawOriginal('date'))
+                        ->setTimeFrom(now());
+                } catch (\Throwable $e) {
+                    $effectiveAt = now();
+                }
 
                 $hppService->applyIncoming(
                     (int) $purchaseDelivery->branch_id,
@@ -998,7 +1005,10 @@ class PurchaseDeliveryController extends Controller
                     (float) $unitCost,
                     (int) $addGood,
                     (int) $addDefect,
-                    (int) $addDamaged
+                    (int) $addDamaged,
+                    $effectiveAt,                    // ✅ NEW
+                    PurchaseDelivery::class,          // ✅ NEW
+                    (int) $purchaseDelivery->id       // ✅ NEW
                 );
             }
 

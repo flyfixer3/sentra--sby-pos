@@ -26,7 +26,10 @@ class HppService
         $incomingUnitCost,
         int $incomingGoodQty = 0,
         int $incomingDefectQty = 0,
-        int $incomingDamagedQty = 0
+        int $incomingDamagedQty = 0,
+        $effectiveAt = null,               // ✅ NEW (optional)
+        ?string $sourceType = null,         // ✅ NEW (optional)
+        ?int $sourceId = null               // ✅ NEW (optional)
     ): void {
         $incomingQty = max(0, (int) $incomingQty);
         if ($incomingQty <= 0) {
@@ -34,29 +37,46 @@ class HppService
         }
 
         $unitCost = (float) $incomingUnitCost;
-        if ($unitCost < 0) {
-            $unitCost = 0;
+        if ($unitCost < 0) $unitCost = 0;
+
+        // effectiveAt fallback: now()
+        try {
+            $eff = $effectiveAt ? \Carbon\Carbon::parse($effectiveAt) : now();
+        } catch (\Throwable $e) {
+            $eff = now();
         }
 
         DB::transaction(function () use (
             $branchId,
             $productId,
             $incomingQty,
-            $unitCost
+            $unitCost,
+            $eff,
+            $sourceType,
+            $sourceId
         ) {
-            // Lock row HPP kalau ada
-            $hppRow = ProductHpp::query()
+            /**
+             * ✅ Ambil HPP snapshot terakhir yang berlaku <= effective_at
+             * (kalau tidak ada, fallback latest)
+             */
+            $prev = ProductHpp::query()
                 ->where('branch_id', $branchId)
                 ->where('product_id', $productId)
+                ->where(function ($q) use ($eff) {
+                    $q->whereNull('effective_at')
+                    ->orWhere('effective_at', '<=', $eff);
+                })
+                ->orderByDesc('effective_at')
+                ->orderByDesc('id')
                 ->lockForUpdate()
                 ->first();
 
-            $oldAvg = $hppRow ? (float) $hppRow->avg_cost : 0.0;
+            $oldAvg = $prev ? (float) $prev->avg_cost : 0.0;
 
             /**
              * Ambil stok saat ini (setelah mutation masuk dibuat).
              * Karena receiving sudah menambah stock_racks, maka totalAfter sudah termasuk incoming.
-             * Kita butuh oldQty sebelum incoming => oldQty = totalAfter - incomingQty.
+             * oldQty sebelum incoming => oldQty = totalAfter - incomingQty.
              */
             $stockAgg = DB::table('stock_racks')
                 ->where('branch_id', $branchId)
@@ -71,18 +91,15 @@ class HppService
 
             $totalAfter = 0;
             if ($stockAgg) {
-                // Basis qty untuk costing: total kualitas (good+defect+damaged).
-                // Ini paling aman karena receiving kamu bisa split kualitas.
                 $totalAfter = (int) (($stockAgg->sum_good ?? 0) + ($stockAgg->sum_defect ?? 0) + ($stockAgg->sum_damaged ?? 0));
 
-                // fallback kalau kolom kualitas belum populated (jaga-jaga)
+                // fallback kalau kolom kualitas belum populated
                 if ($totalAfter <= 0) {
                     $totalAfter = (int) ($stockAgg->sum_available ?? 0);
                 }
             }
 
             $oldQty = max(0, (int) $totalAfter - (int) $incomingQty);
-
             $denom = $oldQty + $incomingQty;
 
             if ($denom <= 0) {
@@ -93,19 +110,31 @@ class HppService
                 $newAvg = (($oldAvg * $oldQty) + ($unitCost * $incomingQty)) / $denom;
             }
 
-            if (!$hppRow) {
-                ProductHpp::create([
-                    'branch_id' => $branchId,
-                    'product_id' => $productId,
-                    'avg_cost' => round($newAvg, 2),
-                    'last_purchase_cost' => round($unitCost, 2),
-                ]);
-            } else {
-                $hppRow->update([
-                    'avg_cost' => round($newAvg, 2),
-                    'last_purchase_cost' => round($unitCost, 2),
-                ]);
-            }
+            $newAvg = round($newAvg, 2);
+
+            /**
+             * ✅ LEDGER: INSERT ROW BARU (append-only)
+             * avg_cost = snapshot terbaru
+             * last_purchase_cost = unit cost terakhir
+             */
+            ProductHpp::create([
+                'branch_id'          => $branchId,
+                'product_id'         => $productId,
+
+                'effective_at'       => $eff,
+                'source_type'        => $sourceType,
+                'source_id'          => $sourceId,
+
+                'avg_cost'           => $newAvg,
+                'last_purchase_cost' => round($unitCost, 2),
+
+                'incoming_qty'       => (int) $incomingQty,
+                'incoming_unit_cost' => round($unitCost, 2),
+
+                'old_qty'            => (int) $oldQty,
+                'old_avg_cost'       => round($oldAvg, 2),
+                'new_avg_cost'       => $newAvg,
+            ]);
         });
     }
 
@@ -115,11 +144,35 @@ class HppService
      */
     public function getCurrentHpp(int $branchId, int $productId): float
     {
-        $val = ProductHpp::query()
+        $row = ProductHpp::query()
             ->where('branch_id', $branchId)
             ->where('product_id', $productId)
-            ->value('avg_cost');
+            ->orderByDesc('effective_at')
+            ->orderByDesc('id')
+            ->first(['avg_cost']);
 
-        return (float) ($val ?? 0);
+        return (float) ($row?->avg_cost ?? 0);
+    }
+
+    public function getHppAsOf(int $branchId, int $productId, $asOf): float
+    {
+        try {
+            $t = \Carbon\Carbon::parse($asOf);
+        } catch (\Throwable $e) {
+            return $this->getCurrentHpp($branchId, $productId);
+        }
+
+        $row = ProductHpp::query()
+            ->where('branch_id', $branchId)
+            ->where('product_id', $productId)
+            ->where(function ($q) use ($t) {
+                $q->whereNull('effective_at')
+                ->orWhere('effective_at', '<=', $t);
+            })
+            ->orderByDesc('effective_at')
+            ->orderByDesc('id')
+            ->first(['avg_cost']);
+
+        return (float) ($row?->avg_cost ?? 0);
     }
 }

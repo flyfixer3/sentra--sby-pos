@@ -464,17 +464,12 @@ class SaleController extends Controller
                 $saleDeliveryId = (int) $request->get('sale_delivery_id', 0);
                 $fromDelivery = $saleDeliveryId > 0;
 
-                /** @var \Modules\SaleDelivery\Entities\SaleDelivery|null $lockedDelivery */
                 $lockedDelivery = null;
-
-                /** @var \Modules\SaleOrder\Entities\SaleOrder|null $lockedSaleOrder */
                 $lockedSaleOrder = null;
 
-                // for split shipping/fee equally across invoices (deliveries)
                 $splitCount = 1;
                 $splitIndex = 1;
 
-                // info only
                 $deliveryDiscountInfoTotal = 0.0;
 
                 $splitEven = function (int $total, int $count, int $index1Based): int {
@@ -538,12 +533,11 @@ class SaleController extends Controller
                         ->where('id', $saleOrderId)
                         ->firstOrFail();
 
-                    // split context (equal split shipping/fee per invoice)
                     $ctx = $getDeliverySplitContext((int)$lockedSaleOrder->id, (int)$branchId, (int)$lockedDelivery->id);
                     $splitCount = (int) $ctx['count'];
                     $splitIndex = (int) $ctx['index'];
 
-                    // info only: compute discount from SO items (for note)
+                    // info only: compute discount from SO items
                     $soItems = \Modules\SaleOrder\Entities\SaleOrderItem::query()
                         ->where('sale_order_id', (int)$lockedSaleOrder->id)
                         ->get()
@@ -556,7 +550,7 @@ class SaleController extends Controller
 
                         $soRow = $soItems->get($pid);
 
-                        $unit = (float) ($soRow?->unit_price ?? $it->unit_price ?? 0);
+                        $unit  = (float) ($soRow?->unit_price ?? $it->unit_price ?? 0);
                         $price = (float) ($soRow?->price ?? $it->price ?? $unit);
 
                         $dAmt  = (float) ($soRow?->product_discount_amount ?? $it->product_discount_amount ?? 0);
@@ -577,7 +571,6 @@ class SaleController extends Controller
 
                 // ======================================================
                 // Compute invoice items subtotal & qty (SERVER TRUTH)
-                // IMPORTANT: price di cart sudah NET (sell price).
                 // ======================================================
                 $itemsSubtotal = 0;
                 $totalQty = 0;
@@ -599,11 +592,8 @@ class SaleController extends Controller
                 $effectiveTaxPct  = round((float) ($request->tax_percentage ?? 0), 2);
                 $effectiveDiscPct = round((float) ($request->discount_percentage ?? 0), 2);
 
-                if ($effectiveTaxPct < 0) $effectiveTaxPct = 0;
-                if ($effectiveTaxPct > 100) $effectiveTaxPct = 100;
-
-                if ($effectiveDiscPct < 0) $effectiveDiscPct = 0;
-                if ($effectiveDiscPct > 100) $effectiveDiscPct = 100;
+                $effectiveTaxPct = max(0, min(100, $effectiveTaxPct));
+                $effectiveDiscPct = max(0, min(100, $effectiveDiscPct));
 
                 $effectiveShipping = (int) ($request->shipping_amount ?? 0);
                 $effectiveFee      = (int) ($request->fee_amount ?? 0);
@@ -633,7 +623,7 @@ class SaleController extends Controller
                     $allocShip = $splitEven($soShip, $splitCount, $splitIndex);
                     $allocFee  = $splitEven($soFee,  $splitCount, $splitIndex);
 
-                    // ✅ PENTING: jangan apply discount lagi.
+                    // ✅ jangan apply discount lagi.
                     $effectiveDiscPct = round((float) ($lockedSaleOrder->discount_percentage ?? 0), 2);
                     $discountAmount = 0;
 
@@ -708,7 +698,6 @@ class SaleController extends Controller
                     'total_amount' => (int) $computedGrandTotal,
                     'total_quantity' => (int) $totalQty,
 
-                    // ✅ NEW: single source of truth
                     'dp_allocated_amount' => (int) $dpAllocatedForThisInvoice,
 
                     'due_amount' => (int) $due_amount,
@@ -731,28 +720,49 @@ class SaleController extends Controller
                 $sale = Sale::create($saleData);
 
                 // ======================================================
-                // Create SaleDetails
+                // Create SaleDetails (✅ server-truth snapshot HPP + fix total_cost)
                 // ======================================================
                 $total_cost = 0;
+
+                $hppService = new \Modules\Product\Services\HppService();
+                $saleDateForHpp = $request->date ?: now()->toDateString();
 
                 foreach ($cartItems as $cart_item) {
                     $qty = (int) ($cart_item->qty ?? 0);
                     $price = (int) ($cart_item->price ?? 0);
                     if ($qty <= 0) continue;
 
-                    $total_cost += (int) ($cart_item->options->product_cost ?? 0);
+                    $productId = (int) $cart_item->id;
+
+                    // ✅ snapshot HPP di server: as-of tanggal invoice
+                    $hppUnit = 0;
+                    if ($branchId > 0 && $productId > 0) {
+                        if (method_exists($hppService, 'getHppAsOf')) {
+                            $hppUnit = (float) $hppService->getHppAsOf($branchId, $productId, $saleDateForHpp);
+                        } else {
+                            $hppUnit = (float) $hppService->getCurrentHpp($branchId, $productId);
+                        }
+                    }
+                    $hppUnitInt = (int) round(max(0.0, $hppUnit), 0);
+
+                    // ✅ FIX BUG: total_cost harus qty * hppUnit
+                    $total_cost += ($hppUnitInt * $qty);
 
                     $saleDetailData = [
                         'sale_id' => (int) $sale->id,
-                        'product_id' => (int) $cart_item->id,
+                        'product_id' => $productId,
                         'product_name' => (string) $cart_item->name,
                         'product_code' => (string) ($cart_item->options->code ?? ''),
-                        'product_cost' => (int) ($cart_item->options->product_cost ?? 0),
+
+                        // ✅ ini snapshot HPP/unit
+                        'product_cost' => $hppUnitInt,
 
                         'warehouse_id' => null,
 
-                        'quantity' => (int) $qty,
+                        'quantity' => $qty,
                         'price' => max(0, (int) $price),
+
+                        // unit_price (original) tetap ambil dari cart (source: SO/delivery)
                         'unit_price' => (int) ($cart_item->options->unit_price ?? 0),
 
                         'sub_total' => (int) ($qty * max(0, (int) $price)),
@@ -811,7 +821,7 @@ class SaleController extends Controller
                 Cart::instance('sale')->destroy();
 
                 // ======================================================
-                // Accounting Transaction (unchanged)
+                // Accounting Transaction (pakai total_cost yg sudah benar)
                 // ======================================================
                 if ($total_cost <= 0) {
                     Helper::addNewTransaction([
@@ -852,13 +862,11 @@ class SaleController extends Controller
                 }
 
                 // ======================================================
-                // ✅ Payment record (kalau paid_amount > 0)
+                // Payment record (kalau paid_amount > 0) - tetap
                 // ======================================================
                 if ((int) $sale->paid_amount > 0) {
                     $depositCode = trim((string) ($request->deposit_code ?? ''));
 
-                    // ✅ NEW: kalau invoice dari delivery + ada SO, dan deposit_code kosong,
-                    // ambil deposit_code dari Sale Order (biar konsisten & gak double input)
                     if ($depositCode === '' && $fromDelivery && $lockedSaleOrder) {
                         $soDepositCode = trim((string) ($lockedSaleOrder->deposit_code ?? ''));
                         if ($soDepositCode !== '' && $soDepositCode !== '-') {

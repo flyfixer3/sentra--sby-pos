@@ -309,7 +309,7 @@ class ProductCartSale extends Component
 
     /**
      * ✅ HPP-aware calculation.
-     * product_cost = current HPP dari tabel product_hpps berdasarkan branch aktif.
+     * product_cost = snapshot HPP (as-of sale date) dari ledger product_hpps berdasarkan branch aktif.
      */
     private function calculate($product): array
     {
@@ -318,23 +318,37 @@ class ProductCartSale extends Component
         $product_tax = 0;
         $unit_price = $price;
 
-        $branchId = (int) BranchContext::id();
+        $branchId  = (int) BranchContext::id();
         $productId = (int) ($product['id'] ?? 0);
+
+        // Ambil tanggal invoice jika tersedia (form sale biasanya punya field date)
+        // fallback: sekarang
+        $saleDate = request()->get('date');
+        if (empty($saleDate)) {
+            $saleDate = now()->toDateString();
+        }
 
         $hpp = 0.0;
         if ($branchId > 0 && $productId > 0) {
             $hppService = new HppService();
-            $hpp = (float) $hppService->getCurrentHpp($branchId, $productId);
+
+            // ✅ gunakan as-of (kalau method belum ada, kamu bikin ya di HppService)
+            // fallback kalau method belum ada: getCurrentHpp()
+            if (method_exists($hppService, 'getHppAsOf')) {
+                $hpp = (float) $hppService->getHppAsOf($branchId, $productId, $saleDate);
+            } else {
+                $hpp = (float) $hppService->getCurrentHpp($branchId, $productId);
+            }
         }
 
         $product_cost = (int) round(max(0.0, $hpp), 0);
 
         return [
-            'price' => $price,
-            'sub_total' => $sub_total,
-            'product_tax' => $product_tax,
+            'price'        => $price,
+            'sub_total'    => $sub_total,
+            'product_tax'  => $product_tax,
             'product_cost' => $product_cost,
-            'unit_price' => $unit_price,
+            'unit_price'   => $unit_price,
         ];
     }
 
