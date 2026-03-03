@@ -23,9 +23,16 @@
                 <div class="card">
                     <div class="card-body">
                         @include('utils.alerts')
+
                         <form id="sale-form" action="{{ route('sales.update', $sale) }}" method="POST">
                             @csrf
-                            @method('patch')
+
+                            {{-- IMPORTANT:
+                                 Route update kamu pakai PUT, jadi method spoof harus PUT, bukan PATCH.
+                                 Kalau pakai PATCH akan 405 Method Not Allowed.
+                            --}}
+                            @method('put')
+
                             <div class="form-row">
                                 <div class="col-lg-3">
                                     <div class="form-group">
@@ -33,28 +40,44 @@
                                         <input type="text" class="form-control" name="reference" required value="{{ $sale->reference }}" readonly>
                                     </div>
                                 </div>
+
                                 <div class="col-lg-3">
                                     <div class="from-group">
                                         <div class="form-group">
                                             <label for="customer_id">Customer <span class="text-danger">*</span></label>
                                             <select class="form-control" name="customer_id" id="customer_id" required>
                                                 @foreach($customers as $customer)
-                                                    <option {{ $sale->customer_id == $customer->id ? 'selected' : '' }} value="{{ $customer->id }}">{{ $customer->customer_name }}</option>
+                                                    <option {{ (int)$sale->customer_id === (int)$customer->id ? 'selected' : '' }} value="{{ $customer->id }}">
+                                                        {{ $customer->customer_name }}
+                                                    </option>
                                                 @endforeach
                                             </select>
                                         </div>
                                     </div>
                                 </div>
+
                                 <div class="col-lg-2">
                                     <div class="form-group">
-                                        <label for="reference">Car Plate<span class="text-danger">*</span></label>
-                                        <input type="text" class="form-control" name="car_number_plate" id="car_number_plate" required >
+                                        <label for="car_number_plate">Car Plate<span class="text-danger">*</span></label>
+
+                                        {{-- DI FIX:
+                                             sebelumnya required tapi kosong -> edit jadi ribet.
+                                             sekarang auto isi dari kolom sale->license_number (sesuai store: 'license_number')
+                                        --}}
+                                        <input
+                                            type="text"
+                                            class="form-control"
+                                            name="car_number_plate"
+                                            id="car_number_plate"
+                                            required
+                                            value="{{ $sale->license_number ?? '' }}"
+                                        >
                                     </div>
                                 </div>
 
                                 <div class="col-lg-2">
                                     <div class="form-group">
-                                        <label for="sale_form">Sales From <span class="text-danger">*</span></label>
+                                        <label for="sale_from">Sales From <span class="text-danger">*</span></label>
                                         <select class="form-control" name="sale_from" id="sale_from" required>
                                             <option {{ $sale->sale_from == 'Google Ads' ? 'selected' : '' }} value="Google Ads">Google Ads</option>
                                             <option {{ $sale->sale_from == 'Marketplace' ? 'selected' : '' }} value="Marketplace">Marketplace</option>
@@ -66,6 +89,7 @@
                                         </select>
                                     </div>
                                 </div>
+
                                 <div class="col-lg-2">
                                     <div class="from-group">
                                         <div class="form-group">
@@ -89,6 +113,7 @@
                                         </select>
                                     </div>
                                 </div>
+
                                 <div class="col-lg-4">
                                     <div class="from-group">
                                         <div class="form-group">
@@ -97,6 +122,7 @@
                                         </div>
                                     </div>
                                 </div>
+
                                 <div class="col-lg-4">
                                     <div class="form-group">
                                         <label for="paid_amount">Amount Received <span class="text-danger">*</span></label>
@@ -116,6 +142,7 @@
                                 </button>
                             </div>
                         </form>
+
                     </div>
                 </div>
             </div>
