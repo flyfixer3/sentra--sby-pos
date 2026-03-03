@@ -18,14 +18,16 @@ class ActivityLogController extends Controller
   
     public function index(Request $request)
     {
-        $query = Activity::query();
+        // ✅ eager load supaya tidak N+1 (lebih cepat, tidak ubah fitur)
+        $query = Activity::query()->with(['causer', 'subject']);
 
         // ✅ Filter by User
         if ($request->has('user') && $request->user != '') {
             $query->where('causer_id', $request->user);
         }
 
-        // ✅ Filter by Table
+        // ✅ Filter by Table (subject_type)
+        // input table dari dropdown adalah class_basename(subject_type)
         if ($request->has('table') && $request->table != '') {
             $query->where('subject_type', 'like', "%{$request->table}%");
         }
@@ -40,11 +42,21 @@ class ActivityLogController extends Controller
             }
         }
 
-        $logs = $query->latest()->paginate(10);
-        $users = User::orderBy('name')->get(); // Get all users
-        $tables = Activity::selectRaw('DISTINCT(subject_type)')->pluck('subject_type')->map(function ($item) {
-            return class_basename($item);
-        })->toArray(); // Get unique table names
+        $logs = $query->latest()->paginate(10)->withQueryString();
+
+        $users = User::orderBy('name')->get();
+
+        // ✅ ambil table list yang unique + rapi
+        $tables = Activity::selectRaw('DISTINCT(subject_type) as subject_type')
+            ->pluck('subject_type')
+            ->map(function ($item) {
+                return class_basename($item);
+            })
+            ->filter()
+            ->unique()
+            ->sort()
+            ->values()
+            ->toArray();
 
         return view('activitylog::index', compact('logs', 'users', 'tables'));
     }

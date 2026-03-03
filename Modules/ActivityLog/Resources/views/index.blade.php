@@ -35,11 +35,11 @@
                 </select>
             </div>
 
-            <!-- Date Range Filter (Custom Calendar Picker) -->
+            <!-- Date Range Filter -->
             <div class="col-md-4">
                 <label for="date_range">Date Range:</label>
                 <input type="text" name="date_range" id="date_range" class="form-control"
-                    value="{{ request('date_range') ?? '' }}" placeholder="Select Date Range">
+                       value="{{ request('date_range') ?? '' }}" placeholder="Select Date Range">
             </div>
 
             <!-- Filter Button -->
@@ -66,22 +66,76 @@
         <tbody>
             @foreach ($logs as $log)
             <tr>
-                <td>{{ $log->created_at->format('Y-m-d H:i') }}</td>
+                <td>{{ optional($log->created_at)->format('Y-m-d H:i') }}</td>
                 <td>{{ $log->causer->name ?? 'System' }}</td>
                 <td>{{ $log->description }}</td>
-                <td>{{ class_basename($log->subject_type) ?? '-' }}</td>
-                
+                <td>{{ $log->subject_type ? class_basename($log->subject_type) : '-' }}</td>
+
+                <td>
+                    @if($log->subject && method_exists($log->subject, 'getAttribute'))
+                        @php
+                            use Illuminate\Support\Facades\Route;
+
+                            $modelName = strtolower(class_basename($log->subject_type));
+
+                            // ✅ FIX: tambah 'mutation' + betulin default (tanpa kutip)
+                            $routeName = match ($modelName) {
+                                'sale'     => 'sales.show',
+                                'product'  => 'products.show',
+                                'purchase' => 'purchases.show',
+                                'mutation' => 'mutations.show',
+                                'stock'    => 'stocks.index', // contoh route index yang biasanya tidak butuh param
+                                default    => $modelName . 's.show',
+                            };
+
+                            $subjectId = $log->subject->getAttribute('id');
+
+                            // Label yang ditampilin di tabel
+                            $label = $modelName === 'sale'
+                                ? ($log->subject->getAttribute('reference') ?? $subjectId)
+                                : $subjectId;
+
+                            // ✅ amanin kalau route gak ada / beda param
+                            $hasRoute = Route::has($routeName);
+
+                            // route yang biasanya "index" tidak perlu parameter
+                            $noParamRoutes = [
+                                'stocks.index',
+                            ];
+
+                            $needsParam = !in_array($routeName, $noParamRoutes, true);
+                        @endphp
+
+                        @if($hasRoute)
+                            @if($needsParam)
+                                <a href="{{ route($routeName, $subjectId) }}" class="text-primary">
+                                    {{ $label }}
+                                </a>
+                            @else
+                                <a href="{{ route($routeName) }}" class="text-primary">
+                                    {{ $label }}
+                                </a>
+                            @endif
+                        @else
+                            {{ $label }}
+                        @endif
+                    @else
+                        -
+                    @endif
+                </td>
+
                 <td>
                     @php
                         $oldValues = $log->properties['old'] ?? [];
                         $newValues = $log->properties['attributes'] ?? [];
                     @endphp
+
                     @if (!empty($oldValues) && !empty($newValues))
                         @foreach($oldValues as $key => $oldValue)
-                            @if(isset($newValues[$key]) && $oldValue !== $newValues[$key]) 
-                                <strong>{{ ucfirst(str_replace('_', ' ', $key)) }}:</strong> 
-                                <span class="text-danger">{{ $oldValue }}</span> → 
-                                <span class="text-success">{{ $newValues[$key] }}</span><br>
+                            @if(array_key_exists($key, $newValues) && $oldValue !== $newValues[$key])
+                                <strong>{{ ucfirst(str_replace('_', ' ', $key)) }}:</strong>
+                                <span class="text-danger">{{ is_array($oldValue) ? json_encode($oldValue) : $oldValue }}</span> →
+                                <span class="text-success">{{ is_array($newValues[$key]) ? json_encode($newValues[$key]) : $newValues[$key] }}</span><br>
                             @endif
                         @endforeach
                     @else
@@ -92,12 +146,12 @@
             @endforeach
         </tbody>
     </table>
+
     {{ $logs->links() }}
 </div>
 @endsection
 
 @push('page_scripts')
-
     <!-- ✅ Ensure jQuery is Loaded -->
     <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
 
@@ -112,8 +166,6 @@
 
     <script>
     $(document).ready(function() {
-        console.log("Checking if Date Range Picker is loaded...");
-
         // ✅ Initialize Date Range Picker
         $('#date_range').daterangepicker({
             autoUpdateInput: false,
@@ -127,21 +179,16 @@
 
         // ✅ Handle Selection
         $('#date_range').on('apply.daterangepicker', function(ev, picker) {
-            console.log("📅 Date Selected: ", picker.startDate.format('YYYY-MM-DD'), picker.endDate.format('YYYY-MM-DD'));
             $(this).val(picker.startDate.format('YYYY-MM-DD') + ' to ' + picker.endDate.format('YYYY-MM-DD'));
         });
 
         // ✅ Handle Clear
         $('#date_range').on('cancel.daterangepicker', function(ev, picker) {
-            console.log("❌ Date Cleared");
             $(this).val('');
         });
 
-        console.log("✅ Date Range Picker Initialized!");
-
-        // ✅ Fix Bootstrap Tooltip Error
+        // ✅ Bootstrap tooltip (kalau ada)
         $('[data-bs-toggle="tooltip"]').tooltip();
     });
     </script>
-
 @endpush

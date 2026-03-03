@@ -570,6 +570,91 @@ class SaleController extends Controller
                 }
 
                 // ======================================================
+                // ✅ STOCK VALIDATION (WALK-IN FLOW): prevent reserved > actual stock
+                //
+                // Problem kamu:
+                // - Sale invoice dibuat -> auto create SaleDelivery pending
+                // - reserved ditambah, tapi saat create sale berikutnya belum ngecek reserved existing
+                // - jadinya bisa oversell dan qty_reserved bisa > stok real (mutation stock_last)
+                //
+                // Fix:
+                // - Untuk NON-fromDelivery (walk-in), sebelum create invoice:
+                //   cek: (GOOD STOCK di branch) - (CURRENT RESERVED pool) >= qty yang mau di-invoice
+                // - Lock row stocks (pool: warehouse_id NULL) supaya aman dari race condition
+                // ======================================================
+                if (!$fromDelivery) {
+                    // group request qty per product
+                    $needByProduct = [];
+                    foreach ($cartItems as $it) {
+                        $pid = (int) ($it->id ?? 0);
+                        $qty = (int) ($it->qty ?? 0);
+                        if ($pid <= 0 || $qty <= 0) continue;
+                        if (!isset($needByProduct[$pid])) $needByProduct[$pid] = 0;
+                        $needByProduct[$pid] += $qty;
+                    }
+
+                    if (!empty($needByProduct)) {
+                        // active branch warehouses (untuk baca GOOD stock dari mutations)
+                        $warehouseIds = \Modules\Product\Entities\Warehouse::query()
+                            ->where('branch_id', $branchId)
+                            ->pluck('id')
+                            ->map(fn($v) => (int) $v)
+                            ->toArray();
+
+                        $getStockLastByWarehouse = function (int $productId, int $warehouseId): int {
+                            $m = \Modules\Mutation\Entities\Mutation::query()
+                                ->where('product_id', $productId)
+                                ->where('warehouse_id', $warehouseId)
+                                ->latest()
+                                ->first();
+
+                            return $m ? (int) $m->stock_last : 0;
+                        };
+
+                        foreach ($needByProduct as $pid => $qtyNeed) {
+                            $pid = (int) $pid;
+                            $qtyNeed = (int) $qtyNeed;
+                            if ($pid <= 0 || $qtyNeed <= 0) continue;
+
+                            // 1) hitung GOOD stock real di branch (sum stock_last terakhir per warehouse)
+                            $good = 0;
+                            foreach ($warehouseIds as $wid) {
+                                $good += $getStockLastByWarehouse($pid, (int) $wid);
+                            }
+                            $good = max(0, (int) $good);
+
+                            // 2) ambil reserved pool saat ini (lock row biar aman)
+                            $row = DB::table('stocks')
+                                ->where('branch_id', (int) $branchId)
+                                ->whereNull('warehouse_id') // POOL row
+                                ->where('product_id', (int) $pid)
+                                ->lockForUpdate()
+                                ->first();
+
+                            $reservedNow = $row ? max(0, (int) ($row->qty_reserved ?? 0)) : 0;
+
+                            // available yang boleh di-reserve sekarang = GOOD - reserved existing
+                            $availableToReserve = $good - $reservedNow;
+                            if ($availableToReserve < 0) $availableToReserve = 0;
+
+                            if ($qtyNeed > $availableToReserve) {
+                                // bikin message yang jelas supaya admin ngerti
+                                $p = \Modules\Product\Entities\Product::find($pid);
+                                $code = $p?->product_code ?? ('#' . $pid);
+                                $name = $p?->product_name ?? '';
+
+                                throw new \RuntimeException(
+                                    "Stock tidak cukup untuk {$code} {$name}. " .
+                                    "Requested: {$qtyNeed}, Available (after reserved): {$availableToReserve}, " .
+                                    "Good: {$good}, Reserved: {$reservedNow}. " .
+                                    "Silakan kurangi qty / selesaikan dulu Sale Delivery pending yang masih reserve stock."
+                                );
+                            }
+                        }
+                    }
+                }
+
+                // ======================================================
                 // Compute invoice items subtotal & qty (SERVER TRUTH)
                 // ======================================================
                 $itemsSubtotal = 0;
