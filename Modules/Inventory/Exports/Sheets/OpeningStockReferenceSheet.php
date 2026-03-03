@@ -18,6 +18,9 @@ class OpeningStockReferenceSheet implements FromArray, WithTitle
         $rows = [];
         $rows[] = ['INFO'];
         $rows[] = ['- Import ini akan membuat MUTATION (In) untuk OPENING STOCK (GOOD only) per rack.'];
+        $rows[] = ['- Template ini juga mengisi OPENING HPP (avg_cost) untuk baseline moving average.'];
+        $rows[] = ['- avg_cost adalah HPP/unit awal (angka per unit), akan disimpan ke tabel product_hpps (per branch + product).'];
+        $rows[] = ['- Jika 1 product diinput di banyak rack/baris, avg_cost final akan dihitung WEIGHTED (qty * avg_cost) dari semua baris opening.'];
         $rows[] = ['- Qty DEFECT/DAMAGED tidak di-import dari Excel. Gunakan Adjustment / Quality Reclass agar detail item valid.'];
         $rows[] = ['- Pastikan product_code sudah ada di tabel products (import products dulu).'];
         $rows[] = ['- Pastikan rack sudah ada (import racks dulu).'];

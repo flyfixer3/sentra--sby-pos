@@ -44,32 +44,26 @@ class OpeningStockImportController extends Controller
             $noteInput = trim((string)($request->note ?? 'Opening Balance Import'));
             $note = 'AUTO GENERATED: EXCEL | ' . ($noteInput !== '' ? $noteInput : 'Opening Balance Import');
 
-            Excel::import(
-                new OpeningStockImport(
-                    auth()->id(),
-                    (string)$request->date,
-                    $reference,
-                    $note
-                ),
-                $request->file('file')
+            $importer = new \Modules\Inventory\Imports\OpeningStockImport(
+                auth()->id(),
+                (string)$request->date,
+                $reference,
+                $note
             );
 
-            toast('Opening stock imported successfully (via Mutation)!', 'success');
-            return redirect()->route('mutations.index');
+            Excel::import($importer, $request->file('file'));
 
-        } catch (ValidationException $e) {
-            $failures = $e->failures();
-
-            $messages = [];
-            foreach ($failures as $f) {
-                $messages[] = 'Row ' . $f->row() . ': ' . implode(', ', $f->errors());
-                if (count($messages) >= 3) break;
+            // ✅ jangan sampai "sukses" tapi 0 row masuk
+            if ((int) $importer->getImportedCount() <= 0) {
+                toast('Import finished but no rows were imported. Please check: qty_good >= 1, and all codes are valid.', 'error');
+                return redirect()->back()->withInput();
             }
 
-            toast('Import failed. ' . implode(' | ', $messages), 'error');
-            return redirect()->back()->withInput();
+            toast('Opening stock imported successfully (via Mutation + Opening HPP)!', 'success');
+            return redirect()->route('mutations.index');
 
         } catch (\Throwable $e) {
+            // semua error termasuk "product not found" akan masuk sini, dan pesannya sudah ada Row X:
             toast('Import failed: ' . $e->getMessage(), 'error');
             return redirect()->back()->withInput();
         }

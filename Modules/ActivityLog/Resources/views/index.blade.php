@@ -70,24 +70,7 @@
                 <td>{{ $log->causer->name ?? 'System' }}</td>
                 <td>{{ $log->description }}</td>
                 <td>{{ class_basename($log->subject_type) ?? '-' }}</td>
-                <td>
-                    @if($log->subject && method_exists($log->subject, 'getAttribute'))
-                        @php
-                            $modelName = strtolower(class_basename($log->subject_type));
-                            $routeName = match ($modelName) {
-                                'sale' => 'sales.show',
-                                'product' => 'products.show',
-                                'purchase' => 'purchases.show',
-                                default => $modelName . 's.show'
-                            };
-                        @endphp
-                        <a href="{{ route($routeName, $log->subject->id) }}" class="text-primary">
-                            {{ $modelName === 'sale' ? ($log->subject->getAttribute('reference') ?? $log->subject->id) : $log->subject->id }}
-                        </a>
-                    @else
-                        -
-                    @endif
-                </td>
+                
                 <td>
                     @php
                         $oldValues = $log->properties['old'] ?? [];
