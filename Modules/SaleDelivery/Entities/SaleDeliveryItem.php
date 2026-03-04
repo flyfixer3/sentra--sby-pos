@@ -4,12 +4,13 @@ namespace Modules\SaleDelivery\Entities;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Database\Eloquent\SoftDeletes;
 use Modules\Product\Entities\Product;
 use Modules\Product\Entities\Warehouse;
 
 class SaleDeliveryItem extends Model
 {
-    use HasFactory;
+    use HasFactory, SoftDeletes;
 
     protected $fillable = [
         'sale_delivery_id',

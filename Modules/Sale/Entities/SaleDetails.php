@@ -9,9 +9,10 @@ use Modules\Warehouse\Entities\Warehouse;
 
 class SaleDetails extends Model
 {
-    use HasFactory;
+    use HasFactory, SoftDeletes;
 
     protected $guarded = [];
+    protected $dates = ['deleted_at'];
 
     protected $with = ['product'];
 

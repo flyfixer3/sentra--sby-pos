@@ -67,7 +67,7 @@ class SalesDataTable extends DataTable
 
     public function query(Sale $model)
     {
-        return $model->newQuery();
+        return $model->newQuery()->withTrashed();
     }
 
     public function html()

@@ -5,6 +5,7 @@ namespace Modules\SaleOrder\Entities;
 use App\Models\BaseModel;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Support\Facades\Auth;
 use Modules\People\Entities\Customer;
 use Modules\Product\Entities\Warehouse;
@@ -13,6 +14,7 @@ use Modules\Sale\Entities\Sale;
 
 class SaleOrder extends BaseModel
 {
+    use SoftDeletes;
     protected $table = 'sale_orders';
 
     protected $fillable = [

@@ -6,12 +6,14 @@ use Illuminate\Database\Eloquent\Model;
 use App\Models\BaseModel;
 use App\Models\User;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Database\Eloquent\SoftDeletes;
 
 class Sale extends BaseModel
 {
-    use HasFactory;
+    use HasFactory, SoftDeletes;
 
     protected $guarded = [];
+    protected $dates = ['deleted_at'];
 
     public function saleDetails() {
         return $this->hasMany(SaleDetails::class, 'sale_id', 'id');

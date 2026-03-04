@@ -922,12 +922,63 @@ class SaleOrderController extends Controller
                 throw new \RuntimeException('Cannot delete. This Sale Order already has Sale Deliveries.');
             }
 
-            DB::transaction(function () use ($saleOrder) {
+            DB::transaction(function () use ($saleOrder, $branchId) {
+
+                // ✅ lock SO + items
+                $so = SaleOrder::query()
+                    ->lockForUpdate()
+                    ->with(['items'])
+                    ->where('branch_id', (int) $branchId)
+                    ->findOrFail((int) $saleOrder->id);
+
+                $st = strtolower((string) ($so->status ?? 'pending'));
+                if ($st !== 'pending') {
+                    throw new \RuntimeException('Only pending Sale Order can be deleted.');
+                }
+
+                // ✅ build qtyByProduct dari items (yang masih aktif)
+                $qtyByProduct = [];
+                foreach (($so->items ?? []) as $it) {
+                    $pid = (int) ($it->product_id ?? 0);
+                    $qty = (int) ($it->quantity ?? 0);
+                    if ($pid <= 0 || $qty <= 0) continue;
+
+                    if (!isset($qtyByProduct[$pid])) $qtyByProduct[$pid] = 0;
+                    $qtyByProduct[$pid] += $qty;
+                }
+
+                // ✅ rollback reserved pool stock (warehouse_id NULL)
+                if (!empty($qtyByProduct)) {
+                    foreach ($qtyByProduct as $pid => $qty) {
+                        $pid = (int) $pid;
+                        $qty = (int) $qty;
+                        if ($pid <= 0 || $qty <= 0) continue;
+
+                        $poolRow = DB::table('stocks')
+                            ->where('branch_id', (int) $branchId)
+                            ->whereNull('warehouse_id')
+                            ->where('product_id', (int) $pid)
+                            ->lockForUpdate()
+                            ->first();
+
+                        if ($poolRow) {
+                            DB::table('stocks')
+                                ->where('id', (int) $poolRow->id)
+                                ->update([
+                                    'qty_reserved' => DB::raw("GREATEST(COALESCE(qty_reserved,0) - {$qty}, 0)"),
+                                    'updated_at'   => now(),
+                                ]);
+                        }
+                        // kalau pool row tidak ada, ya skip (data lama / tidak konsisten), tapi aman.
+                    }
+                }
+
+                // ✅ soft delete items dulu, lalu SO
                 SaleOrderItem::query()
-                    ->where('sale_order_id', (int) $saleOrder->id)
+                    ->where('sale_order_id', (int) $so->id)
                     ->delete();
 
-                $saleOrder->delete();
+                $so->delete();
             });
 
             toast('Sale Order deleted!', 'warning');

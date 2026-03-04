@@ -4,10 +4,12 @@ namespace Modules\SaleOrder\Entities;
 
 use App\Models\BaseModel;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\SoftDeletes;
 use Modules\Product\Entities\Product;
 
 class SaleOrderItem extends BaseModel
 {
+    use SoftDeletes;
     protected $table = 'sale_order_items';
 
     protected $fillable = [

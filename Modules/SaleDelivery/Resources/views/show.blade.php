@@ -38,6 +38,9 @@
     // ✅ NEW: tampilkan warehouse
     $warehouseName = $saleDelivery->warehouse?->warehouse_name
         ?? (!empty($saleDelivery->warehouse_id) ? ('WH#' . (int)$saleDelivery->warehouse_id) : null);
+
+    // ✅ NEW: walk-in flag (NO delete action from SD UI)
+    $isWalkin = empty($saleDelivery->sale_order_id);
 @endphp
 
 <div class="container-fluid">
@@ -120,7 +123,8 @@
                     @endif
 
                     @can('delete_sale_deliveries')
-                        @if($st !== 'confirmed')
+                        {{-- ✅ PATCH: walk-in delivery tidak boleh di-delete dari UI SaleDelivery --}}
+                        @if(!$isWalkin && $st !== 'confirmed')
                             <form method="POST"
                                 action="{{ route('sale-deliveries.destroy', $saleDelivery->id) }}"
                                 class="d-inline"

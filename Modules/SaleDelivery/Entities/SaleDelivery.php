@@ -2,10 +2,10 @@
 
 namespace Modules\SaleDelivery\Entities;
 
+use App\Models\BaseModel;
 use App\Models\User;
-use App\Traits\HasBranchScope;
-use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Support\Facades\Auth;
 use Modules\People\Entities\Customer;
 use Modules\Product\Entities\Warehouse;
@@ -13,7 +13,7 @@ use Modules\Sale\Entities\Sale;
 
 class SaleDelivery extends BaseModel
 {
-    use HasFactory;
+    use HasFactory, SoftDeletes;
 
     protected $fillable = [
         'branch_id',
@@ -109,6 +109,28 @@ class SaleDelivery extends BaseModel
                 $model->reference = make_reference_id('SDO', (int) $model->id);
                 $model->saveQuietly();
             }
+        });
+
+        /**
+         * ✅ NEW: cascade soft delete items (walk-in package lifecycle)
+         * Ini aman untuk kasus manual delete delivery, atau delete via SaleController.
+         */
+        static::deleting(function (self $delivery) {
+            if ($delivery->isForceDeleting()) {
+                $delivery->items()->withTrashed()->forceDelete();
+                return;
+            }
+
+            $delivery->items()->delete();
+        });
+
+        /**
+         * ✅ NEW: cascade restore items
+         * Kalau SaleDelivery direstore (misal via restore Sale walk-in),
+         * items ikut balik.
+         */
+        static::restoring(function (self $delivery) {
+            $delivery->items()->withTrashed()->restore();
         });
     }
 }

@@ -1372,9 +1372,423 @@ class SaleController extends Controller
         return redirect()->route('sales.index');
     }
 
-    public function destroy(Sale $sale) {
+    public function destroy(Sale $sale)
+    {
         abort_if(Gate::denies('delete_sales'), 403);
-        toast('Sale Deleted!', 'warning');
-        return redirect()->route('sales.index');
+
+        $branchId = BranchContext::id();
+
+        try {
+            DB::transaction(function () use ($sale, $branchId) {
+
+                // =========================
+                // ✅ Lock invoice header
+                // =========================
+                $s = Sale::withoutGlobalScopes()
+                    ->lockForUpdate()
+                    ->findOrFail((int) $sale->id);
+
+                // ✅ Branch guard
+                if (Schema::hasColumn('sales', 'branch_id')) {
+                    if ((int) ($s->branch_id ?? 0) !== (int) $branchId) {
+                        abort(403, 'Active branch mismatch for this Sale.');
+                    }
+                }
+
+                // =========================
+                // ✅ RULE 0: payment_status MUST be Unpaid
+                // =========================
+                $status = strtolower(trim((string) ($s->payment_status ?? '')));
+                if ($status !== 'unpaid') {
+                    throw new \RuntimeException("Cannot delete: Invoice payment_status must be Unpaid. Current: {$s->payment_status}");
+                }
+
+                // =========================
+                // ✅ RULE 1: No payment allowed
+                // =========================
+                $paidAmount = (int) ($s->paid_amount ?? 0);
+                if ($paidAmount > 0) {
+                    throw new \RuntimeException('Cannot delete: this Invoice already has payment amount (paid_amount > 0).');
+                }
+
+                $hasPayments = SalePayment::withoutGlobalScopes()
+                    ->where('sale_id', (int) $s->id)
+                    ->exists();
+
+                if ($hasPayments) {
+                    throw new \RuntimeException('Cannot delete: this Invoice already has payment records.');
+                }
+
+                // =========================
+                // ✅ Lock related deliveries
+                // =========================
+                $deliveries = SaleDelivery::withoutGlobalScopes()
+                    ->lockForUpdate()
+                    ->where('sale_id', (int) $s->id)
+                    ->get();
+
+                // =========================
+                // ✅ RULE 2: ALL deliveries must be PENDING
+                // =========================
+                if ($deliveries->isNotEmpty()) {
+                    foreach ($deliveries as $del) {
+
+                        if ((int) ($del->branch_id ?? 0) !== (int) $branchId) {
+                            throw new \RuntimeException('Cannot delete: related Sale Delivery belongs to different branch.');
+                        }
+
+                        $dst = strtolower(trim((string) ($del->getRawOriginal('status') ?? $del->status ?? 'pending')));
+                        if ($dst !== 'pending') {
+                            throw new \RuntimeException(
+                                "Cannot delete: related Sale Delivery already processed (status: {$del->status})."
+                            );
+                        }
+                    }
+
+                    // =========================
+                    // ✅ Rollback reserved POOL ONLY for AUTO walk-in deliveries
+                    // (agar tidak salah rollback untuk delivery manual source=sale)
+                    // =========================
+                    $reservedRollbackByProduct = [];
+
+                    foreach ($deliveries as $del) {
+                        $saleOrderId = (int) ($del->sale_order_id ?? 0);
+
+                        // ✅ kalau dari SO → tidak ada reserved pool (skip)
+                        if ($saleOrderId > 0) {
+                            continue;
+                        }
+
+                        // ✅ DETECT auto-generated delivery dari invoice (walk-in)
+                        // NOTE: ini penting supaya delivery manual source=sale tidak ikut rollback reserved.
+                        $note = (string) ($del->note ?? '');
+                        $isAutoWalkin = str_starts_with($note, 'Auto generated from Invoice #');
+
+                        if (!$isAutoWalkin) {
+                            continue;
+                        }
+
+                        $items = SaleDeliveryItem::withoutGlobalScopes()
+                            ->where('sale_delivery_id', (int) $del->id)
+                            ->lockForUpdate()
+                            ->get(['product_id', 'quantity']);
+
+                        foreach ($items as $it) {
+                            $pid = (int) ($it->product_id ?? 0);
+                            $qty = (int) ($it->quantity ?? 0);
+                            if ($pid <= 0 || $qty <= 0) continue;
+
+                            if (!isset($reservedRollbackByProduct[$pid])) $reservedRollbackByProduct[$pid] = 0;
+                            $reservedRollbackByProduct[$pid] += $qty;
+                        }
+                    }
+
+                    if (!empty($reservedRollbackByProduct)) {
+                        foreach ($reservedRollbackByProduct as $pid => $qty) {
+                            $pid = (int) $pid;
+                            $qty = (int) $qty;
+                            if ($pid <= 0 || $qty <= 0) continue;
+
+                            $poolRow = DB::table('stocks')
+                                ->where('branch_id', (int) $branchId)
+                                ->whereNull('warehouse_id')
+                                ->where('product_id', (int) $pid)
+                                ->lockForUpdate()
+                                ->first();
+
+                            if ($poolRow) {
+                                DB::table('stocks')
+                                    ->where('id', (int) $poolRow->id)
+                                    ->update([
+                                        'qty_reserved' => DB::raw("GREATEST(COALESCE(qty_reserved,0) - {$qty}, 0)"),
+                                        'updated_by'   => auth()->id(),
+                                        'updated_at'   => now(),
+                                    ]);
+                            }
+                        }
+                    }
+
+                    // =========================
+                    // ✅ Delete delivery items + deliveries (soft delete)
+                    // =========================
+                    $deliveryIds = $deliveries->pluck('id')->map(fn($v) => (int)$v)->toArray();
+
+                    if (!empty($deliveryIds)) {
+                        SaleDeliveryItem::withoutGlobalScopes()
+                            ->whereIn('sale_delivery_id', $deliveryIds)
+                            ->delete();
+
+                        SaleDelivery::withoutGlobalScopes()
+                            ->whereIn('id', $deliveryIds)
+                            ->delete();
+                    }
+                }
+
+                // =========================
+                // ✅ Delete sale details + sale (soft delete)
+                // =========================
+                SaleDetails::withoutGlobalScopes()
+                    ->where('sale_id', (int) $s->id)
+                    ->delete();
+
+                $s->delete();
+            });
+
+            toast('Sale Deleted (soft)!', 'warning');
+            return redirect()->route('sales.index');
+
+        } catch (\Throwable $e) {
+            report($e);
+            toast($e->getMessage(), 'error');
+            return redirect()->route('sales.index');
+        }
+    }
+
+    /**
+     * Increment qty_reserved pada pool stock (warehouse_id NULL).
+     * Dipakai saat RESTORE walk-in sale + pending delivery, karena saat destroy kamu sudah rollback reserved.
+     */
+    private function incrementReservedPoolStock(int $branchId, array $reservedAddByProduct, string $reference): void
+    {
+        if ($branchId <= 0) return;
+
+        foreach ($reservedAddByProduct as $productId => $qtyAdd) {
+            $productId = (int) $productId;
+            $qtyAdd    = (int) $qtyAdd;
+
+            if ($productId <= 0 || $qtyAdd <= 0) continue;
+
+            $row = DB::table('stocks')
+                ->where('branch_id', (int) $branchId)
+                ->whereNull('warehouse_id')
+                ->where('product_id', (int) $productId)
+                ->lockForUpdate()
+                ->first();
+
+            if (!$row) {
+                DB::table('stocks')->insert([
+                    'product_id'     => (int) $productId,
+                    'branch_id'      => (int) $branchId,
+                    'warehouse_id'   => null,
+                    'qty_available'  => 0,
+                    'qty_reserved'   => 0,
+                    'qty_incoming'   => 0,
+                    'min_stock'      => 0,
+                    'note'           => 'Auto created by restore reserved. Ref: ' . $reference,
+                    'created_by'     => auth()->id(),
+                    'updated_by'     => auth()->id(),
+                    'created_at'     => now(),
+                    'updated_at'     => now(),
+                ]);
+
+                $row = (object) ['qty_reserved' => 0];
+            }
+
+            $current = (int) ($row->qty_reserved ?? 0);
+
+            DB::table('stocks')
+                ->where('branch_id', (int) $branchId)
+                ->whereNull('warehouse_id')
+                ->where('product_id', (int) $productId)
+                ->update([
+                    'qty_reserved' => $current + $qtyAdd,
+                    'updated_by'   => auth()->id(),
+                    'updated_at'   => now(),
+                ]);
+        }
+    }
+
+    public function restore(int $id)
+    {
+        abort_if(Gate::denies('delete_sales'), 403);
+
+        $branchId = BranchContext::id();
+
+        try {
+            DB::transaction(function () use ($id, $branchId) {
+
+                $sale = Sale::withTrashed()
+                    ->withoutGlobalScopes()
+                    ->lockForUpdate()
+                    ->findOrFail($id);
+
+                // branch guard
+                if (Schema::hasColumn('sales', 'branch_id')) {
+                    if ((int) ($sale->branch_id ?? 0) !== (int) $branchId) {
+                        abort(403, 'Active branch mismatch for this Sale.');
+                    }
+                }
+
+                // ✅ only add reserved back if this restore actually changes state from trashed -> active
+                $saleWasTrashed = $sale->trashed();
+
+                // restore sale header
+                if ($saleWasTrashed) {
+                    $sale->restore();
+                }
+
+                // restore sale details
+                SaleDetails::withTrashed()
+                    ->withoutGlobalScopes()
+                    ->where('sale_id', (int) $sale->id)
+                    ->restore();
+
+                /**
+                 * ✅ Restore related SaleDelivery ONLY for WALK-IN lifecycle:
+                 * delivery.sale_id = sale.id AND delivery.sale_order_id IS NULL
+                 */
+                $walkinDeliveries = SaleDelivery::withTrashed()
+                    ->withoutGlobalScopes()
+                    ->lockForUpdate()
+                    ->where('sale_id', (int) $sale->id)
+                    ->whereNull('sale_order_id')
+                    ->get();
+
+                // ✅ reserved add map (only for deliveries that were actually restored from trashed)
+                $reservedAddByProduct = [];
+
+                foreach ($walkinDeliveries as $del) {
+                    // extra safety: branch guard delivery
+                    if ((int) ($del->branch_id ?? 0) !== (int) $branchId) {
+                        throw new \RuntimeException('Cannot restore: related Sale Delivery belongs to different branch.');
+                    }
+
+                    $deliveryWasTrashed = $del->trashed();
+
+                    if ($deliveryWasTrashed) {
+                        $del->restore();
+                    }
+
+                    // ✅ IMPORTANT:
+                    // - reserved pool hanya relevan untuk delivery PENDING (belum confirmed stock-out)
+                    // - dan hanya jika delivery benar-benar baru di-restore (biar gak double-add)
+                    $st = strtolower(trim((string) ($del->getRawOriginal('status') ?? $del->status ?? 'pending')));
+                    if ($saleWasTrashed && $deliveryWasTrashed && $st === 'pending') {
+
+                        // Ensure items restored (idempotent)
+                        SaleDeliveryItem::withTrashed()
+                            ->withoutGlobalScopes()
+                            ->where('sale_delivery_id', (int) $del->id)
+                            ->restore();
+
+                        $items = SaleDeliveryItem::withoutGlobalScopes()
+                            ->where('sale_delivery_id', (int) $del->id)
+                            ->get(['product_id', 'quantity']);
+
+                        foreach ($items as $it) {
+                            $pid = (int) ($it->product_id ?? 0);
+                            $qty = (int) ($it->quantity ?? 0);
+                            if ($pid <= 0 || $qty <= 0) continue;
+
+                            if (!isset($reservedAddByProduct[$pid])) $reservedAddByProduct[$pid] = 0;
+                            $reservedAddByProduct[$pid] += $qty;
+                        }
+                    } else {
+                        // kalau bukan pending / bukan newly restored, tetap restore items kalau kamu butuh tampilan data
+                        // (optional, tapi aman)
+                        if ($deliveryWasTrashed) {
+                            SaleDeliveryItem::withTrashed()
+                                ->withoutGlobalScopes()
+                                ->where('sale_delivery_id', (int) $del->id)
+                                ->restore();
+                        }
+                    }
+                }
+
+                // ✅ add back reserved pool (warehouse_id NULL)
+                if (!empty($reservedAddByProduct)) {
+                    $this->incrementReservedPoolStock((int) $branchId, $reservedAddByProduct, (string) ($sale->reference ?? ('SALE#'.$sale->id)));
+                }
+            });
+
+            toast('Sale Restored!', 'success');
+            return redirect()->route('sales.index');
+
+        } catch (\Throwable $e) {
+            report($e);
+            toast($e->getMessage(), 'error');
+            return redirect()->route('sales.index');
+        }
+    }
+
+    public function forceDestroy(int $id)
+    {
+        abort_if(Gate::denies('delete_sales'), 403);
+
+        $branchId = BranchContext::id();
+
+        try {
+            DB::transaction(function () use ($id, $branchId) {
+
+                $sale = Sale::withTrashed()
+                    ->withoutGlobalScopes()
+                    ->lockForUpdate()
+                    ->findOrFail($id);
+
+                // branch guard
+                if (Schema::hasColumn('sales', 'branch_id')) {
+                    if ((int) ($sale->branch_id ?? 0) !== (int) $branchId) {
+                        abort(403, 'Active branch mismatch for this Sale.');
+                    }
+                }
+
+                if (!$sale->trashed()) {
+                    throw new \RuntimeException('Force delete only allowed after soft delete.');
+                }
+
+                // ✅ extra safety: pastikan tidak ada payment record nyangkut
+                $hasPayments = SalePayment::withTrashed()
+                    ->withoutGlobalScopes()
+                    ->where('sale_id', (int) $sale->id)
+                    ->exists();
+
+                if ($hasPayments) {
+                    throw new \RuntimeException('Cannot force delete: Sale still has payment records.');
+                }
+
+                // =========================
+                // ✅ Force delete related deliveries + items
+                // =========================
+                $deliveryIds = SaleDelivery::withTrashed()
+                    ->withoutGlobalScopes()
+                    ->where('sale_id', (int) $sale->id)
+                    ->pluck('id')
+                    ->map(fn($v) => (int) $v)
+                    ->toArray();
+
+                if (!empty($deliveryIds)) {
+                    SaleDeliveryItem::withTrashed()
+                        ->withoutGlobalScopes()
+                        ->whereIn('sale_delivery_id', $deliveryIds)
+                        ->forceDelete();
+
+                    SaleDelivery::withTrashed()
+                        ->withoutGlobalScopes()
+                        ->whereIn('id', $deliveryIds)
+                        ->forceDelete();
+                }
+
+                // =========================
+                // ✅ Force delete sale details
+                // =========================
+                SaleDetails::withTrashed()
+                    ->withoutGlobalScopes()
+                    ->where('sale_id', (int) $sale->id)
+                    ->forceDelete();
+
+                // =========================
+                // ✅ Force delete sale header
+                // =========================
+                $sale->forceDelete();
+            });
+
+            toast('Sale Deleted Permanently!', 'warning');
+            return redirect()->route('sales.index');
+
+        } catch (\Throwable $e) {
+            report($e);
+            toast($e->getMessage(), 'error');
+            return redirect()->route('sales.index');
+        }
     }
 }

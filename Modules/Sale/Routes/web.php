@@ -18,7 +18,9 @@ Route::group(['middleware' => 'auth'], function () {
         Route::get('sales/{sale}/edit', 'SaleController@edit')->name('sales.edit');
         Route::put('sales/{sale}', 'SaleController@update')->name('sales.update');
         Route::delete('sales/{sale}', 'SaleController@destroy')->name('sales.destroy');
-
+        Route::patch('sales/{sale}/restore', 'SaleController@restore')->name('sales.restore');
+        Route::delete('sales/{sale}/force-destroy', 'SaleController@force-destroy')->name('sales.force-destroy');
+        
         // POS (transaksi -> wajib branch)
         Route::get('/app/pos', 'PosController@index')->name('app.pos.index');
         Route::post('/app/pos', 'PosController@store')->name('app.pos.store');
