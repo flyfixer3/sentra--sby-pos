@@ -157,7 +157,7 @@ class PurchaseDeliveryController extends Controller
                 'note'              => $note,
                 'ship_via'          => $request->ship_via,
                 'tracking_number'   => $request->tracking_number,
-                'status'            => 'Pending',
+                'status'            => 'pending',
                 'created_by'        => auth()->id(),
 
                 'note_updated_by'   => $note ? auth()->id() : null,
@@ -1154,5 +1154,104 @@ class PurchaseDeliveryController extends Controller
             'damaged'          => $damaged,
             'rackInSummaryByProduct' => $rackInSummaryByProduct, // ✅ NEW
         ]);
+    }
+
+    public function destroy(PurchaseDelivery $purchaseDelivery)
+    {
+        abort_if(Gate::denies('delete_purchase_deliveries'), 403);
+
+        $active = session('active_branch');
+        if ($active === 'all' || $active === null || $active === '') {
+            toast("Please choose a specific branch first (not 'All Branch').", 'error');
+            return redirect()->route('purchase-deliveries.index');
+        }
+        $branchId = (int) $active;
+
+        try {
+            DB::transaction(function () use ($purchaseDelivery, $branchId) {
+
+                // lock header
+                $pd = PurchaseDelivery::withoutGlobalScopes()
+                    ->lockForUpdate()
+                    ->findOrFail((int) $purchaseDelivery->id);
+
+                // branch guard
+                if ((int) $pd->branch_id !== (int) $branchId) {
+                    abort(403, 'Active branch mismatch for this Purchase Delivery.');
+                }
+
+                // only pending can delete
+                $status = strtolower(trim((string) ($pd->status ?? '')));
+                if ($status !== 'pending') {
+                    throw new \RuntimeException('Only Pending Purchase Delivery can be deleted.');
+                }
+
+                // lock details
+                $details = PurchaseDeliveryDetails::withoutGlobalScopes()
+                    ->where('purchase_delivery_id', (int) $pd->id)
+                    ->lockForUpdate()
+                    ->get(['id', 'qty_received', 'qty_defect', 'qty_damaged']);
+
+                // if any confirmed qty exists => block
+                foreach ($details as $d) {
+                    $confirmed = (int) ($d->qty_received ?? 0)
+                        + (int) ($d->qty_defect ?? 0)
+                        + (int) ($d->qty_damaged ?? 0);
+
+                    if ($confirmed > 0) {
+                        throw new \RuntimeException('Cannot delete: this Purchase Delivery has been partially/fully confirmed.');
+                    }
+                }
+
+                // extra safety: if mutation exists => block
+                $baseRef = 'PD-' . (int) $pd->id;
+                $hasMutation = \Modules\Mutation\Entities\Mutation::withoutGlobalScopes()
+                    ->where('branch_id', (int) $pd->branch_id)
+                    ->where('reference', 'like', $baseRef . '-B%')
+                    ->exists();
+
+                if ($hasMutation) {
+                    throw new \RuntimeException('Cannot delete: mutation logs already exist for this Purchase Delivery.');
+                }
+
+                // extra safety: if invoice exists => block
+                $hasInvoice = \Modules\Purchase\Entities\Purchase::withoutGlobalScopes()
+                    ->where('purchase_delivery_id', (int) $pd->id)
+                    ->exists();
+
+                if ($hasInvoice) {
+                    throw new \RuntimeException('Cannot delete: this Purchase Delivery already has an Invoice (Purchase).');
+                }
+
+                // delete details then header
+                PurchaseDeliveryDetails::withoutGlobalScopes()
+                    ->where('purchase_delivery_id', (int) $pd->id)
+                    ->delete();
+
+                $pd->delete();
+
+                // optional refresh status PO
+                if (!empty($pd->purchase_order_id)) {
+                    $po = PurchaseOrder::withoutGlobalScopes()
+                        ->lockForUpdate()
+                        ->find((int) $pd->purchase_order_id);
+
+                    if ($po && method_exists($po, 'refreshStatus')) {
+                        $po->refreshStatus();
+                    }
+                }
+            });
+
+            toast('Purchase Delivery Deleted!', 'warning');
+            return redirect()->route('purchase-deliveries.index');
+
+        } catch (\Throwable $e) {
+            report($e);
+
+            // ✅ INI KUNCI BIAR PESAN MUNCUL
+            toast($e->getMessage(), 'error');
+
+            return redirect()->route('purchase-deliveries.index');
+        }
     }
 }

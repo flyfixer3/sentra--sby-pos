@@ -5,13 +5,16 @@ namespace Modules\PurchaseDelivery\Entities;
 use App\Models\BaseModel;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Database\Eloquent\SoftDeletes;
 use Modules\Branch\Entities\Branch;
 use Modules\Product\Entities\Warehouse;
 use Modules\Purchase\Entities\Purchase;
 
 class PurchaseDelivery extends BaseModel
 {
-    use HasFactory;
+    use HasFactory, SoftDeletes;
+
+    protected $dates = ['deleted_at'];
 
     protected $fillable = [
         'purchase_order_id',
