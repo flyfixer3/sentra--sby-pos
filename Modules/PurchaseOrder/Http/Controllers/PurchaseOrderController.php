@@ -328,10 +328,140 @@ class PurchaseOrderController extends Controller
     {
         abort_if(Gate::denies('delete_purchase_orders'), 403);
 
-        $purchase_order->delete();
+        $active = session('active_branch');
+        if ($active === 'all' || $active === null || $active === '') {
+            return redirect()
+                ->route('purchase-orders.index')
+                ->with('error', "Please select a specific branch first (not 'All Branch').");
+        }
+        $branchId = (int) $active;
 
-        toast('Purchase Order Deleted!', 'warning');
+        try {
+            DB::transaction(function () use ($purchase_order, $branchId) {
 
-        return redirect()->route('purchase-orders.index');
+                // Lock PO row (prevent race delete/confirm/update)
+                $po = \Modules\PurchaseOrder\Entities\PurchaseOrder::withoutGlobalScopes()
+                    ->lockForUpdate()
+                    ->findOrFail((int) $purchase_order->id);
+
+                // Branch guard (biar konsisten multi-branch)
+                if ((int) $po->branch_id !== (int) $branchId) {
+                    abort(403, 'You can only delete Purchase Orders from the active branch.');
+                }
+
+                // Rule 1: kalau sudah ada invoice/purchase, tidak boleh delete
+                if (method_exists($po, 'hasInvoice') && $po->hasInvoice()) {
+                    throw new \RuntimeException('Cannot delete: this Purchase Order already has an Invoice (Purchase).');
+                }
+
+                // Rule 2: kalau sudah ada Purchase Delivery, jangan allow delete
+                // NOTE: purchase_deliveries tidak punya deleted_at (no soft delete)
+                $hasPD = DB::table('purchase_deliveries')
+                    ->where('purchase_order_id', (int) $po->id)
+                    ->exists();
+
+                if ($hasPD) {
+                    throw new \RuntimeException(
+                        'Cannot delete: this Purchase Order already has Purchase Deliveries. Please delete/cancel the deliveries first.'
+                    );
+                }
+
+                // Rule 3: kalau sudah ada fulfilled (berarti pernah confirm), jangan allow delete
+                $totalFulfilled = (int) $po->purchaseOrderDetails()
+                    ->sum('fulfilled_quantity');
+
+                if ($totalFulfilled > 0) {
+                    throw new \RuntimeException(
+                        'Cannot delete: this Purchase Order already has fulfilled quantity (items already confirmed/received).'
+                    );
+                }
+
+                // Aggregate qty per product dari PO details
+                $details = $po->purchaseOrderDetails()
+                    ->get(['product_id', 'quantity']);
+
+                $qtyByProduct = [];
+                foreach ($details as $d) {
+                    $pid = (int) ($d->product_id ?? 0);
+                    $qty = (int) ($d->quantity ?? 0);
+                    if ($pid <= 0 || $qty <= 0) continue;
+
+                    if (!isset($qtyByProduct[$pid])) $qtyByProduct[$pid] = 0;
+                    $qtyByProduct[$pid] += $qty;
+                }
+
+                // Balikin incoming pool (branch-level, warehouse_id NULL)
+                foreach ($qtyByProduct as $productId => $qty) {
+
+                    // Lock semua pool rows yang match (antisipasi duplicate NULL warehouse_id)
+                    $poolRows = DB::table('stocks')
+                        ->where('branch_id', (int) $branchId)
+                        ->whereNull('warehouse_id')
+                        ->where('product_id', (int) $productId)
+                        ->lockForUpdate()
+                        ->orderBy('id', 'asc')
+                        ->get();
+
+                    // Kalau belum ada row pool sama sekali, buat dulu supaya konsisten
+                    if ($poolRows->isEmpty()) {
+                        DB::table('stocks')->insert([
+                            'branch_id'     => (int) $branchId,
+                            'warehouse_id'  => null,
+                            'product_id'    => (int) $productId,
+                            'qty_available' => 0,
+                            'qty_reserved'  => 0,
+                            'qty_incoming'  => 0,
+                            'min_stock'     => 0,
+                            'created_at'    => now(),
+                            'updated_at'    => now(),
+                        ]);
+
+                        $poolRows = DB::table('stocks')
+                            ->where('branch_id', (int) $branchId)
+                            ->whereNull('warehouse_id')
+                            ->where('product_id', (int) $productId)
+                            ->lockForUpdate()
+                            ->orderBy('id', 'asc')
+                            ->get();
+                    }
+
+                    $remainingToSubtract = (int) $qty;
+
+                    foreach ($poolRows as $row) {
+                        if ($remainingToSubtract <= 0) break;
+
+                        $currentIncoming = (int) ($row->qty_incoming ?? 0);
+                        if ($currentIncoming <= 0) continue;
+
+                        $take = min($currentIncoming, $remainingToSubtract);
+                        $newIncoming = $currentIncoming - $take;
+
+                        DB::table('stocks')
+                            ->where('id', (int) $row->id)
+                            ->update([
+                                'qty_incoming' => (int) $newIncoming,
+                                'updated_at'   => now(),
+                            ]);
+
+                        $remainingToSubtract -= $take;
+                    }
+
+                    // Jika incoming pool ternyata kurang dari qty PO (data sudah terlanjur tidak konsisten),
+                    // kita tidak bikin minus (tetap stop di 0).
+                }
+
+                // Hapus PO (details akan cascade delete via FK)
+                $po->delete();
+            });
+
+            toast('Purchase Order Deleted! Incoming has been reverted.', 'warning');
+            return redirect()->route('purchase-orders.index');
+
+        } catch (\Throwable $e) {
+            report($e);
+            return redirect()
+                ->back()
+                ->with('error', $e->getMessage());
+        }
     }
 }
