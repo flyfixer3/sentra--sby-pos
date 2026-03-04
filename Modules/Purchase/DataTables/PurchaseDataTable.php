@@ -15,11 +15,10 @@ class PurchaseDataTable extends DataTable
         return datatables()
             ->eloquent($query)
 
-            // ✅ (REMOVED) kolom Transaction Date (purchases.date)
-            // ->editColumn('date', function ($data) {
-            //     if (empty($data->date)) return '-';
-            //     return Carbon::parse($data->date)->format('d-m-Y');
-            // })
+            // ✅ NEW: row merah kalau soft deleted
+            ->setRowClass(function ($data) {
+                return !empty($data->deleted_at) ? 'table-danger' : '';
+            })
 
             ->addColumn('total_amount', function ($data) {
                 return format_currency($data->total_amount);
