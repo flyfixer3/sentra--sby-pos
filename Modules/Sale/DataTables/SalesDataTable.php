@@ -36,6 +36,11 @@ class SalesDataTable extends DataTable
         return datatables()
             ->eloquent($query)
 
+            // ✅ Row merah kalau soft deleted
+            ->setRowClass(function ($row) {
+                return !empty($row->deleted_at) ? 'table-danger' : '';
+            })
+
             // ✅ date tampil dengan jam dari created_at
             ->editColumn('date', function ($row) {
                 return $this->formatDateWithCreatedTime($row, 'date');
