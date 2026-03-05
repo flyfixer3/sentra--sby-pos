@@ -5,6 +5,7 @@ namespace Modules\PurchaseOrder\Entities;
 use App\Models\BaseModel;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Schema;
 use Modules\Purchase\Entities\Purchase;
@@ -13,7 +14,7 @@ use Modules\PurchaseDelivery\Entities\PurchaseDelivery;
 
 class PurchaseOrder extends BaseModel
 {
-    use HasFactory;
+    use HasFactory, SoftDeletes;
 
     protected $guarded = [];
 
