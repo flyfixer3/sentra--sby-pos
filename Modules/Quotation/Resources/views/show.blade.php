@@ -29,11 +29,13 @@
     $hasSO = \Illuminate\Support\Facades\DB::table('sale_orders')
         ->where('branch_id', $branchId)
         ->where('quotation_id', (int) $quotation->id)
+        ->whereNull('deleted_at') // 🔥 penting
         ->exists();
 
     $hasSD = \Illuminate\Support\Facades\DB::table('sale_deliveries')
         ->where('branch_id', $branchId)
         ->where('quotation_id', (int) $quotation->id)
+        ->whereNull('deleted_at') // 🔥 penting
         ->exists();
 
     $hasChildren = $hasSO || $hasSD;

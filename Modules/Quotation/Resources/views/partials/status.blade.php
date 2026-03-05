@@ -1,4 +1,4 @@
-@if ($data->status == 'Pending')
+@if ($data->status == 'pending')
     <span class="badge badge-info">
         {{ $data->status }}
     </span>

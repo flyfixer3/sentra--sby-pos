@@ -913,9 +913,11 @@ class SaleOrderController extends Controller
                 throw new \RuntimeException('Only pending Sale Order can be deleted.');
             }
 
-            // ✅ safety: kalau sudah ada Sale Delivery turunan, jangan boleh delete
+            // ✅ safety: kalau sudah ada Sale Delivery turunan AKTIF (belum soft delete), jangan boleh delete
             $hasDelivery = DB::table('sale_deliveries')
+                ->where('branch_id', (int) $branchId)
                 ->where('sale_order_id', (int) $saleOrder->id)
+                ->whereNull('deleted_at') // 🔥 INI KUNCI supaya soft-deleted tidak dihitung
                 ->exists();
 
             if ($hasDelivery) {

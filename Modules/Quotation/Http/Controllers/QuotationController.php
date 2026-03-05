@@ -413,7 +413,7 @@ class QuotationController extends Controller
                 }
 
                 // ==========================================
-                // 4) ✅ Mark quotation completed
+                // 4) ✅ Mark quotation completed (KONSISTEN dengan UI: Pending/Completed)
                 // ==========================================
                 $quotation->update([
                     'status' => 'completed',
@@ -424,9 +424,6 @@ class QuotationController extends Controller
 
             // kamu mau arahkan ke invoice dulu (lebih masuk akal)
             return redirect()->route('sales.show', $saleId);
-
-            // atau kalau mau ke delivery:
-            // return redirect()->route('sale-deliveries.show', $saleDeliveryId);
 
         } catch (\Throwable $e) {
             toast($e->getMessage(), 'error');

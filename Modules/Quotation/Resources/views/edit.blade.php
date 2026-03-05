@@ -62,8 +62,8 @@
                                     <div class="form-group">
                                         <label for="status">Status <span class="text-danger">*</span></label>
                                         <select class="form-control" name="status" id="status" required>
-                                            <option {{ $quotation->status == 'Pending' ? 'selected' : '' }} value="Pending">Pending</option>
-                                            <option {{ $quotation->status == 'Sent' ? 'selected' : '' }} value="Sent">Sent</option>
+                                            <option {{ $quotation->status == 'pending' ? 'selected' : '' }} value="pending">Pending</option>
+                                            <option {{ $quotation->status == 'completed' ? 'selected' : '' }} value="completed">Completed</option>
                                         </select>
                                     </div>
                                 </div>
