@@ -2,38 +2,39 @@
 
 namespace Modules\Expense\Entities;
 
-use Illuminate\Database\Eloquent\Model;
+use App\Models\BaseModel;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
-use Illuminate\Support\Carbon;
 
-class Expense extends Model
+class Expense extends BaseModel
 {
     use HasFactory;
 
     protected $guarded = [];
 
-    public function category() {
+    protected $casts = [
+        'date' => 'date:Y-m-d',
+    ];
+
+    public function category()
+    {
         return $this->belongsTo(ExpenseCategory::class, 'category_id', 'id');
     }
 
-    public static function boot() {
+    protected static function boot()
+    {
         parent::boot();
 
         static::creating(function ($model) {
-            $number = Expense::max('id') + 1;
-            $model->reference = make_reference_id('EXP', $number);
+            // reference auto: EXP-00001 dst
+            if (empty($model->reference)) {
+                $number = (static::withoutGlobalScopes()->max('id') ?? 0) + 1;
+                $model->reference = make_reference_id('EXP', $number);
+            }
+
+            // default type
+            if (empty($model->type)) {
+                $model->type = 'credit';
+            }
         });
-    }
-
-    public function getDateAttribute($value) {
-        return Carbon::parse($value)->format('d M, Y');
-    }
-
-    public function setAmountAttribute($value) {
-        $this->attributes['amount'] = ($value * 1);
-    }
-
-    public function getAmountAttribute($value) {
-        return ($value / 1);
     }
 }
