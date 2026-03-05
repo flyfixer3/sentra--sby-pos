@@ -23,9 +23,19 @@
                 <div class="card">
                     <div class="card-body">
                         @include('utils.alerts')
+
                         <form id="purchase-form" action="{{ route('purchases.update', $purchase) }}" method="POST">
                             @csrf
-                            @method('patch')
+                            @method('put')
+
+                            @php
+                                $isAdmin = auth()->check() && auth()->user()->hasRole('Administrator');
+                            @endphp
+
+                            @if($isAdmin)
+                                <input type="hidden" name="is_admin_ui" value="1">
+                            @endif
+
                             <div class="form-row">
                                 <div class="col-lg-2">
                                     <div class="form-group">
@@ -36,7 +46,7 @@
                                 <div class="col-lg-3">
                                     <div class="form-group">
                                         <label for="reference_supplier">Supplier Invoice <span class="text-danger">*</span></label>
-                                        <input type="text" class="form-control" name="reference_supplier" value="{{ $purchase->reference_supplier }}" >
+                                        <input type="text" class="form-control" name="reference_supplier" value="{{ $purchase->reference_supplier }}">
                                     </div>
                                 </div>
                                 <div class="col-lg-3">
@@ -69,6 +79,9 @@
                                 </div>
                             </div>
 
+                            {{-- NOTE: ini Livewire cart purchase kamu masih pakai loading warehouse hardcoded 99.
+                                 Aku tidak ubah supaya tidak merusak fitur yang sudah ada.
+                                 // TODO (future): ganti agar sesuai branch aktif. --}}
                             <livewire:product-cart-purchase :cartInstance="'purchase'" :data="$purchase" :loading_warehouse="\Modules\Product\Entities\Warehouse::findOrFail(99)"/>
 
                             <div class="form-row">
@@ -103,12 +116,49 @@
                                 <textarea name="note" id="note" rows="5" class="form-control">{{ $purchase->note }}</textarea>
                             </div>
 
+                            {{-- ✅ Admin-only: alasan + disclaimer confirm --}}
+                            @if($isAdmin)
+                                <div class="card mt-3 border-warning">
+                                    <div class="card-header bg-warning text-dark" style="font-weight:800;">
+                                        Admin Only — HPP Sensitive Edit
+                                    </div>
+                                    <div class="card-body">
+                                        <div class="alert alert-warning mb-3">
+                                            <div style="font-weight:800;">Perhatian:</div>
+                                            <div>
+                                                Kalau kamu mengubah <b>harga/qty item</b> di invoice purchase yang sudah berdampak ke receiving,
+                                                sistem akan melakukan <b>HPP correction</b> dan dapat mempengaruhi profit sale.
+                                            </div>
+                                            <div class="mt-2" style="font-size:12px; opacity:.9;">
+                                                // TODO (future): validasi berbasis shift closing (saat fitur tutup shift sudah ada).
+                                            </div>
+                                        </div>
+
+                                        <div class="form-group">
+                                            <label for="edit_reason" style="font-weight:800;">
+                                                Reason / Note for Edit (Required if change item price/qty)
+                                            </label>
+                                            <textarea name="edit_reason" id="edit_reason" rows="4" class="form-control"
+                                                      placeholder="Contoh: Supplier salah input harga, koreksi sesuai invoice asli...">{{ old('edit_reason') }}</textarea>
+                                        </div>
+
+                                        <div class="form-check mt-2">
+                                            <input class="form-check-input" type="checkbox" value="1" id="confirm_recalculate_hpp" name="confirm_recalculate_hpp">
+                                            <label class="form-check-label" for="confirm_recalculate_hpp" style="font-weight:800;">
+                                                I understand this will recalculate / correct HPP ledger and update sale cost snapshot (same day).
+                                            </label>
+                                        </div>
+                                    </div>
+                                </div>
+                            @endif
+
                             <div class="mt-3">
                                 <button type="submit" class="btn btn-primary">
                                     Update Purchase <i class="bi bi-check"></i>
                                 </button>
                             </div>
                         </form>
+
                     </div>
                 </div>
             </div>

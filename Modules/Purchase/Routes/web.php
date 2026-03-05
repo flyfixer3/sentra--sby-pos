@@ -32,7 +32,10 @@ Route::group(['middleware' => 'auth'], function () {
 
         // edit/update/destroy (lebih spesifik dari {purchase})
         Route::get('purchases/{purchase}/edit', 'PurchaseController@edit')->name('purchases.edit');
-        Route::put('purchases/{purchase}', 'PurchaseController@update')->name('purchases.update');
+
+        // ✅ FIX: accept PUT + PATCH (biar aman walaupun form pakai patch/put)
+        Route::match(['put', 'patch'], 'purchases/{purchase}', 'PurchaseController@update')->name('purchases.update');
+
         Route::delete('purchases/{purchase}', 'PurchaseController@destroy')->name('purchases.destroy');
 
         // restore/force-destroy
