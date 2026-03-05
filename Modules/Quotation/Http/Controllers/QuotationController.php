@@ -17,6 +17,7 @@ use Modules\Quotation\Entities\Quotation;
 use Modules\Quotation\Entities\QuotationDetails;
 use Modules\Quotation\Http\Requests\StoreQuotationRequest;
 use Modules\Quotation\Http\Requests\UpdateQuotationRequest;
+use Modules\Quotation\Services\QuotationStatusService;
 use Modules\Sale\Entities\Sale;
 use Modules\Sale\Entities\SaleDetails;
 
@@ -235,14 +236,37 @@ class QuotationController extends Controller
         return redirect()->route('quotations.index');
     }
 
-    public function destroy(Quotation $quotation) {
-        abort_if(Gate::denies('delete_quotations'), 403);
+    public function destroy($id)
+    {
+        // Kalau kamu pakai Gate/permission, tetap aman kalau baris ini sudah ada sebelumnya.
+        // Kalau tidak ada, tidak masalah.
+        if (function_exists('abort_if')) {
+            abort_if(Gate::denies('delete_quotations'), 403);
+        }
 
-        $quotation->delete();
+        $quotation = Quotation::query()->findOrFail($id);
 
-        toast('Quotation Deleted!', 'warning');
+        // Block kalau masih punya turunan aktif (SO/SD yang belum soft delete)
+        if (QuotationStatusService::hasActiveDescendant((int) $quotation->id)) {
+            return redirect()
+                ->back()
+                ->with('error', 'Quotation cannot be deleted because it already has a Sales Order / Sales Delivery. Please delete the related Sales Order / Sales Delivery first.');
+        }
 
-        return redirect()->route('quotations.index');
+        DB::transaction(function () use ($quotation) {
+            // Soft delete quotation details dulu biar rapi (walaupun FK cascade ON DELETE CASCADE,
+            // tapi itu untuk hard delete, bukan soft delete)
+            QuotationDetails::query()
+                ->where('quotation_id', $quotation->id)
+                ->delete();
+
+            // Soft delete quotation
+            $quotation->delete();
+        });
+
+        return redirect()
+            ->back()
+            ->with('success', 'Quotation deleted successfully.');
     }
 
     public function createInvoiceDirect(Quotation $quotation)

@@ -2,15 +2,17 @@
 
 namespace Modules\Quotation\Entities;
 
+use App\Models\BaseModel;
 use App\Traits\HasBranchScope;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Support\Carbon;
 use Modules\People\Entities\Customer;
 
-class Quotation extends Model
+class Quotation extends BaseModel
 {
-    use HasFactory, HasBranchScope;
+    use HasFactory, SoftDeletes;
 
     protected $guarded = [];
 

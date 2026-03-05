@@ -758,7 +758,7 @@ class PurchaseController extends Controller
                     abort(403, 'Active branch mismatch for this Purchase.');
                 }
 
-                // ✅ status rule: pending only (sesuai requirement kamu)
+                // ✅ status rule: pending only
                 $st = strtolower(trim((string) ($p->status ?? 'pending')));
                 if ($st !== 'pending') {
                     throw new \RuntimeException('Only Pending Purchase (Invoice) can be deleted.');
@@ -792,53 +792,43 @@ class PurchaseController extends Controller
                     ->get(['product_id', 'quantity']);
 
                 // =========================
-                // ✅ Resolve related PDs
+                // ✅ Identify WALK-IN vs PO-based
                 // =========================
                 $poId = (int) ($p->purchase_order_id ?? 0);
                 $pdId = (int) ($p->purchase_delivery_id ?? 0);
 
+                // WALK-IN = invoice tidak terkait PO
                 $isWalkIn = ($poId <= 0);
 
-                // kumpulin PD IDs yang akan kita cascade delete
-                $pdIdsToDelete = [];
-
-                if ($isWalkIn) {
-                    // ✅ walk-in: hanya PD auto-created yang dilink purchase_delivery_id
-                    if ($pdId > 0) $pdIdsToDelete = [$pdId];
-                } else {
-                    // ✅ PO-based: cascade semua PD untuk PO tsb (biar rapih 1 PO = 1 invoice),
-                    // tapi hanya kalau semuanya "aman" (pending, no confirmed qty, no mutation, no other invoice)
-                    $pdIdsToDelete = PurchaseDelivery::withoutGlobalScopes()
-                        ->where('purchase_order_id', $poId)
-                        ->pluck('id')
-                        ->map(fn($x) => (int) $x)
-                        ->toArray();
-                }
-
                 // =========================
-                // ✅ VALIDASI PD sebelum delete (jaga gak ada confirm/mutation)
+                // ✅ If linked PD exists: guard PD (race safe)
+                // - WALK-IN: nanti PD di-delete bareng
+                // - NON WALK-IN: PD tidak dihapus, tapi tetap block delete invoice kalau PD sudah diproses
                 // =========================
-                if (!empty($pdIdsToDelete)) {
+                $linkedPd = null;
 
-                    $pds = PurchaseDelivery::withoutGlobalScopes()
-                        ->whereIn('id', $pdIdsToDelete)
+                if ($pdId > 0) {
+                    $linkedPd = PurchaseDelivery::withoutGlobalScopes()
                         ->lockForUpdate()
-                        ->get(['id', 'branch_id', 'status']);
+                        ->find((int) $pdId);
 
-                    foreach ($pds as $pd) {
+                    if ($linkedPd) {
 
-                        if ((int) $pd->branch_id !== (int) $p->branch_id) {
+                        if ((int) $linkedPd->branch_id !== (int) $p->branch_id) {
                             throw new \RuntimeException('Cannot delete: related Purchase Delivery belongs to different branch.');
                         }
 
-                        $pdStatus = strtolower(trim((string) ($pd->status ?? 'pending')));
+                        // Kalau PD sudah confirmed/processed, invoice jangan boleh dihapus
+                        $pdStatus = strtolower(trim((string) ($linkedPd->status ?? 'pending')));
                         if ($pdStatus !== 'pending') {
-                            throw new \RuntimeException("Cannot delete: related Purchase Delivery already processed (status: {$pd->status}).");
+                            throw new \RuntimeException(
+                                "Cannot delete: related Purchase Delivery already processed (status: {$linkedPd->status})."
+                            );
                         }
 
-                        // pastikan belum ada confirmed qty di detail
+                        // pastikan belum ada confirmed qty di detail PD
                         $details = PurchaseDeliveryDetails::withoutGlobalScopes()
-                            ->where('purchase_delivery_id', (int) $pd->id)
+                            ->where('purchase_delivery_id', (int) $linkedPd->id)
                             ->lockForUpdate()
                             ->get(['qty_received', 'qty_defect', 'qty_damaged']);
 
@@ -848,37 +838,29 @@ class PurchaseController extends Controller
                                 + (int) ($d->qty_damaged ?? 0);
 
                             if ($confirmed > 0) {
-                                throw new \RuntimeException('Cannot delete: related Purchase Delivery already has confirmed quantities.');
+                                throw new \RuntimeException(
+                                    'Cannot delete: related Purchase Delivery already has confirmed quantities.'
+                                );
                             }
                         }
 
                         // safety: jangan sampai sudah ada mutation PD
-                        $baseRef = 'PD-' . (int) $pd->id;
+                        $baseRef = 'PD-' . (int) $linkedPd->id;
                         $hasMutation = Mutation::withoutGlobalScopes()
-                            ->where('branch_id', (int) $pd->branch_id)
+                            ->where('branch_id', (int) $linkedPd->branch_id)
                             ->where('reference', 'like', $baseRef . '-B%')
                             ->exists();
 
                         if ($hasMutation) {
-                            throw new \RuntimeException('Cannot delete: mutation logs already exist for related Purchase Delivery.');
-                        }
-
-                        // safety: kalau PD ini dilink ke invoice lain (harusnya tidak terjadi), block
-                        $linkedOtherInvoice = Purchase::withoutGlobalScopes()
-                            ->where('purchase_delivery_id', (int) $pd->id)
-                            ->whereNull('deleted_at')
-                            ->where('id', '!=', (int) $p->id)
-                            ->exists();
-
-                        if ($linkedOtherInvoice) {
-                            throw new \RuntimeException('Cannot delete: related Purchase Delivery is linked to another active invoice.');
+                            throw new \RuntimeException(
+                                'Cannot delete: mutation logs already exist for related Purchase Delivery.'
+                            );
                         }
                     }
                 }
 
                 // =========================
                 // ✅ ROLLBACK incoming pool hanya untuk WALK-IN invoice
-                // (PO-based invoice: incoming sudah di-handle oleh PO & confirm PD)
                 // =========================
                 if ($isWalkIn) {
                     $qtyByProduct = [];
@@ -911,16 +893,15 @@ class PurchaseController extends Controller
                 }
 
                 // =========================
-                // ✅ Soft delete cascade PD details + PD (kalau ada)
+                // ✅ DELETE PD hanya untuk WALK-IN (AUTO PD)
                 // =========================
-                if (!empty($pdIdsToDelete)) {
+                if ($isWalkIn && $linkedPd) {
+
                     PurchaseDeliveryDetails::withoutGlobalScopes()
-                        ->whereIn('purchase_delivery_id', array_map('intval', $pdIdsToDelete))
+                        ->where('purchase_delivery_id', (int) $linkedPd->id)
                         ->delete();
 
-                    PurchaseDelivery::withoutGlobalScopes()
-                        ->whereIn('id', array_map('intval', $pdIdsToDelete))
-                        ->delete();
+                    $linkedPd->delete();
                 }
 
                 // =========================

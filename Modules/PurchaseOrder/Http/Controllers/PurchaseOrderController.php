@@ -344,7 +344,7 @@ class PurchaseOrderController extends Controller
                     ->lockForUpdate()
                     ->findOrFail((int) $purchase_order->id);
 
-                // Branch guard (biar konsisten multi-branch)
+                // Branch guard
                 if ((int) $po->branch_id !== (int) $branchId) {
                     abort(403, 'You can only delete Purchase Orders from the active branch.');
                 }
@@ -355,7 +355,6 @@ class PurchaseOrderController extends Controller
                 }
 
                 // Rule 2: kalau sudah ada Purchase Delivery, jangan allow delete
-                // NOTE: purchase_deliveries tidak punya deleted_at (no soft delete)
                 $hasPD = DB::table('purchase_deliveries')
                     ->where('purchase_order_id', (int) $po->id)
                     ->exists();
@@ -366,8 +365,9 @@ class PurchaseOrderController extends Controller
                     );
                 }
 
-                // Rule 3: kalau sudah ada fulfilled (berarti pernah confirm), jangan allow delete
-                $totalFulfilled = (int) $po->purchaseOrderDetails()
+                // Rule 3: kalau sudah ada fulfilled, jangan allow delete
+                $totalFulfilled = (int) \Modules\PurchaseOrder\Entities\PurchaseOrderDetails::withoutGlobalScopes()
+                    ->where('purchase_order_id', (int) $po->id)
                     ->sum('fulfilled_quantity');
 
                 if ($totalFulfilled > 0) {
@@ -376,10 +376,13 @@ class PurchaseOrderController extends Controller
                     );
                 }
 
-                // Aggregate qty per product dari PO details
-                $details = $po->purchaseOrderDetails()
+                // ✅ Lock details (karena soft delete tidak cascade)
+                $details = \Modules\PurchaseOrder\Entities\PurchaseOrderDetails::withoutGlobalScopes()
+                    ->where('purchase_order_id', (int) $po->id)
+                    ->lockForUpdate()
                     ->get(['product_id', 'quantity']);
 
+                // Aggregate qty per product dari PO details
                 $qtyByProduct = [];
                 foreach ($details as $d) {
                     $pid = (int) ($d->product_id ?? 0);
@@ -390,10 +393,9 @@ class PurchaseOrderController extends Controller
                     $qtyByProduct[$pid] += $qty;
                 }
 
-                // Balikin incoming pool (branch-level, warehouse_id NULL)
+                // ✅ Rollback incoming pool (branch-level, warehouse_id NULL)
                 foreach ($qtyByProduct as $productId => $qty) {
 
-                    // Lock semua pool rows yang match (antisipasi duplicate NULL warehouse_id)
                     $poolRows = DB::table('stocks')
                         ->where('branch_id', (int) $branchId)
                         ->whereNull('warehouse_id')
@@ -402,8 +404,8 @@ class PurchaseOrderController extends Controller
                         ->orderBy('id', 'asc')
                         ->get();
 
-                    // Kalau belum ada row pool sama sekali, buat dulu supaya konsisten
                     if ($poolRows->isEmpty()) {
+                        // create row biar konsisten, tapi incoming rollback tetap aman
                         DB::table('stocks')->insert([
                             'branch_id'     => (int) $branchId,
                             'warehouse_id'  => null,
@@ -445,12 +447,14 @@ class PurchaseOrderController extends Controller
 
                         $remainingToSubtract -= $take;
                     }
-
-                    // Jika incoming pool ternyata kurang dari qty PO (data sudah terlanjur tidak konsisten),
-                    // kita tidak bikin minus (tetap stop di 0).
                 }
 
-                // Hapus PO (details akan cascade delete via FK)
+                // ✅ FIX: Soft delete details dulu (biar deleted_at keisi)
+                \Modules\PurchaseOrder\Entities\PurchaseOrderDetails::withoutGlobalScopes()
+                    ->where('purchase_order_id', (int) $po->id)
+                    ->delete();
+
+                // ✅ Soft delete header terakhir
                 $po->delete();
             });
 
