@@ -19,6 +19,10 @@
             <div class="col-12">
                 <div class="card">
                     <div class="card-body">
+
+                        {{-- ✅ biar kalau ada redirect->with() juga tetap muncul --}}
+                        @include('utils.alerts')
+
                         <a href="{{ route('quotations.create') }}" class="btn btn-primary">
                             Add Quotation <i class="bi bi-plus"></i>
                         </a>

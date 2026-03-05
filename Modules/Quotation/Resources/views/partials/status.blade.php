@@ -1,9 +1,22 @@
-@if ($data->status == 'pending')
-    <span class="badge badge-info">
-        {{ $data->status }}
-    </span>
-@else
-    <span class="badge badge-success">
-        {{ $data->status }}
-    </span>
-@endif
+@php
+    $st = strtolower(trim((string) ($data->status ?? 'pending')));
+
+    $class = match ($st) {
+        'pending'   => 'badge bg-warning text-dark',
+        'completed' => 'badge bg-success',
+        'cancelled' => 'badge bg-danger',
+        default     => 'badge bg-secondary',
+    };
+
+    // label rapih (tapi DB tetap lowercase)
+    $label = match ($st) {
+        'pending'   => 'Pending',
+        'completed' => 'Completed',
+        'cancelled' => 'Cancelled',
+        default     => strtoupper($st),
+    };
+@endphp
+
+<span class="{{ $class }}">
+    {{ $label }}
+</span>

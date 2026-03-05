@@ -69,6 +69,8 @@ class QuotationController extends Controller
                 })
                 ->firstOrFail();
 
+            $status = strtolower(trim((string) ($request->status ?? 'pending')));
+
             $quotation = Quotation::create([
                 'branch_id'           => $branchId,
                 'date'                => $request->date,
@@ -78,7 +80,7 @@ class QuotationController extends Controller
                 'discount_percentage' => $request->discount_percentage,
                 'shipping_amount'     => (int) $request->shipping_amount,
                 'total_amount'        => (int) $request->total_amount,
-                'status'              => $request->status,
+                'status'              => $status, // ✅ lowercase
                 'note'                => $request->note,
                 'tax_amount'          => (int) Cart::instance('quotation')->tax(),
                 'discount_amount'     => (int) Cart::instance('quotation')->discount(),
@@ -189,6 +191,8 @@ class QuotationController extends Controller
                 $quotation_detail->delete();
             }
 
+            $status = strtolower(trim((string) ($request->status ?? 'pending')));
+
             // ✅ update header quotation (branch-aware + legacy safe)
             $updateData = [
                 'date'                => $request->date,
@@ -199,7 +203,7 @@ class QuotationController extends Controller
                 'discount_percentage' => $request->discount_percentage,
                 'shipping_amount'     => (int) $request->shipping_amount,
                 'total_amount'        => (int) $request->total_amount,
-                'status'              => $request->status,
+                'status'              => $status, // ✅ lowercase
                 'note'                => $request->note,
                 'tax_amount'          => (int) Cart::instance('quotation')->tax(),
                 'discount_amount'     => (int) Cart::instance('quotation')->discount(),
@@ -224,7 +228,7 @@ class QuotationController extends Controller
                     'unit_price'               => (int) $cart_item->options->unit_price,
                     'sub_total'                => (int) $cart_item->options->sub_total,
                     'product_discount_amount'  => (int) $cart_item->options->product_discount,
-                    'product_discount_type'    => $cart_item->options->product_discount_type,
+                    'product_discount_type'    => (int) $cart_item->options->product_discount_type,
                     'product_tax_amount'       => (int) $cart_item->options->product_tax,
                 ]);
             }
@@ -238,35 +242,36 @@ class QuotationController extends Controller
 
     public function destroy($id)
     {
-        // Kalau kamu pakai Gate/permission, tetap aman kalau baris ini sudah ada sebelumnya.
-        // Kalau tidak ada, tidak masalah.
-        if (function_exists('abort_if')) {
-            abort_if(Gate::denies('delete_quotations'), 403);
+        abort_if(Gate::denies('delete_quotations'), 403);
+
+        try {
+            $quotation = Quotation::query()->findOrFail($id);
+
+            // Block kalau masih punya turunan aktif (SO/SD yang belum soft delete)
+            if (QuotationStatusService::hasActiveDescendant((int) $quotation->id)) {
+                toast(
+                    'Quotation cannot be deleted because it already has a Sales Order / Sales Delivery. Please delete the related Sales Order / Sales Delivery first.',
+                    'error'
+                );
+                return redirect()->back();
+            }
+
+            DB::transaction(function () use ($quotation) {
+
+                QuotationDetails::query()
+                    ->where('quotation_id', $quotation->id)
+                    ->delete();
+
+                $quotation->delete();
+            });
+
+            toast('Quotation deleted successfully.', 'warning');
+            return redirect()->route('quotations.index');
+
+        } catch (\Throwable $e) {
+            toast($e->getMessage(), 'error');
+            return redirect()->back();
         }
-
-        $quotation = Quotation::query()->findOrFail($id);
-
-        // Block kalau masih punya turunan aktif (SO/SD yang belum soft delete)
-        if (QuotationStatusService::hasActiveDescendant((int) $quotation->id)) {
-            return redirect()
-                ->back()
-                ->with('error', 'Quotation cannot be deleted because it already has a Sales Order / Sales Delivery. Please delete the related Sales Order / Sales Delivery first.');
-        }
-
-        DB::transaction(function () use ($quotation) {
-            // Soft delete quotation details dulu biar rapi (walaupun FK cascade ON DELETE CASCADE,
-            // tapi itu untuk hard delete, bukan soft delete)
-            QuotationDetails::query()
-                ->where('quotation_id', $quotation->id)
-                ->delete();
-
-            // Soft delete quotation
-            $quotation->delete();
-        });
-
-        return redirect()
-            ->back()
-            ->with('success', 'Quotation deleted successfully.');
     }
 
     public function createInvoiceDirect(Quotation $quotation)
