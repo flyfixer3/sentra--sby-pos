@@ -388,4 +388,78 @@
         </div>
     </div>
 </div>
+
+{{-- =========================================================
+     ✅ Edit / Correction Logs (Spatie Activity Log)
+     ========================================================= --}}
+@if(isset($activities) && $activities->count())
+    <div class="card mt-4">
+        <div class="card-header" style="font-weight:800;">
+            Edit / Correction Logs
+        </div>
+        <div class="card-body">
+            <div class="table-responsive">
+                <table class="table table-sm table-bordered mb-0">
+                    <thead>
+                        <tr>
+                            <th style="width:160px;">Time</th>
+                            <th style="width:140px;">Event</th>
+                            <th style="width:220px;">By</th>
+                            <th>Description</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach($activities as $act)
+                            @php
+                                $causerName = '-';
+                                if ($act->causer) {
+                                    $causerName = $act->causer->name ?? ($act->causer->email ?? 'User#' . $act->causer_id);
+                                }
+
+                                $props = $act->properties ? $act->properties->toArray() : [];
+                                $reason = $props['reason'] ?? null;
+                                $type = $props['type'] ?? null;
+                            @endphp
+                            <tr>
+                                <td>{{ \Carbon\Carbon::parse($act->created_at)->format('d M Y H:i:s') }}</td>
+                                <td>
+                                    <span class="badge bg-secondary">{{ $act->event ?? '-' }}</span>
+                                    @if($type === 'purchase_hpp_sensitive_edit')
+                                        <span class="badge bg-warning text-dark">HPP Sensitive</span>
+                                    @endif
+                                </td>
+                                <td>{{ $causerName }}</td>
+                                <td style="white-space:pre-line;">
+                                    <div style="font-weight:800;">{{ $act->description ?? '-' }}</div>
+
+                                    @if($reason)
+                                        <div class="mt-1">
+                                            <span class="badge bg-info">Reason</span>
+                                            {{ $reason }}
+                                        </div>
+                                    @endif
+
+                                    @if(isset($props['changed_products']) && is_array($props['changed_products']))
+                                        <div class="mt-2">
+                                            <div style="font-weight:800;">Changed Products:</div>
+                                            @foreach($props['changed_products'] as $pid => $chg)
+                                                <div style="font-size:12px;">
+                                                    - product_id={{ $pid }},
+                                                    old_cost={{ $chg['old_unit_cost'] ?? 0 }},
+                                                    new_cost={{ $chg['new_unit_cost'] ?? 0 }},
+                                                    old_qty={{ $chg['old_qty'] ?? 0 }},
+                                                    new_qty={{ $chg['new_qty'] ?? 0 }}
+                                                </div>
+                                            @endforeach
+                                        </div>
+                                    @endif
+                                </td>
+                            </tr>
+                        @endforeach
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+@endif
 @endsection
