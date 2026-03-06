@@ -641,272 +641,281 @@ class PurchaseController extends Controller
 
     public function update(UpdatePurchaseRequest $request, Purchase $purchase)
     {
-        DB::transaction(function () use ($request, $purchase) {
+        abort_if(Gate::denies('edit_purchases'), 403);
 
-            $branchId = $this->getActiveBranchId();
+        try {
+            DB::transaction(function () use ($request, $purchase) {
 
-            // =========================================================
-            // ✅ Permission rules:
-            // - Non-admin: hanya boleh edit "simple fields" (note, supplier invoice ref, due_date, date, etc)
-            // - Admin (Administrator): boleh edit harga/qty detail, TAPI:
-            //    - wajib isi edit_reason
-            //    - wajib centang confirm_recalculate_hpp
-            // =========================================================
-            $isAdmin = auth()->check() && auth()->user()->hasRole('Administrator');
+                $branchId = $this->getActiveBranchId();
 
-            // =========================================================
-            // Map detail lama (DB) untuk detect perubahan HPP-sensitive
-            // =========================================================
-            $oldDetails = $purchase->purchaseDetails()->get();
-            $oldMap = [];
-            foreach ($oldDetails as $d) {
-                $pid = (int) $d->product_id;
+                // =========================================================
+                // ✅ Permission rules:
+                // - Non-admin: hanya boleh edit "simple fields"
+                // - Admin (Administrator): boleh edit harga/qty detail
+                // =========================================================
+                $isAdmin = auth()->check() && auth()->user()->hasRole('Administrator');
 
-                // cost basis:
-                // di sistem kamu kadang pakai "price" sebagai unit price juga.
-                $oldUnit = (float) ($d->unit_price ?? 0);
-                if ($oldUnit <= 0) $oldUnit = (float) ($d->price ?? 0);
+                // =========================================================
+                // Map detail lama (DB) untuk detect perubahan HPP-sensitive
+                // =========================================================
+                $oldDetails = $purchase->purchaseDetails()->get();
+                $oldMap = [];
+                foreach ($oldDetails as $d) {
+                    $pid = (int) $d->product_id;
 
-                $oldMap[$pid] = [
-                    'qty'       => (int) ($d->quantity ?? 0),
-                    'unit_cost' => (float) $oldUnit,
-                ];
-            }
+                    $oldUnit = (float) ($d->unit_price ?? 0);
+                    if ($oldUnit <= 0) {
+                        $oldUnit = (float) ($d->price ?? 0);
+                    }
 
-            // Map detail baru (Cart)
-            $newMap = [];
-            foreach (Cart::instance('purchase')->content() as $cart_item) {
-                $pid = (int) $cart_item->id;
-
-                $newUnit = (float) ($cart_item->options->unit_price ?? 0);
-                if ($newUnit <= 0) $newUnit = (float) ($cart_item->price ?? 0);
-
-                $newMap[$pid] = [
-                    'qty'       => (int) ($cart_item->qty ?? 0),
-                    'unit_cost' => (float) $newUnit,
-                ];
-            }
-
-            // Detect HPP-sensitive change: qty or unit_cost changed or item list changed
-            $hppSensitiveChanged = false;
-            $changedProducts = [];
-
-            $allProductIds = array_values(array_unique(array_merge(array_keys($oldMap), array_keys($newMap))));
-            foreach ($allProductIds as $pid) {
-                $pid = (int) $pid;
-
-                $old = $oldMap[$pid] ?? null;
-                $new = $newMap[$pid] ?? null;
-
-                // item removed/added => sensitive
-                if (!$old || !$new) {
-                    $hppSensitiveChanged = true;
-                    $changedProducts[$pid] = [
-                        'old_unit_cost' => (float) ($old['unit_cost'] ?? 0),
-                        'new_unit_cost' => (float) ($new['unit_cost'] ?? 0),
-                        'old_qty'       => (int) ($old['qty'] ?? 0),
-                        'new_qty'       => (int) ($new['qty'] ?? 0),
-                    ];
-                    continue;
-                }
-
-                if (
-                    (int) $old['qty'] !== (int) $new['qty'] ||
-                    round((float) $old['unit_cost'], 2) !== round((float) $new['unit_cost'], 2)
-                ) {
-                    $hppSensitiveChanged = true;
-                    $changedProducts[$pid] = [
-                        'old_unit_cost' => round((float) $old['unit_cost'], 2),
-                        'new_unit_cost' => round((float) $new['unit_cost'], 2),
-                        'old_qty'       => (int) $old['qty'],
-                        'new_qty'       => (int) $new['qty'],
+                    $oldMap[$pid] = [
+                        'qty'       => (int) ($d->quantity ?? 0),
+                        'unit_cost' => (float) $oldUnit,
                     ];
                 }
-            }
 
-            // =========================================================
-            // Guards:
-            // - jika sensitive change, non-admin dilarang
-            // - jika admin, wajib isi edit_reason + confirm checkbox
-            // =========================================================
-            if ($hppSensitiveChanged && !$isAdmin) {
-                throw new \RuntimeException('You are not allowed to edit item price/qty because it affects HPP. Please contact Administrator.');
-            }
+                // =========================================================
+                // Map detail baru (Cart)
+                // =========================================================
+                $newMap = [];
+                foreach (Cart::instance('purchase')->content() as $cart_item) {
+                    $pid = (int) $cart_item->id;
 
-            if ($hppSensitiveChanged && $isAdmin) {
-                $reason = trim((string) $request->edit_reason);
-                if ($reason === '') {
-                    throw new \RuntimeException('Edit reason is required for HPP-sensitive changes.');
+                    $newUnit = (float) ($cart_item->options->unit_price ?? 0);
+                    if ($newUnit <= 0) {
+                        $newUnit = (float) ($cart_item->price ?? 0);
+                    }
+
+                    $newMap[$pid] = [
+                        'qty'       => (int) ($cart_item->qty ?? 0),
+                        'unit_cost' => (float) $newUnit,
+                    ];
                 }
 
-                $confirmed = (int) ($request->confirm_recalculate_hpp ?? 0);
-                if ($confirmed !== 1) {
-                    throw new \RuntimeException('Please confirm the disclaimer checkbox to proceed with HPP correction.');
-                }
+                // =========================================================
+                // Detect HPP-sensitive change
+                // =========================================================
+                $hppSensitiveChanged = false;
+                $changedProducts = [];
 
-                // ✅ TODO (future): validasi shift closing
-                // if (shift already closed) { block unless supervisor reopen day }
-            }
+                $allProductIds = array_values(array_unique(array_merge(array_keys($oldMap), array_keys($newMap))));
+                foreach ($allProductIds as $pid) {
+                    $pid = (int) $pid;
 
-            // =========================================================
-            // 기존 guard kamu: dulu invoice tidak boleh diedit kalau PD confirmed
-            // Sekarang: kalau admin dan sensitive change => boleh (karena kita koreksi HPP)
-            // kalau non-admin => tetap block (aman)
-            // =========================================================
-            if (!empty($purchase->purchase_delivery_id)) {
-                $pd = PurchaseDelivery::find((int) $purchase->purchase_delivery_id);
-                if ($pd) {
-                    $st = strtolower(trim((string) $pd->status));
+                    $old = $oldMap[$pid] ?? null;
+                    $new = $newMap[$pid] ?? null;
 
-                    if (in_array($st, ['partial', 'received', 'completed'], true)) {
-                        if (!$isAdmin) {
-                            throw new \RuntimeException("This Purchase cannot be edited because related Purchase Delivery has been confirmed ({$pd->status}).");
-                        }
-                        // admin boleh lanjut (akan koreksi HPP kalau ada perubahan item cost/qty)
+                    // item removed / added = sensitive
+                    if (!$old || !$new) {
+                        $hppSensitiveChanged = true;
+                        $changedProducts[$pid] = [
+                            'old_unit_cost' => (float) ($old['unit_cost'] ?? 0),
+                            'new_unit_cost' => (float) ($new['unit_cost'] ?? 0),
+                            'old_qty'       => (int) ($old['qty'] ?? 0),
+                            'new_qty'       => (int) ($new['qty'] ?? 0),
+                        ];
+                        continue;
+                    }
+
+                    if (
+                        (int) $old['qty'] !== (int) $new['qty'] ||
+                        round((float) $old['unit_cost'], 2) !== round((float) $new['unit_cost'], 2)
+                    ) {
+                        $hppSensitiveChanged = true;
+                        $changedProducts[$pid] = [
+                            'old_unit_cost' => round((float) $old['unit_cost'], 2),
+                            'new_unit_cost' => round((float) $new['unit_cost'], 2),
+                            'old_qty'       => (int) $old['qty'],
+                            'new_qty'       => (int) $new['qty'],
+                        ];
                     }
                 }
-            }
 
-            $warehouseId = $request->warehouse_id
-                ? (int) $request->warehouse_id
-                : ($purchase->warehouse_id ? (int) $purchase->warehouse_id : $this->resolveDefaultWarehouseId($branchId));
-
-            $this->assertWarehouseBelongsToBranch($warehouseId, $branchId);
-            $this->ensureCartItemsHaveWarehouse($warehouseId);
-
-            $due_amount = ($request->total_amount * 1) - ($request->paid_amount * 1);
-            $payment_status = $due_amount == ($request->total_amount * 1)
-                ? 'Unpaid'
-                : ($due_amount > 0 ? 'Partial' : 'Paid');
-
-            // ✅ update header
-            $purchase->update([
-                'date' => $request->date,
-                'due_date' => $request->due_date,
-                'reference' => $request->reference,
-                'reference_supplier'=> $request->reference_supplier,
-                'supplier_id' => $request->supplier_id,
-                'supplier_name' => Supplier::findOrFail($request->supplier_id)->supplier_name,
-                'tax_percentage' => $request->tax_percentage,
-                'discount_percentage' => $request->discount_percentage,
-                'shipping_amount' => $request->shipping_amount * 1,
-                'paid_amount' => $request->paid_amount * 1,
-                'total_amount' => $request->total_amount * 1,
-                'total_quantity' => $request->total_quantity,
-                'due_amount' => $due_amount * 1,
-                'status' => $request->status,
-                'payment_status' => $payment_status,
-                'payment_method' => $request->payment_method,
-                'note' => $request->note,
-                'tax_amount' => Cart::instance('purchase')->tax() * 1,
-                'discount_amount' => Cart::instance('purchase')->discount() * 1,
-
-                // ✅ lock
-                'branch_id' => $branchId,
-                'warehouse_id' => $warehouseId,
-            ]);
-
-            // =========================================================
-            // replace details: delete lalu insert ulang
-            // =========================================================
-            foreach ($purchase->purchaseDetails as $purchase_detail) {
-                $purchase_detail->delete();
-            }
-
-            foreach (Cart::instance('purchase')->content() as $cart_item) {
-
-                $itemWarehouseId = isset($cart_item->options->warehouse_id)
-                    ? (int) $cart_item->options->warehouse_id
-                    : $warehouseId;
-
-                $this->assertWarehouseBelongsToBranch($itemWarehouseId, $branchId);
-
-                $productCode = $cart_item->options->code ?? null;
-                if (empty($productCode)) {
-                    $p = Product::select('product_code')->find($cart_item->id);
-                    $productCode = ($p && $p->product_code) ? $p->product_code : 'UNKNOWN';
+                // =========================================================
+                // ✅ Jika HPP-sensitive dan bukan admin => block
+                // Ini berlaku baik PD sudah confirmed maupun belum
+                // =========================================================
+                if ($hppSensitiveChanged && !$isAdmin) {
+                    throw new \RuntimeException('You are not allowed to edit item price/qty because it affects HPP. Please contact Administrator.');
                 }
 
-                PurchaseDetail::create([
-                    'purchase_id' => $purchase->id,
-                    'product_id' => $cart_item->id,
-                    'product_name' => $cart_item->name,
-                    'product_code' => $productCode,
-                    'quantity' => (int) $cart_item->qty,
-                    'price' => $cart_item->price * 1,
-                    'warehouse_id' => $itemWarehouseId,
-                    'unit_price' => ($cart_item->options->unit_price ?? 0) * 1,
-                    'sub_total' => ($cart_item->options->sub_total ?? 0) * 1,
-                    'product_discount_amount' => ($cart_item->options->product_discount ?? 0) * 1,
-                    'product_discount_type' => $cart_item->options->product_discount_type ?? 'fixed',
-                    'product_tax_amount' => ($cart_item->options->product_tax ?? 0) * 1,
+                // =========================================================
+                // ✅ Jika HPP-sensitive dan admin => wajib isi reason + checkbox
+                // =========================================================
+                if ($hppSensitiveChanged && $isAdmin) {
+                    $reason = trim((string) $request->edit_reason);
+                    if ($reason === '') {
+                        throw new \RuntimeException('Edit reason is required for HPP-sensitive changes.');
+                    }
+
+                    $confirmed = (int) ($request->confirm_recalculate_hpp ?? 0);
+                    if ($confirmed !== 1) {
+                        throw new \RuntimeException('Please confirm the disclaimer checkbox to proceed with HPP correction.');
+                    }
+
+                    // TODO: nanti kalau konsep shift closing sudah ada,
+                    // validasi HPP-sensitive edit hanya boleh kalau shift belum closed
+                    // atau harus lewat mekanisme reopen day / supervisor approval
+                }
+
+                // =========================================================
+                // ✅ Guard PD confirmed:
+                // - Kalau hanya simple edit => BOLEH
+                // - Kalau HPP-sensitive edit => hanya admin (sudah dicek di atas)
+                // =========================================================
+                if (!empty($purchase->purchase_delivery_id)) {
+                    $pd = PurchaseDelivery::find((int) $purchase->purchase_delivery_id);
+
+                    if ($pd) {
+                        $st = strtolower(trim((string) $pd->status));
+
+                        if (in_array($st, ['partial', 'received', 'completed'], true)) {
+                            // Tidak perlu block semua edit lagi.
+                            // Cukup block HPP-sensitive untuk non-admin, yang sudah dicek di atas.
+                            // Jadi simple edit tetap jalan.
+                        }
+                    }
+                }
+
+                $warehouseId = $request->warehouse_id
+                    ? (int) $request->warehouse_id
+                    : ($purchase->warehouse_id ? (int) $purchase->warehouse_id : $this->resolveDefaultWarehouseId($branchId));
+
+                $this->assertWarehouseBelongsToBranch($warehouseId, $branchId);
+                $this->ensureCartItemsHaveWarehouse($warehouseId);
+
+                $due_amount = ($request->total_amount * 1) - ($request->paid_amount * 1);
+                $payment_status = $due_amount == ($request->total_amount * 1)
+                    ? 'Unpaid'
+                    : ($due_amount > 0 ? 'Partial' : 'Paid');
+
+                // =========================================================
+                // ✅ update header
+                // =========================================================
+                $purchase->update([
+                    'date' => $request->date,
+                    'due_date' => $request->due_date,
+                    'reference' => $request->reference,
+                    'reference_supplier'=> $request->reference_supplier,
+                    'supplier_id' => $request->supplier_id,
+                    'supplier_name' => Supplier::findOrFail($request->supplier_id)->supplier_name,
+                    'tax_percentage' => $request->tax_percentage,
+                    'discount_percentage' => $request->discount_percentage,
+                    'shipping_amount' => $request->shipping_amount * 1,
+                    'paid_amount' => $request->paid_amount * 1,
+                    'total_amount' => $request->total_amount * 1,
+                    'total_quantity' => $request->total_quantity,
+                    'due_amount' => $due_amount * 1,
+                    'status' => $request->status,
+                    'payment_status' => $payment_status,
+                    'payment_method' => $request->payment_method,
+                    'note' => $request->note,
+                    'tax_amount' => Cart::instance('purchase')->tax() * 1,
+                    'discount_amount' => Cart::instance('purchase')->discount() * 1,
+                    'branch_id' => $branchId,
+                    'warehouse_id' => $warehouseId,
                 ]);
-            }
 
-            // =========================================================
-            // ✅ If admin did HPP-sensitive change, apply:
-            // - activity log custom event
-            // - HPP correction ledger (append)
-            // - refresh sale_details.product_cost same day
-            // =========================================================
-            if ($hppSensitiveChanged && $isAdmin) {
-                $reason = trim((string) $request->edit_reason);
+                // =========================================================
+                // ✅ replace details: delete lalu insert ulang
+                // =========================================================
+                foreach ($purchase->purchaseDetails as $purchase_detail) {
+                    $purchase_detail->delete();
+                }
 
-                // custom activity log (supaya gampang dibaca di show)
-                activity()
-                    ->performedOn($purchase)
-                    ->causedBy(auth()->user())
-                    ->withProperties([
-                        'type' => 'purchase_hpp_sensitive_edit',
-                        'reason' => $reason,
-                        'changed_products' => $changedProducts,
-                        'purchase_id' => (int) $purchase->id,
-                        'purchase_delivery_id' => (int) ($purchase->purchase_delivery_id ?? 0),
-                        'purchase_date' => (string) $purchase->date,
-                    ])
-                    ->log('Purchase price corrected (HPP sensitive edit)');
+                foreach (Cart::instance('purchase')->content() as $cart_item) {
+                    $itemWarehouseId = isset($cart_item->options->warehouse_id)
+                        ? (int) $cart_item->options->warehouse_id
+                        : $warehouseId;
 
-                // Apply HPP correction + refresh sale cost
-                $service = new \Modules\Product\Services\HppCorrectionService();
+                    $this->assertWarehouseBelongsToBranch($itemWarehouseId, $branchId);
 
-                $productIds = array_keys($changedProducts);
+                    $productCode = $cart_item->options->code ?? null;
+                    if (empty($productCode)) {
+                        $p = Product::select('product_code')->find($cart_item->id);
+                        $productCode = ($p && $p->product_code) ? $p->product_code : 'UNKNOWN';
+                    }
 
-                $summary = $service->applyPurchasePriceCorrection(
-                    (int) $branchId,
-                    (int) $purchase->id,
-                    (string) $purchase->date,
-                    $purchase->purchase_delivery_id ? (int) $purchase->purchase_delivery_id : null,
-                    array_map(function ($v) {
-                        return [
-                            'old_unit_cost' => (float) ($v['old_unit_cost'] ?? 0),
-                            'new_unit_cost' => (float) ($v['new_unit_cost'] ?? 0),
-                        ];
-                    }, $changedProducts)
-                );
+                    PurchaseDetail::create([
+                        'purchase_id' => $purchase->id,
+                        'product_id' => $cart_item->id,
+                        'product_name' => $cart_item->name,
+                        'product_code' => $productCode,
+                        'quantity' => (int) $cart_item->qty,
+                        'price' => $cart_item->price * 1,
+                        'warehouse_id' => $itemWarehouseId,
+                        'unit_price' => ($cart_item->options->unit_price ?? 0) * 1,
+                        'sub_total' => ($cart_item->options->sub_total ?? 0) * 1,
+                        'product_discount_amount' => ($cart_item->options->product_discount ?? 0) * 1,
+                        'product_discount_type' => $cart_item->options->product_discount_type ?? 'fixed',
+                        'product_tax_amount' => ($cart_item->options->product_tax ?? 0) * 1,
+                    ]);
+                }
 
-                $updatedSaleRows = $service->refreshSaleCostSnapshotSameDay(
-                    (int) $branchId,
-                    (string) $purchase->date,
-                    $productIds
-                );
+                // =========================================================
+                // ✅ If admin did HPP-sensitive change
+                // =========================================================
+                if ($hppSensitiveChanged && $isAdmin) {
+                    $reason = trim((string) $request->edit_reason);
 
-                // log summary juga (biar audit-nya jelas)
-                activity()
-                    ->performedOn($purchase)
-                    ->causedBy(auth()->user())
-                    ->withProperties([
-                        'type' => 'hpp_correction_summary',
-                        'summary' => $summary,
-                        'updated_sale_detail_rows' => (int) $updatedSaleRows,
-                    ])
-                    ->log('HPP correction applied & sale cost snapshot refreshed (same day)');
-            }
+                    activity()
+                        ->performedOn($purchase)
+                        ->causedBy(auth()->user())
+                        ->withProperties([
+                            'type' => 'purchase_hpp_sensitive_edit',
+                            'reason' => $reason,
+                            'changed_products' => $changedProducts,
+                            'purchase_id' => (int) $purchase->id,
+                            'purchase_delivery_id' => (int) ($purchase->purchase_delivery_id ?? 0),
+                            'purchase_date' => (string) $purchase->date,
+                        ])
+                        ->log('Purchase price corrected (HPP sensitive edit)');
 
-            Cart::instance('purchase')->destroy();
-        });
+                    $service = new \Modules\Product\Services\HppCorrectionService();
 
-        toast('Purchase Updated!', 'info');
-        return redirect()->route('purchases.index');
+                    $productIds = array_keys($changedProducts);
+
+                    $summary = $service->applyPurchasePriceCorrection(
+                        (int) $branchId,
+                        (int) $purchase->id,
+                        (string) $purchase->date,
+                        $purchase->purchase_delivery_id ? (int) $purchase->purchase_delivery_id : null,
+                        array_map(function ($v) {
+                            return [
+                                'old_unit_cost' => (float) ($v['old_unit_cost'] ?? 0),
+                                'new_unit_cost' => (float) ($v['new_unit_cost'] ?? 0),
+                            ];
+                        }, $changedProducts)
+                    );
+
+                    $updatedSaleRows = $service->refreshSaleCostSnapshotSameDay(
+                        (int) $branchId,
+                        (string) $purchase->date,
+                        $productIds
+                    );
+
+                    activity()
+                        ->performedOn($purchase)
+                        ->causedBy(auth()->user())
+                        ->withProperties([
+                            'type' => 'hpp_correction_summary',
+                            'summary' => $summary,
+                            'updated_sale_detail_rows' => (int) $updatedSaleRows,
+                        ])
+                        ->log('HPP correction applied & sale cost snapshot refreshed (same day)');
+                }
+
+                Cart::instance('purchase')->destroy();
+            });
+
+            toast('Purchase Updated!', 'success');
+            return redirect()->route('purchases.index');
+
+        } catch (\Throwable $e) {
+            report($e);
+            toast($e->getMessage(), 'error');
+            return redirect()->back()->withInput();
+        }
     }
 
     public function destroy(Purchase $purchase)

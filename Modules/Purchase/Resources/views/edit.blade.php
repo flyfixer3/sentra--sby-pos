@@ -24,13 +24,34 @@
                     <div class="card-body">
                         @include('utils.alerts')
 
+                        @php
+                            $isAdmin = auth()->check() && auth()->user()->hasRole('Administrator');
+
+                            $pdStatus = null;
+                            if (!empty($purchase->purchase_delivery_id)) {
+                                $pd = \Modules\PurchaseDelivery\Entities\PurchaseDelivery::find($purchase->purchase_delivery_id);
+                                $pdStatus = $pd ? strtolower(trim((string) $pd->status)) : null;
+                            }
+
+                            $pdConfirmed = in_array($pdStatus, ['partial', 'received', 'completed'], true);
+                        @endphp
+
+                        @if($pdConfirmed)
+                            <div class="alert alert-info">
+                                <div style="font-weight:700;">Info:</div>
+                                <div>
+                                    Related Purchase Delivery has already been confirmed.
+                                    You can still edit <b>simple fields</b> such as note / supplier invoice / due date.
+                                </div>
+                                <div class="mt-1">
+                                    Changes to <b>item price / qty / item list</b> are considered <b>HPP-sensitive</b> and are allowed only for <b>Administrator</b>.
+                                </div>
+                            </div>
+                        @endif
+
                         <form id="purchase-form" action="{{ route('purchases.update', $purchase) }}" method="POST">
                             @csrf
                             @method('put')
-
-                            @php
-                                $isAdmin = auth()->check() && auth()->user()->hasRole('Administrator');
-                            @endphp
 
                             @if($isAdmin)
                                 <input type="hidden" name="is_admin_ui" value="1">
@@ -40,112 +61,124 @@
                                 <div class="col-lg-2">
                                     <div class="form-group">
                                         <label for="reference">Reference <span class="text-danger">*</span></label>
-                                        <input type="text" class="form-control" name="reference" required value="{{ $purchase->reference }}" readonly>
+                                        <input type="text" class="form-control" name="reference" required value="{{ old('reference', $purchase->reference) }}" readonly>
                                     </div>
                                 </div>
+
                                 <div class="col-lg-3">
                                     <div class="form-group">
                                         <label for="reference_supplier">Supplier Invoice <span class="text-danger">*</span></label>
-                                        <input type="text" class="form-control" name="reference_supplier" value="{{ $purchase->reference_supplier }}">
+                                        <input type="text" class="form-control" name="reference_supplier" value="{{ old('reference_supplier', $purchase->reference_supplier) }}">
                                     </div>
                                 </div>
+
                                 <div class="col-lg-3">
-                                    <div class="from-group">
-                                        <div class="form-group">
-                                            <label for="supplier_id">Supplier <span class="text-danger">*</span></label>
-                                            <select class="form-control" name="supplier_id" id="supplier_id" required>
-                                                @foreach(\Modules\People\Entities\Supplier::all() as $supplier)
-                                                    <option {{ $purchase->supplier_id == $supplier->id ? 'selected' : '' }} value="{{ $supplier->id }}">{{ $supplier->supplier_name }}</option>
-                                                @endforeach
-                                            </select>
-                                        </div>
+                                    <div class="form-group">
+                                        <label for="supplier_id">Supplier <span class="text-danger">*</span></label>
+                                        <select class="form-control" name="supplier_id" id="supplier_id" required>
+                                            @foreach(\Modules\People\Entities\Supplier::all() as $supplier)
+                                                <option
+                                                    value="{{ $supplier->id }}"
+                                                    {{ (string) old('supplier_id', $purchase->supplier_id) === (string) $supplier->id ? 'selected' : '' }}>
+                                                    {{ $supplier->supplier_name }}
+                                                </option>
+                                            @endforeach
+                                        </select>
                                     </div>
                                 </div>
+
                                 <div class="col-lg-3">
-                                    <div class="from-group">
-                                        <div class="form-group">
-                                            <label for="date">Date <span class="text-danger">*</span></label>
-                                            <input type="date" class="form-control" name="date" required value="{{ $purchase->date }}">
-                                        </div>
+                                    <div class="form-group">
+                                        <label for="date">Date <span class="text-danger">*</span></label>
+                                        <input type="date" class="form-control" name="date" required value="{{ old('date', $purchase->date) }}">
                                     </div>
                                 </div>
+
                                 <div class="col-lg-1">
-                                    <div class="from-group">
-                                        <div class="form-group">
-                                            <label for="due_date">Due Date (Days) <span class="text-danger">*</span></label>
-                                            <input type="number" class="form-control" name="due_date" required value="{{ $purchase->due_date }}">
-                                        </div>
+                                    <div class="form-group">
+                                        <label for="due_date">Due Date (Days) <span class="text-danger">*</span></label>
+                                        <input type="number" class="form-control" name="due_date" required value="{{ old('due_date', $purchase->due_date) }}">
                                     </div>
                                 </div>
                             </div>
 
-                            {{-- NOTE: ini Livewire cart purchase kamu masih pakai loading warehouse hardcoded 99.
-                                 Aku tidak ubah supaya tidak merusak fitur yang sudah ada.
-                                 // TODO (future): ganti agar sesuai branch aktif. --}}
-                            <livewire:product-cart-purchase :cartInstance="'purchase'" :data="$purchase" :loading_warehouse="\Modules\Product\Entities\Warehouse::findOrFail(99)"/>
+                            {{-- NOTE:
+                                 loading warehouse tetap mengikuti pola project kamu.
+                                 Belum aku ubah besar-besaran supaya feature existing tidak rusak.
+                                 TODO future: sinkronkan loading warehouse dengan branch aktif & flow walk-in/pending PD.
+                            --}}
+                            <livewire:product-cart-purchase
+                                :cartInstance="'purchase'"
+                                :data="$purchase"
+                                :loading_warehouse="\Modules\Product\Entities\Warehouse::findOrFail($purchase->warehouse_id ?: 99)"
+                            />
 
                             <div class="form-row">
                                 <div class="col-lg-4">
                                     <div class="form-group">
                                         <label for="status">Status <span class="text-danger">*</span></label>
                                         <select class="form-control" name="status" id="status" required>
-                                            <option {{ $purchase->status == 'Pending' ? 'selected' : '' }} value="Pending">Pending</option>
-                                            <option {{ $purchase->status == 'Ordered' ? 'selected' : '' }} value="Ordered">Ordered</option>
-                                            <option {{ $purchase->status == 'Completed' ? 'selected' : '' }} value="Completed">Completed</option>
+                                            <option value="Pending" {{ old('status', $purchase->status) == 'Pending' ? 'selected' : '' }}>Pending</option>
+                                            <option value="Ordered" {{ old('status', $purchase->status) == 'Ordered' ? 'selected' : '' }}>Ordered</option>
+                                            <option value="Completed" {{ old('status', $purchase->status) == 'Completed' ? 'selected' : '' }}>Completed</option>
                                         </select>
                                     </div>
                                 </div>
+
                                 <div class="col-lg-4">
-                                    <div class="from-group">
-                                        <div class="form-group">
-                                            <label for="payment_method">Payment Method <span class="text-danger">*</span></label>
-                                            <input type="text" class="form-control" name="payment_method" required value="{{ $purchase->payment_method }}" readonly>
-                                        </div>
+                                    <div class="form-group">
+                                        <label for="payment_method">Payment Method <span class="text-danger">*</span></label>
+                                        <input type="text" class="form-control" name="payment_method" required value="{{ old('payment_method', $purchase->payment_method) }}" readonly>
                                     </div>
                                 </div>
+
                                 <div class="col-lg-4">
                                     <div class="form-group">
                                         <label for="paid_amount">Amount Received <span class="text-danger">*</span></label>
-                                        <input id="paid_amount" type="text" class="form-control" name="paid_amount" required value="{{ $purchase->paid_amount }}" readonly>
+                                        <input id="paid_amount" type="text" class="form-control" name="paid_amount" required value="{{ old('paid_amount', $purchase->paid_amount) }}" readonly>
                                     </div>
                                 </div>
                             </div>
 
                             <div class="form-group">
                                 <label for="note">Note (If Needed)</label>
-                                <textarea name="note" id="note" rows="5" class="form-control">{{ $purchase->note }}</textarea>
+                                <textarea name="note" id="note" rows="5" class="form-control">{{ old('note', $purchase->note) }}</textarea>
                             </div>
 
-                            {{-- ✅ Admin-only: alasan + disclaimer confirm --}}
                             @if($isAdmin)
                                 <div class="card mt-3 border-warning">
-                                    <div class="card-header bg-warning text-dark" style="font-weight:800;">
-                                        Admin Only — HPP Sensitive Edit
+                                    <div class="card-header bg-warning text-dark" style="font-weight: 700;">
+                                        Administrator Only — HPP Sensitive Edit
                                     </div>
                                     <div class="card-body">
                                         <div class="alert alert-warning mb-3">
-                                            <div style="font-weight:800;">Perhatian:</div>
+                                            <div style="font-weight:700;">Warning:</div>
                                             <div>
-                                                Kalau kamu mengubah <b>harga/qty item</b> di invoice purchase yang sudah berdampak ke receiving,
-                                                sistem akan melakukan <b>HPP correction</b> dan dapat mempengaruhi profit sale.
+                                                If you change <b>item price / qty / item list</b>, the system will create
+                                                an <b>HPP correction ledger</b> and refresh same-day sale cost snapshot.
                                             </div>
-                                            <div class="mt-2" style="font-size:12px; opacity:.9;">
-                                                // TODO (future): validasi berbasis shift closing (saat fitur tutup shift sudah ada).
+                                            <div class="mt-1" style="font-size: 12px;">
+                                                TODO future: validate against shift closing / reopen day flow.
                                             </div>
                                         </div>
 
                                         <div class="form-group">
-                                            <label for="edit_reason" style="font-weight:800;">
-                                                Reason / Note for Edit (Required if change item price/qty)
+                                            <label for="edit_reason" style="font-weight:700;">
+                                                Reason / Note for HPP-Sensitive Edit
                                             </label>
-                                            <textarea name="edit_reason" id="edit_reason" rows="4" class="form-control"
-                                                      placeholder="Contoh: Supplier salah input harga, koreksi sesuai invoice asli...">{{ old('edit_reason') }}</textarea>
+                                            <textarea
+                                                name="edit_reason"
+                                                id="edit_reason"
+                                                rows="4"
+                                                class="form-control"
+                                                placeholder="Example: Supplier invoice price was wrong, corrected based on actual invoice..."
+                                            >{{ old('edit_reason') }}</textarea>
                                         </div>
 
                                         <div class="form-check mt-2">
-                                            <input class="form-check-input" type="checkbox" value="1" id="confirm_recalculate_hpp" name="confirm_recalculate_hpp">
-                                            <label class="form-check-label" for="confirm_recalculate_hpp" style="font-weight:800;">
-                                                I understand this will recalculate / correct HPP ledger and update sale cost snapshot (same day).
+                                            <input class="form-check-input" type="checkbox" value="1" id="confirm_recalculate_hpp" name="confirm_recalculate_hpp" {{ old('confirm_recalculate_hpp') ? 'checked' : '' }}>
+                                            <label class="form-check-label" for="confirm_recalculate_hpp" style="font-weight:700;">
+                                                I understand this will correct HPP ledger and update same-day sale product cost snapshot.
                                             </label>
                                         </div>
                                     </div>
@@ -182,7 +215,8 @@
 
             $('#purchase-form').submit(function () {
                 var paid_amount = $('#paid_amount').maskMoney('destroy')[0];
-                var new_number = parseInt(paid_amount.value.toString().replaceAll(/[Rp.]/g, ""));
+                var raw = paid_amount.value.toString().replaceAll(/[Rp.]/g, "");
+                var new_number = parseInt(raw || 0);
                 $('#paid_amount').val(new_number);
             });
         });
