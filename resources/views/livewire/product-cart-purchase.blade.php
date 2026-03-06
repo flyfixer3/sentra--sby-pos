@@ -27,7 +27,7 @@
                 <thead class="thead-dark">
                 <tr>
                     <th class="align-middle">Product</th>
-                    <th class="align-middle">Sell Unit Price</th>
+                    <th class="align-middle">Purchase Unit Price</th>
                     <th class="align-middle">Placement</th>
                     <th class="align-middle">Current Stock</th>
                     <th class="align-middle">Quantity</th>
@@ -42,7 +42,7 @@
                 @if(isset($cart_items) && $cart_items->isNotEmpty())
                     @foreach($cart_items as $cart_item)
                         @php
-                            $scope = (string)($cart_item->options->stock_scope ?? 'branch'); // branch | warehouse
+                            $scope = (string)($cart_item->options->stock_scope ?? 'branch');
                             $scopeNote = $scope === 'branch'
                                 ? 'Stock shown is total from ALL warehouses (active branch).'
                                 : 'Stock shown is from the selected/assigned warehouse.';

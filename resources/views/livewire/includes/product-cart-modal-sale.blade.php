@@ -1,4 +1,4 @@
-<!-- Button trigger Discount Modal -->
+<!-- Button trigger Modal -->
 <span
     wire:click="$emitSelf('discountModalRefresh', '{{ $cart_item->id }}', '{{ $cart_item->rowId }}')"
     role="button"
@@ -9,10 +9,17 @@
     <i class="bi bi-pencil-square text-white"></i>
 </span>
 
-<!-- Discount Modal -->
+<!-- Modal -->
 <div wire:ignore.self class="modal fade" id="discountModal{{ $cart_item->id }}" tabindex="-1" role="dialog" aria-labelledby="discountModalLabel" aria-hidden="true">
     <div class="modal-dialog" role="document">
         <div class="modal-content">
+            @php
+                $isPurchaseCart = isset($cart_instance) && $cart_instance === 'purchase';
+                $currentUnitPrice = (float) ($cart_item->options->unit_price ?? 0);
+                $currentRowPrice  = (float) ($cart_item->price ?? 0);
+                $currentDiscount  = (float) ($cart_item->options->product_discount ?? 0);
+            @endphp
+
             <div class="modal-header">
                 <h5 class="modal-title" id="discountModalLabel">
                     {{ $cart_item->name }}
@@ -39,17 +46,37 @@
                         </div>
                     @endif
 
+                    @if($isPurchaseCart)
+                        <div class="alert alert-info">
+                            <strong>Purchase Edit Mode:</strong><br>
+                            Field ini akan mengubah <strong>harga beli item</strong> pada cart purchase.
+                            Jika invoice purchase nanti di-save, perubahan ini akan ikut terbaca pada proses koreksi HPP.
+                        </div>
+                    @endif
+
                     <div class="form-group">
-                        <label>Discount By <span class="text-danger">*</span></label>
+                        <label>
+                            {{ $isPurchaseCart ? 'Change By' : 'Discount By' }}
+                            <span class="text-danger">*</span>
+                        </label>
+
                         <select wire:model="discount_type.{{ $cart_item->id }}" class="form-control" required>
-                            <option value="fixed">Fixed Sell Price</option>
-                            <option value="percentage">Percentage</option>
+                            @if($isPurchaseCart)
+                                <option value="fixed">Fixed Purchase Price</option>
+                                <option value="percentage">Discount Percentage</option>
+                            @else
+                                <option value="fixed">Fixed Sell Price</option>
+                                <option value="percentage">Percentage</option>
+                            @endif
                         </select>
                     </div>
 
                     <div class="form-group">
                         @if(($discount_type[$cart_item->id] ?? null) === 'percentage')
-                            <label>Discount(%) <span class="text-danger">*</span></label>
+                            <label>
+                                {{ $isPurchaseCart ? 'Discount (%) from Purchase Price' : 'Discount (%)' }}
+                                <span class="text-danger">*</span>
+                            </label>
                             <input
                                 wire:model.defer="item_discount.{{ $cart_item->id }}"
                                 type="number"
@@ -57,29 +84,43 @@
                                 value="{{ $item_discount[$cart_item->id] ?? '' }}"
                                 min="0"
                                 max="100"
+                                step="0.01"
                             >
                         @elseif(($discount_type[$cart_item->id] ?? null) === 'fixed')
-                            <label>Sell Price <span class="text-danger">*</span></label>
+                            <label>
+                                {{ $isPurchaseCart ? 'Purchase Unit Price' : 'Sell Price' }}
+                                <span class="text-danger">*</span>
+                            </label>
                             <input
                                 wire:model.defer="item_discount.{{ $cart_item->id }}"
                                 type="number"
                                 class="form-control"
-                                value="{{ isset($item_discount[$cart_item->id]) && ($item_discount[$cart_item->id] ?? 0) != 0 ? ($cart_item->price - $item_discount[$cart_item->id]) : '' }}"
+                                value="{{
+                                    $isPurchaseCart
+                                        ? ($item_discount[$cart_item->id] ?? $currentUnitPrice)
+                                        : (
+                                            isset($item_discount[$cart_item->id]) && ($item_discount[$cart_item->id] ?? 0) != 0
+                                                ? ($currentRowPrice - $currentDiscount)
+                                                : ''
+                                        )
+                                }}"
                                 placeholder="0"
+                                step="0.01"
+                                min="0"
                             >
                         @endif
                     </div>
 
                     @php
-                        // --- SAFE CHECK untuk gudang / warehouse ---
-                        $wid  = $warehouse_id[$cart_item->id] ?? null; // id gudang yang dipilih untuk item ini (kalau ada)
+                        $wid  = $warehouse_id[$cart_item->id] ?? null;
                         $wrec = null;
+
                         if ($wid) {
-                            // ambil hanya kolom yang dibutuhkan, dan handle jika tidak ditemukan
                             $wrec = \Modules\Product\Entities\Warehouse::query()
                                 ->select('id', 'warehouse_code')
                                 ->find($wid);
                         }
+
                         $warehouseCode = $wrec->warehouse_code ?? null;
                     @endphp
 
@@ -92,6 +133,7 @@
                                 class="form-control"
                                 value="{{ $item_cost_konsyinasi[$cart_item->id] ?? '' }}"
                                 placeholder="0"
+                                step="0.01"
                             >
                         </div>
                     @endif
@@ -99,7 +141,9 @@
 
                 <div class="modal-footer">
                     <button type="button" class="btn btn-secondary" data-dismiss="modal">Close</button>
-                    <button type="submit" class="btn btn-primary">Save changes</button>
+                    <button type="submit" class="btn btn-primary">
+                        {{ $isPurchaseCart ? 'Save Purchase Price' : 'Save Changes' }}
+                    </button>
                 </div>
             </form>
         </div>
