@@ -13,6 +13,24 @@ class QuotationsDataTable extends DataTable
     {
         return datatables()
             ->eloquent($query)
+            ->editColumn('date', function ($data) {
+                $dateText = '-';
+                $timeText = '';
+
+                if (!empty($data->getRawOriginal('date'))) {
+                    $dateText = \Carbon\Carbon::parse($data->getRawOriginal('date'))->format('d M, Y');
+                }
+
+                if (!empty($data->created_at)) {
+                    $timeText = \Carbon\Carbon::parse($data->created_at)->format('H:i');
+                }
+
+                if ($timeText !== '') {
+                    return $dateText . ' ' . $timeText;
+                }
+
+                return $dateText;
+            })
             ->addColumn('total_amount', function ($data) {
                 return format_currency($data->total_amount);
             })
@@ -21,7 +39,8 @@ class QuotationsDataTable extends DataTable
             })
             ->addColumn('action', function ($data) {
                 return view('quotation::partials.actions', compact('data'));
-            });
+            })
+            ->rawColumns(['date', 'status', 'action']);
     }
 
     public function query(Quotation $model)
