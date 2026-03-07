@@ -15,7 +15,7 @@ class PurchaseDataTable extends DataTable
         return datatables()
             ->eloquent($query)
 
-            // ✅ NEW: row merah kalau soft deleted
+            // ✅ row merah kalau soft deleted
             ->setRowClass(function ($data) {
                 return !empty($data->deleted_at) ? 'table-danger' : '';
             })
@@ -33,7 +33,9 @@ class PurchaseDataTable extends DataTable
 
                 // kalau due_date kosong / 0 → tampilkan "-"
                 $days = (int) ($data->due_date ?? 0);
-                if ($days <= 0) return '-';
+                if ($days <= 0) {
+                    return '-';
+                }
 
                 $baseDate = $data->date ? Carbon::parse($data->date) : Carbon::now();
                 $target = $baseDate->copy()->addDays($days);
@@ -58,8 +60,20 @@ class PurchaseDataTable extends DataTable
 
             // ✅ Created At (DateTime) -> ambil dari created_at (timestamp)
             ->addColumn('created_datetime', function ($data) {
-                if (empty($data->created_at)) return '-';
+                if (empty($data->created_at)) {
+                    return '-';
+                }
+
                 return Carbon::parse($data->created_at)->format('d-m-Y H:i');
+            })
+
+            // ✅ Deleted At (DateTime)
+            ->addColumn('deleted_datetime', function ($data) {
+                if (empty($data->deleted_at)) {
+                    return '-';
+                }
+
+                return Carbon::parse($data->deleted_at)->format('d-m-Y H:i');
             })
 
             // ✅ Created By (nama user)
@@ -79,18 +93,27 @@ class PurchaseDataTable extends DataTable
 
     public function query(Purchase $model)
     {
-        return $model->newQuery()
+        $query = $model->newQuery()
             ->withTrashed()
             ->select([
                 'purchases.*',
                 'suppliers.supplier_name as supplier_name',
-
                 'u_created.name as created_by_name',
                 'u_updated.name as updated_by_name',
             ])
             ->leftJoin('suppliers', 'suppliers.id', '=', 'purchases.supplier_id')
             ->leftJoin('users as u_created', 'u_created.id', '=', 'purchases.created_by')
             ->leftJoin('users as u_updated', 'u_updated.id', '=', 'purchases.updated_by');
+
+        $deletedFilter = request('deleted_filter', 'all');
+
+        if ($deletedFilter === 'active') {
+            $query->whereNull('purchases.deleted_at');
+        } elseif ($deletedFilter === 'trashed') {
+            $query->whereNotNull('purchases.deleted_at');
+        }
+
+        return $query;
     }
 
     public function html()
@@ -106,7 +129,7 @@ class PurchaseDataTable extends DataTable
             )
 
             /**
-             * ✅ URUTAN KOLOM di getColumns() sekarang:
+             * ✅ URUTAN KOLOM:
              * 0 reference
              * 1 reference_supplier
              * 2 supplier_name
@@ -114,15 +137,69 @@ class PurchaseDataTable extends DataTable
              * 4 due_amount
              * 5 due_date
              * 6 payment_status
-             * 7 deleted_at (hidden)
+             * 7 deleted_datetime
              * 8 created_datetime
              * 9 created_by_name
              * 10 updated_by_name
              * 11 action
-             * 12 created_at (hidden)  <-- ini yang dipakai sorting
+             * 12 created_at (hidden, untuk sorting)
+             * 13 deleted_at (hidden, untuk logic/filter)
              */
             ->orderBy(12, 'desc')
+            ->parameters([
+                'ajax' => [
+                    'data' => 'function(d) {
+                        d.deleted_filter = $("#purchase-deleted-filter").val();
+                    }',
+                ],
+                'initComplete' => 'function() {
+                    var api = this.api();
+                    var wrapper = $("#purchases-table_wrapper");
+                    var lengthContainer = wrapper.find(".dataTables_length");
 
+                    if ($("#purchase-deleted-filter-wrap").length === 0) {
+                        var filterHtml = `
+                            <div id="purchase-deleted-filter-wrap"
+                                class="d-inline-flex align-items-center ml-3"
+                                style="gap:8px; vertical-align:middle;">
+                                <span style="
+                                    font-size: 12px;
+                                    font-weight: 500;
+                                    color: #6c757d;
+                                    white-space: nowrap;
+                                    margin-bottom: 0;
+                                ">
+                                    Soft Delete
+                                </span>
+                                <select id="purchase-deleted-filter"
+                                        class="form-control form-control-sm"
+                                        style="
+                                            width: 150px;
+                                            min-width: 150px;
+                                            border-radius: 6px;
+                                        ">
+                                    <option value="all">All</option>
+                                    <option value="active">Not Deleted</option>
+                                    <option value="trashed">Soft Deleted</option>
+                                </select>
+                            </div>
+                        `;
+
+                        lengthContainer.css({
+                            "display": "flex",
+                            "align-items": "center",
+                            "flex-wrap": "wrap",
+                            "gap": "8px"
+                        });
+
+                        lengthContainer.append(filterHtml);
+                    }
+
+                    $(document).off("change", "#purchase-deleted-filter").on("change", "#purchase-deleted-filter", function() {
+                        api.ajax.reload();
+                    });
+                }',
+            ])
             ->buttons(
                 Button::make('excel')->text('<i class="bi bi-file-earmark-excel-fill"></i> Excel'),
                 Button::make('print')->text('<i class="bi bi-printer-fill"></i> Print'),
@@ -136,11 +213,6 @@ class PurchaseDataTable extends DataTable
         return [
             Column::make('reference')
                 ->className('text-center align-middle'),
-
-            // ✅ (REMOVED) kolom date karena redundant dengan Created At
-            // Column::make('date')
-            //     ->title('Date')
-            //     ->className('text-center align-middle'),
 
             Column::make('reference_supplier')
                 ->title('Invoice')
@@ -162,10 +234,12 @@ class PurchaseDataTable extends DataTable
             Column::make('payment_status')
                 ->className('text-center align-middle'),
 
-            // hidden - tetap ada kalau kamu butuh logic soft delete
-            Column::make('deleted_at')->visible(false),
+            Column::computed('deleted_datetime')
+                ->title('Deleted At')
+                ->className('text-center align-middle')
+                ->orderable(false)
+                ->searchable(false),
 
-            // ✅ Created At (datetime)
             Column::computed('created_datetime')
                 ->title('Created At')
                 ->className('text-center align-middle')
@@ -189,8 +263,11 @@ class PurchaseDataTable extends DataTable
                 ->printable(false)
                 ->className('text-center align-middle'),
 
-            // ✅ hidden created_at untuk sorting (jangan dihapus)
+            // hidden created_at untuk sorting
             Column::make('created_at')->visible(false),
+
+            // hidden deleted_at untuk logic/filter
+            Column::make('deleted_at')->visible(false),
         ];
     }
 

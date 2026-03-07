@@ -46,6 +46,22 @@ class SalesDataTable extends DataTable
                 return $this->formatDateWithCreatedTime($row, 'date');
             })
 
+            ->addColumn('created_datetime', function ($row) {
+                if (empty($row->created_at)) {
+                    return '-';
+                }
+
+                return Carbon::parse($row->created_at)->format('d-m-Y H:i');
+            })
+
+            ->addColumn('deleted_datetime', function ($row) {
+                if (empty($row->deleted_at)) {
+                    return '-';
+                }
+
+                return Carbon::parse($row->deleted_at)->format('d-m-Y H:i');
+            })
+
             /**
              * ✅ IMPORTANT:
              * - total_amount = Invoice Total (grand total after discount)
@@ -72,7 +88,17 @@ class SalesDataTable extends DataTable
 
     public function query(Sale $model)
     {
-        return $model->newQuery()->withTrashed();
+        $query = $model->newQuery()->withTrashed();
+
+        $deletedFilter = request('deleted_filter', 'all');
+
+        if ($deletedFilter === 'active') {
+            $query->whereNull('deleted_at');
+        } elseif ($deletedFilter === 'trashed') {
+            $query->whereNotNull('deleted_at');
+        }
+
+        return $query;
     }
 
     public function html()
@@ -87,6 +113,60 @@ class SalesDataTable extends DataTable
                 "<'row'<'col-md-5'i><'col-md-7 mt-2'p>>"
             )
             ->orderBy(0)
+            ->parameters([
+                'ajax' => [
+                    'data' => 'function(d) {
+                        d.deleted_filter = $("#sale-deleted-filter").val();
+                    }',
+                ],
+                'initComplete' => 'function() {
+                    var api = this.api();
+                    var wrapper = $("#sales-table_wrapper");
+                    var lengthContainer = wrapper.find(".dataTables_length");
+
+                    if ($("#sale-deleted-filter-wrap").length === 0) {
+                        var filterHtml = `
+                            <div id="sale-deleted-filter-wrap"
+                                class="d-inline-flex align-items-center ml-3"
+                                style="gap:8px; vertical-align:middle;">
+                                <span style="
+                                    font-size: 12px;
+                                    font-weight: 500;
+                                    color: #6c757d;
+                                    white-space: nowrap;
+                                    margin-bottom: 0;
+                                ">
+                                    Soft Delete
+                                </span>
+                                <select id="sale-deleted-filter"
+                                        class="form-control form-control-sm"
+                                        style="
+                                            width: 150px;
+                                            min-width: 150px;
+                                            border-radius: 6px;
+                                        ">
+                                    <option value="all">All</option>
+                                    <option value="active">Not Deleted</option>
+                                    <option value="trashed">Soft Deleted</option>
+                                </select>
+                            </div>
+                        `;
+
+                        lengthContainer.css({
+                            "display": "flex",
+                            "align-items": "center",
+                            "flex-wrap": "wrap",
+                            "gap": "8px"
+                        });
+
+                        lengthContainer.append(filterHtml);
+                    }
+
+                    $(document).off("change", "#sale-deleted-filter").on("change", "#sale-deleted-filter", function() {
+                        api.ajax.reload();
+                    });
+                }',
+            ])
             ->buttons(
                 Button::make('excel')->text('<i class="bi bi-file-earmark-excel-fill"></i> Excel'),
                 Button::make('print')->text('<i class="bi bi-printer-fill"></i> Print'),
@@ -109,17 +189,14 @@ class SalesDataTable extends DataTable
                 ->title('Customer')
                 ->className('text-center align-middle'),
 
-            // ✅ Invoice Total (Grand Total after discount)
             Column::computed('total_amount')
                 ->title('Invoice Total')
                 ->className('text-center align-middle'),
 
-            // ✅ Cash received at invoice creation
             Column::computed('paid_amount')
                 ->title('Cash Received')
                 ->className('text-center align-middle'),
 
-            // ✅ Remaining balance after DP allocated + cash
             Column::computed('due_amount')
                 ->title('Amount to Receive')
                 ->className('text-center align-middle'),
@@ -127,12 +204,25 @@ class SalesDataTable extends DataTable
             Column::computed('payment_status')
                 ->className('text-center align-middle'),
 
+            Column::computed('created_datetime')
+                ->title('Created At')
+                ->className('text-center align-middle')
+                ->orderable(false)
+                ->searchable(false),
+
+            Column::computed('deleted_datetime')
+                ->title('Deleted At')
+                ->className('text-center align-middle')
+                ->orderable(false)
+                ->searchable(false),
+
             Column::computed('action')
                 ->exportable(false)
                 ->printable(false)
                 ->className('text-center align-middle'),
 
             Column::make('created_at')->visible(false),
+            Column::make('deleted_at')->visible(false),
         ];
     }
 
