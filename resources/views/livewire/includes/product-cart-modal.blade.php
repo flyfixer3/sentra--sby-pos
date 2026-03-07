@@ -1,17 +1,28 @@
 @php
     $pid = (int) $cart_item->id;
 
-    // ✅ SAFE DEFAULT biar gak "Undefined array key"
-    $dtype = $discount_type[$pid] ?? 'fixed';
-    $ival  = $item_discount[$pid] ?? 0;
+    $isPurchaseOrderCart = isset($cart_instance) && $cart_instance === 'purchase_order';
+    $dtype = $discount_type[$pid] ?? ($cart_item->options->product_discount_type ?? 'fixed');
+
+    $currentUnitPrice = (float) ($cart_item->options->unit_price ?? 0);
+    if ($currentUnitPrice <= 0) {
+        $currentUnitPrice = (float) ($cart_item->price ?? 0);
+    }
+
+    $currentRowPrice = (float) ($cart_item->price ?? 0);
+    $currentDiscount = (float) ($cart_item->options->product_discount ?? 0);
 @endphp
 
-<!-- Button trigger Discount Modal -->
-<span wire:click="$emitSelf('discountModalRefresh', '{{ $pid }}', '{{ $cart_item->rowId }}')" role="button" class="badge badge-warning pointer-event" data-toggle="modal" data-target="#discountModal{{ $pid }}">
+<span
+    wire:click="$emitSelf('discountModalRefresh', '{{ $pid }}', '{{ $cart_item->rowId }}')"
+    role="button"
+    class="badge badge-warning pointer-event"
+    data-toggle="modal"
+    data-target="#discountModal{{ $pid }}"
+>
     <i class="bi bi-pencil-square text-white"></i>
 </span>
 
-<!-- Discount Modal -->
 <div wire:ignore.self class="modal fade" id="discountModal{{ $pid }}" tabindex="-1" role="dialog" aria-labelledby="discountModalLabel{{ $pid }}" aria-hidden="true">
     <div class="modal-dialog" role="document">
         <div class="modal-content">
@@ -43,35 +54,64 @@
                         </div>
                     @endif
 
+                    @if($isPurchaseOrderCart)
+                        <div class="alert alert-info">
+                            <strong>Purchase Order Edit Mode</strong><br>
+                            Field fixed di sini adalah <strong>harga beli / purchase unit price</strong>, bukan nominal diskon.
+                        </div>
+                    @endif
+
                     <div class="form-group">
-                        <label>Discount By <span class="text-danger">*</span></label>
+                        <label>
+                            {{ $isPurchaseOrderCart ? 'Change By' : 'Discount By' }}
+                            <span class="text-danger">*</span>
+                        </label>
                         <select wire:model="discount_type.{{ $pid }}" class="form-control" required>
-                            <option value="fixed">Fixed Buy Price</option>
-                            <option value="percentage">Percentage</option>
+                            @if($isPurchaseOrderCart)
+                                <option value="fixed">Fixed Purchase Price</option>
+                                <option value="percentage">Discount Percentage</option>
+                            @else
+                                <option value="fixed">Fixed Buy Price</option>
+                                <option value="percentage">Percentage</option>
+                            @endif
                         </select>
                     </div>
 
+                    @if($isPurchaseOrderCart)
+                        <div class="mb-2">
+                            <small class="text-muted">
+                                Current purchase unit price:
+                                <strong>{{ format_currency($currentUnitPrice) }}</strong>
+                            </small>
+                        </div>
+                    @endif
+
                     <div class="form-group">
-                        {{-- ✅ SAFE: jangan akses $discount_type[$pid] langsung --}}
-                        @if(($discount_type[$pid] ?? $dtype) == 'percentage')
-                            <label>Discount(%) <span class="text-danger">*</span></label>
+                        @if($dtype === 'percentage')
+                            <label>
+                                {{ $isPurchaseOrderCart ? 'Discount (%) from Purchase Price' : 'Discount (%)' }}
+                                <span class="text-danger">*</span>
+                            </label>
                             <input
                                 wire:model.defer="item_discount.{{ $pid }}"
                                 type="number"
                                 class="form-control"
-                                value="{{ $item_discount[$pid] ?? $ival }}"
                                 min="0"
                                 max="100"
+                                step="0.01"
                             >
                         @else
-                            <label>Buying Price <span class="text-danger">*</span></label>
+                            <label>
+                                {{ $isPurchaseOrderCart ? 'Purchase Unit Price' : 'Buying Price' }}
+                                <span class="text-danger">*</span>
+                            </label>
                             <input
                                 wire:model.defer="item_discount.{{ $pid }}"
                                 type="number"
                                 class="form-control"
-                                value="{{ ($item_discount[$pid] ?? $ival) == 0 ? '' : ($cart_item->price - ($item_discount[$pid] ?? $ival)) }}"
-                                placeholder="0"
+                                placeholder="{{ $isPurchaseOrderCart ? $currentUnitPrice : max(($currentRowPrice - $currentDiscount), 0) }}"
                                 min="0"
+                                step="0.01"
                             >
                         @endif
                     </div>
@@ -80,7 +120,9 @@
 
                 <div class="modal-footer">
                     <button type="button" class="btn btn-secondary" data-dismiss="modal">Close</button>
-                    <button type="submit" class="btn btn-primary">Save changes</button>
+                    <button type="submit" class="btn btn-primary">
+                        {{ $isPurchaseOrderCart ? 'Save Purchase Price' : 'Save changes' }}
+                    </button>
                 </div>
             </form>
 

@@ -102,15 +102,11 @@
                                 </div>
                             </div>
 
-                            {{-- NOTE:
-                                 loading warehouse tetap mengikuti pola project kamu.
-                                 Belum aku ubah besar-besaran supaya feature existing tidak rusak.
-                                 TODO future: sinkronkan loading warehouse dengan branch aktif & flow walk-in/pending PD.
-                            --}}
                             <livewire:product-cart-purchase
                                 :cartInstance="'purchase'"
                                 :data="$purchase"
-                                :loading_warehouse="\Modules\Product\Entities\Warehouse::findOrFail($purchase->warehouse_id ?: 99)"
+                                :loading_warehouse="$loadingWarehouseId"
+                                :stock_mode="$stock_mode"
                             />
 
                             <div class="form-row">

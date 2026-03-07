@@ -10,18 +10,23 @@
 </span>
 
 <!-- Modal -->
-<div wire:ignore.self class="modal fade" id="discountModal{{ $cart_item->id }}" tabindex="-1" role="dialog" aria-labelledby="discountModalLabel" aria-hidden="true">
+<div wire:ignore.self class="modal fade" id="discountModal{{ $cart_item->id }}" tabindex="-1" role="dialog" aria-labelledby="discountModalLabel{{ $cart_item->id }}" aria-hidden="true">
     <div class="modal-dialog" role="document">
         <div class="modal-content">
             @php
                 $isPurchaseCart = isset($cart_instance) && $cart_instance === 'purchase';
                 $currentUnitPrice = (float) ($cart_item->options->unit_price ?? 0);
+                if ($currentUnitPrice <= 0) {
+                    $currentUnitPrice = (float) ($cart_item->price ?? 0);
+                }
+
                 $currentRowPrice  = (float) ($cart_item->price ?? 0);
                 $currentDiscount  = (float) ($cart_item->options->product_discount ?? 0);
+                $currentDiscountType = $discount_type[$cart_item->id] ?? ($cart_item->options->product_discount_type ?? 'fixed');
             @endphp
 
             <div class="modal-header">
-                <h5 class="modal-title" id="discountModalLabel">
+                <h5 class="modal-title" id="discountModalLabel{{ $cart_item->id }}">
                     {{ $cart_item->name }}
                     <br>
                     <span class="badge badge-success">
@@ -49,8 +54,8 @@
                     @if($isPurchaseCart)
                         <div class="alert alert-info">
                             <strong>Purchase Edit Mode:</strong><br>
-                            Field ini akan mengubah <strong>harga beli item</strong> pada cart purchase.
-                            Jika invoice purchase nanti di-save, perubahan ini akan ikut terbaca pada proses koreksi HPP.
+                            Field ini mengubah <strong>harga beli item</strong> pada cart purchase.
+                            Nilai ini nanti disimpan ke <strong>purchase detail</strong>, bukan mengubah harga jual master product.
                         </div>
                     @endif
 
@@ -71,8 +76,17 @@
                         </select>
                     </div>
 
+                    @if($isPurchaseCart)
+                        <div class="mb-2">
+                            <small class="text-muted">
+                                Current purchase unit price:
+                                <strong>{{ format_currency($currentUnitPrice) }}</strong>
+                            </small>
+                        </div>
+                    @endif
+
                     <div class="form-group">
-                        @if(($discount_type[$cart_item->id] ?? null) === 'percentage')
+                        @if($currentDiscountType === 'percentage')
                             <label>
                                 {{ $isPurchaseCart ? 'Discount (%) from Purchase Price' : 'Discount (%)' }}
                                 <span class="text-danger">*</span>
@@ -81,12 +95,11 @@
                                 wire:model.defer="item_discount.{{ $cart_item->id }}"
                                 type="number"
                                 class="form-control"
-                                value="{{ $item_discount[$cart_item->id] ?? '' }}"
                                 min="0"
                                 max="100"
                                 step="0.01"
                             >
-                        @elseif(($discount_type[$cart_item->id] ?? null) === 'fixed')
+                        @else
                             <label>
                                 {{ $isPurchaseCart ? 'Purchase Unit Price' : 'Sell Price' }}
                                 <span class="text-danger">*</span>
@@ -95,16 +108,7 @@
                                 wire:model.defer="item_discount.{{ $cart_item->id }}"
                                 type="number"
                                 class="form-control"
-                                value="{{
-                                    $isPurchaseCart
-                                        ? ($item_discount[$cart_item->id] ?? $currentUnitPrice)
-                                        : (
-                                            isset($item_discount[$cart_item->id]) && ($item_discount[$cart_item->id] ?? 0) != 0
-                                                ? ($currentRowPrice - $currentDiscount)
-                                                : ''
-                                        )
-                                }}"
-                                placeholder="0"
+                                placeholder="{{ $isPurchaseCart ? $currentUnitPrice : max(($currentRowPrice - $currentDiscount), 0) }}"
                                 step="0.01"
                                 min="0"
                             >
@@ -131,7 +135,6 @@
                                 wire:model.defer="item_cost_konsyinasi.{{ $cart_item->id }}"
                                 type="number"
                                 class="form-control"
-                                value="{{ $item_cost_konsyinasi[$cart_item->id] ?? '' }}"
                                 placeholder="0"
                                 step="0.01"
                             >

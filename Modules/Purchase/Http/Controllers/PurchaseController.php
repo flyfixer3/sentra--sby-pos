@@ -592,51 +592,114 @@ class PurchaseController extends Controller
         ));
     }
 
-    public function edit(Purchase $purchase) {
+    public function edit(Purchase $purchase)
+    {
         abort_if(Gate::denies('edit_purchases'), 403);
+
+        $purchase->loadMissing([
+            'purchaseDetails',
+            'purchaseDelivery',
+        ]);
 
         $purchase_details = $purchase->purchaseDetails;
 
         Cart::instance('purchase')->destroy();
         $cart = Cart::instance('purchase');
 
-        $activeBranchId = $this->getActiveBranchId();
-        $defaultWarehouseId = $purchase->warehouse_id ? (int)$purchase->warehouse_id : $this->resolveDefaultWarehouseId($activeBranchId);
+        $branchId = $this->getActiveBranchId();
+
+        // =========================================================
+        // Samakan logic dengan create/createFromDelivery:
+        // - PD confirmed + warehouse final ada => stock per warehouse
+        // - selain itu => stock all warehouses dalam active branch
+        // =========================================================
+        $purchaseDelivery = $purchase->purchaseDelivery;
+
+        $pdStatus = strtolower(trim((string) ($purchaseDelivery->status ?? 'pending')));
+        $isConfirmed = in_array($pdStatus, ['partial', 'received', 'completed'], true);
+
+        $resolvedWarehouseId = null;
+        if ($isConfirmed && !empty($purchaseDelivery?->warehouse_id)) {
+            $resolvedWarehouseId = (int) $purchaseDelivery->warehouse_id;
+        }
+
+        $stock_mode = $resolvedWarehouseId ? 'warehouse' : 'branch_all';
+
+        // loading warehouse hanya untuk fallback UI
+        $defaultWarehouseId = $this->resolveDefaultWarehouseId($branchId);
+        $loadingWarehouseId = $resolvedWarehouseId ?: $defaultWarehouseId;
+
+        // helper local: total stock seluruh warehouse branch aktif
+        $getStockAllWarehousesInBranch = function (int $productId) use ($branchId): int {
+            $warehouseIds = DB::table('warehouses')
+                ->where('branch_id', (int) $branchId)
+                ->pluck('id')
+                ->toArray();
+
+            if (empty($warehouseIds)) {
+                return 0;
+            }
+
+            $sum = 0;
+            foreach ($warehouseIds as $wid) {
+                $last = Mutation::where('product_id', (int) $productId)
+                    ->where('warehouse_id', (int) $wid)
+                    ->latest()
+                    ->value('stock_last');
+
+                $sum += (int) ($last ?? 0);
+            }
+
+            return (int) $sum;
+        };
 
         foreach ($purchase_details as $purchase_detail) {
+            $product = Product::select('id', 'product_unit', 'product_cost')
+                ->find((int) $purchase_detail->product_id);
 
-            $total_stock = Mutation::with('warehouse')
-                ->where('product_id', $purchase_detail->product_id)
-                ->latest()
-                ->get()
-                ->unique('warehouse_id')
-                ->sortByDesc('stock_last')
-                ->sum('stock_last');
+            if ($resolvedWarehouseId) {
+                $last = Mutation::where('product_id', (int) $purchase_detail->product_id)
+                    ->where('warehouse_id', (int) $resolvedWarehouseId)
+                    ->latest()
+                    ->value('stock_last');
+
+                $stockLast = (int) ($last ?? 0);
+                $stockScope = 'warehouse';
+                $itemWarehouseId = (int) $resolvedWarehouseId;
+            } else {
+                $stockLast = (int) $getStockAllWarehousesInBranch((int) $purchase_detail->product_id);
+                $stockScope = 'branch';
+                $itemWarehouseId = null;
+            }
 
             $cart->add([
-                'id'      => $purchase_detail->product_id,
-                'name'    => $purchase_detail->product_name,
-                'qty'     => $purchase_detail->quantity,
-                'price'   => $purchase_detail->price,
+                'id'      => (int) $purchase_detail->product_id,
+                'name'    => (string) $purchase_detail->product_name,
+                'qty'     => (int) $purchase_detail->quantity,
+                'price'   => (float) $purchase_detail->price,
                 'weight'  => 1,
                 'options' => [
-                    'product_discount' => $purchase_detail->product_discount_amount,
-                    'product_discount_type' => $purchase_detail->product_discount_type,
-                    'sub_total'   => $purchase_detail->sub_total,
-                    'code'        => $purchase_detail->product_code,
-
-                    // ✅ jangan hardcode 99
-                    'warehouse_id'=> $purchase_detail->warehouse_id ? (int)$purchase_detail->warehouse_id : $defaultWarehouseId,
-
-                    'stock'       => $total_stock,
-                    'product_tax' => $purchase_detail->product_tax_amount,
-                    'unit_price'  => $purchase_detail->unit_price,
-                    'branch_id'   => $activeBranchId,
-                ]
+                    'product_discount'      => (float) $purchase_detail->product_discount_amount,
+                    'product_discount_type' => (string) $purchase_detail->product_discount_type,
+                    'sub_total'             => (float) $purchase_detail->sub_total,
+                    'code'                  => (string) $purchase_detail->product_code,
+                    'warehouse_id'          => $itemWarehouseId,
+                    'stock'                 => (int) $stockLast,
+                    'stock_scope'           => $stockScope,
+                    'unit'                  => $product?->product_unit,
+                    'product_tax'           => (float) $purchase_detail->product_tax_amount,
+                    'product_cost'          => (float) ($product?->product_cost ?? 0),
+                    'unit_price'            => (float) $purchase_detail->unit_price,
+                    'branch_id'             => (int) $branchId,
+                ],
             ]);
         }
 
-        return view('purchase::edit', compact('purchase'));
+        return view('purchase::edit', [
+            'purchase' => $purchase,
+            'loadingWarehouseId' => $loadingWarehouseId,
+            'stock_mode' => $stock_mode,
+        ]);
     }
 
     public function update(UpdatePurchaseRequest $request, Purchase $purchase)
@@ -649,9 +712,7 @@ class PurchaseController extends Controller
                 $branchId = $this->getActiveBranchId();
 
                 // =========================================================
-                // ✅ Permission rules:
-                // - Non-admin: hanya boleh edit "simple fields"
-                // - Admin (Administrator): boleh edit harga/qty detail
+                // Permission rules
                 // =========================================================
                 $isAdmin = auth()->check() && auth()->user()->hasRole('Administrator');
 
@@ -705,7 +766,6 @@ class PurchaseController extends Controller
                     $old = $oldMap[$pid] ?? null;
                     $new = $newMap[$pid] ?? null;
 
-                    // item removed / added = sensitive
                     if (!$old || !$new) {
                         $hppSensitiveChanged = true;
                         $changedProducts[$pid] = [
@@ -732,15 +792,14 @@ class PurchaseController extends Controller
                 }
 
                 // =========================================================
-                // ✅ Jika HPP-sensitive dan bukan admin => block
-                // Ini berlaku baik PD sudah confirmed maupun belum
+                // Block non-admin jika ada perubahan HPP-sensitive
                 // =========================================================
                 if ($hppSensitiveChanged && !$isAdmin) {
                     throw new \RuntimeException('You are not allowed to edit item price/qty because it affects HPP. Please contact Administrator.');
                 }
 
                 // =========================================================
-                // ✅ Jika HPP-sensitive dan admin => wajib isi reason + checkbox
+                // Admin wajib isi reason + disclaimer
                 // =========================================================
                 if ($hppSensitiveChanged && $isAdmin) {
                     $reason = trim((string) $request->edit_reason);
@@ -753,36 +812,36 @@ class PurchaseController extends Controller
                         throw new \RuntimeException('Please confirm the disclaimer checkbox to proceed with HPP correction.');
                     }
 
-                    // TODO: nanti kalau konsep shift closing sudah ada,
+                    // TODO:
+                    // nanti kalau konsep shift closing sudah ada,
                     // validasi HPP-sensitive edit hanya boleh kalau shift belum closed
                     // atau harus lewat mekanisme reopen day / supervisor approval
                 }
 
                 // =========================================================
-                // ✅ Guard PD confirmed:
-                // - Kalau hanya simple edit => BOLEH
-                // - Kalau HPP-sensitive edit => hanya admin (sudah dicek di atas)
+                // Resolve warehouse FINAL mengikuti PD confirmed saja
+                // - jika PD belum confirmed => warehouse null
+                // - jika PD confirmed + warehouse ada => gunakan warehouse itu
                 // =========================================================
+                $linkedPd = null;
                 if (!empty($purchase->purchase_delivery_id)) {
-                    $pd = PurchaseDelivery::find((int) $purchase->purchase_delivery_id);
+                    $linkedPd = PurchaseDelivery::find((int) $purchase->purchase_delivery_id);
+                }
 
-                    if ($pd) {
-                        $st = strtolower(trim((string) $pd->status));
+                $warehouseId = null;
+                if ($linkedPd) {
+                    $pdStatus = strtolower(trim((string) ($linkedPd->status ?? 'pending')));
+                    $isConfirmed = in_array($pdStatus, ['partial', 'received', 'completed'], true);
 
-                        if (in_array($st, ['partial', 'received', 'completed'], true)) {
-                            // Tidak perlu block semua edit lagi.
-                            // Cukup block HPP-sensitive untuk non-admin, yang sudah dicek di atas.
-                            // Jadi simple edit tetap jalan.
-                        }
+                    if ($isConfirmed && !empty($linkedPd->warehouse_id)) {
+                        $warehouseId = (int) $linkedPd->warehouse_id;
                     }
                 }
 
-                $warehouseId = $request->warehouse_id
-                    ? (int) $request->warehouse_id
-                    : ($purchase->warehouse_id ? (int) $purchase->warehouse_id : $this->resolveDefaultWarehouseId($branchId));
-
-                $this->assertWarehouseBelongsToBranch($warehouseId, $branchId);
-                $this->ensureCartItemsHaveWarehouse($warehouseId);
+                if (!empty($warehouseId)) {
+                    $this->assertWarehouseBelongsToBranch((int) $warehouseId, (int) $branchId);
+                    $this->ensureCartItemsHaveWarehouse((int) $warehouseId);
+                }
 
                 $due_amount = ($request->total_amount * 1) - ($request->paid_amount * 1);
                 $payment_status = $due_amount == ($request->total_amount * 1)
@@ -790,7 +849,7 @@ class PurchaseController extends Controller
                     : ($due_amount > 0 ? 'Partial' : 'Paid');
 
                 // =========================================================
-                // ✅ update header
+                // update header
                 // =========================================================
                 $purchase->update([
                     'date' => $request->date,
@@ -813,22 +872,26 @@ class PurchaseController extends Controller
                     'tax_amount' => Cart::instance('purchase')->tax() * 1,
                     'discount_amount' => Cart::instance('purchase')->discount() * 1,
                     'branch_id' => $branchId,
-                    'warehouse_id' => $warehouseId,
+                    'warehouse_id' => $warehouseId ? (int) $warehouseId : null,
                 ]);
 
                 // =========================================================
-                // ✅ replace details: delete lalu insert ulang
+                // replace details
                 // =========================================================
                 foreach ($purchase->purchaseDetails as $purchase_detail) {
                     $purchase_detail->delete();
                 }
 
                 foreach (Cart::instance('purchase')->content() as $cart_item) {
-                    $itemWarehouseId = isset($cart_item->options->warehouse_id)
-                        ? (int) $cart_item->options->warehouse_id
-                        : $warehouseId;
+                    $itemWarehouseId = null;
 
-                    $this->assertWarehouseBelongsToBranch($itemWarehouseId, $branchId);
+                    if (!empty($warehouseId)) {
+                        $itemWarehouseId = (int) $warehouseId;
+                    }
+
+                    if (!empty($itemWarehouseId)) {
+                        $this->assertWarehouseBelongsToBranch((int) $itemWarehouseId, (int) $branchId);
+                    }
 
                     $productCode = $cart_item->options->code ?? null;
                     if (empty($productCode)) {
@@ -843,7 +906,7 @@ class PurchaseController extends Controller
                         'product_code' => $productCode,
                         'quantity' => (int) $cart_item->qty,
                         'price' => $cart_item->price * 1,
-                        'warehouse_id' => $itemWarehouseId,
+                        'warehouse_id' => $itemWarehouseId ? (int) $itemWarehouseId : null,
                         'unit_price' => ($cart_item->options->unit_price ?? 0) * 1,
                         'sub_total' => ($cart_item->options->sub_total ?? 0) * 1,
                         'product_discount_amount' => ($cart_item->options->product_discount ?? 0) * 1,
@@ -853,7 +916,7 @@ class PurchaseController extends Controller
                 }
 
                 // =========================================================
-                // ✅ If admin did HPP-sensitive change
+                // Jika admin melakukan HPP-sensitive edit
                 // =========================================================
                 if ($hppSensitiveChanged && $isAdmin) {
                     $reason = trim((string) $request->edit_reason);

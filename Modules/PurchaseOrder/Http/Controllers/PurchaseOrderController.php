@@ -226,21 +226,34 @@ class PurchaseOrderController extends Controller
         $cart = Cart::instance('purchase_order');
 
         foreach ($purchase_order_details as $purchase_order_detail) {
+            $product = Product::select('id', 'product_unit', 'product_cost')
+                ->find((int) $purchase_order_detail->product_id);
+
+            $total_stock = Mutation::with('warehouse')
+                ->where('product_id', (int) $purchase_order_detail->product_id)
+                ->latest()
+                ->get()
+                ->unique('warehouse_id')
+                ->sortByDesc('stock_last')
+                ->sum('stock_last');
+
             $cart->add([
-                'id'      => $purchase_order_detail->product_id,
-                'name'    => $purchase_order_detail->product_name,
-                'qty'     => $purchase_order_detail->quantity,
-                'price'   => $purchase_order_detail->price,
+                'id'      => (int) $purchase_order_detail->product_id,
+                'name'    => (string) $purchase_order_detail->product_name,
+                'qty'     => (int) $purchase_order_detail->quantity,
+                'price'   => (float) $purchase_order_detail->price,
                 'weight'  => 1,
                 'options' => [
-                    'product_discount'      => $purchase_order_detail->product_discount_amount,
-                    'product_discount_type' => $purchase_order_detail->product_discount_type,
-                    'sub_total'             => $purchase_order_detail->sub_total,
-                    'code'                  => $purchase_order_detail->product_code,
-                    'stock'                 => Product::findOrFail($purchase_order_detail->product_id)->product_quantity,
-                    'product_tax'           => $purchase_order_detail->product_tax_amount,
-                    'unit_price'            => $purchase_order_detail->unit_price
-                ]
+                    'product_discount'      => (float) $purchase_order_detail->product_discount_amount,
+                    'product_discount_type' => (string) $purchase_order_detail->product_discount_type,
+                    'sub_total'             => (float) $purchase_order_detail->sub_total,
+                    'code'                  => (string) $purchase_order_detail->product_code,
+                    'stock'                 => (int) $total_stock,
+                    'unit'                  => $product?->product_unit,
+                    'product_tax'           => (float) $purchase_order_detail->product_tax_amount,
+                    'product_cost'          => (float) ($product?->product_cost ?? 0),
+                    'unit_price'            => (float) $purchase_order_detail->unit_price,
+                ],
             ]);
         }
 

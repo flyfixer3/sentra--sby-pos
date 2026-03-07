@@ -32,7 +32,6 @@ class ProductCartPurchase extends Component
     public $item_cost_konsyinasi;
     public $data;
 
-    // ✅ NEW: branch_all | warehouse
     public $stock_mode = 'branch_all';
 
     public function mount($cartInstance, $data = null, $loading_warehouse = null, $stock_mode = 'branch_all')
@@ -45,7 +44,7 @@ class ProductCartPurchase extends Component
 
         $this->loading_warehouse = null;
         if (is_numeric($loading_warehouse)) {
-            $this->loading_warehouse = Warehouse::find((int)$loading_warehouse);
+            $this->loading_warehouse = Warehouse::find((int) $loading_warehouse);
         } else {
             $this->loading_warehouse = $loading_warehouse;
         }
@@ -55,8 +54,10 @@ class ProductCartPurchase extends Component
             $warehouse = null;
 
             if (!empty($branchId) && $branchId !== 'all') {
-                $warehouse = Warehouse::where('branch_id', (int)$branchId)->where('is_main', 1)->first();
-                if (!$warehouse) $warehouse = Warehouse::where('branch_id', (int)$branchId)->first();
+                $warehouse = Warehouse::where('branch_id', (int) $branchId)->where('is_main', 1)->first();
+                if (!$warehouse) {
+                    $warehouse = Warehouse::where('branch_id', (int) $branchId)->first();
+                }
             }
 
             if (!$warehouse) {
@@ -81,19 +82,40 @@ class ProductCartPurchase extends Component
             $cart_items = Cart::instance($this->cart_instance)->content();
 
             foreach ($cart_items as $cart_item) {
-                $this->check_quantity[$cart_item->id] = (int)($cart_item->options->stock ?? 0);
-                $this->quantity[$cart_item->id] = (int)$cart_item->qty;
+                $productId = (int) $cart_item->id;
 
-                $this->warehouse_id[$cart_item->id] = (int)($cart_item->options->warehouse_id ?? ($this->loading_warehouse->id ?? 0));
+                $this->check_quantity[$productId] = (int) ($cart_item->options->stock ?? 0);
+                $this->quantity[$productId] = (int) $cart_item->qty;
 
-                $this->discount_type[$cart_item->id] = $cart_item->options->product_discount_type ?? 'fixed';
-                $this->item_cost_konsyinasi[$cart_item->id] = $cart_item->options->product_cost ?? 0;
+                if ($this->stock_mode === 'warehouse') {
+                    $this->warehouse_id[$productId] = (int) ($cart_item->options->warehouse_id ?? ($this->loading_warehouse->id ?? 0));
+                } else {
+                    $this->warehouse_id[$productId] = $cart_item->options->warehouse_id ? (int) $cart_item->options->warehouse_id : null;
+                }
+
+                $this->discount_type[$productId] = $cart_item->options->product_discount_type ?? 'fixed';
+                $this->item_cost_konsyinasi[$productId] = (float) ($cart_item->options->product_cost ?? 0);
 
                 if (($cart_item->options->product_discount_type ?? 'fixed') === 'fixed') {
-                    $this->item_discount[$cart_item->id] = $cart_item->options->product_discount ?? 0;
+                    $currentUnitPrice = (float) ($cart_item->options->unit_price ?? 0);
+                    if ($currentUnitPrice <= 0) {
+                        $currentUnitPrice = (float) ($cart_item->price ?? 0);
+                    }
+
+                    $this->item_discount[$productId] = $currentUnitPrice;
                 } else {
-                    $priceBase = ($cart_item->price > 0) ? $cart_item->price : 1;
-                    $this->item_discount[$cart_item->id] = round(100 * (($cart_item->options->product_discount ?? 0) / $priceBase));
+                    $currentUnitPrice = (float) ($cart_item->options->unit_price ?? 0);
+                    if ($currentUnitPrice <= 0) {
+                        $currentUnitPrice = (float) ($cart_item->price ?? 0);
+                    }
+
+                    $discountAmount = (float) ($cart_item->options->product_discount ?? 0);
+
+                    if ($currentUnitPrice > 0) {
+                        $this->item_discount[$productId] = round(($discountAmount / $currentUnitPrice) * 100, 2);
+                    } else {
+                        $this->item_discount[$productId] = 0;
+                    }
                 }
             }
         } else {
@@ -111,10 +133,7 @@ class ProductCartPurchase extends Component
             $this->item_cost_konsyinasi = [];
         }
 
-        // ✅ sync stock options sesuai stock_mode
         $this->syncCartToCurrentWarehouse();
-
-        // ✅ prefill qty dari cart
         $this->syncQuantityDefaults();
     }
 
@@ -124,7 +143,9 @@ class ProductCartPurchase extends Component
 
         foreach ($cart_items as $row) {
             $pid = (int) $row->id;
-            if ($pid <= 0) continue;
+            if ($pid <= 0) {
+                continue;
+            }
 
             if (!isset($this->quantity[$pid]) || $this->quantity[$pid] === null || $this->quantity[$pid] === '') {
                 $this->quantity[$pid] = (int) $row->qty;
@@ -134,8 +155,12 @@ class ProductCartPurchase extends Component
                 $this->check_quantity[$pid] = (int) ($row->options->stock ?? 0);
             }
 
-            if (!isset($this->warehouse_id[$pid]) || !(int)$this->warehouse_id[$pid]) {
-                $this->warehouse_id[$pid] = (int) ($row->options->warehouse_id ?? ($this->loading_warehouse->id ?? 0));
+            if (!array_key_exists($pid, $this->warehouse_id)) {
+                if ($this->stock_mode === 'warehouse') {
+                    $this->warehouse_id[$pid] = (int) ($row->options->warehouse_id ?? ($this->loading_warehouse->id ?? 0));
+                } else {
+                    $this->warehouse_id[$pid] = $row->options->warehouse_id ? (int) $row->options->warehouse_id : null;
+                }
             }
 
             if (!isset($this->discount_type[$pid]) || !$this->discount_type[$pid]) {
@@ -144,10 +169,25 @@ class ProductCartPurchase extends Component
 
             if (!isset($this->item_discount[$pid])) {
                 if (($row->options->product_discount_type ?? 'fixed') === 'fixed') {
-                    $this->item_discount[$pid] = (float) ($row->options->product_discount ?? 0);
+                    $currentUnitPrice = (float) ($row->options->unit_price ?? 0);
+                    if ($currentUnitPrice <= 0) {
+                        $currentUnitPrice = (float) ($row->price ?? 0);
+                    }
+
+                    $this->item_discount[$pid] = $currentUnitPrice;
                 } else {
-                    $priceBase = ((float)$row->price > 0) ? (float)$row->price : 1;
-                    $this->item_discount[$pid] = round(100 * (((float)($row->options->product_discount ?? 0)) / $priceBase));
+                    $currentUnitPrice = (float) ($row->options->unit_price ?? 0);
+                    if ($currentUnitPrice <= 0) {
+                        $currentUnitPrice = (float) ($row->price ?? 0);
+                    }
+
+                    $discountAmount = (float) ($row->options->product_discount ?? 0);
+
+                    if ($currentUnitPrice > 0) {
+                        $this->item_discount[$pid] = round(($discountAmount / $currentUnitPrice) * 100, 2);
+                    } else {
+                        $this->item_discount[$pid] = 0;
+                    }
                 }
             }
 
@@ -171,14 +211,17 @@ class ProductCartPurchase extends Component
 
     public function purchaseWarehouseChanged($warehouseId)
     {
-        $warehouseId = (int)$warehouseId;
-        if ($warehouseId <= 0) return;
+        $warehouseId = (int) $warehouseId;
+        if ($warehouseId <= 0) {
+            return;
+        }
 
         $activeBranch = session('active_branch');
         if (!empty($activeBranch) && $activeBranch !== 'all') {
             $exists = Warehouse::where('id', $warehouseId)
-                ->where('branch_id', (int)$activeBranch)
+                ->where('branch_id', (int) $activeBranch)
                 ->exists();
+
             if (!$exists) {
                 session()->flash('message', 'Selected warehouse does not belong to the active branch.');
                 return;
@@ -186,11 +229,11 @@ class ProductCartPurchase extends Component
         }
 
         $wh = Warehouse::find($warehouseId);
-        if (!$wh) return;
+        if (!$wh) {
+            return;
+        }
 
         $this->loading_warehouse = $wh;
-
-        // kalau user sudah memilih warehouse via header, mode harus warehouse
         $this->stock_mode = 'warehouse';
 
         $this->syncCartToCurrentWarehouse();
@@ -198,9 +241,8 @@ class ProductCartPurchase extends Component
 
     private function syncCartToCurrentWarehouse(): void
     {
-        $warehouseId = (int)($this->loading_warehouse ? $this->loading_warehouse->id : 0);
+        $warehouseId = (int) ($this->loading_warehouse ? $this->loading_warehouse->id : 0);
 
-        // fallback: kalau gak ada warehouse sama sekali, stop
         if ($warehouseId <= 0 && $this->stock_mode === 'warehouse') {
             return;
         }
@@ -216,10 +258,9 @@ class ProductCartPurchase extends Component
                 $scope = 'warehouse';
                 $optWarehouseId = $warehouseId;
             } else {
-                // ✅ purchase create (no PD): stock ALL warehouses (active branch)
                 $stockLast = $this->getStockLastAllWarehousesInActiveBranch($productId);
                 $scope = 'branch';
-                $optWarehouseId = null; // ✅ belum ditentukan
+                $optWarehouseId = null;
             }
 
             $cart->update($row->rowId, [
@@ -229,10 +270,7 @@ class ProductCartPurchase extends Component
                     'stock'                 => $stockLast,
                     'stock_scope'           => $scope,
                     'unit'                  => $row->options->unit,
-
-                    // ✅ warehouse_id hanya diisi kalau mode warehouse
                     'warehouse_id'          => $optWarehouseId,
-
                     'product_tax'           => $row->options->product_tax,
                     'product_cost'          => $row->options->product_cost,
                     'unit_price'            => $row->options->unit_price,
@@ -243,8 +281,10 @@ class ProductCartPurchase extends Component
 
             $this->check_quantity[$productId] = $stockLast;
 
-            if ($optWarehouseId) {
+            if ($this->stock_mode === 'warehouse') {
                 $this->warehouse_id[$productId] = (int) $optWarehouseId;
+            } else {
+                $this->warehouse_id[$productId] = null;
             }
         }
 
@@ -258,14 +298,35 @@ class ProductCartPurchase extends Component
             ->latest()
             ->first();
 
-        return $mutation ? (int)$mutation->stock_last : 0;
+        return $mutation ? (int) $mutation->stock_last : 0;
+    }
+
+    private function getStockLastAllWarehousesInActiveBranch(int $productId): int
+    {
+        $branchId = session('active_branch');
+
+        if (empty($branchId) || $branchId === 'all') {
+            return 0;
+        }
+
+        $warehouseIds = Warehouse::where('branch_id', (int) $branchId)->pluck('id')->toArray();
+        if (empty($warehouseIds)) {
+            return 0;
+        }
+
+        $sum = 0;
+        foreach ($warehouseIds as $wid) {
+            $sum += $this->getStockLastByWarehouse((int) $productId, (int) $wid);
+        }
+
+        return (int) $sum;
     }
 
     public function productSelected($product)
     {
         $cart = Cart::instance($this->cart_instance);
 
-        $warehouseId = (int)($this->loading_warehouse ? $this->loading_warehouse->id : 0);
+        $warehouseId = (int) ($this->loading_warehouse ? $this->loading_warehouse->id : 0);
 
         if ($this->stock_mode === 'warehouse' && $warehouseId <= 0) {
             session()->flash('message', 'Default warehouse is not set. Please create/select a warehouse for this branch first.');
@@ -295,15 +356,10 @@ class ProductCartPurchase extends Component
                 'product_discount_type' => 'fixed',
                 'sub_total'             => $calc['sub_total'],
                 'code'                  => $product['product_code'],
-
                 'stock'                 => $stockLast,
                 'stock_scope'           => $scope,
-
                 'unit'                  => $product['product_unit'],
-
-                // ✅ warehouse_id hanya kalau mode warehouse
                 'warehouse_id'          => $optWarehouseId,
-
                 'product_tax'           => $calc['product_tax'],
                 'product_cost'          => $calc['product_cost'],
                 'unit_price'            => $calc['unit_price'],
@@ -313,14 +369,10 @@ class ProductCartPurchase extends Component
         $this->global_qty = $cart->count();
         $this->check_quantity[$product['id']] = $stockLast;
         $this->quantity[$product['id']] = 1;
-
-        if ($optWarehouseId) {
-            $this->warehouse_id[$product['id']] = $optWarehouseId;
-        }
-
+        $this->warehouse_id[$product['id']] = $optWarehouseId;
         $this->discount_type[$product['id']] = 'fixed';
-        $this->item_discount[$product['id']] = 0;
-        $this->item_cost_konsyinasi[$product['id']] = 0;
+        $this->item_discount[$product['id']] = (float) $calc['unit_price'];
+        $this->item_cost_konsyinasi[$product['id']] = (float) ($calc['product_cost'] ?? 0);
     }
 
     public function removeItem($row_id)
@@ -331,29 +383,29 @@ class ProductCartPurchase extends Component
 
     public function updatedGlobalQuantity()
     {
-        Cart::instance($this->cart_instance)->setGlobalQuantity((int)$this->global_qty);
+        Cart::instance($this->cart_instance)->setGlobalQuantity((int) $this->global_qty);
     }
 
     public function updatedGlobalTax()
     {
-        Cart::instance($this->cart_instance)->setGlobalTax((int)$this->global_tax);
+        Cart::instance($this->cart_instance)->setGlobalTax((int) $this->global_tax);
     }
 
     public function updatedGlobalDiscount()
     {
-        Cart::instance($this->cart_instance)->setGlobalDiscount((int)$this->global_discount);
+        Cart::instance($this->cart_instance)->setGlobalDiscount((int) $this->global_discount);
     }
 
     public function updateQuantity($row_id, $product_id)
     {
         if ($this->cart_instance == 'sale' || $this->cart_instance == 'purchase_return') {
-            if ((int)($this->check_quantity[$product_id] ?? 0) < (int)($this->quantity[$product_id] ?? 0)) {
+            if ((int) ($this->check_quantity[$product_id] ?? 0) < (int) ($this->quantity[$product_id] ?? 0)) {
                 session()->flash('message', 'The requested quantity is not available in stock.');
                 return;
             }
         }
 
-        Cart::instance($this->cart_instance)->update($row_id, (int)$this->quantity[$product_id]);
+        Cart::instance($this->cart_instance)->update($row_id, (int) $this->quantity[$product_id]);
 
         $cart_item = Cart::instance($this->cart_instance)->get($row_id);
         $this->global_qty = Cart::instance($this->cart_instance)->count();
@@ -377,7 +429,26 @@ class ProductCartPurchase extends Component
 
     public function updatedDiscountType($value, $name)
     {
-        $this->item_discount[$name] = 0;
+        $productId = (int) $name;
+
+        if ($value === 'fixed') {
+            $row = Cart::instance($this->cart_instance)
+                ->content()
+                ->first(function ($item) use ($productId) {
+                    return (int) $item->id === $productId;
+                });
+
+            if ($row) {
+                $currentUnitPrice = (float) ($row->options->unit_price ?? 0);
+                if ($currentUnitPrice <= 0) {
+                    $currentUnitPrice = (float) ($row->price ?? 0);
+                }
+                $this->item_discount[$productId] = $currentUnitPrice;
+                return;
+            }
+        }
+
+        $this->item_discount[$productId] = 0;
     }
 
     public function discountModalRefresh($product_id, $row_id)
@@ -397,11 +468,6 @@ class ProductCartPurchase extends Component
         $discountType = $this->discount_type[$product_id] ?? 'fixed';
         $inputValue   = (float) ($this->item_discount[$product_id] ?? 0);
 
-        // =========================================================
-        // ✅ PURCHASE MODE:
-        // input fixed = NEW PURCHASE UNIT PRICE
-        // input percentage = discount percentage from current unit price
-        // =========================================================
         if ($this->cart_instance === 'purchase') {
             $currentUnitPrice = (float) ($cart_item->options->unit_price ?? 0);
             if ($currentUnitPrice <= 0) {
@@ -417,17 +483,16 @@ class ProductCartPurchase extends Component
                     return;
                 }
 
-                $newUnitPrice   = round($inputValue, 2);
+                $newUnitPrice = round($inputValue, 2);
                 $discountAmount = round(max($currentUnitPrice - $newUnitPrice, 0), 2);
             } else {
-                // percentage
                 if ($inputValue < 0 || $inputValue > 100) {
                     session()->flash('discount_message' . $product_id, 'Percentage must be between 0 and 100.');
                     return;
                 }
 
                 $discountAmount = round($currentUnitPrice * ($inputValue / 100), 2);
-                $newUnitPrice   = round($currentUnitPrice - $discountAmount, 2);
+                $newUnitPrice = round($currentUnitPrice - $discountAmount, 2);
 
                 if ($newUnitPrice < 0) {
                     $newUnitPrice = 0;
@@ -445,13 +510,16 @@ class ProductCartPurchase extends Component
                 $newUnitPrice
             );
 
+            if ($discountType === 'fixed') {
+                $this->item_discount[$product_id] = $newUnitPrice;
+            } else {
+                $this->item_discount[$product_id] = $inputValue;
+            }
+
             session()->flash('discount_message' . $product_id, 'Purchase price updated successfully!');
             return;
         }
 
-        // =========================================================
-        // ✅ DEFAULT / SALE MODE (existing behavior)
-        // =========================================================
         if ($discountType === 'fixed') {
             $discount_amount = 0;
 
@@ -534,27 +602,6 @@ class ProductCartPurchase extends Component
         ];
     }
 
-    private function getStockLastAllWarehousesInActiveBranch(int $productId): int
-    {
-        $branchId = session('active_branch');
-
-        if (empty($branchId) || $branchId === 'all') {
-            return 0;
-        }
-
-        $warehouseIds = Warehouse::where('branch_id', (int) $branchId)->pluck('id')->toArray();
-        if (empty($warehouseIds)) {
-            return 0;
-        }
-
-        $sum = 0;
-        foreach ($warehouseIds as $wid) {
-            $sum += $this->getStockLastByWarehouse((int) $productId, (int) $wid);
-        }
-
-        return (int) $sum;
-    }
-
     public function updateCartOptions(
         $row_id,
         $product_id,
@@ -565,7 +612,6 @@ class ProductCartPurchase extends Component
         $overrideUnitPrice = null,
         $overrideRowPrice = null
     ) {
-        // ✅ kalau mode branch_all, jangan paksa warehouse_id
         $optWarehouseId = ($this->stock_mode === 'warehouse') ? (int) $warehouse_id : null;
 
         $freshItem = Cart::instance($this->cart_instance)->get($row_id);
@@ -600,8 +646,5 @@ class ProductCartPurchase extends Component
                 'product_discount_type' => $this->discount_type[$product_id] ?? 'fixed',
             ]
         ]);
-
-        // sync state local livewire biar modal/table langsung ikut berubah
-        $this->item_discount[$product_id] = $this->item_discount[$product_id] ?? 0;
     }
 }
