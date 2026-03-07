@@ -24,6 +24,67 @@ class SaleOrderController extends Controller
         return redirect()->back()->withInput();
     }
 
+    private function buildSaleOrderItemSnapshots(array $rows, $productMap): array
+    {
+        $items = [];
+        $qtyByProduct = [];
+        $sellSubtotal = 0;
+        $masterSubtotal = 0;
+
+        foreach ($rows as $row) {
+            $pid = (int) ($row['product_id'] ?? 0);
+            $qty = (int) ($row['quantity'] ?? 0);
+
+            if ($pid <= 0 || $qty <= 0) {
+                continue;
+            }
+
+            $product = $productMap[$pid] ?? null;
+            if (!$product) {
+                throw new \RuntimeException('Invalid product selected.');
+            }
+
+            $masterUnitPrice = max(0, (int) ($product->product_price ?? 0));
+
+            $requestedUnitPrice = array_key_exists('original_price', $row) && $row['original_price'] !== null
+                ? max(0, (int) $row['original_price'])
+                : $masterUnitPrice;
+
+            $netPrice = array_key_exists('price', $row) && $row['price'] !== null
+                ? max(0, (int) $row['price'])
+                : $requestedUnitPrice;
+
+            $unitPrice = max($requestedUnitPrice, $netPrice, $masterUnitPrice);
+            $itemDiscountAmount = max(0, $unitPrice - $netPrice);
+            $subTotal = (int) ($qty * $netPrice);
+
+            $items[] = [
+                'product_id' => $pid,
+                'quantity' => $qty,
+                'unit_price' => $unitPrice,
+                'price' => $netPrice,
+                'product_discount_amount' => $itemDiscountAmount,
+                'product_discount_type' => 'fixed',
+                'sub_total' => $subTotal,
+            ];
+
+            if (!isset($qtyByProduct[$pid])) {
+                $qtyByProduct[$pid] = 0;
+            }
+
+            $qtyByProduct[$pid] += $qty;
+            $sellSubtotal += $subTotal;
+            $masterSubtotal += ($qty * $masterUnitPrice);
+        }
+
+        return [
+            'items' => $items,
+            'qty_by_product' => $qtyByProduct,
+            'sell_subtotal' => (int) $sellSubtotal,
+            'master_subtotal' => (int) $masterSubtotal,
+        ];
+    }
+
     public function index(SaleOrdersDataTable $dataTable)
     {
         abort_if(Gate::denies('access_sale_orders'), 403);
@@ -82,10 +143,18 @@ class SaleOrderController extends Controller
                 $prefillRefText = 'Quotation: ' . ($quotation->reference ?? $quotation->id);
 
                 foreach ($quotation->quotationDetails as $d) {
+                    $unitPrice = (int) ($d->price ?? 0);
+                    $qty = (int) ($d->quantity ?? 0);
+
                     $prefillItems[] = [
                         'product_id' => (int) $d->product_id,
-                        'quantity'   => (int) $d->quantity,
-                        'price'      => (int) $d->price,
+                        'quantity'   => $qty,
+                        'price'      => $unitPrice,
+                        'original_price' => $unitPrice,
+                        'unit_price' => $unitPrice,
+                        'product_discount_amount' => 0,
+                        'product_discount_type' => 'fixed',
+                        'sub_total' => (int) ($qty * $unitPrice),
 
                         // ✅ nanti di-inject dari master product
                         'product_name' => null,
@@ -110,10 +179,20 @@ class SaleOrderController extends Controller
                 $prefillRefText = 'Invoice: ' . ($sale->reference ?? $sale->id);
 
                 foreach ($sale->saleDetails as $d) {
+                    $unitPrice = $d->unit_price !== null ? (int) $d->unit_price : (int) ($d->price ?? 0);
+                    $netPrice = (int) ($d->price ?? $unitPrice);
+                    $qty = (int) ($d->quantity ?? 0);
+                    $itemDiscount = (int) ($d->product_discount_amount ?? max(0, $unitPrice - $netPrice));
+
                     $prefillItems[] = [
                         'product_id' => (int) $d->product_id,
-                        'quantity'   => (int) $d->quantity,
-                        'price'      => (int) $d->price,
+                        'quantity'   => $qty,
+                        'price'      => $netPrice,
+                        'original_price' => $unitPrice,
+                        'unit_price' => $unitPrice,
+                        'product_discount_amount' => $itemDiscount,
+                        'product_discount_type' => (string) ($d->product_discount_type ?? 'fixed'),
+                        'sub_total' => (int) ($d->sub_total ?? ($qty * $netPrice)),
 
                         // ✅ nanti di-inject dari master product
                         'product_name' => null,
@@ -211,6 +290,10 @@ class SaleOrderController extends Controller
                 'items.*.quantity' => 'required|integer|min:1',
                 'items.*.price' => 'nullable|integer|min:0',
                 'items.*.original_price' => 'nullable|integer|min:0',
+                'items.*.unit_price' => 'nullable|integer|min:0',
+                'items.*.product_discount_amount' => 'nullable|integer|min:0',
+                'items.*.product_discount_type' => 'nullable|in:fixed,percentage',
+                'items.*.sub_total' => 'nullable|integer|min:0',
             ];
 
             if ($source === 'quotation') $rules['quotation_id'] = 'required|integer';
@@ -264,28 +347,15 @@ class SaleOrderController extends Controller
                     if ($exists) abort(422, 'Sale Order for this invoice already exists.');
                 }
 
-                // ==========================
-                // qty + sell subtotal
-                // ==========================
-                $qtyByProduct = [];
-                $sellSubtotal = 0;
+                $productIds = collect($request->items)
+                    ->pluck('product_id')
+                    ->map(fn ($id) => (int) $id)
+                    ->filter(fn ($id) => $id > 0)
+                    ->unique()
+                    ->values()
+                    ->all();
 
-                foreach ($request->items as $row) {
-                    $pid = (int) ($row['product_id'] ?? 0);
-                    $qty = (int) ($row['quantity'] ?? 0);
-                    $sell = array_key_exists('price', $row) && $row['price'] !== null ? (int) $row['price'] : 0;
-
-                    if ($pid <= 0 || $qty <= 0) continue;
-
-                    if (!isset($qtyByProduct[$pid])) $qtyByProduct[$pid] = 0;
-                    $qtyByProduct[$pid] += $qty;
-
-                    $sellSubtotal += ($qty * max(0, $sell));
-                }
-
-                if (empty($qtyByProduct)) abort(422, 'Items are empty.');
-
-                $productIds = array_keys($qtyByProduct);
+                if (empty($productIds)) abort(422, 'Items are empty.');
 
                 $productMap = Product::query()
                     ->select('id', 'product_price')
@@ -297,18 +367,29 @@ class SaleOrderController extends Controller
                     abort(422, 'Invalid product selected.');
                 }
 
-                // master subtotal (truth)
-                $masterSubtotal = 0;
-                foreach ($qtyByProduct as $pid => $qty) {
-                    $master = (int) ($productMap[$pid]->product_price ?? 0);
-                    $masterSubtotal += ((int)$qty * max(0, $master));
-                }
+                $itemSnapshot = $this->buildSaleOrderItemSnapshots((array) $request->items, $productMap);
+                $normalizedItems = $itemSnapshot['items'];
+                $qtyByProduct = $itemSnapshot['qty_by_product'];
+                $sellSubtotal = (int) $itemSnapshot['sell_subtotal'];
+                $masterSubtotal = (int) $itemSnapshot['master_subtotal'];
 
-                $discountAmount = max(0, (int)$masterSubtotal - (int)$sellSubtotal);
+                if (empty($qtyByProduct)) abort(422, 'Items are empty.');
 
-                $discountPct = 0.0;
-                if ($masterSubtotal > 0 && $discountAmount > 0) {
-                    $discountPct = round(($discountAmount / $masterSubtotal) * 100, 2);
+                $autoDiscount = (string) $request->auto_discount === '1';
+                $requestedDiscountPct = max(0, min(100, (float) $request->discount_percentage));
+
+                $priceDiffDiscountAmount = max(0, (int)$masterSubtotal - (int)$sellSubtotal);
+
+                if ($autoDiscount) {
+                    $discountAmount = (int) $priceDiffDiscountAmount;
+                    $discountPct = 0.0;
+
+                    if ($masterSubtotal > 0 && $discountAmount > 0) {
+                        $discountPct = round(($discountAmount / $masterSubtotal) * 100, 2);
+                    }
+                } else {
+                    $discountPct = (float) $requestedDiscountPct;
+                    $discountAmount = (int) round($sellSubtotal * ($discountPct / 100));
                 }
 
                 // totals
@@ -317,7 +398,7 @@ class SaleOrderController extends Controller
                 $fee = (int) $request->fee_amount;
 
                 $taxAmount = (int) round($sellSubtotal * ($taxPct / 100));
-                $grandTotal = (int) round($sellSubtotal + $taxAmount + $shipping + $fee);
+                $grandTotal = (int) round($sellSubtotal + $taxAmount + $shipping + $fee - ($autoDiscount ? 0 : $discountAmount));
 
                 // ==========================
                 // Deposit planned (max)
@@ -400,12 +481,16 @@ class SaleOrderController extends Controller
 
                 $saleOrderId = (int) $so->id;
 
-                foreach ($request->items as $row) {
+                foreach ($normalizedItems as $row) {
                     SaleOrderItem::create([
                         'sale_order_id' => $so->id,
                         'product_id' => (int) $row['product_id'],
                         'quantity' => (int) $row['quantity'],
-                        'price' => array_key_exists('price', $row) && $row['price'] !== null ? (int) $row['price'] : null,
+                        'unit_price' => (int) $row['unit_price'],
+                        'price' => (int) $row['price'],
+                        'product_discount_amount' => (int) $row['product_discount_amount'],
+                        'product_discount_type' => (string) ($row['product_discount_type'] ?? 'fixed'),
+                        'sub_total' => (int) $row['sub_total'],
                     ]);
                 }
 
@@ -691,10 +776,19 @@ class SaleOrderController extends Controller
 
             // convert items to prefill format for Livewire
             $items = $saleOrder->items->map(function ($it) {
+                $unitPrice = $it->unit_price !== null ? (int) $it->unit_price : (int) ($it->price ?? 0);
+                $netPrice = $it->price !== null ? (int) $it->price : $unitPrice;
+                $qty = (int) ($it->quantity ?? 0);
+
                 return [
                     'product_id' => (int) $it->product_id,
-                    'quantity'   => (int) $it->quantity,
-                    'price'      => $it->price !== null ? (int) $it->price : null,
+                    'quantity'   => $qty,
+                    'price'      => $netPrice,
+                    'original_price' => $unitPrice,
+                    'unit_price' => $unitPrice,
+                    'product_discount_amount' => (int) ($it->product_discount_amount ?? max(0, $unitPrice - $netPrice)),
+                    'product_discount_type' => (string) ($it->product_discount_type ?? 'fixed'),
+                    'sub_total' => (int) ($it->sub_total ?? ($qty * $netPrice)),
                 ];
             })->values()->toArray();
 
@@ -747,6 +841,10 @@ class SaleOrderController extends Controller
                 'items.*.quantity' => 'required|integer|min:1',
                 'items.*.price' => 'nullable|integer|min:0',
                 'items.*.original_price' => 'nullable|integer|min:0',
+                'items.*.unit_price' => 'nullable|integer|min:0',
+                'items.*.product_discount_amount' => 'nullable|integer|min:0',
+                'items.*.product_discount_type' => 'nullable|in:fixed,percentage',
+                'items.*.sub_total' => 'nullable|integer|min:0',
             ]);
 
             DB::transaction(function () use ($request, $saleOrder, $branchId) {
@@ -768,30 +866,17 @@ class SaleOrderController extends Controller
                     })
                     ->firstOrFail();
 
-                // ==========================
-                // ✅ Build qty + sellSubtotal
-                // ==========================
-                $qtyByProduct = [];
-                $sellSubtotal = 0;
+                $productIds = collect($request->items)
+                    ->pluck('product_id')
+                    ->map(fn ($id) => (int) $id)
+                    ->filter(fn ($id) => $id > 0)
+                    ->unique()
+                    ->values()
+                    ->all();
 
-                foreach ($request->items as $row) {
-                    $pid = (int) ($row['product_id'] ?? 0);
-                    $qty = (int) ($row['quantity'] ?? 0);
-                    $sell = array_key_exists('price', $row) && $row['price'] !== null ? (int) $row['price'] : 0;
-
-                    if ($pid <= 0 || $qty <= 0) continue;
-
-                    if (!isset($qtyByProduct[$pid])) $qtyByProduct[$pid] = 0;
-                    $qtyByProduct[$pid] += $qty;
-
-                    $sellSubtotal += ($qty * max(0, $sell));
-                }
-
-                if (empty($qtyByProduct)) {
+                if (empty($productIds)) {
                     throw new \RuntimeException('Items are empty.');
                 }
-
-                $productIds = array_keys($qtyByProduct);
 
                 $productMap = Product::query()
                     ->select('id', 'product_price')
@@ -803,20 +888,31 @@ class SaleOrderController extends Controller
                     throw new \RuntimeException('Invalid product selected.');
                 }
 
-                // ==========================
-                // ✅ master subtotal
-                // ==========================
-                $masterSubtotal = 0;
-                foreach ($qtyByProduct as $pid => $qty) {
-                    $master = (int) ($productMap[$pid]->product_price ?? 0);
-                    $masterSubtotal += ((int)$qty * max(0, $master));
+                $itemSnapshot = $this->buildSaleOrderItemSnapshots((array) $request->items, $productMap);
+                $normalizedItems = $itemSnapshot['items'];
+                $qtyByProduct = $itemSnapshot['qty_by_product'];
+                $sellSubtotal = (int) $itemSnapshot['sell_subtotal'];
+                $masterSubtotal = (int) $itemSnapshot['master_subtotal'];
+
+                if (empty($qtyByProduct)) {
+                    throw new \RuntimeException('Items are empty.');
                 }
 
-                $discountAmount = max(0, (int) $masterSubtotal - (int) $sellSubtotal);
+                $autoDiscount = (string) $request->auto_discount === '1';
+                $requestedDiscountPct = max(0, min(100, (float) $request->discount_percentage));
 
-                $discountPct = 0.0;
-                if ($masterSubtotal > 0 && $discountAmount > 0) {
-                    $discountPct = round(($discountAmount / $masterSubtotal) * 100, 2);
+                $priceDiffDiscountAmount = max(0, (int) $masterSubtotal - (int) $sellSubtotal);
+
+                if ($autoDiscount) {
+                    $discountAmount = (int) $priceDiffDiscountAmount;
+                    $discountPct = 0.0;
+
+                    if ($masterSubtotal > 0 && $discountAmount > 0) {
+                        $discountPct = round(($discountAmount / $masterSubtotal) * 100, 2);
+                    }
+                } else {
+                    $discountPct = (float) $requestedDiscountPct;
+                    $discountAmount = (int) round($sellSubtotal * ($discountPct / 100));
                 }
 
                 $taxPct = (float) $request->tax_percentage;
@@ -824,7 +920,7 @@ class SaleOrderController extends Controller
                 $fee = (int) $request->fee_amount;
 
                 $taxAmount = (int) round($sellSubtotal * ($taxPct / 100));
-                $grandTotal = (int) round($sellSubtotal + $taxAmount + $shipping + $fee);
+                $grandTotal = (int) round($sellSubtotal + $taxAmount + $shipping + $fee - ($autoDiscount ? 0 : $discountAmount));
 
                 // deposit (same rule)
                 $depositPct = (int) ($request->deposit_percentage ?? 0);
@@ -877,12 +973,16 @@ class SaleOrderController extends Controller
                     ->where('sale_order_id', (int) $saleOrder->id)
                     ->delete();
 
-                foreach ($request->items as $row) {
+                foreach ($normalizedItems as $row) {
                     SaleOrderItem::create([
                         'sale_order_id' => (int) $saleOrder->id,
                         'product_id' => (int) $row['product_id'],
                         'quantity' => (int) $row['quantity'],
-                        'price' => array_key_exists('price', $row) && $row['price'] !== null ? (int) $row['price'] : null,
+                        'unit_price' => (int) $row['unit_price'],
+                        'price' => (int) $row['price'],
+                        'product_discount_amount' => (int) $row['product_discount_amount'],
+                        'product_discount_type' => (string) ($row['product_discount_type'] ?? 'fixed'),
+                        'sub_total' => (int) $row['sub_total'],
                     ]);
                 }
 

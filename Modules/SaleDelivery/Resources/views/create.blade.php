@@ -148,7 +148,7 @@
                                         <input type="number"
                                                name="items[{{ $i }}][quantity]"
                                                class="form-control"
-                                               min="1"
+                                               min="0"
                                                value="{{ (int) $qty }}"
                                                required>
                                     </td>

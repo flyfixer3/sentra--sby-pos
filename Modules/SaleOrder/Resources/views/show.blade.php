@@ -66,7 +66,12 @@
     $ship     = (int)($saleOrder->shipping_amount ?? 0);
     $total    = (int)($saleOrder->total_amount ?? 0);
 
-    $discInfo = (int)($saleOrder->discount_amount ?? 0); // informational diff
+    $storedDiscountAmount = (int)($saleOrder->discount_amount ?? 0);
+    $baseGrandBeforeDiscount = $subtotal + $taxAmt + $fee + $ship;
+    $appliedOrderDiscount = max(0, $baseGrandBeforeDiscount - $total);
+    $isManualOrderDiscount = $appliedOrderDiscount > 0;
+
+    $discInfo = $isManualOrderDiscount ? $appliedOrderDiscount : $storedDiscountAmount;
     $dpMax    = (int)($saleOrder->deposit_amount ?? 0);
     $dpRec    = (int)($saleOrder->deposit_received_amount ?? 0);
     $remainingAfterDp = max(0, $total - $dpRec);
@@ -189,10 +194,25 @@
                         <tr><td>Tax</td><td class="text-end">{{ format_currency($taxAmt) }}</td></tr>
                         <tr><td>Platform Fee</td><td class="text-end">{{ format_currency($fee) }}</td></tr>
                         <tr><td>Shipping</td><td class="text-end">{{ format_currency($ship) }}</td></tr>
+                        @if($discInfo > 0)
+                            <tr>
+                                <td>
+                                    {{ $isManualOrderDiscount ? 'Order Discount' : 'Discount Info (Diff)' }}
+                                    @if($isManualOrderDiscount && (float)($saleOrder->discount_percentage ?? 0) > 0)
+                                        <div class="text-muted small">{{ number_format((float)($saleOrder->discount_percentage ?? 0), 2) }}%</div>
+                                    @endif
+                                </td>
+                                <td class="text-end">- {{ format_currency($discInfo) }}</td>
+                            </tr>
+                        @endif
                         <tr><td><strong>Grand Total</strong></td><td class="text-end"><strong>{{ format_currency($total) }}</strong></td></tr>
                     </table>
                     <div class="text-muted small">
-                        Discount di SO adalah <strong>informasi</strong> (selisih Master vs Sell), bukan pengurangan kedua kali.
+                        @if($isManualOrderDiscount)
+                            Discount di SO ini adalah <strong>order-level discount</strong> yang mengurangi Grand Total.
+                        @else
+                            Discount di SO adalah <strong>informasi</strong> (selisih Master vs Sell), bukan pengurangan kedua kali.
+                        @endif
                     </div>
                 </div>
 
@@ -200,7 +220,7 @@
                     <div class="p-3 border rounded-3 bg-light">
                         <div class="row">
                             <div class="col-md-6">
-                                <div class="text-muted small">Discount Info (Diff)</div>
+                                <div class="text-muted small">{{ $isManualOrderDiscount ? 'Stored Discount' : 'Discount Info (Diff)' }}</div>
                                 <div class="fw-semibold">{{ format_currency($discInfo) }}</div>
                             </div>
                             <div class="col-md-6">
@@ -251,6 +271,10 @@
                         @php
                             $pid = (int) $it->product_id;
                             $ordered = (int) ($it->quantity ?? 0);
+                            $unitPrice = (int) ($it->unit_price ?? ($it->price ?? 0));
+                            $netPrice = (int) ($it->price ?? $unitPrice);
+                            $itemDiscount = (int) ($it->product_discount_amount ?? max(0, $unitPrice - $netPrice));
+                            $lineSubtotal = (int) ($it->sub_total ?? ($ordered * $netPrice));
 
                             $remConfirmed = (int) ($remainingConfirmedMap[$pid] ?? 0);
                             $delivered = max(0, $ordered - $remConfirmed);
@@ -275,6 +299,12 @@
                                         <span class="badge bg-light text-dark border">{{ $pCode }}</span>
                                     @endif
                                     <span class="ms-1">product_id: {{ $pid }}</span>
+                                </div>
+                                <div class="text-muted small mt-1">
+                                    Unit: <strong>{{ format_currency($unitPrice) }}</strong>
+                                    • Net: <strong>{{ format_currency($netPrice) }}</strong>
+                                    • Item Discount: <strong>{{ format_currency($itemDiscount) }}</strong>
+                                    • Subtotal: <strong>{{ format_currency($lineSubtotal) }}</strong>
                                 </div>
                             </td>
 

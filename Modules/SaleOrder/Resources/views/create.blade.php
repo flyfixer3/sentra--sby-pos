@@ -182,7 +182,7 @@
                                        class="form-control" value="{{ $oldDiscount }}" required>
 
                                 <div class="small text-muted">
-                                    Auto: % dihitung dari (Master - Sell). Manual: % akan mengubah Sell Price.
+                                    Auto: informasi dari selisih Unit vs Net per item. Manual: discount order-level mengurangi Grand Total.
                                 </div>
                             </div>
 
@@ -234,7 +234,7 @@
 
                                 <div class="small text-muted">
                                     Grand Total dihitung dari item (qty × sell price) + tax + fee + shipping.<br>
-                                    Discount hanya informasi (selisih Master vs Sell), tidak mengurangi lagi saat Auto ON.
+                                    Item discount sudah masuk ke Net Price per baris. Header discount hanya mengurangi total saat Auto OFF.
                                 </div>
                             </div>
                         </div>

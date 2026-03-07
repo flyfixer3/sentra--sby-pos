@@ -88,9 +88,11 @@ class ProductCartSale extends Component
                 $this->item_cost_konsyinasi[$pid] = (float) ($cart_item->options->product_cost ?? 0);
 
                 if (($cart_item->options->product_discount_type ?? 'fixed') === 'fixed') {
-                    $this->item_discount[$pid] = (float) ($cart_item->options->product_discount ?? 0);
+                    $this->item_discount[$pid] = (float) ($cart_item->price ?? 0);
                 } else {
-                    $priceBase = ((float) $cart_item->price > 0) ? (float) $cart_item->price : 1;
+                    $priceBase = ((float) ($cart_item->price + ($cart_item->options->product_discount ?? 0)) > 0)
+                        ? (float) ($cart_item->price + ($cart_item->options->product_discount ?? 0))
+                        : 1;
                     $disc = (float) ($cart_item->options->product_discount ?? 0);
                     $this->item_discount[$pid] = round(100 * ($disc / $priceBase), 2);
                 }
@@ -303,9 +305,11 @@ class ProductCartSale extends Component
         $cart_item = Cart::instance($this->cart_instance)->get($row_id);
         $this->global_qty = Cart::instance($this->cart_instance)->count();
 
+        $subTotal = (float) ($cart_item->price * $cart_item->qty);
+
         Cart::instance($this->cart_instance)->update($row_id, [
             'options' => [
-                'sub_total'             => $cart_item->price * $cart_item->qty,
+                'sub_total'             => $subTotal,
                 'code'                  => $cart_item->options->code,
                 'stock'                 => (int) $stock,
                 'stock_scope'           => $stockScope,
@@ -325,6 +329,148 @@ class ProductCartSale extends Component
 
         // ✅ keep state konsisten
         $this->syncQuantityDefaults();
+    }
+
+    public function updatedDiscountType($value, $name)
+    {
+        $productId = (int) $name;
+        $row = Cart::instance($this->cart_instance)
+            ->content()
+            ->first(function ($item) use ($productId) {
+                return (int) $item->id === $productId;
+            });
+
+        if (!$row) {
+            $this->item_discount[$productId] = 0;
+            return;
+        }
+
+        $basePrice = (float) (($row->price ?? 0) + ($row->options->product_discount ?? 0));
+        if ($basePrice < 0) {
+            $basePrice = 0;
+        }
+
+        if ($value === 'fixed') {
+            $this->item_discount[$productId] = $basePrice;
+        } else {
+            $this->item_discount[$productId] = 0;
+        }
+    }
+
+    public function discountModalRefresh($product_id, $row_id)
+    {
+        $product_id = (int) $product_id;
+        $row = Cart::instance($this->cart_instance)->get($row_id);
+        if ($row) {
+            $basePrice = (float) (($row->price ?? 0) + ($row->options->product_discount ?? 0));
+            if (($this->discount_type[$product_id] ?? 'fixed') === 'fixed') {
+                $this->item_discount[$product_id] = (float) ($row->price ?? 0);
+            } else {
+                $this->item_discount[$product_id] = $basePrice > 0
+                    ? round((float) ($row->options->product_discount ?? 0) / $basePrice * 100, 2)
+                    : 0;
+            }
+        }
+
+        $this->updateQuantity($row_id, $product_id);
+    }
+
+    public function setProductDiscount($row_id, $product_id)
+    {
+        $product_id = (int) $product_id;
+        $cart_item = Cart::instance($this->cart_instance)->get($row_id);
+
+        if (!$cart_item) {
+            session()->flash('discount_message' . $product_id, 'Cart item not found.');
+            return;
+        }
+
+        $discountType = (string) ($this->discount_type[$product_id] ?? 'fixed');
+        $inputValue = (float) ($this->item_discount[$product_id] ?? 0);
+
+        $basePrice = (float) (($cart_item->price ?? 0) + ($cart_item->options->product_discount ?? 0));
+        if ($basePrice < 0) {
+            $basePrice = 0;
+        }
+
+        if ($discountType === 'fixed') {
+            if ($inputValue < 0) {
+                $inputValue = 0;
+            }
+
+            $newRowPrice = (float) $inputValue;
+            $discountAmount = max(0, $basePrice - $newRowPrice);
+        } else {
+            if ($inputValue < 0 || $inputValue > 100) {
+                session()->flash('discount_message' . $product_id, 'Percentage must be between 0 and 100.');
+                return;
+            }
+
+            $discountAmount = round($basePrice * ($inputValue / 100), 2);
+            $newRowPrice = round($basePrice - $discountAmount, 2);
+        }
+
+        if ($newRowPrice < 0) {
+            $newRowPrice = 0;
+        }
+
+        Cart::instance($this->cart_instance)->update($row_id, [
+            'price' => $newRowPrice,
+        ]);
+
+        $updatedItem = Cart::instance($this->cart_instance)->get($row_id);
+        if (!$updatedItem) {
+            return;
+        }
+
+        $this->updateCartOptions($row_id, $product_id, $updatedItem, $discountAmount);
+
+        if ($discountType === 'fixed') {
+            $this->item_discount[$product_id] = $newRowPrice;
+        } else {
+            $this->item_discount[$product_id] = $inputValue;
+        }
+
+        session()->flash('discount_message' . $product_id, 'Discount added to the product!');
+    }
+
+    public function updateCartOptions($row_id, $product_id, $cart_item, $discount_amount)
+    {
+        $warehouseId   = (int) ($cart_item->options->warehouse_id ?? 0);
+        $warehouseName = (string) ($cart_item->options->warehouse_name ?? '');
+        $stockScope    = (string) ($cart_item->options->stock_scope ?? 'branch');
+
+        if ($warehouseId > 0) {
+            $stock = (int) Mutation::where('product_id', (int) $product_id)
+                ->where('warehouse_id', $warehouseId)
+                ->latest()
+                ->value('stock_last');
+
+            if ($stock < 0) {
+                $stock = 0;
+            }
+        } else {
+            $stock = $this->getSellableStockByBranch((int) $product_id);
+        }
+
+        $subTotal = (float) (($cart_item->price ?? 0) * ($cart_item->qty ?? 0));
+
+        Cart::instance($this->cart_instance)->update($row_id, ['options' => [
+            'sub_total'             => $subTotal,
+            'code'                  => $cart_item->options->code,
+            'stock'                 => (int) $stock,
+            'stock_scope'           => $stockScope,
+            'unit'                  => $cart_item->options->unit,
+            'warehouse_id'          => $warehouseId ?: null,
+            'warehouse_name'        => $warehouseName,
+            'product_tax'           => $cart_item->options->product_tax,
+            'product_cost'          => $cart_item->options->product_cost,
+            'unit_price'            => $cart_item->options->unit_price,
+            'product_discount'      => (float) $discount_amount,
+            'product_discount_type' => $this->discount_type[$product_id] ?? 'fixed',
+        ]]);
+
+        $this->check_quantity[$product_id] = (int) $stock;
     }
 
     /**
@@ -394,9 +540,11 @@ class ProductCartSale extends Component
 
             if (!isset($this->item_discount[$pid])) {
                 if (($row->options->product_discount_type ?? 'fixed') === 'fixed') {
-                    $this->item_discount[$pid] = (float) ($row->options->product_discount ?? 0);
+                    $this->item_discount[$pid] = (float) ($row->price ?? 0);
                 } else {
-                    $priceBase = ((float)$row->price > 0) ? (float)$row->price : 1;
+                    $priceBase = ((float)($row->price + ($row->options->product_discount ?? 0)) > 0)
+                        ? (float)($row->price + ($row->options->product_discount ?? 0))
+                        : 1;
                     $this->item_discount[$pid] = round(100 * (((float)($row->options->product_discount ?? 0)) / $priceBase));
                 }
             }

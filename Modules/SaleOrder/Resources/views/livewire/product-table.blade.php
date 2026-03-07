@@ -22,6 +22,9 @@
                     $qty = (int)($row['quantity'] ?? 1);
                     $price = (int)($row['price'] ?? 0);
                     $orig = (int)($row['original_price'] ?? 0);
+                    $unit = max($orig, $price);
+                    $itemDiscount = max(0, $unit - $price);
+                    $subTotal = max(0, $qty) * max(0, $price);
                 @endphp
 
                 <tr>
@@ -43,8 +46,11 @@
                         @endif
 
                         <input type="hidden" name="items[{{ $i }}][product_id]" value="{{ $pid }}">
-                        {{-- ✅ NEW baseline for auto-discount --}}
                         <input type="hidden" name="items[{{ $i }}][original_price]" value="{{ $orig }}">
+                        <input type="hidden" name="items[{{ $i }}][unit_price]" value="{{ $unit }}">
+                        <input type="hidden" name="items[{{ $i }}][product_discount_amount]" value="{{ $itemDiscount }}">
+                        <input type="hidden" name="items[{{ $i }}][product_discount_type]" value="fixed">
+                        <input type="hidden" name="items[{{ $i }}][sub_total]" value="{{ $subTotal }}">
                     </td>
 
                     <td>
@@ -69,9 +75,13 @@
                             value="{{ $price }}"
                             @if($pid <= 0) disabled @endif
                         >
-                        @if($pid > 0 && $orig > 0 && $price < $orig)
+                        @if($pid > 0)
                             <div class="text-muted small mt-1">
-                                Auto-discount candidate: {{ format_currency(($orig - $price) * max(1,$qty)) }}
+                                Unit: <strong>{{ format_currency($unit) }}</strong>
+                                • Item Discount: <strong>{{ format_currency($itemDiscount) }}/pcs</strong>
+                            </div>
+                            <div class="text-muted small">
+                                Line Subtotal: <strong>{{ format_currency($subTotal) }}</strong>
                             </div>
                         @endif
                     </td>

@@ -16,7 +16,11 @@ class SaleOrderItem extends BaseModel
         'sale_order_id',
         'product_id',
         'quantity',
+        'unit_price',
         'price',
+        'product_discount_amount',
+        'product_discount_type',
+        'sub_total',
     ];
 
     public function saleOrder(): BelongsTo
