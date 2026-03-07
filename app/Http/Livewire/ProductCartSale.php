@@ -5,6 +5,7 @@ namespace App\Http\Livewire;
 use App\Support\BranchContext;
 use Gloudemans\Shoppingcart\Facades\Cart;
 use Livewire\Component;
+use Modules\Product\Entities\Warehouse;
 use Modules\Mutation\Entities\Mutation;
 use Modules\Product\Services\HppService;
 
@@ -20,7 +21,7 @@ class ProductCartSale extends Component
     public $platform_fee = 0;
     public $is_locked_by_so = false;
 
-    // [product_id] => total stock pada branch (gabungan semua warehouse)
+    // [product_id] => sellable stock pada branch (GOOD - RESERVED)
     public $check_quantity;
 
     // [product_id] => qty
@@ -124,20 +125,38 @@ class ProductCartSale extends Component
         ]);
     }
 
-    private function getTotalStockByBranch(int $productId): int
+    private function getSellableStockByBranch(int $productId): int
     {
         $branchId = (int) BranchContext::id();
-
-        $q = Mutation::query()->where('product_id', $productId)->orderByDesc('id');
-
-        if ($branchId > 0) {
-            $q->where('branch_id', $branchId);
+        if ($branchId <= 0 || $productId <= 0) {
+            return 0;
         }
 
-        // ambil mutation terakhir per warehouse, lalu jumlah stock_last
-        $rows = $q->get()->unique('warehouse_id');
+        $warehouseIds = Warehouse::query()
+            ->where('branch_id', $branchId)
+            ->pluck('id')
+            ->map(fn ($id) => (int) $id)
+            ->toArray();
 
-        return (int) $rows->sum('stock_last');
+        $good = 0;
+        foreach ($warehouseIds as $warehouseId) {
+            $last = Mutation::query()
+                ->where('product_id', $productId)
+                ->where('warehouse_id', (int) $warehouseId)
+                ->latest()
+                ->value('stock_last');
+
+            $good += max(0, (int) ($last ?? 0));
+        }
+
+        $reserved = (int) \DB::table('stocks')
+            ->where('branch_id', $branchId)
+            ->whereNull('warehouse_id')
+            ->where('product_id', $productId)
+            ->value('qty_reserved');
+
+        $sellable = $good - max(0, $reserved);
+        return (int) max(0, $sellable);
     }
 
     public function productSelected($result)
@@ -145,12 +164,13 @@ class ProductCartSale extends Component
         $cart = Cart::instance($this->cart_instance);
         $product = $result;
 
-        // ✅ SALE CREATE (walk-in) defaultnya: stock ditampilkan dari TOTAL branch (gabungan semua warehouse)
+        // ✅ SALE CREATE (walk-in) defaultnya: stock = sellable branch pool (GOOD - RESERVED)
         // karena warehouse baru dipilih saat Confirm Sale Delivery.
-        $stockTotal = $this->getTotalStockByBranch((int) ($product['id'] ?? 0));
+        $stockTotal = $this->getSellableStockByBranch((int) ($product['id'] ?? 0));
 
         if ($stockTotal <= 0 && ($this->cart_instance === 'sale' || $this->cart_instance === 'purchase_return')) {
-            session()->flash('message', 'The requested quantity is not available in stock (Branch Total Stock = 0).');
+            session()->flash('message', 'The requested quantity is not available in stock (Sellable stock = 0).');
+            return;
         }
 
         $calc = $this->calculate($product);
@@ -167,7 +187,7 @@ class ProductCartSale extends Component
                 'sub_total'             => (int) ($calc['sub_total'] ?? 0),
                 'code'                  => (string) ($product['product_code'] ?? ''),
 
-                // ✅ stock ditampilkan sebagai total branch
+                // ✅ stock ditampilkan sebagai sellable branch pool
                 'stock'                 => (int) $stockTotal,
 
                 // ✅ FIX UTAMA BIAR UI NOTE GAK RANCU:
@@ -255,7 +275,7 @@ class ProductCartSale extends Component
 
         // hitung stock sesuai mode:
         // - kalau ada warehouse_id -> warehouse stock
-        // - kalau tidak -> branch total
+        // - kalau tidak -> sellable stock branch pool (GOOD - RESERVED)
         if ($warehouseId > 0) {
             $stock = (int) Mutation::where('product_id', $product_id)
                 ->where('warehouse_id', $warehouseId)
@@ -264,7 +284,7 @@ class ProductCartSale extends Component
 
             $stockScope = $stockScope ?: 'warehouse';
         } else {
-            $stock = $this->getTotalStockByBranch($product_id);
+            $stock = $this->getSellableStockByBranch($product_id);
             $stockScope = $stockScope ?: 'branch';
         }
 
@@ -321,12 +341,9 @@ class ProductCartSale extends Component
         $branchId  = (int) BranchContext::id();
         $productId = (int) ($product['id'] ?? 0);
 
-        // Ambil tanggal invoice jika tersedia (form sale biasanya punya field date)
-        // fallback: sekarang
-        $saleDate = request()->get('date');
-        if (empty($saleDate)) {
-            $saleDate = now()->toDateString();
-        }
+        // Preview HPP mengikuti waktu transaksi saat ini.
+        // Snapshot final yang disimpan tetap dihitung lagi di controller saat sale dibuat.
+        $saleDate = now();
 
         $hpp = 0.0;
         if ($branchId > 0 && $productId > 0) {

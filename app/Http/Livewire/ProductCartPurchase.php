@@ -5,6 +5,7 @@ namespace App\Http\Livewire;
 use Gloudemans\Shoppingcart\Facades\Cart;
 use Livewire\Component;
 use Modules\Mutation\Entities\Mutation;
+use Modules\Product\Entities\Product;
 use Modules\Product\Entities\Warehouse;
 
 class ProductCartPurchase extends Component
@@ -50,11 +51,14 @@ class ProductCartPurchase extends Component
         }
 
         if (!$this->loading_warehouse) {
-            $branchId = session('active_branch');
+            $branchId = $this->resolveActiveBranchIdFromSessionOrCart();
             $warehouse = null;
 
             if (!empty($branchId) && $branchId !== 'all') {
-                $warehouse = Warehouse::where('branch_id', (int) $branchId)->where('is_main', 1)->first();
+                $warehouse = Warehouse::where('branch_id', (int) $branchId)
+                    ->where('is_main', 1)
+                    ->first();
+
                 if (!$warehouse) {
                     $warehouse = Warehouse::where('branch_id', (int) $branchId)->first();
                 }
@@ -90,25 +94,22 @@ class ProductCartPurchase extends Component
                 if ($this->stock_mode === 'warehouse') {
                     $this->warehouse_id[$productId] = (int) ($cart_item->options->warehouse_id ?? ($this->loading_warehouse->id ?? 0));
                 } else {
-                    $this->warehouse_id[$productId] = $cart_item->options->warehouse_id ? (int) $cart_item->options->warehouse_id : null;
+                    $this->warehouse_id[$productId] = !empty($cart_item->options->warehouse_id)
+                        ? (int) $cart_item->options->warehouse_id
+                        : null;
                 }
 
                 $this->discount_type[$productId] = $cart_item->options->product_discount_type ?? 'fixed';
                 $this->item_cost_konsyinasi[$productId] = (float) ($cart_item->options->product_cost ?? 0);
 
-                if (($cart_item->options->product_discount_type ?? 'fixed') === 'fixed') {
-                    $currentUnitPrice = (float) ($cart_item->options->unit_price ?? 0);
-                    if ($currentUnitPrice <= 0) {
-                        $currentUnitPrice = (float) ($cart_item->price ?? 0);
-                    }
+                $currentUnitPrice = (float) ($cart_item->options->unit_price ?? 0);
+                if ($currentUnitPrice <= 0) {
+                    $currentUnitPrice = (float) ($cart_item->price ?? 0);
+                }
 
+                if (($cart_item->options->product_discount_type ?? 'fixed') === 'fixed') {
                     $this->item_discount[$productId] = $currentUnitPrice;
                 } else {
-                    $currentUnitPrice = (float) ($cart_item->options->unit_price ?? 0);
-                    if ($currentUnitPrice <= 0) {
-                        $currentUnitPrice = (float) ($cart_item->price ?? 0);
-                    }
-
                     $discountAmount = (float) ($cart_item->options->product_discount ?? 0);
 
                     if ($currentUnitPrice > 0) {
@@ -137,6 +138,82 @@ class ProductCartPurchase extends Component
         $this->syncQuantityDefaults();
     }
 
+    private function resolveActiveBranchIdFromSessionOrCart()
+    {
+        $activeBranch = session('active_branch');
+
+        if (!empty($activeBranch) && $activeBranch !== 'all') {
+            return (int) $activeBranch;
+        }
+
+        $firstRow = Cart::instance($this->cart_instance)->content()->first();
+        if ($firstRow && !empty($firstRow->options->branch_id)) {
+            return (int) $firstRow->options->branch_id;
+        }
+
+        if ($this->data && !empty($this->data->branch_id)) {
+            return (int) $this->data->branch_id;
+        }
+
+        return null;
+    }
+
+    private function getProductCode(int $productId): string
+    {
+        $product = Product::select('product_code')->find($productId);
+        return $product?->product_code ?? 'UNKNOWN';
+    }
+
+    private function getProductUnit(int $productId): string
+    {
+        $product = Product::select('product_unit')->find($productId);
+        return $product?->product_unit ?? 'Unit';
+    }
+
+    private function calculateStockContext(int $productId, ?int $warehouseId = null): array
+    {
+        if ($this->stock_mode === 'warehouse' && !empty($warehouseId)) {
+            $stockLast = $this->getStockLastByWarehouse($productId, (int) $warehouseId);
+
+            return [
+                'stock' => (int) $stockLast,
+                'stock_scope' => 'warehouse',
+                'warehouse_id' => (int) $warehouseId,
+            ];
+        }
+
+        $stockLast = $this->getStockLastAllWarehousesInActiveBranch($productId);
+
+        return [
+            'stock' => (int) $stockLast,
+            'stock_scope' => 'branch',
+            'warehouse_id' => null,
+        ];
+    }
+
+    private function mergeOptions($row, array $overrides = []): array
+    {
+        $existingOptions = (array) $row->options;
+
+        if (empty($existingOptions['code'])) {
+            $existingOptions['code'] = $this->getProductCode((int) $row->id);
+        }
+
+        if (!array_key_exists('branch_id', $existingOptions) || empty($existingOptions['branch_id'])) {
+            $existingOptions['branch_id'] = $this->resolveActiveBranchIdFromSessionOrCart();
+        }
+
+        if (empty($existingOptions['unit'])) {
+            $existingOptions['unit'] = $this->getProductUnit((int) $row->id);
+        }
+
+        if (!array_key_exists('purchase_detail_id', $existingOptions)) {
+            $existingOptions['purchase_detail_id'] = null;
+        }
+
+        return array_merge($existingOptions, $overrides);
+    }
+
     private function syncQuantityDefaults(): void
     {
         $cart_items = Cart::instance($this->cart_instance)->content();
@@ -159,7 +236,9 @@ class ProductCartPurchase extends Component
                 if ($this->stock_mode === 'warehouse') {
                     $this->warehouse_id[$pid] = (int) ($row->options->warehouse_id ?? ($this->loading_warehouse->id ?? 0));
                 } else {
-                    $this->warehouse_id[$pid] = $row->options->warehouse_id ? (int) $row->options->warehouse_id : null;
+                    $this->warehouse_id[$pid] = !empty($row->options->warehouse_id)
+                        ? (int) $row->options->warehouse_id
+                        : null;
                 }
             }
 
@@ -168,19 +247,14 @@ class ProductCartPurchase extends Component
             }
 
             if (!isset($this->item_discount[$pid])) {
-                if (($row->options->product_discount_type ?? 'fixed') === 'fixed') {
-                    $currentUnitPrice = (float) ($row->options->unit_price ?? 0);
-                    if ($currentUnitPrice <= 0) {
-                        $currentUnitPrice = (float) ($row->price ?? 0);
-                    }
+                $currentUnitPrice = (float) ($row->options->unit_price ?? 0);
+                if ($currentUnitPrice <= 0) {
+                    $currentUnitPrice = (float) ($row->price ?? 0);
+                }
 
+                if (($row->options->product_discount_type ?? 'fixed') === 'fixed') {
                     $this->item_discount[$pid] = $currentUnitPrice;
                 } else {
-                    $currentUnitPrice = (float) ($row->options->unit_price ?? 0);
-                    if ($currentUnitPrice <= 0) {
-                        $currentUnitPrice = (float) ($row->price ?? 0);
-                    }
-
                     $discountAmount = (float) ($row->options->product_discount ?? 0);
 
                     if ($currentUnitPrice > 0) {
@@ -216,7 +290,8 @@ class ProductCartPurchase extends Component
             return;
         }
 
-        $activeBranch = session('active_branch');
+        $activeBranch = $this->resolveActiveBranchIdFromSessionOrCart();
+
         if (!empty($activeBranch) && $activeBranch !== 'all') {
             $exists = Warehouse::where('id', $warehouseId)
                 ->where('branch_id', (int) $activeBranch)
@@ -253,36 +328,31 @@ class ProductCartPurchase extends Component
         foreach ($items as $row) {
             $productId = (int) $row->id;
 
-            if ($this->stock_mode === 'warehouse') {
-                $stockLast = $this->getStockLastByWarehouse($productId, $warehouseId);
-                $scope = 'warehouse';
-                $optWarehouseId = $warehouseId;
-            } else {
-                $stockLast = $this->getStockLastAllWarehousesInActiveBranch($productId);
-                $scope = 'branch';
-                $optWarehouseId = null;
+            $context = $this->calculateStockContext(
+                $productId,
+                $this->stock_mode === 'warehouse' ? $warehouseId : null
+            );
+
+            $unitPrice = (float) ($row->options->unit_price ?? 0);
+            if ($unitPrice <= 0) {
+                $unitPrice = (float) ($row->price ?? 0);
             }
 
+            $subTotal = $unitPrice * (int) ($row->qty ?? 0);
+
             $cart->update($row->rowId, [
-                'options' => [
-                    'sub_total'             => $row->price * $row->qty,
-                    'code'                  => $row->options->code,
-                    'stock'                 => $stockLast,
-                    'stock_scope'           => $scope,
-                    'unit'                  => $row->options->unit,
-                    'warehouse_id'          => $optWarehouseId,
-                    'product_tax'           => $row->options->product_tax,
-                    'product_cost'          => $row->options->product_cost,
-                    'unit_price'            => $row->options->unit_price,
-                    'product_discount'      => $row->options->product_discount,
-                    'product_discount_type' => $row->options->product_discount_type,
-                ]
+                'options' => $this->mergeOptions($row, [
+                    'sub_total'    => $subTotal,
+                    'stock'        => $context['stock'],
+                    'stock_scope'  => $context['stock_scope'],
+                    'warehouse_id' => $context['warehouse_id'],
+                ])
             ]);
 
-            $this->check_quantity[$productId] = $stockLast;
+            $this->check_quantity[$productId] = $context['stock'];
 
             if ($this->stock_mode === 'warehouse') {
-                $this->warehouse_id[$productId] = (int) $optWarehouseId;
+                $this->warehouse_id[$productId] = (int) $context['warehouse_id'];
             } else {
                 $this->warehouse_id[$productId] = null;
             }
@@ -303,7 +373,7 @@ class ProductCartPurchase extends Component
 
     private function getStockLastAllWarehousesInActiveBranch(int $productId): int
     {
-        $branchId = session('active_branch');
+        $branchId = $this->resolveActiveBranchIdFromSessionOrCart();
 
         if (empty($branchId) || $branchId === 'all') {
             return 0;
@@ -326,6 +396,15 @@ class ProductCartPurchase extends Component
     {
         $cart = Cart::instance($this->cart_instance);
 
+        $exists = $cart->search(function ($cartItem) use ($product) {
+            return (int) $cartItem->id === (int) $product['id'];
+        });
+
+        if ($exists->isNotEmpty()) {
+            session()->flash('message', 'Product exists in the cart!');
+            return;
+        }
+
         $warehouseId = (int) ($this->loading_warehouse ? $this->loading_warehouse->id : 0);
 
         if ($this->stock_mode === 'warehouse' && $warehouseId <= 0) {
@@ -333,15 +412,10 @@ class ProductCartPurchase extends Component
             return;
         }
 
-        if ($this->stock_mode === 'warehouse') {
-            $stockLast = $this->getStockLastByWarehouse((int) $product['id'], $warehouseId);
-            $scope = 'warehouse';
-            $optWarehouseId = $warehouseId;
-        } else {
-            $stockLast = $this->getStockLastAllWarehousesInActiveBranch((int) $product['id']);
-            $scope = 'branch';
-            $optWarehouseId = null;
-        }
+        $context = $this->calculateStockContext(
+            (int) $product['id'],
+            $this->stock_mode === 'warehouse' ? $warehouseId : null
+        );
 
         $calc = $this->calculate($product);
 
@@ -349,27 +423,29 @@ class ProductCartPurchase extends Component
             'id'      => $product['id'],
             'name'    => $product['product_name'],
             'qty'     => 1,
-            'price'   => $calc['price'],
+            'price'   => $calc['unit_price'],
             'weight'  => 1,
             'options' => [
+                'purchase_detail_id'    => null,
                 'product_discount'      => 0.00,
                 'product_discount_type' => 'fixed',
-                'sub_total'             => $calc['sub_total'],
+                'sub_total'             => $calc['unit_price'],
                 'code'                  => $product['product_code'],
-                'stock'                 => $stockLast,
-                'stock_scope'           => $scope,
+                'stock'                 => $context['stock'],
+                'stock_scope'           => $context['stock_scope'],
                 'unit'                  => $product['product_unit'],
-                'warehouse_id'          => $optWarehouseId,
+                'warehouse_id'          => $context['warehouse_id'],
                 'product_tax'           => $calc['product_tax'],
                 'product_cost'          => $calc['product_cost'],
                 'unit_price'            => $calc['unit_price'],
+                'branch_id'             => $this->resolveActiveBranchIdFromSessionOrCart(),
             ]
         ]);
 
         $this->global_qty = $cart->count();
-        $this->check_quantity[$product['id']] = $stockLast;
+        $this->check_quantity[$product['id']] = $context['stock'];
         $this->quantity[$product['id']] = 1;
-        $this->warehouse_id[$product['id']] = $optWarehouseId;
+        $this->warehouse_id[$product['id']] = $context['warehouse_id'];
         $this->discount_type[$product['id']] = 'fixed';
         $this->item_discount[$product['id']] = (float) $calc['unit_price'];
         $this->item_cost_konsyinasi[$product['id']] = (float) ($calc['product_cost'] ?? 0);
@@ -410,21 +486,30 @@ class ProductCartPurchase extends Component
         $cart_item = Cart::instance($this->cart_instance)->get($row_id);
         $this->global_qty = Cart::instance($this->cart_instance)->count();
 
+        $warehouseId = null;
+        if ($this->stock_mode === 'warehouse') {
+            $warehouseId = (int) ($cart_item->options->warehouse_id ?? ($this->loading_warehouse->id ?? 0));
+        }
+
+        $context = $this->calculateStockContext((int) $product_id, $warehouseId);
+
+        $unitPrice = (float) ($cart_item->options->unit_price ?? 0);
+        if ($unitPrice <= 0) {
+            $unitPrice = (float) ($cart_item->price ?? 0);
+        }
+
+        $subTotal = $unitPrice * (int) ($cart_item->qty ?? 0);
+
         Cart::instance($this->cart_instance)->update($row_id, [
-            'options' => [
-                'sub_total'             => $cart_item->price * $cart_item->qty,
-                'code'                  => $cart_item->options->code,
-                'stock'                 => $cart_item->options->stock,
-                'stock_scope'           => $cart_item->options->stock_scope ?? ($this->stock_mode === 'warehouse' ? 'warehouse' : 'branch'),
-                'unit'                  => $cart_item->options->unit,
-                'warehouse_id'          => $cart_item->options->warehouse_id,
-                'product_tax'           => $cart_item->options->product_tax,
-                'product_cost'          => $cart_item->options->product_cost,
-                'unit_price'            => $cart_item->options->unit_price,
-                'product_discount'      => $cart_item->options->product_discount,
-                'product_discount_type' => $cart_item->options->product_discount_type,
-            ]
+            'options' => $this->mergeOptions($cart_item, [
+                'sub_total'    => $subTotal,
+                'stock'        => $context['stock'],
+                'stock_scope'  => $context['stock_scope'],
+                'warehouse_id' => $context['warehouse_id'],
+            ])
         ]);
+
+        $this->check_quantity[$product_id] = $context['stock'];
     }
 
     public function updatedDiscountType($value, $name)
@@ -443,6 +528,7 @@ class ProductCartPurchase extends Component
                 if ($currentUnitPrice <= 0) {
                     $currentUnitPrice = (float) ($row->price ?? 0);
                 }
+
                 $this->item_discount[$productId] = $currentUnitPrice;
                 return;
             }
@@ -525,10 +611,6 @@ class ProductCartPurchase extends Component
 
             if (!empty($inputValue)) {
                 $discount_amount = ($cart_item->price + ($cart_item->options->product_discount ?? 0)) - $inputValue;
-
-                Cart::instance($this->cart_instance)->update($row_id, [
-                    'price' => $inputValue,
-                ]);
             }
 
             $this->updateCartOptions(
@@ -545,10 +627,6 @@ class ProductCartPurchase extends Component
             $basePrice = (float) ($cart_item->price + ($cart_item->options->product_discount ?? 0));
             $discount_amount = round($basePrice * ($inputValue / 100), 2);
             $newRowPrice = round($basePrice - $discount_amount, 2);
-
-            Cart::instance($this->cart_instance)->update($row_id, [
-                'price' => $newRowPrice,
-            ]);
 
             $this->updateCartOptions(
                 $row_id,
@@ -578,18 +656,18 @@ class ProductCartPurchase extends Component
             $unit_price = $product['product_price'];
             $product_cost = $product['product_cost'];
             $product_tax = $product['product_price'] * ($product['product_order_tax'] / 1);
-            $sub_total = $price;
+            $sub_total = $unit_price;
         } elseif ($product['product_tax_type'] == 2) {
             $price = $product['product_price'];
             $unit_price = $product['product_price'] - ($product['product_price'] * ($product['product_order_tax'] / 1));
             $product_tax = $product['product_price'] * ($product['product_order_tax'] / 1);
-            $sub_total = $product['product_price'];
+            $sub_total = $unit_price;
             $product_cost = $product['product_cost'];
         } else {
             $price = $product['product_price'];
             $unit_price = $product['product_price'];
             $product_tax = 0.00;
-            $sub_total = $product['product_price'];
+            $sub_total = $unit_price;
             $product_cost = $product['product_cost'];
         }
 
@@ -612,7 +690,10 @@ class ProductCartPurchase extends Component
         $overrideUnitPrice = null,
         $overrideRowPrice = null
     ) {
-        $optWarehouseId = ($this->stock_mode === 'warehouse') ? (int) $warehouse_id : null;
+        $context = $this->calculateStockContext(
+            (int) $product_id,
+            $this->stock_mode === 'warehouse' ? (int) $warehouse_id : null
+        );
 
         $freshItem = Cart::instance($this->cart_instance)->get($row_id);
         if (!$freshItem) {
@@ -627,24 +708,42 @@ class ProductCartPurchase extends Component
             ? (float) $overrideUnitPrice
             : (float) ($freshItem->options->unit_price ?? $finalRowPrice);
 
-        $finalQty = (int) ($freshItem->qty ?? 0);
-        $finalSubTotal = round($finalRowPrice * $finalQty, 2);
+        if ($finalUnitPrice <= 0) {
+            $finalUnitPrice = $finalRowPrice;
+        }
+
+        if ($finalRowPrice <= 0) {
+            $finalRowPrice = $finalUnitPrice;
+        }
 
         Cart::instance($this->cart_instance)->update($row_id, [
             'price' => $finalRowPrice,
-            'options' => [
+        ]);
+
+        $updatedItem = Cart::instance($this->cart_instance)->get($row_id);
+        if (!$updatedItem) {
+            return;
+        }
+
+        $finalQty = (int) ($updatedItem->qty ?? 0);
+        $finalSubTotal = round($finalUnitPrice * $finalQty, 2);
+
+        Cart::instance($this->cart_instance)->update($row_id, [
+            'options' => $this->mergeOptions($updatedItem, [
                 'sub_total'             => $finalSubTotal,
-                'code'                  => $freshItem->options->code,
-                'stock'                 => $freshItem->options->stock,
-                'stock_scope'           => $freshItem->options->stock_scope ?? ($this->stock_mode === 'warehouse' ? 'warehouse' : 'branch'),
-                'unit'                  => $freshItem->options->unit,
-                'product_tax'           => $freshItem->options->product_tax,
-                'warehouse_id'          => $optWarehouseId,
-                'product_cost'          => $item_cost_konsyinasi,
-                'unit_price'            => $finalUnitPrice,
+                'stock'                 => $context['stock'],
+                'stock_scope'           => $context['stock_scope'],
+                'warehouse_id'          => $context['warehouse_id'],
+                'product_cost'          => (float) $item_cost_konsyinasi,
+                'unit_price'            => (float) $finalUnitPrice,
                 'product_discount'      => (float) $discount_amount,
                 'product_discount_type' => $this->discount_type[$product_id] ?? 'fixed',
-            ]
+                'code'                  => $updatedItem->options->code ?? $this->getProductCode((int) $product_id),
+                'unit'                  => $updatedItem->options->unit ?? $this->getProductUnit((int) $product_id),
+                'branch_id'             => $updatedItem->options->branch_id ?? $this->resolveActiveBranchIdFromSessionOrCart(),
+            ])
         ]);
+
+        $this->check_quantity[$product_id] = $context['stock'];
     }
 }

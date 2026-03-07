@@ -810,7 +810,7 @@ class SaleController extends Controller
                 $total_cost = 0;
 
                 $hppService = new \Modules\Product\Services\HppService();
-                $saleDateForHpp = $request->date ?: now()->toDateString();
+                $saleHppAt = $sale->created_at ?? now();
 
                 foreach ($cartItems as $cart_item) {
                     $qty = (int) ($cart_item->qty ?? 0);
@@ -819,11 +819,11 @@ class SaleController extends Controller
 
                     $productId = (int) $cart_item->id;
 
-                    // ✅ snapshot HPP di server: as-of tanggal invoice
+                    // ✅ snapshot HPP di server: as-of waktu transaksi sale dibuat
                     $hppUnit = 0;
                     if ($branchId > 0 && $productId > 0) {
                         if (method_exists($hppService, 'getHppAsOf')) {
-                            $hppUnit = (float) $hppService->getHppAsOf($branchId, $productId, $saleDateForHpp);
+                            $hppUnit = (float) $hppService->getHppAsOf($branchId, $productId, $saleHppAt);
                         } else {
                             $hppUnit = (float) $hppService->getCurrentHpp($branchId, $productId);
                         }

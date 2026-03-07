@@ -25,7 +25,7 @@
                         @include('utils.alerts')
 
                         @php
-                            $isAdmin = auth()->check() && auth()->user()->hasRole('Administrator');
+                            $isAdmin = $canManageHppSensitiveEdit ?? false;
 
                             $pdStatus = null;
                             if (!empty($purchase->purchase_delivery_id)) {

@@ -2,6 +2,7 @@
 
 namespace Modules\Sale\Http\Controllers;
 
+use App\Support\BranchContext;
 use Gloudemans\Shoppingcart\Facades\Cart;
 use Illuminate\Contracts\Support\Renderable;
 use Illuminate\Http\Request;
@@ -10,6 +11,7 @@ use Illuminate\Support\Facades\DB;
 use Modules\People\Entities\Customer;
 use Modules\Product\Entities\Category;
 use Modules\Product\Entities\Product;
+use Modules\Product\Services\HppService;
 use Modules\Sale\Entities\Sale;
 use Modules\Sale\Entities\SaleDetails;
 use Modules\Sale\Entities\SalePayment;
@@ -39,6 +41,7 @@ class PosController extends Controller
 
     public function store(StorePosSaleRequest $request) {
         DB::transaction(function () use ($request) {
+            $branchId = (int) (BranchContext::id() ?? 0);
             $due_amount = $request->total_amount - $request->paid_amount;
 
             if ($due_amount == $request->total_amount) {
@@ -68,12 +71,23 @@ class PosController extends Controller
                 'discount_amount' => Cart::instance('sale')->discount() * 1,
             ]);
 
+            $hppService = new HppService();
+            $saleHppAt = $sale->created_at ?? now();
+
             foreach (Cart::instance('sale')->content() as $cart_item) {
+                $productId = (int) $cart_item->id;
+                $hppUnit = 0.0;
+
+                if ($branchId > 0 && $productId > 0) {
+                    $hppUnit = (float) $hppService->getHppAsOf($branchId, $productId, $saleHppAt);
+                }
+
                 SaleDetails::create([
                     'sale_id' => $sale->id,
-                    'product_id' => $cart_item->id,
+                    'product_id' => $productId,
                     'product_name' => $cart_item->name,
                     'product_code' => $cart_item->options->code,
+                    'product_cost' => (int) round(max(0.0, $hppUnit), 0),
                     'quantity' => $cart_item->qty,
                     'price' => $cart_item->price * 1,
                     'unit_price' => $cart_item->options->unit_price * 1,

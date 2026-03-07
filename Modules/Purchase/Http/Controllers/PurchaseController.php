@@ -516,6 +516,21 @@ class PurchaseController extends Controller
         };
     }
 
+    private function canManageHppSensitiveEdit(): bool
+    {
+        $user = auth()->user();
+
+        if (!$user) {
+            return false;
+        }
+
+        if ($user->can('view_sale_hpp')) {
+            return true;
+        }
+
+        return $user->hasAnyRole(['Administrator', 'Super Admin']);
+    }
+
     public function show(Purchase $purchase)
     {
         abort_if(Gate::denies('show_purchases'), 403);
@@ -672,16 +687,27 @@ class PurchaseController extends Controller
                 $itemWarehouseId = null;
             }
 
+            $unitPrice = (float) ($purchase_detail->unit_price ?? 0);
+            if ($unitPrice <= 0) {
+                $unitPrice = (float) ($purchase_detail->price ?? 0);
+            }
+
+            $subTotal = (float) ($purchase_detail->sub_total ?? 0);
+            if ($subTotal <= 0) {
+                $subTotal = (float) $unitPrice * (int) ($purchase_detail->quantity ?? 0);
+            }
+
             $cart->add([
                 'id'      => (int) $purchase_detail->product_id,
                 'name'    => (string) $purchase_detail->product_name,
                 'qty'     => (int) $purchase_detail->quantity,
-                'price'   => (float) $purchase_detail->price,
+                'price'   => (float) $unitPrice,
                 'weight'  => 1,
                 'options' => [
+                    'purchase_detail_id'    => (int) $purchase_detail->id,
                     'product_discount'      => (float) $purchase_detail->product_discount_amount,
                     'product_discount_type' => (string) $purchase_detail->product_discount_type,
-                    'sub_total'             => (float) $purchase_detail->sub_total,
+                    'sub_total'             => (float) $subTotal,
                     'code'                  => (string) $purchase_detail->product_code,
                     'warehouse_id'          => $itemWarehouseId,
                     'stock'                 => (int) $stockLast,
@@ -689,7 +715,7 @@ class PurchaseController extends Controller
                     'unit'                  => $product?->product_unit,
                     'product_tax'           => (float) $purchase_detail->product_tax_amount,
                     'product_cost'          => (float) ($product?->product_cost ?? 0),
-                    'unit_price'            => (float) $purchase_detail->unit_price,
+                    'unit_price'            => (float) $unitPrice,
                     'branch_id'             => (int) $branchId,
                 ],
             ]);
@@ -699,6 +725,7 @@ class PurchaseController extends Controller
             'purchase' => $purchase,
             'loadingWarehouseId' => $loadingWarehouseId,
             'stock_mode' => $stock_mode,
+            'canManageHppSensitiveEdit' => $this->canManageHppSensitiveEdit(),
         ]);
     }
 
@@ -714,7 +741,9 @@ class PurchaseController extends Controller
                 // =========================================================
                 // Permission rules
                 // =========================================================
-                $isAdmin = auth()->check() && auth()->user()->hasRole('Administrator');
+                $isAdmin = $this->canManageHppSensitiveEdit();
+
+                $purchase->loadMissing(['purchaseDetails']);
 
                 // =========================================================
                 // Map detail lama (DB) untuk detect perubahan HPP-sensitive
@@ -820,8 +849,6 @@ class PurchaseController extends Controller
 
                 // =========================================================
                 // Resolve warehouse FINAL mengikuti PD confirmed saja
-                // - jika PD belum confirmed => warehouse null
-                // - jika PD confirmed + warehouse ada => gunakan warehouse itu
                 // =========================================================
                 $linkedPd = null;
                 if (!empty($purchase->purchase_delivery_id)) {
@@ -876,20 +903,25 @@ class PurchaseController extends Controller
                 ]);
 
                 // =========================================================
-                // replace details
+                // Update exact purchase detail row, jangan delete-all + recreate
                 // =========================================================
-                foreach ($purchase->purchaseDetails as $purchase_detail) {
-                    $purchase_detail->delete();
+                $activeDetailIds = $purchase->purchaseDetails()
+                    ->pluck('id')
+                    ->map(fn ($id) => (int) $id)
+                    ->toArray();
+
+                $existingDetailsByProduct = [];
+                foreach ($purchase->purchaseDetails as $existingDetail) {
+                    $existingDetailsByProduct[(int) $existingDetail->product_id][] = $existingDetail;
                 }
+
+                $usedDetailIds = [];
 
                 foreach (Cart::instance('purchase')->content() as $cart_item) {
                     $itemWarehouseId = null;
 
                     if (!empty($warehouseId)) {
                         $itemWarehouseId = (int) $warehouseId;
-                    }
-
-                    if (!empty($itemWarehouseId)) {
                         $this->assertWarehouseBelongsToBranch((int) $itemWarehouseId, (int) $branchId);
                     }
 
@@ -899,20 +931,73 @@ class PurchaseController extends Controller
                         $productCode = ($p && $p->product_code) ? $p->product_code : 'UNKNOWN';
                     }
 
-                    PurchaseDetail::create([
-                        'purchase_id' => $purchase->id,
-                        'product_id' => $cart_item->id,
-                        'product_name' => $cart_item->name,
-                        'product_code' => $productCode,
-                        'quantity' => (int) $cart_item->qty,
-                        'price' => $cart_item->price * 1,
+                    $detailUnitPrice = (float) ($cart_item->options->unit_price ?? 0);
+                    if ($detailUnitPrice <= 0) {
+                        $detailUnitPrice = (float) ($cart_item->price ?? 0);
+                    }
+
+                    $detailPrice = (float) ($cart_item->price ?? 0);
+                    if ($detailPrice <= 0) {
+                        $detailPrice = (float) $detailUnitPrice;
+                    }
+
+                    $detailQty = (int) ($cart_item->qty ?? 0);
+
+                    $detailSubTotal = (float) ($cart_item->options->sub_total ?? 0);
+                    if ($detailSubTotal <= 0) {
+                        $detailSubTotal = round($detailUnitPrice * $detailQty, 2);
+                    }
+
+                    $payload = [
+                        'purchase_id' => (int) $purchase->id,
+                        'product_id' => (int) $cart_item->id,
+                        'product_name' => (string) $cart_item->name,
+                        'product_code' => (string) $productCode,
+                        'quantity' => $detailQty,
+                        'price' => $detailPrice * 1,
                         'warehouse_id' => $itemWarehouseId ? (int) $itemWarehouseId : null,
-                        'unit_price' => ($cart_item->options->unit_price ?? 0) * 1,
-                        'sub_total' => ($cart_item->options->sub_total ?? 0) * 1,
-                        'product_discount_amount' => ($cart_item->options->product_discount ?? 0) * 1,
+                        'unit_price' => $detailUnitPrice * 1,
+                        'sub_total' => $detailSubTotal * 1,
+                        'product_discount_amount' => ((float) ($cart_item->options->product_discount ?? 0)) * 1,
                         'product_discount_type' => $cart_item->options->product_discount_type ?? 'fixed',
-                        'product_tax_amount' => ($cart_item->options->product_tax ?? 0) * 1,
-                    ]);
+                        'product_tax_amount' => ((float) ($cart_item->options->product_tax ?? 0)) * 1,
+                    ];
+
+                    $purchaseDetailId = (int) ($cart_item->options->purchase_detail_id ?? 0);
+
+                    if ($purchaseDetailId > 0) {
+                        $detailRow = PurchaseDetail::where('purchase_id', (int) $purchase->id)
+                            ->where('id', $purchaseDetailId)
+                            ->first();
+
+                        if ($detailRow) {
+                            $detailRow->update($payload);
+                            $usedDetailIds[] = (int) $detailRow->id;
+                            continue;
+                        }
+                    }
+
+                    $fallbackDetail = collect($existingDetailsByProduct[(int) $cart_item->id] ?? [])
+                        ->first(function ($detail) use ($usedDetailIds) {
+                            return !in_array((int) $detail->id, $usedDetailIds, true);
+                        });
+
+                    if ($fallbackDetail) {
+                        $fallbackDetail->update($payload);
+                        $usedDetailIds[] = (int) $fallbackDetail->id;
+                        continue;
+                    }
+
+                    $newDetail = PurchaseDetail::create($payload);
+                    $usedDetailIds[] = (int) $newDetail->id;
+                }
+
+                // Soft delete detail yang tidak lagi ada di cart invoice ini
+                $detailIdsToDelete = array_values(array_diff($activeDetailIds, $usedDetailIds));
+                if (!empty($detailIdsToDelete)) {
+                    PurchaseDetail::where('purchase_id', (int) $purchase->id)
+                        ->whereIn('id', $detailIdsToDelete)
+                        ->delete();
                 }
 
                 // =========================================================
