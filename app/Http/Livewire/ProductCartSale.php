@@ -127,11 +127,15 @@ class ProductCartSale extends Component
         ]);
     }
 
-    private function getSellableStockByBranch(int $productId): int
+    private function getBranchStockSnapshot(int $productId): array
     {
         $branchId = (int) BranchContext::id();
         if ($branchId <= 0 || $productId <= 0) {
-            return 0;
+            return [
+                'good' => 0,
+                'reserved' => 0,
+                'sellable' => 0,
+            ];
         }
 
         $warehouseIds = Warehouse::query()
@@ -157,8 +161,19 @@ class ProductCartSale extends Component
             ->where('product_id', $productId)
             ->value('qty_reserved');
 
-        $sellable = $good - max(0, $reserved);
-        return (int) max(0, $sellable);
+        $reserved = max(0, $reserved);
+        $sellable = max(0, $good - $reserved);
+
+        return [
+            'good' => (int) $good,
+            'reserved' => (int) $reserved,
+            'sellable' => (int) $sellable,
+        ];
+    }
+
+    private function getSellableStockByBranch(int $productId): int
+    {
+        return (int) ($this->getBranchStockSnapshot($productId)['sellable'] ?? 0);
     }
 
     public function productSelected($result)
@@ -168,7 +183,8 @@ class ProductCartSale extends Component
 
         // ✅ SALE CREATE (walk-in) defaultnya: stock = sellable branch pool (GOOD - RESERVED)
         // karena warehouse baru dipilih saat Confirm Sale Delivery.
-        $stockTotal = $this->getSellableStockByBranch((int) ($product['id'] ?? 0));
+        $stockSnapshot = $this->getBranchStockSnapshot((int) ($product['id'] ?? 0));
+        $stockTotal = (int) ($stockSnapshot['sellable'] ?? 0);
 
         if ($stockTotal <= 0 && ($this->cart_instance === 'sale' || $this->cart_instance === 'purchase_return')) {
             session()->flash('message', 'The requested quantity is not available in stock (Sellable stock = 0).');
@@ -191,6 +207,8 @@ class ProductCartSale extends Component
 
                 // ✅ stock ditampilkan sebagai sellable branch pool
                 'stock'                 => (int) $stockTotal,
+                'reserved_stock'        => (int) ($stockSnapshot['reserved'] ?? 0),
+                'sellable_stock'        => (int) ($stockSnapshot['sellable'] ?? 0),
 
                 // ✅ FIX UTAMA BIAR UI NOTE GAK RANCU:
                 // kalau ini kosong, blade kamu fallback ke 'warehouse' => "Stock shown is from warehouse..."
@@ -274,6 +292,8 @@ class ProductCartSale extends Component
         $warehouseId   = (int) ($cart_item->options->warehouse_id ?? 0);
         $warehouseName = (string) ($cart_item->options->warehouse_name ?? '');
         $stockScope    = (string) ($cart_item->options->stock_scope ?? '');
+        $reservedStock = (int) ($cart_item->options->reserved_stock ?? 0);
+        $sellableStock = (int) ($cart_item->options->sellable_stock ?? 0);
 
         // hitung stock sesuai mode:
         // - kalau ada warehouse_id -> warehouse stock
@@ -285,9 +305,14 @@ class ProductCartSale extends Component
                 ->value('stock_last') ?? 0;
 
             $stockScope = $stockScope ?: 'warehouse';
+            $reservedStock = 0;
+            $sellableStock = (int) $stock;
         } else {
-            $stock = $this->getSellableStockByBranch($product_id);
+            $stockSnapshot = $this->getBranchStockSnapshot($product_id);
+            $stock = (int) ($stockSnapshot['sellable'] ?? 0);
             $stockScope = $stockScope ?: 'branch';
+            $reservedStock = (int) ($stockSnapshot['reserved'] ?? 0);
+            $sellableStock = (int) ($stockSnapshot['sellable'] ?? 0);
         }
 
         $this->check_quantity[$product_id] = (int) $stock;
@@ -312,6 +337,8 @@ class ProductCartSale extends Component
                 'sub_total'             => $subTotal,
                 'code'                  => $cart_item->options->code,
                 'stock'                 => (int) $stock,
+                'reserved_stock'        => (int) $reservedStock,
+                'sellable_stock'        => (int) $sellableStock,
                 'stock_scope'           => $stockScope,
                 'unit'                  => $cart_item->options->unit,
 
@@ -439,6 +466,8 @@ class ProductCartSale extends Component
         $warehouseId   = (int) ($cart_item->options->warehouse_id ?? 0);
         $warehouseName = (string) ($cart_item->options->warehouse_name ?? '');
         $stockScope    = (string) ($cart_item->options->stock_scope ?? 'branch');
+        $reservedStock = (int) ($cart_item->options->reserved_stock ?? 0);
+        $sellableStock = (int) ($cart_item->options->sellable_stock ?? 0);
 
         if ($warehouseId > 0) {
             $stock = (int) Mutation::where('product_id', (int) $product_id)
@@ -449,8 +478,14 @@ class ProductCartSale extends Component
             if ($stock < 0) {
                 $stock = 0;
             }
+
+            $reservedStock = 0;
+            $sellableStock = (int) $stock;
         } else {
-            $stock = $this->getSellableStockByBranch((int) $product_id);
+            $stockSnapshot = $this->getBranchStockSnapshot((int) $product_id);
+            $stock = (int) ($stockSnapshot['sellable'] ?? 0);
+            $reservedStock = (int) ($stockSnapshot['reserved'] ?? 0);
+            $sellableStock = (int) ($stockSnapshot['sellable'] ?? 0);
         }
 
         $subTotal = (float) (($cart_item->price ?? 0) * ($cart_item->qty ?? 0));
@@ -459,6 +494,8 @@ class ProductCartSale extends Component
             'sub_total'             => $subTotal,
             'code'                  => $cart_item->options->code,
             'stock'                 => (int) $stock,
+            'reserved_stock'        => (int) $reservedStock,
+            'sellable_stock'        => (int) $sellableStock,
             'stock_scope'           => $stockScope,
             'unit'                  => $cart_item->options->unit,
             'warehouse_id'          => $warehouseId ?: null,

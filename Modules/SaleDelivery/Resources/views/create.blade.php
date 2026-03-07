@@ -107,6 +107,9 @@
                         <small class="text-muted">
                             {{ $isSaleOrder ? 'Items are prefilled from Sale Order (remaining qty).' : 'Add products and quantities.' }}
                         </small>
+                        <div class="small text-muted">
+                            Quantity `0` is allowed while preparing the form. Rows with qty `0` will be ignored on submit, but at least 1 product with qty greater than `0` is required.
+                        </div>
                     </div>
                 </div>
 
@@ -156,7 +159,7 @@
                                     <td class="text-end">
                                         <button type="button"
                                                 class="btn btn-sm btn-outline-danger remove-row"
-                                                {{ ($isSaleOrder || $i === 0) ? 'disabled' : '' }}>
+                                                {{ (count($items) <= 1) ? 'disabled' : '' }}>
                                             Remove
                                         </button>
                                     </td>
@@ -196,7 +199,7 @@
                 </select>
             </td>
             <td>
-                <input type="number" name="items[${idx}][quantity]" class="form-control" min="1" value="1" required>
+                <input type="number" name="items[${idx}][quantity]" class="form-control" min="0" value="1" required>
             </td>
             <td class="text-end">
                 <button type="button" class="btn btn-sm btn-outline-danger remove-row">Remove</button>
@@ -218,6 +221,8 @@
             const tbody = document.querySelector('#items-table tbody');
             if (tbody && tbody.querySelectorAll('tr').length > 1) {
                 tr.remove();
+            } else {
+                window.alert('At least 1 product row must remain.');
             }
         }
     });

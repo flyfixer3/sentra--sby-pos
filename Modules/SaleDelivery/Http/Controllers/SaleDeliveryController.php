@@ -22,6 +22,25 @@ class SaleDeliveryController extends Controller
 {
     use SaleDeliveryShared;
 
+    private function normalizeDraftItems(array $items): array
+    {
+        return collect($items)
+            ->map(function ($row) {
+                return [
+                    'product_id' => (int) ($row['product_id'] ?? 0),
+                    'quantity' => max(0, (int) ($row['quantity'] ?? 0)),
+                    'price' => array_key_exists('price', $row) && $row['price'] !== null
+                        ? (int) $row['price']
+                        : null,
+                ];
+            })
+            ->filter(function ($row) {
+                return (int) $row['product_id'] > 0 && (int) $row['quantity'] > 0;
+            })
+            ->values()
+            ->all();
+    }
+
     public function index(SaleDeliveriesDataTable $dataTable)
     {
         abort_if(Gate::denies('access_sale_deliveries'), 403);
@@ -177,7 +196,7 @@ class SaleDeliveryController extends Controller
                 'note' => 'nullable|string|max:2000',
                 'items' => 'required|array|min:1',
                 'items.*.product_id' => 'required|integer',
-                'items.*.quantity' => 'required|integer|min:1',
+                'items.*.quantity' => 'required|integer|min:0',
                 'items.*.price' => 'nullable|integer|min:0',
             ];
 
@@ -189,6 +208,10 @@ class SaleDeliveryController extends Controller
             $request->validate($rules);
 
             DB::transaction(function () use ($request, $branchId, $source) {
+                $deliveryItems = $this->normalizeDraftItems((array) $request->input('items', []));
+                if (empty($deliveryItems)) {
+                    throw new \RuntimeException('At least 1 product with quantity greater than 0 is required.');
+                }
 
                 $saleId = null;
                 $saleOrderId = null;
@@ -207,7 +230,7 @@ class SaleDeliveryController extends Controller
 
                     $remainingMap = $this->getPlannedRemainingQtyBySaleOrder($saleOrderId);
 
-                    foreach ($request->items as $row) {
+                    foreach ($deliveryItems as $row) {
                         $pid = (int) $row['product_id'];
                         $qty = (int) $row['quantity'];
                         $rem = (int) ($remainingMap[$pid] ?? 0);
@@ -230,7 +253,7 @@ class SaleDeliveryController extends Controller
 
                     $remainingMap = $this->getRemainingQtyBySale($saleId);
 
-                    foreach ($request->items as $row) {
+                    foreach ($deliveryItems as $row) {
                         $pid = (int) $row['product_id'];
                         $qty = (int) $row['quantity'];
                         $rem = (int) ($remainingMap[$pid] ?? 0);
@@ -263,7 +286,7 @@ class SaleDeliveryController extends Controller
                     'created_by'    => auth()->id(),
                 ]);
 
-                foreach ($request->items as $row) {
+                foreach ($deliveryItems as $row) {
 
                     // ✅ FIX: 0 / negatif dianggap "tidak diisi" => NULL
                     $price = array_key_exists('price', $row) && $row['price'] !== null

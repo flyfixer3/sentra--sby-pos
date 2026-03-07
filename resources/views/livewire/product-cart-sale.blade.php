@@ -46,6 +46,8 @@
                         @php
                             $scope = (string)($cart_item->options->stock_scope ?? 'warehouse');
                             $whName = (string)($cart_item->options->warehouse_name ?? '');
+                            $reservedStock = (int) ($cart_item->options->reserved_stock ?? 0);
+                            $sellableStock = (int) ($cart_item->options->sellable_stock ?? ($cart_item->options->stock ?? 0));
                             $scopeNote = $scope === 'branch'
                                 ? 'Stock shown is total from ALL warehouses (active branch).'
                                 : ('Stock shown is from warehouse' . ($whName ? (': ' . $whName) : '.') );
@@ -65,9 +67,22 @@
                             </td>
 
                             <td class="align-middle text-center">
-                                <span class="badge badge-info">
-                                    {{ (int)($cart_item->options->stock ?? 0) . ' ' . (string)($cart_item->options->unit ?? '') }}
-                                </span>
+                                @if($scope === 'branch')
+                                    <div>
+                                        <span class="badge badge-warning">
+                                            Reserved: {{ $reservedStock . ' ' . (string)($cart_item->options->unit ?? '') }}
+                                        </span>
+                                    </div>
+                                    <div class="mt-1">
+                                        <span class="badge badge-info">
+                                            Sellable: {{ $sellableStock . ' ' . (string)($cart_item->options->unit ?? '') }}
+                                        </span>
+                                    </div>
+                                @else
+                                    <span class="badge badge-info">
+                                        {{ (int)($cart_item->options->stock ?? 0) . ' ' . (string)($cart_item->options->unit ?? '') }}
+                                    </span>
+                                @endif
                                 <div class="mt-1">
                                     <small class="text-muted">{{ $scopeNote }}</small>
                                 </div>
