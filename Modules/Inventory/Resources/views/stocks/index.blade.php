@@ -45,50 +45,49 @@
 
             <div class="border rounded p-3 mb-3" style="background:#f8fafc; border-color:#dbe4f0 !important;">
                 <div class="d-flex flex-wrap align-items-center justify-content-between mb-2" style="gap:8px;">
-                    <div class="font-weight-bold text-dark">Legend Kolom Stok</div>
-                    <span class="badge badge-light border text-muted">Sesuai formula tabel saat ini</span>
+                    <div class="font-weight-bold text-dark">Keterangan Kolom Stok</div>
+                    <span class="badge badge-light border text-muted">Panduan singkat pembacaan tabel</span>
                 </div>
 
                 <div class="row">
                     <div class="col-lg-6 mb-2 mb-lg-0">
                         <div class="small text-muted mb-2">
-                            Angka pada tabel ini berasal dari row <b>All Warehouses</b> / pool cabang yang sedang aktif.
+                            Tabel ini menampilkan ringkasan stok produk pada level <b>All Warehouses</b> / pool cabang aktif.
                         </div>
 
                         <div class="small mb-1">
                             <span class="font-weight-bold text-dark">Total</span>:
-                            jumlah <code>stocks.qty_available</code> yang ditampilkan di tabel.
+                            total seluruh stok yang tercatat untuk produk tersebut.
                         </div>
                         <div class="small mb-1">
                             <span class="font-weight-bold text-dark">Good</span>:
-                            <code>Total - Defect - Damaged</code>, minimum <code>0</code>.
+                            stok dalam kondisi baik, yaitu dari <b>Total</b> setelah dikurangi <b>Defect</b> dan <b>Damaged</b>.
                         </div>
                         <div class="small mb-1">
                             <span class="font-weight-bold text-dark">Reserved</span>:
-                            quantity yang sedang di-reserve pada pool cabang.
+                            stok yang sudah dibooking untuk transaksi dan sementara tidak bisa dipakai untuk kebutuhan lain.
                         </div>
                         <div class="small mb-0">
                             <span class="font-weight-bold text-dark">Incoming</span>:
-                            quantity yang saat ini tercatat sebagai incoming.
+                            stok yang sedang dalam proses masuk dan belum menjadi stok aktif.
                         </div>
                     </div>
 
                     <div class="col-lg-6">
                         <div class="small mb-1">
                             <span class="font-weight-bold text-dark">Available</span>:
-                            mengikuti formula tabel saat ini:
-                            <code>max(max(Total - Damaged, 0) - Reserved, 0)</code>.
+                            stok yang saat ini masih bisa dipakai di sistem, yaitu dari <b>Total</b> setelah dikurangi <b>Damaged</b> dan <b>Reserved</b>.
                         </div>
                         <div class="small mb-1">
                             <span class="font-weight-bold text-dark">Defect</span>:
-                            quantity defect yang belum dipindahkan / unresolved dan ditampilkan di tabel.
+                            stok yang tercatat bermasalah / cacat dan dipisahkan dari stok kondisi baik.
                         </div>
                         <div class="small mb-1">
                             <span class="font-weight-bold text-dark">Damaged</span>:
-                            quantity damaged dengan status <code>pending</code> yang belum dipindahkan.
+                            stok yang tercatat rusak dan dipisahkan dari stok yang masih layak.
                         </div>
                         <div class="small text-muted mb-0">
-                            Detail fisik per warehouse, rack, dan condition tetap bisa dilihat dari tombol <b>View Detail</b>.
+                            Untuk melihat rincian per gudang, rak, dan kondisi barang, klik tombol <b>View Detail</b>.
                         </div>
                     </div>
                 </div>
