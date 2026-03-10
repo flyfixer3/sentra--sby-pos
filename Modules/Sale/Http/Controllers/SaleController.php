@@ -1147,7 +1147,7 @@ class SaleController extends Controller
                         'warehouse_id'   => null,
 
                         // pool row: available/incoming default 0, reserved = qty invoice
-                        'qty_available'  => 0,
+                        'qty_total'  => 0,
                         'qty_reserved'   => (int) $qtyAdd,
                         'qty_incoming'   => 0,
                         'min_stock'      => 0,
@@ -1606,7 +1606,7 @@ class SaleController extends Controller
                     'product_id'     => (int) $productId,
                     'branch_id'      => (int) $branchId,
                     'warehouse_id'   => null,
-                    'qty_available'  => 0,
+                    'qty_total'  => 0,
                     'qty_reserved'   => 0,
                     'qty_incoming'   => 0,
                     'min_stock'      => 0,
