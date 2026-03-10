@@ -14,7 +14,7 @@ class Stock extends BaseModel
         'product_id',
         'branch_id',
         'warehouse_id',
-        'qty_available',
+        'qty_total',
         'qty_reserved',
         'qty_incoming',
         'min_stock',
