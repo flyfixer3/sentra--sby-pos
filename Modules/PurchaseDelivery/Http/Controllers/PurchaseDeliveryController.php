@@ -966,7 +966,7 @@ class PurchaseDeliveryController extends Controller
                         'branch_id'     => $branchId,
                         'warehouse_id'  => null,
                         'product_id'    => $productId,
-                        'qty_available' => 0,
+                        'qty_total' => 0,
                         'qty_reserved'  => 0,
                         'qty_incoming'  => 0,
                         'created_at'    => now(),
