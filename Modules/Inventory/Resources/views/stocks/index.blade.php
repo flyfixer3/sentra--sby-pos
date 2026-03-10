@@ -43,6 +43,57 @@
                 </div>
             </div>
 
+            <div class="border rounded p-3 mb-3" style="background:#f8fafc; border-color:#dbe4f0 !important;">
+                <div class="d-flex flex-wrap align-items-center justify-content-between mb-2" style="gap:8px;">
+                    <div class="font-weight-bold text-dark">Legend Kolom Stok</div>
+                    <span class="badge badge-light border text-muted">Sesuai formula tabel saat ini</span>
+                </div>
+
+                <div class="row">
+                    <div class="col-lg-6 mb-2 mb-lg-0">
+                        <div class="small text-muted mb-2">
+                            Angka pada tabel ini berasal dari row <b>All Warehouses</b> / pool cabang yang sedang aktif.
+                        </div>
+
+                        <div class="small mb-1">
+                            <span class="font-weight-bold text-dark">Total</span>:
+                            jumlah <code>stocks.qty_available</code> yang ditampilkan di tabel.
+                        </div>
+                        <div class="small mb-1">
+                            <span class="font-weight-bold text-dark">Good</span>:
+                            <code>Total - Defect - Damaged</code>, minimum <code>0</code>.
+                        </div>
+                        <div class="small mb-1">
+                            <span class="font-weight-bold text-dark">Reserved</span>:
+                            quantity yang sedang di-reserve pada pool cabang.
+                        </div>
+                        <div class="small mb-0">
+                            <span class="font-weight-bold text-dark">Incoming</span>:
+                            quantity yang saat ini tercatat sebagai incoming.
+                        </div>
+                    </div>
+
+                    <div class="col-lg-6">
+                        <div class="small mb-1">
+                            <span class="font-weight-bold text-dark">Available</span>:
+                            mengikuti formula tabel saat ini:
+                            <code>max(max(Total - Damaged, 0) - Reserved, 0)</code>.
+                        </div>
+                        <div class="small mb-1">
+                            <span class="font-weight-bold text-dark">Defect</span>:
+                            quantity defect yang belum dipindahkan / unresolved dan ditampilkan di tabel.
+                        </div>
+                        <div class="small mb-1">
+                            <span class="font-weight-bold text-dark">Damaged</span>:
+                            quantity damaged dengan status <code>pending</code> yang belum dipindahkan.
+                        </div>
+                        <div class="small text-muted mb-0">
+                            Detail fisik per warehouse, rack, dan condition tetap bisa dilihat dari tombol <b>View Detail</b>.
+                        </div>
+                    </div>
+                </div>
+            </div>
+
             <form method="GET" action="{{ route('inventory.stocks.index') }}" class="row g-2 align-items-end mb-3">
 
                 @if($isAllBranchMode)

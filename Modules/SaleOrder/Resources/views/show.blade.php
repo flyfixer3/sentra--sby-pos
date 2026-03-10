@@ -153,13 +153,13 @@
                     </div>
 
                     {{-- ✅ DP Receipt stays separate from Sale Order print --}}
-                    @if($dpRec > 0)
+                    <!-- @if($dpRec > 0)
                         <a class="btn btn-outline-info"
                            href="{{ route('sale-orders.dp-receipt', $saleOrder->id) }}"
                            target="_blank">
                             <i class="bi bi-receipt me-1"></i> DP Receipt
                         </a>
-                    @endif
+                    @endif -->
 
                     @can('edit_sale_orders')
                         @if($status === 'pending')

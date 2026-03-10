@@ -982,7 +982,8 @@ class SaleOrderController extends Controller
                 $grandTotal = (int) round($sellSubtotal + $taxAmount + $shipping + $fee - ($autoDiscount ? 0 : $discountAmount));
 
                 // deposit (same rule)
-                $depositPct = (int) ($request->deposit_percentage ?? 0);
+                $depositPct = (float) ($request->deposit_percentage ?? 0);
+                $depositPct = max(0, min(100, $depositPct));
                 $depositAmountInput = $request->deposit_amount;
                 $depositAmount = (int) (is_numeric($depositAmountInput) ? $depositAmountInput : 0);
 

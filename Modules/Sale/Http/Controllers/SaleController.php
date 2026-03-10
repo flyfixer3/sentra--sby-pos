@@ -59,6 +59,45 @@ class SaleController extends Controller
         return (int) $alloc;
     }
 
+    private function allocateSaleOrderInvoiceFinancials(SaleOrder $saleOrder, int $branchId, int $invoiceItemsSubtotal): array
+    {
+        $invoiceItemsSubtotal = max(0, (int) $invoiceItemsSubtotal);
+
+        $soSubtotal = max(0, (int) ($saleOrder->subtotal_amount ?? 0));
+        $soGrand = max(0, (int) ($saleOrder->total_amount ?? 0));
+
+        $soTaxAmount = max(0, (int) ($saleOrder->tax_amount ?? 0));
+        $soShip = max(0, (int) ($saleOrder->shipping_amount ?? 0));
+        $soFee = max(0, (int) ($saleOrder->fee_amount ?? 0));
+        $dpTotalReceived = max(0, (int) ($saleOrder->deposit_received_amount ?? 0));
+
+        $prevSubtotal = $this->getPrevInvoiceItemsSubtotalForSO((int) $saleOrder->id, $branchId);
+
+        $taxAlloc = $this->calcCumulativeAlloc($soTaxAmount, $soSubtotal, $prevSubtotal, $invoiceItemsSubtotal);
+        $shipAlloc = $this->calcCumulativeAlloc($soShip, $soSubtotal, $prevSubtotal, $invoiceItemsSubtotal);
+        $feeAlloc = $this->calcCumulativeAlloc($soFee, $soSubtotal, $prevSubtotal, $invoiceItemsSubtotal);
+
+        $invoiceGrand = max(0, (int) ($invoiceItemsSubtotal + $taxAlloc + $shipAlloc + $feeAlloc));
+
+        $dpAlloc = 0;
+        if ($dpTotalReceived > 0 && $soGrand > 0 && $invoiceGrand > 0) {
+            $prevGrand = $this->getPrevInvoiceGrandTotalForSO((int) $saleOrder->id, $branchId);
+            $dpAlloc = $this->calcCumulativeAlloc($dpTotalReceived, $soGrand, $prevGrand, $invoiceGrand);
+        }
+
+        return [
+            'items_subtotal' => (int) $invoiceItemsSubtotal,
+            'tax_amount' => (int) $taxAlloc,
+            'shipping_amount' => (int) $shipAlloc,
+            'fee_amount' => (int) $feeAlloc,
+            'grand_total' => (int) $invoiceGrand,
+            'dp_allocated_amount' => (int) $dpAlloc,
+            'dp_total_received' => (int) $dpTotalReceived,
+            'sale_order_subtotal' => (int) $soSubtotal,
+            'sale_order_grand_total' => (int) $soGrand,
+        ];
+    }
+
     private function getPrevInvoiceItemsSubtotalForSO(int $saleOrderId, int $branchId): int
     {
         $prev = (int) DB::table('sale_details as sd')
@@ -142,39 +181,6 @@ class SaleController extends Controller
             return (int) $sum;
         };
 
-        // =========================
-        // Helpers: equal split (shipping/fee) by invoice count
-        // =========================
-        $splitEven = function (int $total, int $count, int $index1Based): int {
-            $total = max(0, $total);
-            $count = max(1, $count);
-            $index1Based = max(1, $index1Based);
-
-            $base = intdiv($total, $count);
-            $rem  = $total - ($base * $count);
-
-            $extra = ($index1Based <= $rem) ? 1 : 0;
-            return (int) ($base + $extra);
-        };
-
-        $getDeliverySplitContext = function (int $saleOrderId, int $branchId, int $currentDeliveryId): array {
-            $rows = \Modules\SaleDelivery\Entities\SaleDelivery::withoutGlobalScopes()
-                ->where('sale_order_id', $saleOrderId)
-                ->where('branch_id', $branchId)
-                ->whereRaw('LOWER(COALESCE(status, "")) = ?', ['confirmed'])
-                ->orderBy('id')
-                ->pluck('id')
-                ->toArray();
-
-            $count = count($rows);
-            if ($count <= 0) return ['count' => 1, 'index' => 1];
-
-            $index = array_search($currentDeliveryId, $rows, true);
-            $index1Based = ($index === false) ? 1 : ((int)$index + 1);
-
-            return ['count' => $count, 'index' => $index1Based];
-        };
-
         // invoice items subtotal (qty * shown price)  => NOTE: shown price kita pakai NET (SO price)
         $invoiceItemsSubtotal = 0;
         $saleOrderGrandTotal = 0;
@@ -185,9 +191,6 @@ class SaleController extends Controller
 
         // INFO discount (buat tampilan di kolom item / info SO), TAPI TIDAK dipakai ngurangin summary lagi
         $deliveryDiscountInfoTotal = 0.0;
-
-        $splitCount = 1;
-        $splitIndex = 1;
 
         if ($saleDeliveryId > 0) {
             $delivery = \Modules\SaleDelivery\Entities\SaleDelivery::with(['items'])->find($saleDeliveryId);
@@ -204,10 +207,6 @@ class SaleController extends Controller
 
                     if ($lockedSaleOrder) {
                         $saleOrderGrandTotal = (int) ($lockedSaleOrder->total_amount ?? 0);
-
-                        $ctx = $getDeliverySplitContext((int)$lockedSaleOrder->id, (int)$branchId, (int)$delivery->id);
-                        $splitCount = (int) $ctx['count'];
-                        $splitIndex = (int) $ctx['index'];
 
                         $discountPct = (float) ($lockedSaleOrder->discount_percentage ?? 0);
                         $discountDiffAmt = (float) ($lockedSaleOrder->discount_amount ?? 0);
@@ -238,9 +237,6 @@ class SaleController extends Controller
 
                             'sale_order_subtotal_amount' => (float) ($lockedSaleOrder->subtotal_amount ?? 0),
                             'sale_order_total_amount'    => (float) ($lockedSaleOrder->total_amount ?? 0),
-
-                            'split_count' => $splitCount,
-                            'split_index' => $splitIndex,
                         ];
                     }
                 }
@@ -381,47 +377,14 @@ class SaleController extends Controller
         // ✅ LOCKED CALC FOR SUMMARY UI (NO DOUBLE DISCOUNT)
         // ==========================================
         if (!empty($lockedSaleOrder) && !empty($lockedFinancial) && (int)$lockedSaleOrder->id > 0) {
+            $alloc = $this->allocateSaleOrderInvoiceFinancials($lockedSaleOrder, (int) $branchId, (int) $invoiceItemsSubtotal);
 
-            $soSubtotal = (int) ($lockedSaleOrder->subtotal_amount ?? 0);
-            $soSubtotal = max(0, $soSubtotal);
-
-            $soTaxAmount = (int) ($lockedSaleOrder->tax_amount ?? 0);
-
-            $soShip = (int) ($lockedSaleOrder->shipping_amount ?? 0);
-            $soFee  = (int) ($lockedSaleOrder->fee_amount ?? 0);
-
-            // TAX prorata
-            $prevSubtotal = $this->getPrevInvoiceItemsSubtotalForSO((int)$lockedSaleOrder->id, (int)$branchId);
-            $taxAlloc  = $this->calcCumulativeAlloc($soTaxAmount, $soSubtotal, $prevSubtotal, $invoiceItemsSubtotal);
-
-            // shipping/fee split
-            $shipAlloc = $splitEven($soShip, $splitCount, $splitIndex);
-            $feeAlloc  = $splitEven($soFee,  $splitCount, $splitIndex);
-
-            // ✅ PENTING: DISCOUNT JANGAN DIKURANGI DI SUMMARY
-            $discAlloc = 0;
-
-            $invoiceEstimatedGrand = (int) ($invoiceItemsSubtotal + $taxAlloc + $shipAlloc + $feeAlloc - $discAlloc);
-            if ($invoiceEstimatedGrand < 0) $invoiceEstimatedGrand = 0;
-
-            /**
-             * ✅✅ FIX UTAMA DP:
-             * DP yang boleh mengurangi invoice hanyalah yang SUDAH DITERIMA (deposit_received_amount).
-             */
-            $dpTotalReceived = (int) ($lockedSaleOrder->deposit_received_amount ?? 0);
-            if ($dpTotalReceived < 0) $dpTotalReceived = 0;
-
-            if ($dpTotalReceived <= 0) {
-                $dpAllocated = 0;
-            } else {
-                $depositPct = (float) ($lockedSaleOrder->deposit_percentage ?? 0);
-                if ($depositPct < 0) $depositPct = 0;
-                if ($depositPct > 100) $depositPct = 100;
-
-                $dpAllocated = (int) round($invoiceEstimatedGrand * ($depositPct / 100));
-                if ($dpAllocated > $dpTotalReceived) $dpAllocated = $dpTotalReceived;
-                if ($dpAllocated < 0) $dpAllocated = 0;
-            }
+            $taxAlloc = (int) ($alloc['tax_amount'] ?? 0);
+            $shipAlloc = (int) ($alloc['shipping_amount'] ?? 0);
+            $feeAlloc = (int) ($alloc['fee_amount'] ?? 0);
+            $invoiceEstimatedGrand = (int) ($alloc['grand_total'] ?? 0);
+            $dpAllocated = (int) ($alloc['dp_allocated_amount'] ?? 0);
+            $dpTotalReceived = (int) ($alloc['dp_total_received'] ?? 0);
 
             // ✅ suggested pay now selalu ada (kalau DP=0 ya = total invoice)
             $suggestedPayNow = max(0, $invoiceEstimatedGrand - $dpAllocated);
@@ -483,40 +446,7 @@ class SaleController extends Controller
                 $lockedDelivery = null;
                 $lockedSaleOrder = null;
 
-                $splitCount = 1;
-                $splitIndex = 1;
-
                 $deliveryDiscountInfoTotal = 0.0;
-
-                $splitEven = function (int $total, int $count, int $index1Based): int {
-                    $total = max(0, $total);
-                    $count = max(1, $count);
-                    $index1Based = max(1, $index1Based);
-
-                    $base = intdiv($total, $count);
-                    $rem  = $total - ($base * $count);
-
-                    $extra = ($index1Based <= $rem) ? 1 : 0;
-                    return (int) ($base + $extra);
-                };
-
-                $getDeliverySplitContext = function (int $saleOrderId, int $branchId, int $currentDeliveryId): array {
-                    $rows = \Modules\SaleDelivery\Entities\SaleDelivery::withoutGlobalScopes()
-                        ->where('sale_order_id', $saleOrderId)
-                        ->where('branch_id', $branchId)
-                        ->whereRaw('LOWER(COALESCE(status, "")) = ?', ['confirmed'])
-                        ->orderBy('id')
-                        ->pluck('id')
-                        ->toArray();
-
-                    $count = count($rows);
-                    if ($count <= 0) return ['count' => 1, 'index' => 1];
-
-                    $idx = array_search($currentDeliveryId, $rows, true);
-                    $index1Based = ($idx === false) ? 1 : ((int)$idx + 1);
-
-                    return ['count' => $count, 'index' => $index1Based];
-                };
 
                 if ($fromDelivery) {
                     $lockedDelivery = SaleDelivery::withoutGlobalScopes()
@@ -548,10 +478,6 @@ class SaleController extends Controller
                         ->where('branch_id', $branchId)
                         ->where('id', $saleOrderId)
                         ->firstOrFail();
-
-                    $ctx = $getDeliverySplitContext((int)$lockedSaleOrder->id, (int)$branchId, (int)$lockedDelivery->id);
-                    $splitCount = (int) $ctx['count'];
-                    $splitIndex = (int) $ctx['index'];
 
                     // info only: compute discount from SO items
                     $soItems = \Modules\SaleOrder\Entities\SaleOrderItem::query()
@@ -711,18 +637,10 @@ class SaleController extends Controller
                 $dpAllocatedForThisInvoice = 0;
 
                 if ($fromDelivery && $lockedSaleOrder) {
-                    $soSubtotal = max(0, (int) ($lockedSaleOrder->subtotal_amount ?? 0));
-                    $soGrand    = max(0, (int) ($lockedSaleOrder->total_amount ?? 0));
-
-                    $soTaxAmount = (int) ($lockedSaleOrder->tax_amount ?? 0);
-                    $soShip      = (int) ($lockedSaleOrder->shipping_amount ?? 0);
-                    $soFee       = (int) ($lockedSaleOrder->fee_amount ?? 0);
-
-                    $prevSubtotal = $this->getPrevInvoiceItemsSubtotalForSO((int) $lockedSaleOrder->id, (int) $branchId);
-
-                    $allocTax  = $this->calcCumulativeAlloc($soTaxAmount, $soSubtotal, $prevSubtotal, $itemsSubtotal);
-                    $allocShip = $splitEven($soShip, $splitCount, $splitIndex);
-                    $allocFee  = $splitEven($soFee,  $splitCount, $splitIndex);
+                    $alloc = $this->allocateSaleOrderInvoiceFinancials($lockedSaleOrder, (int) $branchId, (int) $itemsSubtotal);
+                    $allocTax = (int) ($alloc['tax_amount'] ?? 0);
+                    $allocShip = (int) ($alloc['shipping_amount'] ?? 0);
+                    $allocFee = (int) ($alloc['fee_amount'] ?? 0);
 
                     // ✅ jangan apply discount lagi.
                     $effectiveDiscPct = round((float) ($lockedSaleOrder->discount_percentage ?? 0), 2);
@@ -734,15 +652,8 @@ class SaleController extends Controller
                     $effectiveFee      = (int) $allocFee;
                     $taxAmount         = (int) $allocTax;
 
-                    $computedGrandTotal = (int) ($itemsSubtotal + $taxAmount + $effectiveFee + $effectiveShipping);
-                    if ($computedGrandTotal < 0) $computedGrandTotal = 0;
-
-                    $dpTotal = max(0, (int) ($lockedSaleOrder->deposit_received_amount ?? 0));
-                    $prevGrand = $this->getPrevInvoiceGrandTotalForSO((int) $lockedSaleOrder->id, (int) $branchId);
-
-                    if ($dpTotal > 0 && $soGrand > 0 && $computedGrandTotal > 0) {
-                        $dpAllocatedForThisInvoice = $this->calcCumulativeAlloc($dpTotal, $soGrand, $prevGrand, $computedGrandTotal);
-                    }
+                    $computedGrandTotal = (int) ($alloc['grand_total'] ?? 0);
+                    $dpAllocatedForThisInvoice = (int) ($alloc['dp_allocated_amount'] ?? 0);
                 }
 
                 // ======================================================
