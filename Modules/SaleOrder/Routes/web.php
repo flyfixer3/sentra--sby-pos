@@ -28,6 +28,13 @@ Route::group([
     Route::get('/{saleOrder}', 'SaleOrderController@show')
         ->name('sale-orders.show');
 
+    // ✅ Sale Order document print (independent from DP receipt)
+    Route::get('/{saleOrder}/print', 'SaleOrderController@print')
+        ->name('sale-orders.print');
+
+    Route::get('/{saleOrder}/download', 'SaleOrderController@download')
+        ->name('sale-orders.download');
+
     // ✅ NEW: DP Receipt (PDF + Debug)
     Route::get('/{saleOrder}/dp-receipt', 'SaleOrderController@dpReceipt')
         ->name('sale-orders.dp-receipt');

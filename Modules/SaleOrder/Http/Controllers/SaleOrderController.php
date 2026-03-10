@@ -3,6 +3,7 @@
 namespace Modules\SaleOrder\Http\Controllers;
 
 use App\Support\BranchContext;
+use Barryvdh\DomPDF\Facade\Pdf;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
 use Illuminate\Support\Facades\DB;
@@ -18,6 +19,29 @@ use Modules\SaleOrder\Entities\SaleOrderItem;
 
 class SaleOrderController extends Controller
 {
+    private function saleOrderPdfFilename(SaleOrder $saleOrder): string
+    {
+        $ref = trim((string) ($saleOrder->reference ?? ''));
+        if ($ref === '') {
+            $ref = 'sale-order-' . (int) $saleOrder->id;
+        }
+
+        return 'sale-order-' . $ref . '.pdf';
+    }
+
+    private function buildSaleOrderPdf(SaleOrder $saleOrder)
+    {
+        $saleOrder->loadMissing([
+            'customer',
+            'items.product',
+        ]);
+
+        return Pdf::loadView('saleorder::print', [
+            'saleOrder' => $saleOrder,
+            'customer' => $saleOrder->customer,
+        ])->setPaper('a4');
+    }
+
     private function failBack(string $message, int $status = 422)
     {
         toast($message, 'error');
@@ -619,6 +643,32 @@ class SaleOrderController extends Controller
             'remainingMap',
             'plannedRemainingMap'
         ));
+    }
+
+    public function print(SaleOrder $saleOrder)
+    {
+        abort_if(Gate::denies('show_sale_orders'), 403);
+
+        $branchId = BranchContext::id();
+        if ((int) $saleOrder->branch_id !== (int) $branchId) {
+            abort(403, 'Wrong branch context.');
+        }
+
+        return $this->buildSaleOrderPdf($saleOrder)
+            ->stream($this->saleOrderPdfFilename($saleOrder));
+    }
+
+    public function download(SaleOrder $saleOrder)
+    {
+        abort_if(Gate::denies('show_sale_orders'), 403);
+
+        $branchId = BranchContext::id();
+        if ((int) $saleOrder->branch_id !== (int) $branchId) {
+            abort(403, 'Wrong branch context.');
+        }
+
+        return $this->buildSaleOrderPdf($saleOrder)
+            ->download($this->saleOrderPdfFilename($saleOrder));
     }
 
     public function dpReceipt(\Modules\SaleOrder\Entities\SaleOrder $saleOrder)

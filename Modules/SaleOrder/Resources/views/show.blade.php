@@ -126,33 +126,45 @@
                     </div>
                 </div>
 
-                <div class="d-flex flex-wrap gap-2 align-items-center">
-                    {{-- ✅ NEW: Print DP Receipt --}}
-                    @if($dpRec > 0)
-                        <a class="btn btn-outline-secondary"
-                           href="{{ route('sale-orders.dp-receipt', $saleOrder->id) }}"
-                           target="_blank">
-                            <i class="bi bi-printer"></i> Print DP Receipt
-                        </a>
-                    @endif
-
+                <div class="d-flex flex-wrap gap-2 align-items-center justify-content-end d-print-none">
                     @can('create_sale_deliveries')
                         @if($hasPlannedRemaining)
-                            <a class="btn btn-primary"
+                            <a class="btn btn-primary shadow-sm"
                                href="{{ route('sale-deliveries.create', ['source'=>'sale_order', 'sale_order_id'=>$saleOrder->id]) }}">
-                                <i class="bi bi-truck"></i> Create Sale Delivery
+                                <i class="bi bi-truck me-1"></i> Create Sale Delivery
                             </a>
                         @else
                             <button class="btn btn-secondary" disabled>
-                                <i class="bi bi-check2-circle"></i> All Items Planned
+                                <i class="bi bi-check2-circle me-1"></i> All Items Planned
                             </button>
                         @endif
                     @endcan
 
+                    <div class="btn-group shadow-sm" role="group" aria-label="Sale Order PDF actions">
+                        <a class="btn btn-outline-secondary"
+                           href="{{ route('sale-orders.print', $saleOrder->id) }}"
+                           target="_blank">
+                            <i class="bi bi-printer me-1"></i> Preview PDF
+                        </a>
+                        <a class="btn btn-outline-secondary"
+                           href="{{ route('sale-orders.download', $saleOrder->id) }}">
+                            <i class="bi bi-download me-1"></i> Download PDF
+                        </a>
+                    </div>
+
+                    {{-- ✅ DP Receipt stays separate from Sale Order print --}}
+                    @if($dpRec > 0)
+                        <a class="btn btn-outline-info"
+                           href="{{ route('sale-orders.dp-receipt', $saleOrder->id) }}"
+                           target="_blank">
+                            <i class="bi bi-receipt me-1"></i> DP Receipt
+                        </a>
+                    @endif
+
                     @can('edit_sale_orders')
                         @if($status === 'pending')
                             <a href="{{ route('sale-orders.edit', $saleOrder->id) }}" class="btn btn-outline-primary">
-                                <i class="bi bi-pencil"></i> Edit
+                                <i class="bi bi-pencil me-1"></i> Edit
                             </a>
                         @endif
                     @endcan
@@ -160,11 +172,12 @@
                     @can('delete_sale_orders')
                         @if($status === 'pending')
                             <form action="{{ route('sale-orders.destroy', $saleOrder->id) }}" method="POST"
+                                  class="m-0"
                                   onsubmit="return confirm('Delete this Sale Order? This cannot be undone.')">
                                 @csrf
                                 @method('DELETE')
                                 <button type="submit" class="btn btn-outline-danger">
-                                    <i class="bi bi-trash"></i> Delete
+                                    <i class="bi bi-trash me-1"></i> Delete
                                 </button>
                             </form>
                         @endif
