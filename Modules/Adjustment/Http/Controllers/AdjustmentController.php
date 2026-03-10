@@ -141,15 +141,15 @@ class AdjustmentController extends Controller
         }
 
         // =========================================================
-        // 2) TOTAL per rack: dari stock_racks.qty_available (truth)
+        // 2) TOTAL per rack: dari stock_racks.qty_total (truth)
         // =========================================================
         $stockTotals = DB::table('stock_racks')
             ->where('branch_id', $branchId)
             ->where('warehouse_id', $warehouseId)
             ->where('product_id', $productId)
-            ->get(['rack_id', 'qty_available'])
+            ->get(['rack_id', 'qty_total'])
             ->mapWithKeys(function ($r) {
-                return [(int)$r->rack_id => (int)($r->qty_available ?? 0)];
+                return [(int)$r->rack_id => (int)($r->qty_total ?? 0)];
             })
             ->toArray();
 
@@ -189,7 +189,7 @@ class AdjustmentController extends Controller
 
         // =========================================================
         // 5) Build stock_by_rack (SYNC dengan Inventory logic)
-        //    total = qty_available
+        //    total = qty_total
         //    good  = total - defect - damaged (min 0)
         // =========================================================
         $allRackIds = [];
@@ -2584,7 +2584,7 @@ class AdjustmentController extends Controller
 
         $rows = $q->selectRaw('
                 stock_racks.product_id,
-                COALESCE(SUM(stock_racks.qty_available), 0) as qty_available,
+                COALESCE(SUM(stock_racks.qty_total), 0) as qty_total,
                 COALESCE(SUM(stock_racks.qty_good), 0) as good_qty,
                 COALESCE(SUM(stock_racks.qty_defect), 0) as defect_qty,
                 COALESCE(SUM(stock_racks.qty_damaged), 0) as damaged_qty,
@@ -2601,9 +2601,9 @@ class AdjustmentController extends Controller
             $defectQty  = (int) ($r->defect_qty ?? 0);
             $damagedQty = (int) ($r->damaged_qty ?? 0);
 
-            // ✅ total available = good + defect + damaged (atau pakai qty_available jika sudah benar)
+            // ✅ total available = good + defect + damaged (atau pakai qty_total jika sudah benar)
             $totalAvailable = $goodQty + $defectQty + $damagedQty;
-            $qtyAvailableCol = (int) ($r->qty_available ?? 0);
+            $qtyAvailableCol = (int) ($r->qty_total ?? 0);
             if ($qtyAvailableCol > 0) {
                 $totalAvailable = $qtyAvailableCol;
             }
