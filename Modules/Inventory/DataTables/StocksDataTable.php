@@ -148,7 +148,7 @@ class StocksDataTable extends DataTable
 
                     DB::raw("'All Warehouses' as warehouse_name"),
 
-                    DB::raw('SUM(stocks.qty_available) as total_qty'),
+                    DB::raw('SUM(stocks.qty_total) as total_qty'),
                     DB::raw('SUM(stocks.qty_reserved) as reserved_qty'),
                     DB::raw('SUM(stocks.qty_incoming) as incoming_qty'),
 
@@ -157,7 +157,7 @@ class StocksDataTable extends DataTable
 
                     DB::raw('
                         GREATEST(
-                            SUM(stocks.qty_available)
+                            SUM(stocks.qty_total)
                             - COALESCE(defects.defect_qty,0)
                             - COALESCE(damaged.damaged_qty,0),
                             0
@@ -168,7 +168,7 @@ class StocksDataTable extends DataTable
                         GREATEST(
                             (
                                 GREATEST(
-                                    SUM(stocks.qty_available) - COALESCE(damaged.damaged_qty,0),
+                                    SUM(stocks.qty_total) - COALESCE(damaged.damaged_qty,0),
                                     0
                                 )
                             ) - SUM(stocks.qty_reserved),
@@ -231,7 +231,7 @@ class StocksDataTable extends DataTable
                 DB::raw('MAX(products.product_name) as product_name'),
                 DB::raw("'All Warehouses' as warehouse_name"),
 
-                DB::raw('SUM(stocks.qty_available) as total_qty'),
+                DB::raw('SUM(stocks.qty_total) as total_qty'),
                 DB::raw('SUM(stocks.qty_reserved) as reserved_qty'),
                 DB::raw('SUM(stocks.qty_incoming) as incoming_qty'),
 
@@ -240,7 +240,7 @@ class StocksDataTable extends DataTable
 
                 DB::raw('
                     GREATEST(
-                        SUM(stocks.qty_available)
+                        SUM(stocks.qty_total)
                         - COALESCE(defects.defect_qty,0)
                         - COALESCE(damaged.damaged_qty,0),
                         0
@@ -251,7 +251,7 @@ class StocksDataTable extends DataTable
                     GREATEST(
                         (
                             GREATEST(
-                                SUM(stocks.qty_available) - COALESCE(damaged.damaged_qty,0),
+                                SUM(stocks.qty_total) - COALESCE(damaged.damaged_qty,0),
                                 0
                             )
                         ) - SUM(stocks.qty_reserved),
