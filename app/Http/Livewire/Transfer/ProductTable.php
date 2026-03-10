@@ -330,7 +330,7 @@ class ProductTable extends Component
             ->where('branch_id', $branchId)
             ->where('warehouse_id', (int) $warehouseId)
             ->where('product_id', (int) $productId)
-            ->value('qty_available');
+            ->value('qty_total');
 
         if ($total < 0) $total = 0;
 
