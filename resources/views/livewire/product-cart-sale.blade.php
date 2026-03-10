@@ -48,6 +48,11 @@
                             $whName = (string)($cart_item->options->warehouse_name ?? '');
                             $reservedStock = (int) ($cart_item->options->reserved_stock ?? 0);
                             $sellableStock = (int) ($cart_item->options->sellable_stock ?? ($cart_item->options->stock ?? 0));
+                            $invoiceSource = (string) ($cart_item->options->invoice_source ?? '');
+                            $deliveredQty = (int) ($cart_item->options->delivered_qty ?? 0);
+                            $alreadyInvoicedQty = (int) ($cart_item->options->already_invoiced_qty ?? 0);
+                            $remainingInvoiceableQty = (int) ($cart_item->options->remaining_invoiceable_qty ?? ($cart_item->options->stock ?? 0));
+                            $currentStockQty = (int) ($cart_item->options->current_stock_qty ?? 0);
                             $scopeNote = $scope === 'branch'
                                 ? 'Stock shown is total from ALL warehouses (active branch).'
                                 : ('Stock shown is from warehouse' . ($whName ? (': ' . $whName) : '.') );
@@ -67,7 +72,26 @@
                             </td>
 
                             <td class="align-middle text-center">
-                                @if($scope === 'branch')
+                                @if($invoiceSource === 'sale_delivery')
+                                    <div class="d-inline-block text-center" style="min-width: 170px;">
+                                        <div class="d-flex flex-wrap align-items-center mt-1" style="gap:6px; justify-content: space-evenly;">
+                                            <span class="badge badge-light border text-dark">
+                                                Remaining to Invoice: {{ $remainingInvoiceableQty . ' ' . (string)($cart_item->options->unit ?? '') }}
+                                            </span>
+                                            <span class="badge badge-light border text-dark">
+                                                Delivered: {{ $deliveredQty }}
+                                            </span>
+                                            <span class="badge badge-light border text-dark">
+                                                Invoiced: {{ $alreadyInvoicedQty }}
+                                            </span>
+                                        </div>
+
+                                        <div class="mt-1 small text-muted">
+                                            Stock now: {{ $currentStockQty . ' ' . (string)($cart_item->options->unit ?? '') }}
+                                            <span class="ml-1">(reference only)</span>
+                                        </div>
+                                    </div>
+                                @elseif($scope === 'branch')
                                     <div>
                                         <span class="badge badge-warning">
                                             Reserved: {{ $reservedStock . ' ' . (string)($cart_item->options->unit ?? '') }}

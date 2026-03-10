@@ -209,6 +209,11 @@ class ProductCartSale extends Component
         ];
     }
 
+    private function isSaleDeliveryInvoiceRow($cartItem): bool
+    {
+        return (string) ($cartItem->options->invoice_source ?? '') === 'sale_delivery';
+    }
+
     public function productSelected($result)
     {
         $cart = Cart::instance($this->cart_instance);
@@ -327,18 +332,28 @@ class ProductCartSale extends Component
         $stockScope    = (string) ($cart_item->options->stock_scope ?? '');
         $reservedStock = (int) ($cart_item->options->reserved_stock ?? 0);
         $sellableStock = (int) ($cart_item->options->sellable_stock ?? 0);
+        $isDeliveryInvoice = $this->isSaleDeliveryInvoiceRow($cart_item);
 
-        $stockContext = $this->resolveStockContext($product_id, $stockScope, $warehouseId);
-        $stock = (int) ($stockContext['stock'] ?? 0);
-        $stockScope = (string) ($stockContext['scope'] ?? 'branch');
-        $reservedStock = (int) ($stockContext['reserved'] ?? 0);
-        $sellableStock = (int) ($stockContext['sellable'] ?? 0);
+        if ($isDeliveryInvoice) {
+            $stock = max(0, (int) ($cart_item->options->remaining_invoiceable_qty ?? 0));
+        } else {
+            $stockContext = $this->resolveStockContext($product_id, $stockScope, $warehouseId);
+            $stock = (int) ($stockContext['stock'] ?? 0);
+            $stockScope = (string) ($stockContext['scope'] ?? 'branch');
+            $reservedStock = (int) ($stockContext['reserved'] ?? 0);
+            $sellableStock = (int) ($stockContext['sellable'] ?? 0);
+        }
 
         $this->check_quantity[$product_id] = (int) $stock;
 
         if ($this->cart_instance === 'sale' || $this->cart_instance === 'purchase_return') {
             if ((int) $stock < (int) $qty) {
-                session()->flash('message', 'The requested quantity is not available in stock.');
+                session()->flash(
+                    'message',
+                    $isDeliveryInvoice
+                        ? 'The requested quantity exceeds the remaining quantity that can be invoiced from this delivery.'
+                        : 'The requested quantity is not available in stock.'
+                );
                 return;
             }
         }
@@ -364,6 +379,11 @@ class ProductCartSale extends Component
                 // ✅ jangan di-null lagi, preserve
                 'warehouse_id'          => $warehouseId ?: null,
                 'warehouse_name'        => $warehouseName,
+                'invoice_source'        => $cart_item->options->invoice_source ?? null,
+                'delivered_qty'         => (int) ($cart_item->options->delivered_qty ?? 0),
+                'already_invoiced_qty'  => (int) ($cart_item->options->already_invoiced_qty ?? 0),
+                'remaining_invoiceable_qty' => (int) ($cart_item->options->remaining_invoiceable_qty ?? 0),
+                'current_stock_qty'     => (int) ($cart_item->options->current_stock_qty ?? 0),
 
                 'product_tax'           => $cart_item->options->product_tax,
                 'product_cost'          => $cart_item->options->product_cost,
@@ -487,12 +507,17 @@ class ProductCartSale extends Component
         $stockScope    = (string) ($cart_item->options->stock_scope ?? 'branch');
         $reservedStock = (int) ($cart_item->options->reserved_stock ?? 0);
         $sellableStock = (int) ($cart_item->options->sellable_stock ?? 0);
+        $isDeliveryInvoice = $this->isSaleDeliveryInvoiceRow($cart_item);
 
-        $stockContext = $this->resolveStockContext((int) $product_id, $stockScope, $warehouseId);
-        $stock = (int) ($stockContext['stock'] ?? 0);
-        $stockScope = (string) ($stockContext['scope'] ?? 'branch');
-        $reservedStock = (int) ($stockContext['reserved'] ?? 0);
-        $sellableStock = (int) ($stockContext['sellable'] ?? 0);
+        if ($isDeliveryInvoice) {
+            $stock = max(0, (int) ($cart_item->options->remaining_invoiceable_qty ?? 0));
+        } else {
+            $stockContext = $this->resolveStockContext((int) $product_id, $stockScope, $warehouseId);
+            $stock = (int) ($stockContext['stock'] ?? 0);
+            $stockScope = (string) ($stockContext['scope'] ?? 'branch');
+            $reservedStock = (int) ($stockContext['reserved'] ?? 0);
+            $sellableStock = (int) ($stockContext['sellable'] ?? 0);
+        }
 
         $subTotal = (float) (($cart_item->price ?? 0) * ($cart_item->qty ?? 0));
 
@@ -506,6 +531,11 @@ class ProductCartSale extends Component
             'unit'                  => $cart_item->options->unit,
             'warehouse_id'          => $warehouseId ?: null,
             'warehouse_name'        => $warehouseName,
+            'invoice_source'        => $cart_item->options->invoice_source ?? null,
+            'delivered_qty'         => (int) ($cart_item->options->delivered_qty ?? 0),
+            'already_invoiced_qty'  => (int) ($cart_item->options->already_invoiced_qty ?? 0),
+            'remaining_invoiceable_qty' => (int) ($cart_item->options->remaining_invoiceable_qty ?? 0),
+            'current_stock_qty'     => (int) ($cart_item->options->current_stock_qty ?? 0),
             'product_tax'           => $cart_item->options->product_tax,
             'product_cost'          => $cart_item->options->product_cost,
             'unit_price'            => $cart_item->options->unit_price,

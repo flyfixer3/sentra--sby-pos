@@ -49,6 +49,10 @@
                                         Items & quantities are prefilled from the delivery.
                                         Please complete invoice fields (payment, note, etc.) then submit.
                                     </div>
+                                    <div class="small text-muted mt-1">
+                                        Untuk invoice dari Sale Delivery, quantity mengikuti <strong>Delivered / Remaining to Invoice</strong>.
+                                        Current stock hanya ditampilkan sebagai referensi tambahan.
+                                    </div>
 
                                     @if($isLockedBySO)
                                         <div class="small mt-2">

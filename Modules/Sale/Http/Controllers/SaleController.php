@@ -124,6 +124,73 @@ class SaleController extends Controller
         return max(0, $prev);
     }
 
+    private function deliveredQtyFromDeliveryItem(SaleDeliveryItem $item): int
+    {
+        $confirmedQty = (int) (
+            (int) ($item->qty_good ?? 0)
+            + (int) ($item->qty_defect ?? 0)
+            + (int) ($item->qty_damaged ?? 0)
+        );
+
+        if ($confirmedQty > 0) {
+            return $confirmedQty;
+        }
+
+        return max(0, (int) ($item->quantity ?? 0));
+    }
+
+    private function getInvoiceableQtyMapByDelivery(SaleDelivery $delivery): array
+    {
+        $deliveredByProduct = [];
+
+        foreach (($delivery->items ?? []) as $item) {
+            $productId = (int) ($item->product_id ?? 0);
+            if ($productId <= 0) {
+                continue;
+            }
+
+            if (!isset($deliveredByProduct[$productId])) {
+                $deliveredByProduct[$productId] = 0;
+            }
+
+            $deliveredByProduct[$productId] += $this->deliveredQtyFromDeliveryItem($item);
+        }
+
+        $invoicedByProduct = [];
+        $saleId = (int) ($delivery->sale_id ?? 0);
+        if ($saleId > 0) {
+            $invoicedByProduct = DB::table('sale_details')
+                ->where('sale_id', $saleId)
+                ->whereNull('deleted_at')
+                ->select('product_id', DB::raw('SUM(COALESCE(quantity,0)) as qty'))
+                ->groupBy('product_id')
+                ->pluck('qty', 'product_id')
+                ->map(fn ($qty) => max(0, (int) $qty))
+                ->toArray();
+        }
+
+        $result = [];
+
+        foreach ($deliveredByProduct as $productId => $deliveredQty) {
+            $productId = (int) $productId;
+            $deliveredQty = max(0, (int) $deliveredQty);
+            $alreadyInvoicedQty = max(0, (int) ($invoicedByProduct[$productId] ?? 0));
+            $remainingQty = $deliveredQty - $alreadyInvoicedQty;
+
+            if ($remainingQty < 0) {
+                $remainingQty = 0;
+            }
+
+            $result[$productId] = [
+                'delivered' => $deliveredQty,
+                'already_invoiced' => $alreadyInvoicedQty,
+                'remaining' => $remainingQty,
+            ];
+        }
+
+        return $result;
+    }
+
     public function create()
     {
         abort_if(Gate::denies('create_sales'), 403);
@@ -280,12 +347,17 @@ class SaleController extends Controller
                     ];
                 };
 
+                $invoiceableMap = $this->getInvoiceableQtyMapByDelivery($delivery);
+
                 foreach (($delivery->items ?? []) as $it) {
                     $productId = (int) ($it->product_id ?? 0);
                     if ($productId <= 0) continue;
 
-                    $qty = (int) ($it->quantity ?? 0);
-                    if ($qty <= 0) continue;
+                    $deliveredQty = (int) ($invoiceableMap[$productId]['delivered'] ?? $this->deliveredQtyFromDeliveryItem($it));
+                    $alreadyInvoicedQty = (int) ($invoiceableMap[$productId]['already_invoiced'] ?? 0);
+                    $remainingInvoiceableQty = (int) ($invoiceableMap[$productId]['remaining'] ?? max(0, $deliveredQty - $alreadyInvoicedQty));
+
+                    if ($remainingInvoiceableQty <= 0) continue;
 
                     $p = \Modules\Product\Entities\Product::find($productId);
                     $soRow = $soItemByProduct[$productId] ?? null;
@@ -325,9 +397,9 @@ class SaleController extends Controller
                     // INFO total discount (buat info saja)
                     if ($discAmt > 0) {
                         if ($discType === 'fixed') {
-                            $deliveryDiscountInfoTotal += ($discAmt * $qty);
+                            $deliveryDiscountInfoTotal += ($discAmt * $remainingInvoiceableQty);
                         } else {
-                            $deliveryDiscountInfoTotal += (($unitPrice * $qty) * ($discAmt / 100));
+                            $deliveryDiscountInfoTotal += (($unitPrice * $remainingInvoiceableQty) * ($discAmt / 100));
                         }
                     }
 
@@ -338,13 +410,13 @@ class SaleController extends Controller
                     $stockScope = 'branch';
 
                     // subtotal pakai NET price (priceShown)
-                    $subTotal = (float) ($priceShown * $qty);
+                    $subTotal = (float) ($priceShown * $remainingInvoiceableQty);
                     $invoiceItemsSubtotal += (int) round($subTotal);
 
                     $cart->add([
                         'id'      => $productId,
                         'name'    => (string) ($it->product_name ?? ($p->product_name ?? '-')),
-                        'qty'     => $qty,
+                        'qty'     => $remainingInvoiceableQty,
                         'price'   => $priceShown,
                         'weight'  => 1,
                         'options' => [
@@ -358,6 +430,12 @@ class SaleController extends Controller
 
                             'warehouse_id'          => $deliveryWarehouseId,
                             'warehouse_name'        => $deliveryWarehouseName,
+
+                            'invoice_source'        => 'sale_delivery',
+                            'delivered_qty'         => (int) $deliveredQty,
+                            'already_invoiced_qty'  => (int) $alreadyInvoicedQty,
+                            'remaining_invoiceable_qty' => (int) $remainingInvoiceableQty,
+                            'current_stock_qty'     => (int) ($branchStockSnapshot['sellable'] ?? 0),
 
                             'product_tax'           => $productTax,
                             'unit_price'            => $unitPrice,
@@ -487,7 +565,7 @@ class SaleController extends Controller
 
                     foreach (($lockedDelivery->items ?? []) as $it) {
                         $pid = (int) ($it->product_id ?? 0);
-                        $qty = (int) ($it->quantity ?? 0);
+                        $qty = $this->deliveredQtyFromDeliveryItem($it);
                         if ($pid <= 0 || $qty <= 0) continue;
 
                         $soRow = $soItems->get($pid);
@@ -507,6 +585,37 @@ class SaleController extends Controller
                             $deliveryDiscountInfoTotal += ($dType === 'fixed')
                                 ? ($dAmt * $qty)
                                 : (($unit * $qty) * ($dAmt / 100));
+                        }
+                    }
+
+                    $remainingInvoiceableMap = $this->getInvoiceableQtyMapByDelivery($lockedDelivery);
+                    $needByProduct = [];
+
+                    foreach ($cartItems as $cartItem) {
+                        $pid = (int) ($cartItem->id ?? 0);
+                        $qty = max(0, (int) ($cartItem->qty ?? 0));
+                        if ($pid <= 0 || $qty <= 0) {
+                            continue;
+                        }
+
+                        if (!isset($needByProduct[$pid])) {
+                            $needByProduct[$pid] = 0;
+                        }
+
+                        $needByProduct[$pid] += $qty;
+                    }
+
+                    foreach ($needByProduct as $pid => $qtyNeed) {
+                        $remainingQty = (int) ($remainingInvoiceableMap[(int) $pid]['remaining'] ?? 0);
+                        if ((int) $qtyNeed > $remainingQty) {
+                            $product = Product::find((int) $pid);
+                            $code = $product?->product_code ?? ('#' . (int) $pid);
+                            $name = $product?->product_name ?? '';
+
+                            throw new \RuntimeException(
+                                "Invoice qty exceeds delivered quantity for {$code} {$name}. " .
+                                "Remaining to invoice: {$remainingQty}, Requested: " . (int) $qtyNeed . "."
+                            );
                         }
                     }
                 }
