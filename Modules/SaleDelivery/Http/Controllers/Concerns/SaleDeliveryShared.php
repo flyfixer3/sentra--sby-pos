@@ -8,6 +8,15 @@ use Modules\SaleOrder\Entities\SaleOrder;
 
 trait SaleDeliveryShared
 {
+    private function deliveredQtyExpr(string $alias = 'sdi'): string
+    {
+        return "CASE
+            WHEN (COALESCE({$alias}.qty_good,0) + COALESCE({$alias}.qty_defect,0) + COALESCE({$alias}.qty_damaged,0)) > 0
+                THEN (COALESCE({$alias}.qty_good,0) + COALESCE({$alias}.qty_defect,0) + COALESCE({$alias}.qty_damaged,0))
+            ELSE COALESCE({$alias}.quantity,0)
+        END";
+    }
+
     protected function failBack(string $message, int $status = 422)
     {
         toast($message, 'error');
@@ -139,28 +148,27 @@ trait SaleDeliveryShared
 
     protected function getRemainingQtyBySaleOrder(int $saleOrderId): array
     {
+        $deliveredExpr = $this->deliveredQtyExpr('sdi');
+
         $ordered = DB::table('sale_order_items')
             ->select('product_id', DB::raw('SUM(quantity) as qty'))
             ->where('sale_order_id', $saleOrderId)
+            ->whereNull('deleted_at')
             ->groupBy('product_id')
             ->get();
 
         $shipped = DB::table('sale_delivery_items as sdi')
             ->join('sale_deliveries as sd', 'sd.id', '=', 'sdi.sale_delivery_id')
             ->where('sd.sale_order_id', $saleOrderId)
+            ->whereNull('sd.deleted_at')
+            ->whereNull('sdi.deleted_at')
             ->where(function ($q) {
                 $q->whereNotNull('sd.confirmed_at')
-                    ->orWhereIn(DB::raw('LOWER(sd.status)'), ['confirmed']);
+                    ->orWhereIn(DB::raw('LOWER(sd.status)'), ['confirmed', 'partial']);
             })
             ->select(
                 'sdi.product_id',
-                DB::raw('SUM(
-                    CASE
-                        WHEN (COALESCE(sdi.qty_good,0) + COALESCE(sdi.qty_defect,0) + COALESCE(sdi.qty_damaged,0)) > 0
-                            THEN (COALESCE(sdi.qty_good,0) + COALESCE(sdi.qty_defect,0) + COALESCE(sdi.qty_damaged,0))
-                        ELSE COALESCE(sdi.quantity,0)
-                    END
-                ) as qty')
+                DB::raw("SUM({$deliveredExpr}) as qty")
             )
             ->groupBy('sdi.product_id')
             ->get()
@@ -184,17 +192,42 @@ trait SaleDeliveryShared
 
     protected function getPlannedRemainingQtyBySaleOrder(int $saleOrderId): array
     {
+        $deliveredExpr = $this->deliveredQtyExpr('sdi');
+
         $ordered = DB::table('sale_order_items')
             ->select('product_id', DB::raw('SUM(quantity) as qty'))
             ->where('sale_order_id', $saleOrderId)
+            ->whereNull('deleted_at')
             ->groupBy('product_id')
             ->get();
 
-        $planned = DB::table('sale_delivery_items as sdi')
+        $delivered = DB::table('sale_delivery_items as sdi')
             ->join('sale_deliveries as sd', 'sd.id', '=', 'sdi.sale_delivery_id')
             ->where('sd.sale_order_id', $saleOrderId)
-            ->whereIn(DB::raw('LOWER(sd.status)'), ['pending', 'confirmed', 'partial'])
-            ->select('sdi.product_id', DB::raw('SUM(COALESCE(sdi.quantity,0)) as qty'))
+            ->whereNull('sd.deleted_at')
+            ->whereNull('sdi.deleted_at')
+            ->where(function ($q) {
+                $q->whereNotNull('sd.confirmed_at')
+                    ->orWhereIn(DB::raw('LOWER(sd.status)'), ['confirmed', 'partial']);
+            })
+            ->select('sdi.product_id', DB::raw("SUM({$deliveredExpr}) as qty"))
+            ->groupBy('sdi.product_id')
+            ->get()
+            ->keyBy('product_id');
+
+        $plannedOutstanding = DB::table('sale_delivery_items as sdi')
+            ->join('sale_deliveries as sd', 'sd.id', '=', 'sdi.sale_delivery_id')
+            ->where('sd.sale_order_id', $saleOrderId)
+            ->whereNull('sd.deleted_at')
+            ->whereNull('sdi.deleted_at')
+            ->whereIn(DB::raw('LOWER(sd.status)'), ['pending', 'partial'])
+            ->select(
+                'sdi.product_id',
+                DB::raw("SUM(GREATEST(COALESCE(sdi.quantity,0) - CASE
+                    WHEN LOWER(COALESCE(sd.status,'')) = 'partial' THEN {$deliveredExpr}
+                    ELSE 0
+                END, 0)) as qty")
+            )
             ->groupBy('sdi.product_id')
             ->get()
             ->keyBy('product_id');
@@ -204,9 +237,18 @@ trait SaleDeliveryShared
         foreach ($ordered as $row) {
             $pid = (int) $row->product_id;
             $orderedQty = (int) $row->qty;
-            $plannedQty = isset($planned[$pid]) ? (int) $planned[$pid]->qty : 0;
+            $deliveredQty = isset($delivered[$pid]) ? (int) $delivered[$pid]->qty : 0;
+            $plannedQty = isset($plannedOutstanding[$pid]) ? (int) $plannedOutstanding[$pid]->qty : 0;
 
-            $rem = $orderedQty - $plannedQty;
+            if ($deliveredQty < 0) $deliveredQty = 0;
+            if ($plannedQty < 0) $plannedQty = 0;
+
+            if ($deliveredQty > $orderedQty) $deliveredQty = $orderedQty;
+
+            $maxPlannable = $orderedQty - $deliveredQty;
+            if ($plannedQty > $maxPlannable) $plannedQty = $maxPlannable;
+
+            $rem = $orderedQty - $deliveredQty - $plannedQty;
             if ($rem < 0) $rem = 0;
 
             $remaining[$pid] = $rem;

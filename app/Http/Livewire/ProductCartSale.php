@@ -176,6 +176,39 @@ class ProductCartSale extends Component
         return (int) ($this->getBranchStockSnapshot($productId)['sellable'] ?? 0);
     }
 
+    private function resolveStockContext(int $productId, string $stockScope = 'branch', ?int $warehouseId = null): array
+    {
+        $stockScope = $stockScope === 'warehouse' ? 'warehouse' : 'branch';
+        $warehouseId = (int) ($warehouseId ?? 0);
+
+        if ($stockScope === 'warehouse' && $warehouseId > 0) {
+            $stock = (int) Mutation::where('product_id', $productId)
+                ->where('warehouse_id', $warehouseId)
+                ->latest()
+                ->value('stock_last');
+
+            if ($stock < 0) {
+                $stock = 0;
+            }
+
+            return [
+                'stock' => (int) $stock,
+                'reserved' => 0,
+                'sellable' => (int) $stock,
+                'scope' => 'warehouse',
+            ];
+        }
+
+        $stockSnapshot = $this->getBranchStockSnapshot($productId);
+
+        return [
+            'stock' => (int) ($stockSnapshot['sellable'] ?? 0),
+            'reserved' => (int) ($stockSnapshot['reserved'] ?? 0),
+            'sellable' => (int) ($stockSnapshot['sellable'] ?? 0),
+            'scope' => 'branch',
+        ];
+    }
+
     public function productSelected($result)
     {
         $cart = Cart::instance($this->cart_instance);
@@ -295,25 +328,11 @@ class ProductCartSale extends Component
         $reservedStock = (int) ($cart_item->options->reserved_stock ?? 0);
         $sellableStock = (int) ($cart_item->options->sellable_stock ?? 0);
 
-        // hitung stock sesuai mode:
-        // - kalau ada warehouse_id -> warehouse stock
-        // - kalau tidak -> sellable stock branch pool (GOOD - RESERVED)
-        if ($warehouseId > 0) {
-            $stock = (int) Mutation::where('product_id', $product_id)
-                ->where('warehouse_id', $warehouseId)
-                ->latest()
-                ->value('stock_last') ?? 0;
-
-            $stockScope = $stockScope ?: 'warehouse';
-            $reservedStock = 0;
-            $sellableStock = (int) $stock;
-        } else {
-            $stockSnapshot = $this->getBranchStockSnapshot($product_id);
-            $stock = (int) ($stockSnapshot['sellable'] ?? 0);
-            $stockScope = $stockScope ?: 'branch';
-            $reservedStock = (int) ($stockSnapshot['reserved'] ?? 0);
-            $sellableStock = (int) ($stockSnapshot['sellable'] ?? 0);
-        }
+        $stockContext = $this->resolveStockContext($product_id, $stockScope, $warehouseId);
+        $stock = (int) ($stockContext['stock'] ?? 0);
+        $stockScope = (string) ($stockContext['scope'] ?? 'branch');
+        $reservedStock = (int) ($stockContext['reserved'] ?? 0);
+        $sellableStock = (int) ($stockContext['sellable'] ?? 0);
 
         $this->check_quantity[$product_id] = (int) $stock;
 
@@ -469,24 +488,11 @@ class ProductCartSale extends Component
         $reservedStock = (int) ($cart_item->options->reserved_stock ?? 0);
         $sellableStock = (int) ($cart_item->options->sellable_stock ?? 0);
 
-        if ($warehouseId > 0) {
-            $stock = (int) Mutation::where('product_id', (int) $product_id)
-                ->where('warehouse_id', $warehouseId)
-                ->latest()
-                ->value('stock_last');
-
-            if ($stock < 0) {
-                $stock = 0;
-            }
-
-            $reservedStock = 0;
-            $sellableStock = (int) $stock;
-        } else {
-            $stockSnapshot = $this->getBranchStockSnapshot((int) $product_id);
-            $stock = (int) ($stockSnapshot['sellable'] ?? 0);
-            $reservedStock = (int) ($stockSnapshot['reserved'] ?? 0);
-            $sellableStock = (int) ($stockSnapshot['sellable'] ?? 0);
-        }
+        $stockContext = $this->resolveStockContext((int) $product_id, $stockScope, $warehouseId);
+        $stock = (int) ($stockContext['stock'] ?? 0);
+        $stockScope = (string) ($stockContext['scope'] ?? 'branch');
+        $reservedStock = (int) ($stockContext['reserved'] ?? 0);
+        $sellableStock = (int) ($stockContext['sellable'] ?? 0);
 
         $subTotal = (float) (($cart_item->price ?? 0) * ($cart_item->qty ?? 0));
 

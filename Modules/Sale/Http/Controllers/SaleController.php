@@ -266,6 +266,24 @@ class SaleController extends Controller
                     $deliveryWarehouseName = $wh?->warehouse_name;
                 }
 
+                $getBranchStockSnapshot = function (int $productId) use ($branchId, $getStockLastAllWarehousesInActiveBranch) {
+                    $good = (int) $getStockLastAllWarehousesInActiveBranch($productId);
+
+                    $reserved = (int) \DB::table('stocks')
+                        ->where('branch_id', (int) $branchId)
+                        ->whereNull('warehouse_id')
+                        ->where('product_id', (int) $productId)
+                        ->value('qty_reserved');
+
+                    $reserved = max(0, $reserved);
+
+                    return [
+                        'good' => (int) max(0, $good),
+                        'reserved' => (int) $reserved,
+                        'sellable' => (int) max(0, $good - $reserved),
+                    ];
+                };
+
                 foreach (($delivery->items ?? []) as $it) {
                     $productId = (int) ($it->product_id ?? 0);
                     if ($productId <= 0) continue;
@@ -319,13 +337,9 @@ class SaleController extends Controller
 
                     $productTax = (float) ($it->product_tax_amount ?? 0);
 
-                    if ($deliveryWarehouseId > 0) {
-                        $stock = $getStockLastByWarehouse($productId, $deliveryWarehouseId);
-                        $stockScope = 'warehouse';
-                    } else {
-                        $stock = $getStockLastAllWarehousesInActiveBranch($productId);
-                        $stockScope = 'branch';
-                    }
+                    $branchStockSnapshot = $getBranchStockSnapshot($productId);
+                    $stock = (int) ($branchStockSnapshot['sellable'] ?? 0);
+                    $stockScope = 'branch';
 
                     // subtotal pakai NET price (priceShown)
                     $subTotal = (float) ($priceShown * $qty);
@@ -342,6 +356,8 @@ class SaleController extends Controller
                             'code'                  => (string) ($it->product_code ?? ($p->product_code ?? 'UNKNOWN')),
                             'unit'                  => (string) ($it->product_unit ?? ($p->product_unit ?? '')),
                             'stock'                 => (int) $stock,
+                            'reserved_stock'        => (int) ($branchStockSnapshot['reserved'] ?? 0),
+                            'sellable_stock'        => (int) ($branchStockSnapshot['sellable'] ?? 0),
                             'stock_scope'           => $stockScope,
 
                             'warehouse_id'          => $deliveryWarehouseId,
