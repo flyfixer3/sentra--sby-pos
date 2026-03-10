@@ -111,18 +111,18 @@ class TransferController extends Controller
             'product_id'   => $productId,
         ]);
 
-        $row->qty_available = (int) ($row->qty_available ?? 0);
+        $row->qty_total = (int) ($row->qty_total ?? 0);
         $row->qty_good      = (int) ($row->qty_good ?? 0);
         $row->qty_defect    = (int) ($row->qty_defect ?? 0);
         $row->qty_damaged   = (int) ($row->qty_damaged ?? 0);
 
-        $row->qty_available += $deltaAll;
+        $row->qty_total += $deltaAll;
         $row->qty_good      += $deltaGood;
         $row->qty_defect    += $deltaDefect;
         $row->qty_damaged   += $deltaDamaged;
 
         // clamp min 0
-        if ($row->qty_available < 0) $row->qty_available = 0;
+        if ($row->qty_total < 0) $row->qty_total = 0;
         if ($row->qty_good < 0)      $row->qty_good = 0;
         if ($row->qty_defect < 0)    $row->qty_defect = 0;
         if ($row->qty_damaged < 0)   $row->qty_damaged = 0;
@@ -225,7 +225,7 @@ class TransferController extends Controller
                 ->where('branch_id', $branchId)
                 ->where('warehouse_id', (int) $request->from_warehouse_id)
                 ->where('product_id', $pid)
-                ->value('qty_available');
+                ->value('qty_total');
 
             if ($totalAvailable < 0) $totalAvailable = 0;
 
@@ -653,7 +653,7 @@ class TransferController extends Controller
                             'rack_id'      => $fromRackId,
                             'product_id'   => (int) $item->product_id,
                         ], [
-                            'qty_available' => 0,
+                            'qty_total' => 0,
                             'qty_good'      => 0,
                             'qty_defect'    => 0,
                             'qty_damaged'   => 0,
@@ -685,7 +685,7 @@ class TransferController extends Controller
                         if ($defectQty < 0) $defectQty = 0;
                         if ($damagedQty < 0) $damagedQty = 0;
 
-                        $avail = (int) ($sr->qty_available ?? 0);
+                        $avail = (int) ($sr->qty_total ?? 0);
                         $goodQty = $avail - $defectQty - $damagedQty;
                         if ($goodQty < 0) $goodQty = 0;
 
@@ -954,7 +954,7 @@ class TransferController extends Controller
             // kalau gak ada stock summary, gak perlu reconcile
             if (!$stock) return;
 
-            $sAvail  = (int) ($stock->qty_available ?? 0);
+            $sAvail  = (int) ($stock->qty_total ?? 0);
             $sDef    = (int) ($stock->qty_defect ?? 0);
             $sDam    = (int) ($stock->qty_damaged ?? 0);
 
@@ -968,7 +968,7 @@ class TransferController extends Controller
                 ->where('warehouse_id', $wId)
                 ->where('product_id', $pId)
                 ->selectRaw('
-                    COALESCE(SUM(qty_available),0) as a,
+                    COALESCE(SUM(qty_total),0) as a,
                     COALESCE(SUM(qty_good),0)      as g,
                     COALESCE(SUM(qty_defect),0)    as d,
                     COALESCE(SUM(qty_damaged),0)   as m
@@ -1564,7 +1564,7 @@ class TransferController extends Controller
                 'branch_id'     => (int) $branchId,
                 'warehouse_id'  => (int) $warehouseId,
                 'product_id'    => (int) $productId,
-                'qty_available' => 0,
+                'qty_total' => 0,
                 'qty_reserved'  => 0,
                 'qty_incoming'  => 0,
                 'min_stock'     => 0,
@@ -1654,7 +1654,7 @@ class TransferController extends Controller
                 'branch_id'     => (int) $branchId,
                 'warehouse_id'  => (int) $warehouseId,
                 'product_id'    => (int) $productId,
-                'qty_available' => 0,
+                'qty_total' => 0,
                 'qty_reserved'  => 0,
                 'qty_incoming'  => 0,
                 'min_stock'     => 0,
