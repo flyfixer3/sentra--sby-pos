@@ -52,12 +52,12 @@ class PurchaseOrderPurchasesController extends Controller
             $updated_sub_total = $qty * $price;
 
             // ✅ Stock: TOTAL dari ALL warehouses pada active branch
-            // asumsi table stocks punya qty_available dan warehouse_id not null untuk per-warehouse
+            // asumsi table stocks punya qty_total dan warehouse_id not null untuk per-warehouse
             $stockAll = (int) DB::table('stocks')
                 ->where('branch_id', $branchId)
                 ->whereNotNull('warehouse_id')
                 ->where('product_id', (int) $d->product_id)
-                ->sum(DB::raw('COALESCE(qty_available,0)'));
+                ->sum(DB::raw('COALESCE(qty_total,0)'));
 
             // fallback terakhir kalau tabel stocks belum lengkap / belum ada record
             if ($stockAll <= 0) {
