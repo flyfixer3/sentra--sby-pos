@@ -13,6 +13,6 @@ trait HasStocks
 
     public function getTotalStockAttribute(): int
     {
-        return (int) $this->stocks()->sum('qty_available');
+        return (int) $this->stocks()->sum('qty_total');
     }
 }
