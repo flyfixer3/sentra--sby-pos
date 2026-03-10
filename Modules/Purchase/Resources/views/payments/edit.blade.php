@@ -45,7 +45,12 @@
                                 <div class="col-lg-4">
                                     <div class="form-group">
                                         <label for="due_amount">Due Amount <span class="text-danger">*</span></label>
-                                        <input type="text" class="form-control" name="due_amount" required value="{{ format_currency($purchase->due_amount) }}" readonly>
+                                        <input type="text" class="form-control" name="due_amount" required value="{{ format_currency($purchase->effective_due_amount ?? 0) }}" readonly>
+                                        @if(($purchase->overpaid_amount ?? 0) > 0)
+                                            <small class="text-info d-block mt-1">
+                                                Overpaid: {{ format_currency($purchase->overpaid_amount) }}
+                                            </small>
+                                        @endif
                                     </div>
                                 </div>
                                 <div class="col-lg-4">
@@ -105,7 +110,7 @@
             $('#amount').maskMoney('mask');
 
             $('#getTotalAmount').click(function () {
-                $('#amount').maskMoney('mask', {{ $purchase->due_amount }});
+                $('#amount').maskMoney('mask', {{ $purchase->effective_due_amount ?? 0 }});
             });
 
             $('#payment-form').submit(function () {
@@ -116,4 +121,3 @@
         });
     </script>
 @endpush
-

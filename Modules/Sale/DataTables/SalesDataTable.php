@@ -88,14 +88,14 @@ class SalesDataTable extends DataTable
 
     public function query(Sale $model)
     {
-        $query = $model->newQuery()->withTrashed();
-
         $deletedFilter = request('deleted_filter', 'all');
 
-        if ($deletedFilter === 'active') {
-            $query->whereNull('deleted_at');
+        $query = $model->newQuery();
+
+        if ($deletedFilter === 'all') {
+            $query->withTrashed();
         } elseif ($deletedFilter === 'trashed') {
-            $query->whereNotNull('deleted_at');
+            $query->onlyTrashed();
         }
 
         return $query;
@@ -113,60 +113,6 @@ class SalesDataTable extends DataTable
                 "<'row'<'col-md-5'i><'col-md-7 mt-2'p>>"
             )
             ->orderBy(0)
-            ->parameters([
-                'ajax' => [
-                    'data' => 'function(d) {
-                        d.deleted_filter = $("#sale-deleted-filter").val();
-                    }',
-                ],
-                'initComplete' => 'function() {
-                    var api = this.api();
-                    var wrapper = $("#sales-table_wrapper");
-                    var lengthContainer = wrapper.find(".dataTables_length");
-
-                    if ($("#sale-deleted-filter-wrap").length === 0) {
-                        var filterHtml = `
-                            <div id="sale-deleted-filter-wrap"
-                                class="d-inline-flex align-items-center ml-3"
-                                style="gap:8px; vertical-align:middle;">
-                                <span style="
-                                    font-size: 12px;
-                                    font-weight: 500;
-                                    color: #6c757d;
-                                    white-space: nowrap;
-                                    margin-bottom: 0;
-                                ">
-                                    Soft Delete
-                                </span>
-                                <select id="sale-deleted-filter"
-                                        class="form-control form-control-sm"
-                                        style="
-                                            width: 150px;
-                                            min-width: 150px;
-                                            border-radius: 6px;
-                                        ">
-                                    <option value="all">All</option>
-                                    <option value="active">Not Deleted</option>
-                                    <option value="trashed">Soft Deleted</option>
-                                </select>
-                            </div>
-                        `;
-
-                        lengthContainer.css({
-                            "display": "flex",
-                            "align-items": "center",
-                            "flex-wrap": "wrap",
-                            "gap": "8px"
-                        });
-
-                        lengthContainer.append(filterHtml);
-                    }
-
-                    $(document).off("change", "#sale-deleted-filter").on("change", "#sale-deleted-filter", function() {
-                        api.ajax.reload();
-                    });
-                }',
-            ])
             ->buttons(
                 Button::make('excel')->text('<i class="bi bi-file-earmark-excel-fill"></i> Excel'),
                 Button::make('print')->text('<i class="bi bi-printer-fill"></i> Print'),

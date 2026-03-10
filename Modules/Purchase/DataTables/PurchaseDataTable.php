@@ -43,7 +43,7 @@ class PurchaseDataTable extends DataTable
                 $diff = Carbon::now()->diffInDays($target, false); // bisa minus
 
                 // Kalau sudah Paid, tampil "Paid"
-                if (($data->payment_status ?? null) === 'Paid') {
+                if (in_array(($data->effective_payment_status ?? $data->payment_status ?? null), ['Paid', 'Overpaid'], true)) {
                     return 'Paid';
                 }
 
@@ -51,7 +51,7 @@ class PurchaseDataTable extends DataTable
             })
 
             ->addColumn('due_amount', function ($data) {
-                return format_currency($data->due_amount);
+                return format_currency($data->effective_due_amount ?? 0);
             })
 
             ->editColumn('payment_status', function ($data) {
@@ -94,7 +94,6 @@ class PurchaseDataTable extends DataTable
     public function query(Purchase $model)
     {
         $query = $model->newQuery()
-            ->withTrashed()
             ->select([
                 'purchases.*',
                 'suppliers.supplier_name as supplier_name',
@@ -107,10 +106,10 @@ class PurchaseDataTable extends DataTable
 
         $deletedFilter = request('deleted_filter', 'all');
 
-        if ($deletedFilter === 'active') {
-            $query->whereNull('purchases.deleted_at');
+        if ($deletedFilter === 'all') {
+            $query->withTrashed();
         } elseif ($deletedFilter === 'trashed') {
-            $query->whereNotNull('purchases.deleted_at');
+            $query->onlyTrashed();
         }
 
         return $query;
@@ -146,60 +145,6 @@ class PurchaseDataTable extends DataTable
              * 13 deleted_at (hidden, untuk logic/filter)
              */
             ->orderBy(12, 'desc')
-            ->parameters([
-                'ajax' => [
-                    'data' => 'function(d) {
-                        d.deleted_filter = $("#purchase-deleted-filter").val();
-                    }',
-                ],
-                'initComplete' => 'function() {
-                    var api = this.api();
-                    var wrapper = $("#purchases-table_wrapper");
-                    var lengthContainer = wrapper.find(".dataTables_length");
-
-                    if ($("#purchase-deleted-filter-wrap").length === 0) {
-                        var filterHtml = `
-                            <div id="purchase-deleted-filter-wrap"
-                                class="d-inline-flex align-items-center ml-3"
-                                style="gap:8px; vertical-align:middle;">
-                                <span style="
-                                    font-size: 12px;
-                                    font-weight: 500;
-                                    color: #6c757d;
-                                    white-space: nowrap;
-                                    margin-bottom: 0;
-                                ">
-                                    Soft Delete
-                                </span>
-                                <select id="purchase-deleted-filter"
-                                        class="form-control form-control-sm"
-                                        style="
-                                            width: 150px;
-                                            min-width: 150px;
-                                            border-radius: 6px;
-                                        ">
-                                    <option value="all">All</option>
-                                    <option value="active">Not Deleted</option>
-                                    <option value="trashed">Soft Deleted</option>
-                                </select>
-                            </div>
-                        `;
-
-                        lengthContainer.css({
-                            "display": "flex",
-                            "align-items": "center",
-                            "flex-wrap": "wrap",
-                            "gap": "8px"
-                        });
-
-                        lengthContainer.append(filterHtml);
-                    }
-
-                    $(document).off("change", "#purchase-deleted-filter").on("change", "#purchase-deleted-filter", function() {
-                        api.ajax.reload();
-                    });
-                }',
-            ])
             ->buttons(
                 Button::make('excel')->text('<i class="bi bi-file-earmark-excel-fill"></i> Excel'),
                 Button::make('print')->text('<i class="bi bi-printer-fill"></i> Print'),

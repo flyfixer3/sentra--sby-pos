@@ -290,10 +290,10 @@ class PurchaseController extends Controller
             }
             // kalau warehouseId null => jangan paksa ensureCartItemsHaveWarehouse()
 
-            $due_amount = ($request->total_amount * 1) - ($request->paid_amount * 1);
-            $payment_status = $due_amount == ($request->total_amount * 1)
-                ? 'Unpaid'
-                : ($due_amount > 0 ? 'Partial' : 'Paid');
+            $paymentSnapshot = Purchase::resolvePaymentSnapshot(
+                $request->total_amount * 1,
+                $request->paid_amount * 1
+            );
 
             $supplier = Supplier::findOrFail($request->supplier_id);
 
@@ -324,12 +324,12 @@ class PurchaseController extends Controller
                 'shipping_amount' => $request->shipping_amount * 1,
                 'paid_amount' => $request->paid_amount * 1,
                 'total_amount' => $request->total_amount * 1,
-                'due_amount' => $due_amount * 1,
+                'due_amount' => $paymentSnapshot['due_amount'] * 1,
 
                 'status' => $finalStatus,
 
                 'total_quantity' => $request->total_quantity,
-                'payment_status' => $payment_status,
+                'payment_status' => $paymentSnapshot['payment_status'],
                 'payment_method' => $request->payment_method,
                 'note' => $request->note,
                 'tax_amount' => Cart::instance('purchase')->tax() * 1,
@@ -870,15 +870,17 @@ class PurchaseController extends Controller
                     $this->ensureCartItemsHaveWarehouse((int) $warehouseId);
                 }
 
-                $due_amount = ($request->total_amount * 1) - ($request->paid_amount * 1);
-                $payment_status = $due_amount == ($request->total_amount * 1)
-                    ? 'Unpaid'
-                    : ($due_amount > 0 ? 'Partial' : 'Paid');
+                $paymentSnapshot = Purchase::resolvePaymentSnapshot(
+                    $request->total_amount * 1,
+                    $request->paid_amount * 1
+                );
 
                 // =========================================================
                 // update header
+                // - suppress generic auto activity log for HPP-sensitive correction
+                //   because explicit correction logs below are the real audit trail.
                 // =========================================================
-                $purchase->update([
+                $purchaseUpdatePayload = [
                     'date' => $request->date,
                     'due_date' => $request->due_date,
                     'reference' => $request->reference,
@@ -891,16 +893,24 @@ class PurchaseController extends Controller
                     'paid_amount' => $request->paid_amount * 1,
                     'total_amount' => $request->total_amount * 1,
                     'total_quantity' => $request->total_quantity,
-                    'due_amount' => $due_amount * 1,
+                    'due_amount' => $paymentSnapshot['due_amount'] * 1,
                     'status' => $request->status,
-                    'payment_status' => $payment_status,
+                    'payment_status' => $paymentSnapshot['payment_status'],
                     'payment_method' => $request->payment_method,
                     'note' => $request->note,
                     'tax_amount' => Cart::instance('purchase')->tax() * 1,
                     'discount_amount' => Cart::instance('purchase')->discount() * 1,
                     'branch_id' => $branchId,
                     'warehouse_id' => $warehouseId ? (int) $warehouseId : null,
-                ]);
+                ];
+
+                if ($hppSensitiveChanged) {
+                    \Spatie\Activitylog\Facades\Activity::withoutLogs(function () use ($purchase, $purchaseUpdatePayload) {
+                        $purchase->update($purchaseUpdatePayload);
+                    });
+                } else {
+                    $purchase->update($purchaseUpdatePayload);
+                }
 
                 // =========================================================
                 // Update exact purchase detail row, jangan delete-all + recreate

@@ -58,20 +58,13 @@ class PurchasePaymentsController extends Controller
         
             $purchase = Purchase::findOrFail($request->purchase_id);
 
-            $due_amount = $purchase->due_amount - $request->amount;
-
-            if ($due_amount == $purchase->total_amount) {
-                $payment_status = 'Unpaid';
-            } elseif ($due_amount > 0) {
-                $payment_status = 'Partial';
-            } else {
-                $payment_status = 'Paid';
-            }
+            $newPaidAmount = ($purchase->paid_amount + $request->amount) * 1;
+            $paymentSnapshot = Purchase::resolvePaymentSnapshot($purchase->total_amount, $newPaidAmount);
 
             $purchase->update([
-                'paid_amount' => ($purchase->paid_amount + $request->amount) * 1,
-                'due_amount' => $due_amount * 1,
-                'payment_status' => $payment_status
+                'paid_amount' => $newPaidAmount,
+                'due_amount' => $paymentSnapshot['due_amount'] * 1,
+                'payment_status' => $paymentSnapshot['payment_status']
             ]);
             Helper::addNewTransaction([
                 'label' => "Payment for Supplier Order",
@@ -128,20 +121,13 @@ class PurchasePaymentsController extends Controller
         DB::transaction(function () use ($request, $purchasePayment) {
             $purchase = $purchasePayment->purchase;
 
-            $due_amount = ($purchase->due_amount + $purchasePayment->amount) - $request->amount;
-
-            if ($due_amount == $purchase->total_amount) {
-                $payment_status = 'Unpaid';
-            } elseif ($due_amount > 0) {
-                $payment_status = 'Partial';
-            } else {
-                $payment_status = 'Paid';
-            }
+            $newPaidAmount = (($purchase->paid_amount - $purchasePayment->amount) + $request->amount) * 1;
+            $paymentSnapshot = Purchase::resolvePaymentSnapshot($purchase->total_amount, $newPaidAmount);
 
             $purchase->update([
-                'paid_amount' => (($purchase->paid_amount - $purchasePayment->amount) + $request->amount) * 1,
-                'due_amount' => $due_amount * 1,
-                'payment_status' => $payment_status
+                'paid_amount' => $newPaidAmount,
+                'due_amount' => $paymentSnapshot['due_amount'] * 1,
+                'payment_status' => $paymentSnapshot['payment_status']
             ]);
 
             $purchasePayment->update([

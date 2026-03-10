@@ -22,7 +22,7 @@ class UpdatePurchaseRequest extends FormRequest
             'shipping_amount' => 'required|numeric',
             'total_amount' => 'required|numeric',
             'total_quantity'=> 'required|numeric',
-            'paid_amount' => 'required|numeric|max:' . $this->purchase->total_amount,
+            'paid_amount' => 'required|numeric|min:0',
             'status' => 'required|string|max:255',
             'payment_method' => 'required|string|max:255',
             'note' => 'nullable|string|max:1000'

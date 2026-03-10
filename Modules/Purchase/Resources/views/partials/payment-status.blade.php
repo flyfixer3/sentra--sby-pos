@@ -1,13 +1,21 @@
-@if ($data->payment_status == 'Partial')
+@php
+    $status = $data->effective_payment_status ?? $data->payment_status;
+@endphp
+
+@if ($status == 'Partial')
     <span class="badge badge-warning">
-        {{ $data->payment_status }}
+        {{ $status }}
     </span>
-@elseif ($data->payment_status == 'Paid')
+@elseif ($status == 'Paid')
     <span class="badge badge-success">
-        {{ $data->payment_status }}
+        {{ $status }}
+    </span>
+@elseif ($status == 'Overpaid')
+    <span class="badge badge-info">
+        {{ $status }}
     </span>
 @else
     <span class="badge badge-danger">
-        {{ $data->payment_status }}
+        {{ $status }}
     </span>
 @endif

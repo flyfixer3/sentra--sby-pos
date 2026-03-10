@@ -7,6 +7,49 @@ use Modules\Product\Entities\ProductHpp;
 
 class HppService
 {
+    private function baseLedgerQuery(int $branchId, int $productId)
+    {
+        return ProductHpp::query()
+            ->where('branch_id', $branchId)
+            ->where('product_id', $productId);
+    }
+
+    private function orderedLedgerQuery(int $branchId, int $productId, $asOf = null)
+    {
+        $query = $this->baseLedgerQuery($branchId, $productId);
+
+        if ($asOf !== null) {
+            try {
+                $t = \Carbon\Carbon::parse($asOf);
+            } catch (\Throwable $e) {
+                $t = null;
+            }
+
+            if ($t) {
+                $query->where(function ($q) use ($t) {
+                    $q->where(function ($qq) use ($t) {
+                        $qq->whereNotNull('effective_at')
+                            ->where('effective_at', '<=', $t);
+                    })->orWhere(function ($qq) use ($t) {
+                        $qq->whereNull('effective_at')
+                            ->where('created_at', '<=', $t);
+                    });
+                });
+            }
+        }
+
+        return $query
+            ->orderByRaw('COALESCE(effective_at, created_at) DESC')
+            ->orderByDesc('created_at')
+            ->orderByDesc('id');
+    }
+
+    public function getHppRowAsOf(int $branchId, int $productId, $asOf): ?ProductHpp
+    {
+        return $this->orderedLedgerQuery($branchId, $productId, $asOf)
+            ->first();
+    }
+
     /**
      * Update HPP moving average untuk 1 product pada 1 branch, berdasarkan penerimaan barang (incoming).
      *
@@ -59,15 +102,7 @@ class HppService
              * ✅ Ambil HPP snapshot terakhir yang berlaku <= effective_at
              * (kalau tidak ada, fallback latest)
              */
-            $prev = ProductHpp::query()
-                ->where('branch_id', $branchId)
-                ->where('product_id', $productId)
-                ->where(function ($q) use ($eff) {
-                    $q->whereNull('effective_at')
-                    ->orWhere('effective_at', '<=', $eff);
-                })
-                ->orderByDesc('effective_at')
-                ->orderByDesc('id')
+            $prev = $this->orderedLedgerQuery($branchId, $productId, $eff)
                 ->lockForUpdate()
                 ->first();
 
@@ -144,11 +179,7 @@ class HppService
      */
     public function getCurrentHpp(int $branchId, int $productId): float
     {
-        $row = ProductHpp::query()
-            ->where('branch_id', $branchId)
-            ->where('product_id', $productId)
-            ->orderByDesc('effective_at')
-            ->orderByDesc('id')
+        $row = $this->orderedLedgerQuery($branchId, $productId)
             ->first(['avg_cost']);
 
         return (float) ($row?->avg_cost ?? 0);
@@ -156,21 +187,7 @@ class HppService
 
     public function getHppAsOf(int $branchId, int $productId, $asOf): float
     {
-        try {
-            $t = \Carbon\Carbon::parse($asOf);
-        } catch (\Throwable $e) {
-            return $this->getCurrentHpp($branchId, $productId);
-        }
-
-        $row = ProductHpp::query()
-            ->where('branch_id', $branchId)
-            ->where('product_id', $productId)
-            ->where(function ($q) use ($t) {
-                $q->whereNull('effective_at')
-                ->orWhere('effective_at', '<=', $t);
-            })
-            ->orderByDesc('effective_at')
-            ->orderByDesc('id')
+        $row = $this->orderedLedgerQuery($branchId, $productId, $asOf)
             ->first(['avg_cost']);
 
         return (float) ($row?->avg_cost ?? 0);

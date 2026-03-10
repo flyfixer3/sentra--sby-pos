@@ -33,6 +33,7 @@
         text-transform:uppercase;
     }
     .pd-badge--paid{ background:rgba(25,135,84,.10); color:#146c43; border-color:rgba(25,135,84,.20); }
+    .pd-badge--overpaid{ background:rgba(13,202,240,.12); color:#0c5460; border-color:rgba(13,202,240,.24); }
     .pd-badge--partial{ background:rgba(255,193,7,.14); color:#7a5d00; border-color:rgba(255,193,7,.25); }
     .pd-badge--unpaid{ background:rgba(220,53,69,.10); color:#b02a37; border-color:rgba(220,53,69,.22); }
 
@@ -140,9 +141,13 @@
 
 @section('content')
 @php
-    $paymentStatus = strtolower(trim((string)($purchase->payment_status ?? '')));
+    $effectivePaymentStatus = $purchase->effective_payment_status ?? ($purchase->payment_status ?? '-');
+    $paymentStatus = strtolower(trim((string) $effectivePaymentStatus));
+    $effectiveDueAmount = (float) ($purchase->effective_due_amount ?? 0);
+    $overpaidAmount = (float) ($purchase->overpaid_amount ?? 0);
     $paymentBadge = 'pd-badge';
     if ($paymentStatus === 'paid') $paymentBadge = 'pd-badge pd-badge--paid';
+    elseif ($paymentStatus === 'overpaid') $paymentBadge = 'pd-badge pd-badge--overpaid';
     elseif ($paymentStatus === 'partial') $paymentBadge = 'pd-badge pd-badge--partial';
     elseif ($paymentStatus === 'unpaid') $paymentBadge = 'pd-badge pd-badge--unpaid';
 
@@ -167,7 +172,7 @@
                     <div>
                         <div class="pd-title">
                             Purchase Invoice
-                            <span class="{{ $paymentBadge }}">{{ $purchase->payment_status ?? '-' }}</span>
+                            <span class="{{ $paymentBadge }}">{{ $effectivePaymentStatus }}</span>
                         </div>
                         <div class="pd-sub">
                             Reference: <strong>{{ $purchase->reference }}</strong>
@@ -279,8 +284,14 @@
                                 </div>
                                 <div class="info-row">
                                     <div class="k">Due</div>
-                                    <div class="v">{{ format_currency($purchase->due_amount ?? 0) }}</div>
+                                    <div class="v">{{ format_currency($effectiveDueAmount) }}</div>
                                 </div>
+                                @if($overpaidAmount > 0)
+                                    <div class="info-row">
+                                        <div class="k">Overpaid</div>
+                                        <div class="v text-info">{{ format_currency($overpaidAmount) }}</div>
+                                    </div>
+                                @endif
 
                                 <div class="mt-2">
                                     <div class="text-muted" style="font-size:12px; font-weight:800;">Related Deliveries</div>

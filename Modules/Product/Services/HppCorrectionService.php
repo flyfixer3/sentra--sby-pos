@@ -7,14 +7,97 @@ use Modules\Product\Entities\ProductHpp;
 
 class HppCorrectionService
 {
+    private function getChronologicalIncomingLedgerRows(int $branchId, int $productId)
+    {
+        return ProductHpp::query()
+            ->where('branch_id', (int) $branchId)
+            ->where('product_id', (int) $productId)
+            ->where('incoming_qty', '>', 0)
+            ->orderByRaw('COALESCE(effective_at, created_at) ASC')
+            ->orderBy('created_at')
+            ->orderBy('id')
+            ->get();
+    }
+
+    private function replayCorrectedAverageFromAffectedIncomingRows(
+        int $branchId,
+        int $productId,
+        ?int $purchaseDeliveryId,
+        float $newCost
+    ): ?array {
+        if (empty($purchaseDeliveryId)) {
+            return null;
+        }
+
+        $rows = $this->getChronologicalIncomingLedgerRows($branchId, $productId);
+        if ($rows->isEmpty()) {
+            return null;
+        }
+
+        $sourceType = \Modules\PurchaseDelivery\Entities\PurchaseDelivery::class;
+
+        $affectedRows = $rows->filter(function ($row) use ($purchaseDeliveryId, $sourceType) {
+            return (string) ($row->source_type ?? '') === $sourceType
+                && (int) ($row->source_id ?? 0) === (int) $purchaseDeliveryId;
+        })->values();
+
+        if ($affectedRows->isEmpty()) {
+            return null;
+        }
+
+        $firstAffectedId = (int) $affectedRows->first()->id;
+        $runningAvg = round((float) ($affectedRows->first()->old_avg_cost ?? 0), 2);
+        $processed = 0;
+
+        foreach ($rows as $row) {
+            if ((int) $row->id < $firstAffectedId) {
+                continue;
+            }
+
+            $incomingQty = max(0, (int) ($row->incoming_qty ?? 0));
+            $oldQty = max(0, (int) ($row->old_qty ?? 0));
+
+            if ($incomingQty <= 0) {
+                continue;
+            }
+
+            $unitCost = (float) ($row->incoming_unit_cost ?? 0);
+            if (
+                (string) ($row->source_type ?? '') === $sourceType
+                && (int) ($row->source_id ?? 0) === (int) $purchaseDeliveryId
+            ) {
+                $unitCost = (float) $newCost;
+            }
+
+            $denom = $oldQty + $incomingQty;
+
+            if ($denom <= 0) {
+                $runningAvg = 0.0;
+            } elseif ($oldQty <= 0) {
+                $runningAvg = round($unitCost, 2);
+            } else {
+                $runningAvg = round((($runningAvg * $oldQty) + ($unitCost * $incomingQty)) / $denom, 2);
+            }
+
+            $processed++;
+        }
+
+        return [
+            'replayed_avg' => round((float) $runningAvg, 2),
+            'affected_rows' => (int) $affectedRows->count(),
+            'processed_rows' => (int) $processed,
+            'first_affected_effective_at' => (string) optional($affectedRows->first()->effective_at)->format('Y-m-d H:i:s'),
+        ];
+    }
+
     /**
      * Apply correction entry to product_hpps ledger for a set of product changes.
      *
-     * Strategy (pragmatic & safe):
-     * - We DO NOT rebuild full historical ledger (too heavy and risky).
-     * - We append a correction row effective at end-of-day of purchase date,
-     *   so sales on the same day can refetch correct cost snapshot.
-     * - We adjust avg_cost using an approximation based on remaining qty from the corrected incoming batch.
+     * Strategy:
+     * - Keep ledger append-only.
+     * - Recompute the resulting average by replaying actual incoming HPP rows
+     *   from the affected Purchase Delivery source forward for the same product/branch.
+     * - Then append one correction snapshot row with the corrected resulting avg_cost.
      *
      * @param int $branchId
      * @param int $purchaseId
@@ -64,9 +147,7 @@ class HppCorrectionService
                 continue;
             }
 
-            $delta = $newCost - $oldCost;
-
-            // total onhand (approx) from stock_racks
+            // current onhand for audit metadata on the appended correction row
             $stockAgg = DB::table('stock_racks')
                 ->where('branch_id', (int) $branchId)
                 ->where('product_id', (int) $productId)
@@ -86,57 +167,26 @@ class HppCorrectionService
                 }
             }
 
-            // incoming qty from PD confirm (if exists)
-            $incomingQty = 0;
-            $soldSince   = 0;
+            // old_avg_cost on appended correction row should reflect the current
+            // latest ledger snapshot before this correction row is inserted.
+            $currentAvg = (float) $hppService->getHppAsOf((int) $branchId, (int) $productId, $effectiveAt);
 
-            if (!empty($purchaseDeliveryId)) {
-                $incoming = DB::table('purchase_delivery_details')
-                    ->where('purchase_delivery_id', (int) $purchaseDeliveryId)
-                    ->where('product_id', (int) $productId)
-                    ->selectRaw('
-                        COALESCE(SUM(qty_received), 0) as rcv,
-                        COALESCE(SUM(qty_defect), 0) as def,
-                        COALESCE(SUM(qty_damaged), 0) as dmg,
-                        COALESCE(SUM(quantity), 0) as qty
-                    ')
-                    ->first();
+            $replayed = $this->replayCorrectedAverageFromAffectedIncomingRows(
+                (int) $branchId,
+                (int) $productId,
+                $purchaseDeliveryId ? (int) $purchaseDeliveryId : null,
+                (float) $newCost
+            );
 
-                if ($incoming) {
-                    $incomingQty = (int) (($incoming->rcv ?? 0) + ($incoming->def ?? 0) + ($incoming->dmg ?? 0));
-
-                    // fallback jika sistem lama belum isi qty_received/defect/damaged
-                    if ($incomingQty <= 0) {
-                        $incomingQty = (int) ($incoming->qty ?? 0);
-                    }
-                }
-
-                // sold qty since purchase date (approx)
-                // We only use this to estimate remaining qty that is still on hand from that incoming batch.
-                $soldSince = (int) DB::table('sale_details as sd')
-                    ->join('sales as s', 's.id', '=', 'sd.sale_id')
-                    ->whereNull('s.deleted_at')
-                    ->where('s.branch_id', (int) $branchId)
-                    ->where('sd.product_id', (int) $productId)
-                    ->whereDate('s.date', '>=', $purchaseDate)
-                    ->selectRaw('COALESCE(SUM(sd.quantity), 0) as sum_qty')
-                    ->value('sum_qty');
+            if (!$replayed) {
+                $summary['skipped'][] = [
+                    'product_id' => $productId,
+                    'reason'     => 'No matching incoming HPP ledger row found for the related Purchase Delivery.',
+                ];
+                continue;
             }
 
-            $remainingApprox = max(0, (int) $incomingQty - (int) $soldSince);
-
-            // current avg from ledger latest
-            $currentAvg = (float) $hppService->getCurrentHpp((int) $branchId, (int) $productId);
-
-            // if no onhand or no remaining, we still create a correction row but keep avg as-is,
-            // while updating last_purchase_cost to newCost (so future receiving sees correct last cost).
-            $newAvg = $currentAvg;
-
-            if ($totalOnHand > 0 && $remainingApprox > 0) {
-                $newAvg = $currentAvg + (($delta * $remainingApprox) / $totalOnHand);
-            }
-
-            $newAvg = round((float) $newAvg, 2);
+            $newAvg = round((float) ($replayed['replayed_avg'] ?? $currentAvg), 2);
 
             ProductHpp::create([
                 'branch_id'          => (int) $branchId,
@@ -161,11 +211,10 @@ class HppCorrectionService
                 'product_id'        => $productId,
                 'old_unit_cost'     => round($oldCost, 2),
                 'new_unit_cost'     => round($newCost, 2),
-                'delta'             => round($delta, 2),
                 'total_onhand'      => $totalOnHand,
-                'incoming_qty'      => $incomingQty,
-                'sold_since'        => $soldSince,
-                'remaining_approx'  => $remainingApprox,
+                'affected_rows'     => (int) ($replayed['affected_rows'] ?? 0),
+                'processed_rows'    => (int) ($replayed['processed_rows'] ?? 0),
+                'replay_started_at' => (string) ($replayed['first_affected_effective_at'] ?? ''),
                 'old_avg'           => round($currentAvg, 2),
                 'new_avg'           => $newAvg,
                 'effective_at'      => $effectiveAt->toDateTimeString(),

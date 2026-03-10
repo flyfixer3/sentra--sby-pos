@@ -46,7 +46,7 @@
             @endcan
 
             @can('access_purchase_payments')
-                @if(($data->due_amount ?? 0) > 0)
+                @if(($data->effective_due_amount ?? 0) > 0)
                     <a href="{{ route('purchase-payments.create', $data->id) }}" class="dropdown-item">
                         <i class="bi bi-plus-circle-dotted mr-2 text-success" style="line-height: 1;"></i> Add Payment
                     </a>

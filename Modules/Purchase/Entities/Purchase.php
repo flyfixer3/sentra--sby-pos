@@ -48,6 +48,31 @@ class Purchase extends BaseModel
         return $query->where('status', 'Completed');
     }
 
+    public static function resolvePaymentSnapshot($totalAmount, $paidAmount): array
+    {
+        $totalAmount = (float) ($totalAmount ?? 0);
+        $paidAmount = (float) ($paidAmount ?? 0);
+
+        $dueAmount = max($totalAmount - $paidAmount, 0);
+        $overpaidAmount = max($paidAmount - $totalAmount, 0);
+
+        if ($paidAmount <= 0) {
+            $paymentStatus = 'Unpaid';
+        } elseif ($overpaidAmount > 0) {
+            $paymentStatus = 'Overpaid';
+        } elseif ($dueAmount > 0) {
+            $paymentStatus = 'Partial';
+        } else {
+            $paymentStatus = 'Paid';
+        }
+
+        return [
+            'due_amount' => $dueAmount,
+            'overpaid_amount' => $overpaidAmount,
+            'payment_status' => $paymentStatus,
+        ];
+    }
+
     public function getShippingAmountAttribute($value) {
         return $value / 1;
     }
@@ -62,6 +87,21 @@ class Purchase extends BaseModel
 
     public function getDueAmountAttribute($value) {
         return $value / 1;
+    }
+
+    public function getEffectiveDueAmountAttribute()
+    {
+        return (float) static::resolvePaymentSnapshot($this->total_amount, $this->paid_amount)['due_amount'];
+    }
+
+    public function getOverpaidAmountAttribute()
+    {
+        return (float) static::resolvePaymentSnapshot($this->total_amount, $this->paid_amount)['overpaid_amount'];
+    }
+
+    public function getEffectivePaymentStatusAttribute()
+    {
+        return static::resolvePaymentSnapshot($this->total_amount, $this->paid_amount)['payment_status'];
     }
 
     public function getTaxAmountAttribute($value) {
