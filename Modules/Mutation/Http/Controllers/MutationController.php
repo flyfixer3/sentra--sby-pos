@@ -61,7 +61,7 @@ class MutationController extends Controller
 
     /**
      * MANUAL INPUT (dari menu Mutations)
-     * Sekarang: bikin mutation log + update stocks.qty_available (source of truth)
+     * Sekarang: bikin mutation log + update stocks.qty_total (source of truth)
      */
     public function store(Request $request)
     {
@@ -402,7 +402,7 @@ class MutationController extends Controller
                 'branch_id'     => $branchId,
                 'warehouse_id'  => $warehouseId,
                 'product_id'    => $productId,
-                'qty_available' => 0,
+                'qty_total' => 0,
                 'qty_reserved'  => 0,
                 'qty_incoming'  => 0,
                 'min_stock'     => 0,
@@ -426,7 +426,7 @@ class MutationController extends Controller
             ->where('warehouse_id', $warehouseId)
             ->where('product_id', $productId)
             ->selectRaw('
-                COALESCE(SUM(qty_available),0) as s_avail,
+                COALESCE(SUM(qty_total),0) as s_avail,
                 COALESCE(SUM(qty_good),0) as s_good,
                 COALESCE(SUM(qty_defect),0) as s_def,
                 COALESCE(SUM(qty_damaged),0) as s_dam
@@ -435,7 +435,7 @@ class MutationController extends Controller
 
         $sumAvail = (int) ($agg->s_avail ?? 0);
 
-        // optional guard: kalau data legacy bikin qty_available gak sama dengan good+def+dam
+        // optional guard: kalau data legacy bikin qty_total gak sama dengan good+def+dam
         $sumGood = (int) ($agg->s_good ?? 0);
         $sumDef  = (int) ($agg->s_def ?? 0);
         $sumDam  = (int) ($agg->s_dam ?? 0);
@@ -449,7 +449,7 @@ class MutationController extends Controller
         DB::table('stocks')
             ->where('id', $stockRow->id)
             ->update([
-                'qty_available' => $sumAvail,
+                'qty_total' => $sumAvail,
                 'updated_by'    => Auth::id(),
                 'updated_at'    => now(),
             ]);
@@ -592,7 +592,7 @@ class MutationController extends Controller
                 'branch_id'     => $branchId,
                 'warehouse_id'  => $warehouseId,
                 'product_id'    => $productId,
-                'qty_available' => 0,
+                'qty_total' => 0,
                 'qty_reserved'  => 0,
                 'qty_incoming'  => 0,
                 'min_stock'     => 0,
@@ -607,7 +607,7 @@ class MutationController extends Controller
                 ->first();
         }
 
-        $early = (int) $stock->qty_available;
+        $early = (int) $stock->qty_total;
 
         $in  = $mutationType === 'In' ? $qty : 0;
         $out = $mutationType === 'Out' ? $qty : 0;
@@ -762,7 +762,7 @@ class MutationController extends Controller
                 'warehouse_id'  => (int) $warehouseId,
                 'rack_id'       => (int) $resolvedRackId,
                 'product_id'    => (int) $productId,
-                'qty_available' => 0,
+                'qty_total' => 0,
                 'qty_good'      => 0,
                 'qty_defect'    => 0,
                 'qty_damaged'   => 0,
@@ -779,18 +779,18 @@ class MutationController extends Controller
                 ->first();
         }
 
-        $curAvail = (int) ($sr->qty_available ?? 0);
+        $curAvail = (int) ($sr->qty_total ?? 0);
 
         if ($mutationType === 'Out' && $curAvail < $qty) {
             throw new \RuntimeException(
-                "Not enough rack qty_available for OUT. Need {$qty}, have {$curAvail}. Branch {$branchId}, WH {$warehouseId}, Rack {$resolvedRackId}, Product {$productId}. Ref {$reference}"
+                "Not enough rack qty_total for OUT. Need {$qty}, have {$curAvail}. Branch {$branchId}, WH {$warehouseId}, Rack {$resolvedRackId}, Product {$productId}. Ref {$reference}"
             );
         }
 
         $newAvail = $mutationType === 'In' ? ($curAvail + $qty) : ($curAvail - $qty);
 
         $update = [
-            'qty_available' => (int) $newAvail,
+            'qty_total' => (int) $newAvail,
             'updated_at'    => now(),
         ];
 
@@ -817,10 +817,10 @@ class MutationController extends Controller
             ->where('sr.warehouse_id', (int) $warehouseId)
             ->where('sr.product_id', (int) $productId)
             ->whereRaw($resolvedSrBranchExpr . ' = ?', [(int) $branchId])
-            ->sum('sr.qty_available');
+            ->sum('sr.qty_total');
 
         $stock->update([
-            'qty_available' => $rackSum,
+            'qty_total' => $rackSum,
             'updated_by'    => auth()->id(),
         ]);
 
@@ -891,7 +891,7 @@ class MutationController extends Controller
             return;
         }
 
-        $stockQty = (int) ($stockRow->qty_available ?? 0);
+        $stockQty = (int) ($stockRow->qty_total ?? 0);
 
         $resolvedSrBranchExpr = 'COALESCE(sr.branch_id, w.branch_id)';
 
@@ -900,17 +900,17 @@ class MutationController extends Controller
             ->where('sr.warehouse_id', $warehouseId)
             ->where('sr.product_id', $productId)
             ->whereRaw($resolvedSrBranchExpr . ' = ?', [$branchId])
-            ->sum('sr.qty_available');
+            ->sum('sr.qty_total');
 
         if ($stockQty !== $rackSum) {
             // ✅ AUTO-HEAL: header selalu ikut rackSum
             $stockRow->update([
-                'qty_available' => $rackSum,
+                'qty_total' => $rackSum,
                 'updated_by'    => auth()->id(),
             ]);
 
             // kalau kamu mau logging:
-            // \Log::warning("AUTO-SYNC stocks.qty_available {$stockQty} -> {$rackSum} (branch={$branchId}, wh={$warehouseId}, product={$productId})");
+            // \Log::warning("AUTO-SYNC stocks.qty_total {$stockQty} -> {$rackSum} (branch={$branchId}, wh={$warehouseId}, product={$productId})");
         }
     }
 
@@ -942,7 +942,7 @@ class MutationController extends Controller
                 'warehouse_id'  => (int) $warehouseId,
                 'rack_id'       => (int) $rackId,
                 'product_id'    => (int) $productId,
-                'qty_available' => 0,
+                'qty_total' => 0,
                 'qty_good'      => 0,
                 'qty_defect'    => 0,
                 'qty_damaged'   => 0,
@@ -950,10 +950,10 @@ class MutationController extends Controller
                 'updated_at'    => now(),
             ]);
 
-            $sr = (object) ['qty_available' => 0];
+            $sr = (object) ['qty_total' => 0];
         }
 
-        $qtyAvail = (int) ($sr->qty_available ?? 0);
+        $qtyAvail = (int) ($sr->qty_total ?? 0);
 
         // DEFECT: hanya yang masih available (moved_out_at IS NULL)
         $defect = (int) DB::table('product_defect_items')
@@ -1034,7 +1034,7 @@ class MutationController extends Controller
                 'branch_id'     => $branchId,
                 'warehouse_id'  => $warehouseId,
                 'product_id'    => $productId,
-                'qty_available' => 0,
+                'qty_total' => 0,
                 'qty_reserved'  => 0,
                 'qty_incoming'  => 0,
                 'min_stock'     => 0,
@@ -1049,7 +1049,7 @@ class MutationController extends Controller
                 ->first();
         }
 
-        $early = (int) $stock->qty_available;
+        $early = (int) $stock->qty_total;
 
         $in  = $direction === 'In' ? $qty : 0;
         $out = $direction === 'Out' ? $qty : 0;
@@ -1076,7 +1076,7 @@ class MutationController extends Controller
         ]);
 
         $stock->update([
-            'qty_available' => $last,
+            'qty_total' => $last,
             'updated_by'    => auth()->id(),
         ]);
 
@@ -1105,7 +1105,7 @@ class MutationController extends Controller
                 'warehouse_id'  => (int) $warehouseId,
                 'rack_id'       => (int) $resolvedRackId,
                 'product_id'    => (int) $productId,
-                'qty_available' => 0,
+                'qty_total' => 0,
                 'qty_good'      => 0,
                 'qty_defect'    => 0,
                 'qty_damaged'   => 0,
@@ -1113,14 +1113,14 @@ class MutationController extends Controller
                 'updated_at'    => now(),
             ]);
 
-            $sr = (object)['qty_available' => 0];
+            $sr = (object)['qty_total' => 0];
         }
 
-        $curAvail = (int) ($sr->qty_available ?? 0);
+        $curAvail = (int) ($sr->qty_total ?? 0);
 
         if ($direction === 'Out' && $curAvail < $qty) {
             throw new \RuntimeException(
-                "Not enough rack qty_available for Transfer OUT. Need {$qty}, have {$curAvail}. Branch {$branchId}, WH {$warehouseId}, Rack {$resolvedRackId}, Product {$productId}. Ref {$reference}"
+                "Not enough rack qty_total for Transfer OUT. Need {$qty}, have {$curAvail}. Branch {$branchId}, WH {$warehouseId}, Rack {$resolvedRackId}, Product {$productId}. Ref {$reference}"
             );
         }
 
@@ -1134,7 +1134,7 @@ class MutationController extends Controller
                 $q->where('branch_id', (int) $branchId)->orWhereNull('branch_id');
             })
             ->update([
-                'qty_available' => (int) $newAvail,
+                'qty_total' => (int) $newAvail,
                 'updated_at'    => now(),
             ]);
 
@@ -1218,7 +1218,7 @@ class MutationController extends Controller
                     'branch_id'     => (int)$m->branch_id,
                     'warehouse_id'  => (int)$m->warehouse_id,
                     'product_id'    => (int)$m->product_id,
-                    'qty_available' => 0,
+                    'qty_total' => 0,
                     'qty_reserved'  => 0,
                     'qty_incoming'  => 0,
                     'min_stock'     => 0,
@@ -1234,7 +1234,7 @@ class MutationController extends Controller
             }
 
             $stock->update([
-                'qty_available' => (int)($m->stock_early ?? 0),
+                'qty_total' => (int)($m->stock_early ?? 0),
                 'updated_by'    => auth()->id(),
             ]);
 
@@ -1264,13 +1264,13 @@ class MutationController extends Controller
                         ->first();
 
                     if ($sr) {
-                        $curAvail = (int)($sr->qty_available ?? 0);
+                        $curAvail = (int)($sr->qty_total ?? 0);
 
                         $newAvail = $isIn ? ($curAvail - $qty) : ($curAvail + $qty);
                         if ($newAvail < 0) $newAvail = 0;
 
                         $update = [
-                            'qty_available' => (int)$newAvail,
+                            'qty_total' => (int)$newAvail,
                             'updated_at'    => now(),
                         ];
 
@@ -1321,7 +1321,7 @@ class MutationController extends Controller
                             'warehouse_id'  => (int)$m->warehouse_id,
                             'rack_id'       => (int)$rackId,
                             'product_id'    => (int)$m->product_id,
-                            'qty_available' => 0,
+                            'qty_total' => 0,
                             'qty_good'      => 0,
                             'qty_defect'    => 0,
                             'qty_damaged'   => 0,
@@ -1330,14 +1330,14 @@ class MutationController extends Controller
                         ]);
 
                         $sr = (object)[
-                            'qty_available' => 0,
+                            'qty_total' => 0,
                             'qty_good'      => 0,
                             'qty_defect'    => 0,
                             'qty_damaged'   => 0,
                         ];
                     }
 
-                    $curAvail = (int)($sr->qty_available ?? 0);
+                    $curAvail = (int)($sr->qty_total ?? 0);
                     $curGood  = (int)($sr->qty_good ?? 0);
                     $curDef   = (int)($sr->qty_defect ?? 0);
                     $curDam   = (int)($sr->qty_damaged ?? 0);
@@ -1358,7 +1358,7 @@ class MutationController extends Controller
                         ->where('rack_id', (int)$rackId)
                         ->where('product_id', (int)$m->product_id)
                         ->update([
-                            'qty_available' => (int)$newAvail,
+                            'qty_total' => (int)$newAvail,
                             'qty_good'      => (int)$newGood,
                             'qty_defect'    => (int)$newDef,
                             'qty_damaged'   => (int)$newDam,
@@ -1384,13 +1384,13 @@ class MutationController extends Controller
                             ->first();
 
                         if ($sr) {
-                            $curAvail = (int)($sr->qty_available ?? 0);
+                            $curAvail = (int)($sr->qty_total ?? 0);
 
                             $newAvail = $isIn ? ($curAvail - $qty) : ($curAvail + $qty);
                             if ($newAvail < 0) $newAvail = 0;
 
                             $update = [
-                                'qty_available' => (int)$newAvail,
+                                'qty_total' => (int)$newAvail,
                                 'updated_at'    => now(),
                             ];
 
