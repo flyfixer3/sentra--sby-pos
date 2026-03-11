@@ -52,13 +52,13 @@ class StockService
             $row = $this->getOrCreateStock($productId, $branchId, $warehouseId);
 
             if ($direction === 'in') {
-                $row->qty_available += $qty;
+                $row->qty_total += $qty;
             } else {
-                $row->qty_available -= $qty;
+                $row->qty_total -= $qty;
             }
 
-            if ($row->qty_available < 0) {
-                $row->qty_available = 0;
+            if ($row->qty_total < 0) {
+                $row->qty_total = 0;
             }
 
             $row->save();
@@ -76,12 +76,12 @@ class StockService
             $row = $this->getOrCreateStockRack($productId, $rackId, $warehouseId, $branchId);
 
             if ($direction === 'in') {
-                $row->qty_available += $qty;
+                $row->qty_total += $qty;
                 $this->adjust($productId, $branchId, $warehouseId, $qty, 'in');
             } else {
-                $row->qty_available -= $qty;
-                if ($row->qty_available < 0) {
-                    $row->qty_available = 0;
+                $row->qty_total -= $qty;
+                if ($row->qty_total < 0) {
+                    $row->qty_total = 0;
                 }
                 $this->adjust($productId, $branchId, $warehouseId, $qty, 'out');
             }
@@ -100,13 +100,13 @@ class StockService
         DB::transaction(function () use ($productId, $branchId, $warehouseId, $fromRackId, $toRackId, $qty) {
             // Kurangi stok di rak asal
             $from = $this->getOrCreateStockRack($productId, $fromRackId, $warehouseId, $branchId);
-            $from->qty_available -= $qty;
-            if ($from->qty_available < 0) $from->qty_available = 0;
+            $from->qty_total -= $qty;
+            if ($from->qty_total < 0) $from->qty_total = 0;
             $from->save();
 
             // Tambah stok di rak tujuan
             $to = $this->getOrCreateStockRack($productId, $toRackId, $warehouseId, $branchId);
-            $to->qty_available += $qty;
+            $to->qty_total += $qty;
             $to->save();
 
             // Tidak mengubah stok di tabel "stocks" karena masih di warehouse yang sama

@@ -94,8 +94,8 @@ class StockQualityController extends Controller
             // ✅ SINGLE SOURCE OF TRUTH:
             // MutationController akan:
             // - create/merge mutation log (summary per rack)
-            // - update stocks.qty_available (header)
-            // - update stock_racks.qty_available + bucket (defect)
+            // - update stocks.qty_total (header)
+            // - update stock_racks.qty_total + bucket (defect)
             $this->mutationController->applyInOut(
                 (int) $item->branch_id,
                 (int) $item->warehouse_id,

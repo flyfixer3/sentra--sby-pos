@@ -68,17 +68,17 @@ class SeedRackDummy extends Command
                 ->get()
                 ->groupBy('warehouse_id');
 
-            // 2) isi stock_racks dari stocks qty_available > 0
+            // 2) isi stock_racks dari stocks qty_total > 0
             // ambil branch_id dari warehouses (karena stocks.branch_id banyak NULL)
             $stockQuery = DB::table('stocks')
                 ->join('warehouses', 'warehouses.id', '=', 'stocks.warehouse_id')
                 ->select(
                     'stocks.product_id',
                     'stocks.warehouse_id',
-                    'stocks.qty_available',
+                    'stocks.qty_total',
                     DB::raw('warehouses.branch_id as branch_id')
                 )
-                ->where('stocks.qty_available', '>', 0);
+                ->where('stocks.qty_total', '>', 0);
 
             if ($warehouseFilter) {
                 $stockQuery->where('stocks.warehouse_id', (int) $warehouseFilter);
@@ -118,7 +118,7 @@ class SeedRackDummy extends Command
                     'rack_id' => $defRackId,
                     'warehouse_id' => $warehouseId,
                     'branch_id' => $branchId,
-                    'qty_available' => (int) ($s->qty_available ?? 0),
+                    'qty_total' => (int) ($s->qty_total ?? 0),
                     'created_by' => $userId,
                     'updated_by' => $userId,
                     'created_at' => now(),

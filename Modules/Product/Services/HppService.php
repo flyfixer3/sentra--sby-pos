@@ -120,7 +120,7 @@ class HppService
                     COALESCE(SUM(qty_good), 0) as sum_good,
                     COALESCE(SUM(qty_defect), 0) as sum_defect,
                     COALESCE(SUM(qty_damaged), 0) as sum_damaged,
-                    COALESCE(SUM(qty_available), 0) as sum_available
+                    COALESCE(SUM(qty_total), 0) as sum_available
                 ')
                 ->first();
 

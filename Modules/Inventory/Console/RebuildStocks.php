@@ -15,7 +15,7 @@ class RebuildStocks extends Command
         $this->info('Rebuilding stocks from mutations...');
 
         // 1) reset saldo
-        DB::table('stocks')->update(['qty_available' => 0, 'qty_incoming' => 0, 'qty_reserved' => 0]);
+        DB::table('stocks')->update(['qty_total' => 0, 'qty_incoming' => 0, 'qty_reserved' => 0]);
 
         // 2) agregasi delta per (product,branch,warehouse)
         $this->info('Aggregating mutations → delta...');
@@ -39,7 +39,7 @@ class RebuildStocks extends Command
                     'warehouse_id' => $r->warehouse_id,
                 ],
                 [
-                    'qty_available' => (int) $r->delta_qty,
+                    'qty_total' => (int) $r->delta_qty,
                     'updated_at'    => now(),
                     'created_at'    => now(),
                 ]
@@ -62,7 +62,7 @@ class RebuildStocks extends Command
                         'warehouse_id' => $defaultWarehouse,
                     ],
                     [
-                        'qty_available' => DB::raw('qty_available + '.(int)$p->product_quantity),
+                        'qty_total' => DB::raw('qty_total + '.(int)$p->product_quantity),
                         'min_stock'     => (int)$p->product_stock_alert,
                         'updated_at'    => now(),
                         'created_at'    => now(),

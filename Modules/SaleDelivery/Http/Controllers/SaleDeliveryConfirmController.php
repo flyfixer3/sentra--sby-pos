@@ -56,7 +56,7 @@ class SaleDeliveryConfirmController extends Controller
                     'branch_id'      => (int) $branchId,
                     'warehouse_id'   => null,
 
-                    'qty_available'  => 0,
+                    'qty_total'  => 0,
                     'qty_reserved'   => 0,
                     'qty_incoming'   => 0,
                     'min_stock'      => 0,

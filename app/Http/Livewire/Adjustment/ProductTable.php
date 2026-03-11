@@ -247,14 +247,14 @@ class ProductTable extends Component
                 ->where('warehouse_id', (int) $this->stockWarehouseId)
                 ->where('product_id', (int) $p->id)
                 ->selectRaw('
-                    COALESCE(SUM(qty_available), 0) as qty_available,
+                    COALESCE(SUM(qty_total), 0) as qty_total,
                     COALESCE(SUM(qty_good), 0) as qty_good,
                     COALESCE(SUM(qty_defect), 0) as qty_defect,
                     COALESCE(SUM(qty_damaged), 0) as qty_damaged
                 ')
                 ->first();
 
-            $qtyAvailable = (int) ($row->qty_available ?? 0);
+            $qtyAvailable = (int) ($row->qty_total ?? 0);
             $fallbackTotal = (int) (($row->qty_good ?? 0) + ($row->qty_defect ?? 0) + ($row->qty_damaged ?? 0));
             $stockQty = $qtyAvailable > 0 ? $qtyAvailable : $fallbackTotal;
 
@@ -386,14 +386,14 @@ class ProductTable extends Component
         }
 
         $row = $q->selectRaw('
-                COALESCE(SUM(qty_available), 0) as qty_available,
+                COALESCE(SUM(qty_total), 0) as qty_total,
                 COALESCE(SUM(qty_good), 0) as qty_good,
                 COALESCE(SUM(qty_defect), 0) as qty_defect,
                 COALESCE(SUM(qty_damaged), 0) as qty_damaged
             ')
             ->first();
 
-        $qtyAvailable = (int) ($row->qty_available ?? 0);
+        $qtyAvailable = (int) ($row->qty_total ?? 0);
         $totalAvailable = (int) (($row->qty_good ?? 0) + ($row->qty_defect ?? 0) + ($row->qty_damaged ?? 0));
         if ($qtyAvailable > 0) {
             $totalAvailable = $qtyAvailable;

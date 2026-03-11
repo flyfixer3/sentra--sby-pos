@@ -548,7 +548,7 @@ class SaleOrderController extends Controller
                             'branch_id'    => (int) $branchId,
                             'warehouse_id' => null,
                             'product_id'   => (int) $pid,
-                            'qty_available' => 0,
+                            'qty_total' => 0,
                             'qty_reserved'  => (int) $qty,
                             'qty_incoming'  => 0,
                             'min_stock'     => 0,

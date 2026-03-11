@@ -66,9 +66,9 @@ class Product extends BaseModel implements HasMedia
         $branchId = session('active_branch');
         if (!$branchId) return 0;
 
-        // Ganti 'qty_available' menjadi 'qty' bila kolommu bernama 'qty'
+        // Ganti 'qty_total' menjadi 'qty' bila kolommu bernama 'qty'
         return (int) $this->stockRacks()
             ->where('branch_id', $branchId)
-            ->sum('qty_available');
+            ->sum('qty_total');
     }
 }
