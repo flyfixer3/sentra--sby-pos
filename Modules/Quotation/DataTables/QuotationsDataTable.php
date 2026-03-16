@@ -37,6 +37,12 @@ class QuotationsDataTable extends DataTable
             ->addColumn('status', function ($data) {
                 return view('quotation::partials.status', compact('data'));
             })
+            ->addColumn('created_by_name', function ($data) {
+                return $data->creator?->name ?? '-';
+            })
+            ->addColumn('updated_by_name', function ($data) {
+                return $data->updater?->name ?? '-';
+            })
             ->addColumn('action', function ($data) {
                 return view('quotation::partials.actions', compact('data'));
             })
@@ -45,7 +51,8 @@ class QuotationsDataTable extends DataTable
 
     public function query(Quotation $model)
     {
-        return $model->newQuery();
+        return $model->newQuery()
+            ->with(['creator', 'updater']);
     }
 
     public function html()
@@ -74,6 +81,16 @@ class QuotationsDataTable extends DataTable
             Column::make('customer_name')->title('Customer')->className('text-center align-middle'),
             Column::computed('status')->className('text-center align-middle'),
             Column::computed('total_amount')->className('text-center align-middle'),
+            Column::computed('created_by_name')
+                ->title('Created By')
+                ->className('text-center align-middle')
+                ->orderable(false)
+                ->searchable(false),
+            Column::computed('updated_by_name')
+                ->title('Last Updated By')
+                ->className('text-center align-middle')
+                ->orderable(false)
+                ->searchable(false),
             Column::computed('action')
                 ->exportable(false)
                 ->printable(false)

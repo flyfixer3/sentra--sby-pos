@@ -112,6 +112,8 @@ class QuotationController extends Controller
     public function show(Quotation $quotation) {
         abort_if(Gate::denies('show_quotations'), 403);
 
+        $quotation->loadMissing(['creator', 'updater']);
+
         $branchId = BranchContext::id();
 
         $customer = Customer::query()

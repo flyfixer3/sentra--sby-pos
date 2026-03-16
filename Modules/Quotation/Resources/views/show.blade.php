@@ -13,6 +13,8 @@
 @section('content')
 @php
     $branchId = \App\Support\BranchContext::id();
+    $createdByName = optional($quotation->creator)->name ?? optional($quotation->creator)->username ?? '-';
+    $updatedByName = optional($quotation->updater)->name ?? optional($quotation->updater)->username ?? '-';
 
     $st = strtolower(trim((string) ($quotation->status ?? 'pending')));
     $badgeClass = match($st) {
@@ -169,6 +171,35 @@
                         <div>Date: <strong>{{ $dateText }}</strong></div>
                         <div>Status: <strong>{{ $quotation->status ?? '-' }}</strong></div>
                         <div>Payment Status: <strong>{{ $quotation->payment_status ?? '-' }}</strong></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="card shadow-sm mb-3">
+        <div class="card-header bg-white">
+            <strong>Audit Trail</strong>
+        </div>
+        <div class="card-body">
+            <div class="row g-3">
+                <div class="col-md-6">
+                    <div class="border rounded p-3 h-100">
+                        <div class="text-muted small">Created By</div>
+                        <div class="fw-semibold">{{ $createdByName }}</div>
+                        <div class="text-muted small">
+                            {{ $quotation->created_at ? \Carbon\Carbon::parse($quotation->created_at)->format('d M Y H:i') : '-' }}
+                        </div>
+                    </div>
+                </div>
+
+                <div class="col-md-6">
+                    <div class="border rounded p-3 h-100">
+                        <div class="text-muted small">Updated By</div>
+                        <div class="fw-semibold">{{ $quotation->updated_at ? $updatedByName : '-' }}</div>
+                        <div class="text-muted small">
+                            {{ $quotation->updated_at ? \Carbon\Carbon::parse($quotation->updated_at)->format('d M Y H:i') : '-' }}
+                        </div>
                     </div>
                 </div>
             </div>
