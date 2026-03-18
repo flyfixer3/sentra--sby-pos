@@ -210,6 +210,7 @@ class TransferQualityReportController extends Controller
             ->leftJoin('products as p', 'p.id', '=', 'dm.product_id')
             ->leftJoin('warehouses as w', 'w.id', '=', 'dm.warehouse_id')
             ->leftJoin('branches as b', 'b.id', '=', 'dm.branch_id')
+            ->leftJoin('users as u_updated', 'u_updated.id', '=', 'dm.updated_by')
 
             // Transfer
             ->leftJoin('transfer_requests as tr', function ($join) use ($transferClass) {
@@ -265,6 +266,7 @@ class TransferQualityReportController extends Controller
                 'dm.mutation_out_id',
                 'dm.reference_id',
                 'dm.reference_type',
+                'u_updated.name as updated_by_name',
 
                 'tr.reference as transfer_reference',
                 'po.reference as po_reference',

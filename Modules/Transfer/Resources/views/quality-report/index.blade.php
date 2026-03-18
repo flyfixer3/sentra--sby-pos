@@ -264,6 +264,7 @@
                                     <th class="text-center" style="width:90px;">Qty</th>
                                     <th style="width:110px;" class="text-center">Type</th>
                                     <th style="width:130px;" class="text-center">Resolution</th>
+                                    <th style="width:150px;" class="text-center">Updated By</th>
                                     <th>Reason</th>
                                     <th class="text-center" style="width:110px;">Photo</th>
                                     <th class="text-center" style="width:220px;">Reference</th>
@@ -320,6 +321,7 @@
                                                 {{ $resolutionStatus }}
                                             </span>
                                         </td>
+                                        <td class="text-center">{{ $dm->updated_by_name ?? '-' }}</td>
                                         <td>{{ $dm->reason ?? '-' }}</td>
                                         <td class="text-center">
                                             @if(!empty($dm->photo_path))
