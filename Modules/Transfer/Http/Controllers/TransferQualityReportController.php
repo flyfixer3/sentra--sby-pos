@@ -85,9 +85,11 @@ class TransferQualityReportController extends Controller
 
         // helper filter: item dianggap "masih ada" kalau belum moved out
         $applyNotMovedOut = function ($qr, string $alias) {
-            // robust: wajib moved_out_at NULL (utama), dan kalau ada legacy isi reference_type doang, kita exclude juga
+            // active issue di Quality Report = semua marker moved_out masih kosong
             $qr->whereNull($alias . '.moved_out_at')
-            ->whereNull($alias . '.moved_out_reference_type');
+                ->whereNull($alias . '.moved_out_by')
+                ->whereNull($alias . '.moved_out_reference_type')
+                ->whereNull($alias . '.moved_out_reference_id');
             return $qr;
         };
 
@@ -294,8 +296,6 @@ class TransferQualityReportController extends Controller
                     END as reference_source
                 "),
             ])
-
-            ->where('dm.resolution_status', 'pending')
 
             // ✅ FILTER: jangan tampilkan yang sudah moved out (soft delete bisnis)
             ->tap(function ($qr) use ($applyNotMovedOut) {

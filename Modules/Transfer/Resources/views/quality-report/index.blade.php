@@ -39,7 +39,7 @@
             <div class="qr-head mb-3">
                 <div>
                     <h4 class="qr-title">Quality Report</h4>
-                    <div class="qr-sub">Defect & Issue (Damaged/Missing). Only <b>pending</b> issues are shown. Max 500 rows per section.</div>
+                    <div class="qr-sub">Defect & Issue (Damaged/Missing). Active issue rows stay visible until they are moved out. Max 500 rows per section.</div>
                 </div>
                 <div class="qr-pill">
                     <i class="bi bi-filter"></i> Filters
@@ -133,7 +133,7 @@
             <div class="card qr-card">
                 <div class="card-body qr-kpi">
                     <div>
-                        <div class="lbl">Total Pending Issue Qty</div>
+                        <div class="lbl">Total Active Issue Qty</div>
                         <div class="num">{{ number_format((int) $totalDamagedQty) }}</div>
                     </div>
                     <span class="qr-pill badge-soft-danger">
@@ -244,13 +244,13 @@
     @if(request('type', 'all') === 'all' || request('type') === 'damaged')
         <div class="card qr-card mb-4">
             <div class="card-header bg-white d-flex justify-content-between align-items-center">
-                <div class="fw-bold">Issue List <span class="text-muted fw-normal">(Pending only)</span></div>
+                <div class="fw-bold">Issue List <span class="text-muted fw-normal">(Active until moved out)</span></div>
                 <span class="qr-pill badge-soft-danger"><i class="bi bi-shield-exclamation"></i> resolve from here</span>
             </div>
 
             <div class="card-body p-0">
                 @if($damaged->isEmpty())
-                    <div class="p-4 qr-muted">Tidak ada issue pending.</div>
+                    <div class="p-4 qr-muted">Tidak ada issue aktif.</div>
                 @else
                     <div class="table-responsive">
                         <table class="table table-hover table-bordered mb-0 qr-table">
@@ -263,6 +263,7 @@
                                     <th>Product</th>
                                     <th class="text-center" style="width:90px;">Qty</th>
                                     <th style="width:110px;" class="text-center">Type</th>
+                                    <th style="width:130px;" class="text-center">Resolution</th>
                                     <th>Reason</th>
                                     <th class="text-center" style="width:110px;">Photo</th>
                                     <th class="text-center" style="width:220px;">Reference</th>
@@ -287,6 +288,12 @@
 
                                         $damageType = $dm->damage_type ?? 'damaged';
                                         $typeBadge = $damageType === 'missing' ? 'badge-soft-warning' : 'badge-soft-danger';
+                                        $resolutionStatus = strtolower(trim((string) ($dm->resolution_status ?? 'pending')));
+                                        $resolutionBadge = 'badge-soft';
+                                        if ($resolutionStatus === 'pending') $resolutionBadge = 'badge-soft-warning';
+                                        elseif ($resolutionStatus === 'resolved') $resolutionBadge = 'badge-soft-info';
+                                        elseif ($resolutionStatus === 'compensated') $resolutionBadge = 'badge-soft-primary';
+                                        elseif ($resolutionStatus === 'waived') $resolutionBadge = 'badge-soft';
 
                                         // current values for modal
                                         $currentCause = $dm->cause ?? 'transfer';
@@ -306,6 +313,11 @@
                                         <td class="text-center">
                                             <span class="badge {{ $typeBadge }} text-uppercase fw-semibold">
                                                 {{ $damageType }}
+                                            </span>
+                                        </td>
+                                        <td class="text-center">
+                                            <span class="badge {{ $resolutionBadge }} text-uppercase fw-semibold">
+                                                {{ $resolutionStatus }}
                                             </span>
                                         </td>
                                         <td>{{ $dm->reason ?? '-' }}</td>
@@ -340,7 +352,7 @@
                                                 data-issue-id="{{ (int) $dm->id }}"
                                                 data-cause="{{ $currentCause }}"
                                                 data-responsible="{{ $currentResp }}"
-                                                data-status="pending"
+                                                data-status="{{ $resolutionStatus }}"
                                                 data-note="{{ e((string) $currentNote) }}"
                                             >
                                                 <i class="bi bi-check2-circle"></i> Resolve
@@ -419,7 +431,7 @@
         <div class="alert alert-info mt-3 mb-0">
           <div class="fw-semibold mb-1">Info</div>
           <div class="small">
-            Setelah status diubah dari <b>pending</b>, issue ini akan otomatis hilang dari list dan tidak dihitung lagi di stock.
+            Resolution status tetap terlihat di Quality Report. Item baru hilang dari list aktif jika memang sudah moved out.
           </div>
         </div>
 

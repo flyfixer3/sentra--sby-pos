@@ -2,11 +2,11 @@
 
 namespace Modules\Product\Entities;
 
-use Illuminate\Database\Eloquent\Model;
+use App\Models\BaseModel;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Modules\Mutation\Entities\Mutation;
 
-class ProductDamagedItem extends Model
+class ProductDamagedItem extends BaseModel
 {
     use HasFactory;
 
@@ -34,6 +34,7 @@ class ProductDamagedItem extends Model
         'mutation_in_id',
         'mutation_out_id',
         'created_by',
+        'updated_by',
     ];
 
     protected $casts = [
@@ -46,6 +47,7 @@ class ProductDamagedItem extends Model
         'mutation_in_id'       => 'integer',
         'mutation_out_id'      => 'integer',
         'created_by'           => 'integer',
+        'updated_by'           => 'integer',
         'responsible_user_id'  => 'integer',
     ];
 

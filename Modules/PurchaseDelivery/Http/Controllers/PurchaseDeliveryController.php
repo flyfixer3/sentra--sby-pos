@@ -950,6 +950,7 @@ class PurchaseDeliveryController extends Controller
                             ->whereIn('id', array_map('intval', $createdDamagedIdsByRack[$rackId]))
                             ->update([
                                 'mutation_in_id' => $mutationIdForRack,
+                                'updated_by'     => auth()->id(),
                                 'updated_at'     => now(),
                             ]);
                     }

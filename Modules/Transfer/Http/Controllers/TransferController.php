@@ -639,6 +639,8 @@ class TransferController extends Controller
                                     'moved_out_by' => $user->id,
                                     'moved_out_reference_type' => \Modules\Transfer\Entities\TransferRequest::class,
                                     'moved_out_reference_id' => (int) $transfer->id,
+                                    'updated_by' => $user->id,
+                                    'updated_at' => now(),
                                 ]);
                         }
 
@@ -1739,6 +1741,8 @@ class TransferController extends Controller
                         'moved_out_by' => null,
                         'moved_out_reference_type' => null,
                         'moved_out_reference_id' => null,
+                        'updated_by' => auth()->id(),
+                        'updated_at' => now(),
                     ]);
 
                 foreach ($transfer->items as $item) {

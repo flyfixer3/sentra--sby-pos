@@ -994,6 +994,7 @@ class AdjustmentController extends Controller
                                 'moved_out_by'             => (int) Auth::id(),
                                 'moved_out_reference_type' => Adjustment::class,
                                 'moved_out_reference_id'   => (int) $adjustment->id,
+                                'updated_by'               => (int) Auth::id(),
                                 'updated_at'               => now(),
                             ]);
 
@@ -1040,6 +1041,7 @@ class AdjustmentController extends Controller
                                 ->whereIn('id', $ids)
                                 ->update([
                                     'mutation_out_id' => (int) $mutationOutId,
+                                    'updated_by'      => (int) Auth::id(),
                                     'updated_at'      => now(),
                                 ]);
                         }
@@ -1430,6 +1432,7 @@ class AdjustmentController extends Controller
                             'moved_out_by'             => (int) Auth::id(),
                             'moved_out_reference_type' => Adjustment::class,
                             'moved_out_reference_id'   => (int) $adjustment->id,
+                            'updated_by'               => (int) Auth::id(),
                             'updated_at'               => now(),
                         ]);
 
@@ -1457,6 +1460,7 @@ class AdjustmentController extends Controller
                         ->whereIn('id', $damagedPickIds)
                         ->update([
                             'mutation_out_id' => (int) $mutationOutId,
+                            'updated_by'      => (int) Auth::id(),
                             'updated_at'      => now(),
                         ]);
 
@@ -2246,6 +2250,7 @@ class AdjustmentController extends Controller
                                 'moved_out_by' => (int) Auth::id(),
                                 'moved_out_reference_type' => Adjustment::class,
                                 'moved_out_reference_id' => (int) $adjustment->id,
+                                'updated_by' => (int) Auth::id(),
                                 'updated_at' => $now,
                             ]);
                     }
@@ -2297,6 +2302,7 @@ class AdjustmentController extends Controller
                             ->whereIn('id', $groupIds)
                             ->update([
                                 'mutation_out_id' => (int) $mutationOutId,
+                                'updated_by' => (int) Auth::id(),
                                 'updated_at' => now(),
                             ]);
                     }
