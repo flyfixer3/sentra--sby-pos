@@ -25,7 +25,7 @@
                         @include('utils.alerts')
                         <form id="quotation-form" action="{{ route('quotations.update', $quotation) }}" method="POST">
                             @csrf
-                            @method('patch')
+                            @method('put')
                             <div class="form-row">
                                 <div class="col-lg-4">
                                     <div class="form-group">
