@@ -444,6 +444,7 @@ class PurchaseDeliveryController extends Controller
 
             'items.*.defects'            => 'nullable|array',
             'items.*.damaged_items'      => 'nullable|array',
+            'items.*.damaged_items.*.damage_type' => 'nullable|string|in:damaged,missing',
         ]);
 
         // ✅ HPP service
@@ -851,6 +852,10 @@ class PurchaseDeliveryController extends Controller
                         }
 
                         $rackId = (int) ($d['rack_id'] ?? 0);
+                        $damageType = strtolower(trim((string) ($d['damage_type'] ?? 'damaged')));
+                        if (!in_array($damageType, ['damaged', 'missing'], true)) {
+                            $damageType = 'damaged';
+                        }
 
                         $created = ProductDamagedItem::create([
                             'branch_id'       => (int) $purchaseDelivery->branch_id,
@@ -860,6 +865,7 @@ class PurchaseDeliveryController extends Controller
                             'reference_id'    => (int) $purchaseDelivery->id,
                             'reference_type'  => PurchaseDelivery::class,
                             'quantity'        => 1,
+                            'damage_type'     => $damageType,
                             'reason'          => $d['damaged_reason'] ?? null,
                             'photo_path'      => $photoPath,
                             'created_by'      => auth()->id(),

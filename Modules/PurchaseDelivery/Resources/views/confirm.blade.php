@@ -376,6 +376,7 @@
                                                             <tr>
                                                                 <th style="width:55px" class="text-center">#</th>
                                                                 <th style="min-width:200px;">Rack *</th>
+                                                                <th style="min-width:140px;">Damage Type *</th>
                                                                 <th>Damaged Reason *</th>
                                                                 <th style="width:190px;">Photo (optional)</th>
                                                             </tr>
@@ -545,6 +546,7 @@
         perWrap.querySelectorAll('.damaged-tbody tr').forEach(tr=>{
             out.damaged.push({
                 rack_id: tr.querySelector('.damaged-rack')?.value || '',
+                damage_type: tr.querySelector('.damaged-type-input')?.value || 'damaged',
                 damaged_reason: tr.querySelector('.damaged-reason-input')?.value || ''
             });
         });
@@ -709,6 +711,7 @@
         damagedTbody.innerHTML = '';
         for (let i=0;i<addDamaged;i++){
             const prev = oldDamages[i] || {};
+            const damageType = (prev.damage_type || 'damaged');
             const tr = document.createElement('tr');
             tr.innerHTML = `
                 <td class="text-center align-middle">${i+1}</td>
@@ -716,6 +719,14 @@
                     <select class="form-control form-control-sm damaged-rack"
                             name="items[${idx}][damaged_items][${i}][rack_id]" required>
                         ${rackOptionsHtml()}
+                    </select>
+                </td>
+                <td class="align-middle">
+                    <select class="form-control form-control-sm damaged-type-input"
+                            name="items[${idx}][damaged_items][${i}][damage_type]"
+                            required>
+                        <option value="damaged">damaged</option>
+                        <option value="missing">missing</option>
                     </select>
                 </td>
                 <td class="align-middle">
@@ -738,6 +749,11 @@
             const sel = tr.querySelector('.damaged-rack');
             if (sel && (prev.rack_id || prev.rackId)){
                 sel.value = String(prev.rack_id || prev.rackId);
+            }
+
+            const typeSel = tr.querySelector('.damaged-type-input');
+            if (typeSel) {
+                typeSel.value = (damageType === 'missing') ? 'missing' : 'damaged';
             }
         }
 
