@@ -2250,6 +2250,7 @@ class AdjustmentController extends Controller
                                 'moved_out_by' => (int) Auth::id(),
                                 'moved_out_reference_type' => Adjustment::class,
                                 'moved_out_reference_id' => (int) $adjustment->id,
+                                'resolution_status' => 'resolved',
                                 'updated_by' => (int) Auth::id(),
                                 'updated_at' => $now,
                             ]);
