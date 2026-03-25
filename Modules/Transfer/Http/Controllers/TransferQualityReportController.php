@@ -37,9 +37,11 @@ class TransferQualityReportController extends Controller
             'date_to'      => 'nullable|date',
             'q'            => 'nullable|string|max:255',
             'type'         => 'nullable|in:all,defect,damaged',
+            'resolution_status' => 'nullable|in:all,pending,resolved,compensated,waived',
         ]);
 
         $type = $request->get('type', 'all');
+        $resolutionStatus = (string) $request->get('resolution_status', 'all');
 
         // branch filter
         $branchId = null;
@@ -308,6 +310,7 @@ class TransferQualityReportController extends Controller
             ->when($warehouseId !== null, fn($qr) => $qr->where('dm.warehouse_id', $warehouseId))
             ->when($dateFrom, fn($qr) => $qr->whereDate('dm.created_at', '>=', $dateFrom))
             ->when($dateTo, fn($qr) => $qr->whereDate('dm.created_at', '<=', $dateTo))
+            ->when($resolutionStatus !== 'all', fn($qr) => $qr->where('dm.resolution_status', $resolutionStatus))
             ->when($q !== '', function ($qr) use ($q) {
                 $qr->where(function ($sub) use ($q) {
                     $sub->where('p.product_name', 'like', "%{$q}%")
@@ -349,6 +352,7 @@ class TransferQualityReportController extends Controller
             'dateTo'                 => $dateTo,
             'q'                      => $q,
             'type'                   => $type,
+            'resolutionStatus'       => $resolutionStatus,
             'defects'                => $defects,
             'damaged'                => $damaged,
             'totalDefectQty'         => $totalDefectQty,

@@ -93,7 +93,18 @@
                     </select>
                 </div>
 
-                <div class="col-md-8">
+                <div class="col-md-3">
+                    <label class="form-label">Resolution Status</label>
+                    <select name="resolution_status" class="form-control">
+                        <option value="all" {{ request('resolution_status', 'all') === 'all' ? 'selected' : '' }}>All Statuses</option>
+                        <option value="pending" {{ request('resolution_status') === 'pending' ? 'selected' : '' }}>pending</option>
+                        <option value="resolved" {{ request('resolution_status') === 'resolved' ? 'selected' : '' }}>resolved</option>
+                        <option value="compensated" {{ request('resolution_status') === 'compensated' ? 'selected' : '' }}>compensated</option>
+                        <option value="waived" {{ request('resolution_status') === 'waived' ? 'selected' : '' }}>waived</option>
+                    </select>
+                </div>
+
+                <div class="col-md-5">
                     <label class="form-label">Search</label>
                     <input type="text"
                            name="q"
