@@ -268,7 +268,7 @@
                             <thead class="table-light">
                                 <tr>
                                     <th style="width:60px;">#</th>
-                                    <th style="width:170px;">Date</th>
+                                    <th style="width:170px;">Created Date</th>
                                     <th>Branch</th>
                                     <th>Warehouse</th>
                                     <th>Product</th>
@@ -333,7 +333,14 @@
                                             </span>
                                         </td>
                                         <td class="text-center">{{ $dm->updated_by_name ?? '-' }}</td>
-                                        <td>{{ $dm->reason ?? '-' }}</td>
+                                        <td>
+                                            <div>{{ $dm->reason ?? '-' }}</div>
+                                            @if($resolutionStatus !== 'pending')
+                                                <div class="qr-muted small mt-1">
+                                                    Resolution note: {{ !empty($currentNote) ? $currentNote : '-' }}
+                                                </div>
+                                            @endif
+                                        </td>
                                         <td class="text-center">
                                             @if(!empty($dm->photo_path))
                                                 <a href="{{ \Illuminate\Support\Facades\Storage::url($dm->photo_path) }}" target="_blank" class="btn btn-sm btn-light">
@@ -359,7 +366,7 @@
                                         <td class="text-center">
                                             <button
                                                 type="button"
-                                                class="btn btn-sm btn-outline-primary"
+                                                class="btn btn-sm {{ $resolutionStatus === 'pending' ? 'btn-outline-primary' : 'btn-outline-secondary' }}"
                                                 data-toggle="modal"
                                                 data-target="#resolveIssueModal"
                                                 data-issue-id="{{ (int) $dm->id }}"
@@ -367,6 +374,8 @@
                                                 data-responsible="{{ $currentResp }}"
                                                 data-status="{{ $resolutionStatus }}"
                                                 data-note="{{ e((string) $currentNote) }}"
+                                                title="{{ $resolutionStatus === 'pending' ? 'Resolve issue' : 'Status: ' . strtoupper($resolutionStatus) }}"
+                                                {{ $resolutionStatus !== 'pending' ? 'disabled' : '' }}
                                             >
                                                 <i class="bi bi-check2-circle"></i> Resolve
                                             </button>
