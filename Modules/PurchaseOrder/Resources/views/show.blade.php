@@ -195,7 +195,8 @@
 
     // ✅ Create Delivery hanya boleh kalau PO masih ada remaining (Pending/Partial)
     // Kalau Delivered => remaining=0 => tidak boleh create delivery lagi.
-    $canCreateDelivery = in_array($statusLower, ['pending', 'partial'], true);
+    $canCreateDelivery = in_array($statusLower, ['pending', 'partial'], true)
+        && $purchase_order->hasRemainingDeliveryQuantity();
 
     // ✅ Convert to Purchase hanya boleh kalau belum ada invoice dan belum masuk PD flow
     $canConvertToPurchase = !$hasInvoice && !$hasDeliveryFlow;
@@ -251,6 +252,10 @@
                     class="po-btn po-btn--success d-print-none">
                         <i class="bi bi-truck"></i> Create Delivery
                     </a>
+                @elseif(in_array($statusLower, ['pending', 'partial'], true) && !$purchase_order->hasRemainingDeliveryQuantity())
+                    <span class="po-pill po-pill--muted d-print-none">
+                        This PO has no remaining quantities available for a new Purchase Delivery.
+                    </span>
                 @endif
 
                 @if($canConvertToPurchase)

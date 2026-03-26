@@ -11,6 +11,7 @@ use Illuminate\Support\Facades\Schema;
 use Modules\Purchase\Entities\Purchase;
 use Modules\People\Entities\Supplier;
 use Modules\PurchaseDelivery\Entities\PurchaseDelivery;
+use Illuminate\Support\Facades\DB;
 
 class PurchaseOrder extends BaseModel
 {
@@ -68,6 +69,54 @@ class PurchaseOrder extends BaseModel
         return $this->purchaseDeliveries()->exists();
     }
 
+    public function allocatedDeliveryQtyByProduct(): array
+    {
+        $rows = DB::table('purchase_delivery_details as pdd')
+            ->join('purchase_deliveries as pd', 'pd.id', '=', 'pdd.purchase_delivery_id')
+            ->where('pd.purchase_order_id', (int) $this->id)
+            ->whereNull('pd.deleted_at')
+            ->selectRaw('pdd.product_id, COALESCE(SUM(pdd.quantity), 0) as allocated_qty')
+            ->groupBy('pdd.product_id')
+            ->get();
+
+        $map = [];
+        foreach ($rows as $row) {
+            $map[(int) ($row->product_id ?? 0)] = (int) ($row->allocated_qty ?? 0);
+        }
+
+        return $map;
+    }
+
+    public function purchaseOrderDetailsWithDeliveryRemaining()
+    {
+        $details = $this->relationLoaded('purchaseOrderDetails')
+            ? $this->purchaseOrderDetails
+            : $this->purchaseOrderDetails()->get();
+
+        $allocatedMap = $this->allocatedDeliveryQtyByProduct();
+
+        return $details->map(function ($detail) use (&$allocatedMap) {
+            $productId = (int) ($detail->product_id ?? 0);
+            $orderedQty = (int) ($detail->quantity ?? 0);
+            $allocatedQty = (int) ($allocatedMap[$productId] ?? 0);
+
+            $remainingQty = max($orderedQty - $allocatedQty, 0);
+
+            $detail->allocated_delivery_quantity = $allocatedQty;
+            $detail->delivery_remaining_quantity = $remainingQty;
+
+            return $detail;
+        });
+    }
+
+    public function hasRemainingDeliveryQuantity(): bool
+    {
+        return $this->purchaseOrderDetailsWithDeliveryRemaining()
+            ->contains(function ($detail) {
+                return (int) ($detail->delivery_remaining_quantity ?? 0) > 0;
+            });
+    }
+
     public function hasLegacyPurchaseInvoiceConflict(?int $excludePurchaseDeliveryId = null): bool
     {
         $q = Purchase::query()
@@ -87,6 +136,39 @@ class PurchaseOrder extends BaseModel
         }
 
         return $q->exists();
+    }
+
+    public function hasAllActiveDeliveriesInvoiced(): bool
+    {
+        $deliveryIds = $this->relationLoaded('purchaseDeliveries')
+            ? $this->purchaseDeliveries->pluck('id')->filter()->values()
+            : $this->purchaseDeliveries()->pluck('id');
+
+        $deliveryCount = $deliveryIds->count();
+        if ($deliveryCount <= 0) {
+            return false;
+        }
+
+        $invoicedCount = Purchase::query()
+            ->whereNull('deleted_at')
+            ->whereIn('purchase_delivery_id', $deliveryIds->all())
+            ->distinct('purchase_delivery_id')
+            ->count('purchase_delivery_id');
+
+        return $invoicedCount >= $deliveryCount;
+    }
+
+    public function isFullyInvoiced(): bool
+    {
+        if ($this->hasLegacyPurchaseInvoiceConflict()) {
+            return true;
+        }
+
+        if ($this->hasActiveDeliveries()) {
+            return $this->hasAllActiveDeliveriesInvoiced();
+        }
+
+        return $this->hasInvoice();
     }
 
     /**
@@ -186,7 +268,7 @@ class PurchaseOrder extends BaseModel
         $status = 'Pending';
 
         if ($ordered > 0 && $remaining <= 0) {
-            $status = 'Delivered'; // ✅ FULL received but NOT invoiced
+            $status = $this->isFullyInvoiced() ? 'Completed' : 'Delivered';
         } elseif ($fulfilled > 0 && $remaining > 0) {
             $status = 'Partial';
         } else {

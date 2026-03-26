@@ -133,8 +133,8 @@
                         <tbody>
                         @forelse($items as $detail)
                             @php
-                                $maxQty = (int) (($detail->quantity ?? 0) - ($detail->fulfilled_quantity ?? 0));
-                                if ($maxQty < 0) $maxQty = 0;
+                                $maxQty = (int) ($detail->delivery_remaining_quantity ?? 0);
+                                $allocatedQty = (int) ($detail->allocated_delivery_quantity ?? 0);
                             @endphp
 
                             <tr data-row="{{ $detail->id }}">
@@ -142,7 +142,9 @@
                                     <div class="font-weight-bold">{{ $detail->product_name }}</div>
                                     <span class="badge bg-success">{{ $detail->product_code }}</span>
                                     <div class="pd-mini mt-1">
-                                        Remaining max: <span class="pd-remaining">{{ $maxQty }}</span>
+                                        Ordered: <span class="pd-remaining">{{ (int) ($detail->quantity ?? 0) }}</span>
+                                        • Already in PD: <span class="pd-remaining">{{ $allocatedQty }}</span>
+                                        • Remaining max: <span class="pd-remaining">{{ $maxQty }}</span>
                                     </div>
                                 </td>
 
@@ -187,7 +189,7 @@
                         @empty
                             <tr>
                                 <td colspan="5" class="text-center text-muted py-4">
-                                    No remaining items to receive. (All fulfilled)
+                                    No remaining quantities available for a new Purchase Delivery.
                                 </td>
                             </tr>
                         @endforelse

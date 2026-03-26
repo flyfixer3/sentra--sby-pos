@@ -8,6 +8,7 @@ use Illuminate\Routing\Controller;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
+use Modules\Mutation\Entities\Mutation;
 use Modules\People\Entities\Supplier;
 use Modules\Product\Entities\Product;
 use Modules\PurchaseDelivery\Entities\PurchaseDelivery;

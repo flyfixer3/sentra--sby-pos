@@ -12,7 +12,8 @@
             $disableInvoice = $hasInvoice || $hasDeliveryFlow;
 
             // ✅ Make Delivery: hanya boleh untuk Pending/Partial
-            $disableDelivery = !in_array($statusLower, ['pending', 'partial'], true);
+            $disableDelivery = !in_array($statusLower, ['pending', 'partial'], true)
+                || !$data->hasRemainingDeliveryQuantity();
         @endphp
 
         @can('create_purchase_order_purchases')

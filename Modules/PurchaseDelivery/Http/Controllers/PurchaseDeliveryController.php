@@ -88,14 +88,18 @@ class PurchaseDeliveryController extends Controller
                 ->with('error', 'This PO belongs to a different branch than the active branch.');
         }
 
-        $remainingItems = $purchaseOrder->purchaseOrderDetails()
-            ->whereColumn('quantity', '>', 'fulfilled_quantity')
-            ->get();
+        $purchaseOrder->load(['supplier', 'purchaseOrderDetails']);
+
+        $remainingItems = $purchaseOrder->purchaseOrderDetailsWithDeliveryRemaining()
+            ->filter(function ($detail) {
+                return (int) ($detail->delivery_remaining_quantity ?? 0) > 0;
+            })
+            ->values();
 
         if ($remainingItems->isEmpty()) {
             return redirect()
                 ->route('purchase-orders.show', $purchaseOrder->id)
-                ->with('error', 'This Purchase Order is already fully fulfilled. No remaining items to deliver.');
+                ->with('error', 'This Purchase Order has no remaining quantities available for a new Purchase Delivery.');
         }
 
         $warehouses = Warehouse::query()
@@ -109,7 +113,7 @@ class PurchaseDeliveryController extends Controller
             ?? optional($warehouses->first())->id;
 
         return view('purchase-deliveries::create', [
-            'purchaseOrder'      => $purchaseOrder->load(['supplier', 'purchaseOrderDetails']),
+            'purchaseOrder'      => $purchaseOrder,
             'remainingItems'     => $remainingItems,
             'warehouses'         => $warehouses,
             'defaultWarehouseId' => $defaultWarehouseId,
@@ -146,6 +150,16 @@ class PurchaseDeliveryController extends Controller
                 throw new \RuntimeException('This PO belongs to a different branch than the active branch.');
             }
 
+            $remainingItems = $purchaseOrder->load('purchaseOrderDetails')
+                ->purchaseOrderDetailsWithDeliveryRemaining()
+                ->keyBy('id');
+
+            if ($remainingItems->isEmpty() || !$remainingItems->contains(function ($detail) {
+                return (int) ($detail->delivery_remaining_quantity ?? 0) > 0;
+            })) {
+                throw new \RuntimeException('This Purchase Order has no remaining quantities available for a new Purchase Delivery.');
+            }
+
             $note = $request->note ? (string) $request->note : null;
 
             // ✅ PD dibuat tanpa warehouse_id
@@ -175,11 +189,11 @@ class PurchaseDeliveryController extends Controller
                     ->where('id', (int) $poDetailId)
                     ->firstOrFail();
 
-                // ✅ Safety: jangan bisa input melebihi remaining
-                $maxQty = (int) (($poDetail->quantity ?? 0) - ($poDetail->fulfilled_quantity ?? 0));
-                if ($maxQty < 0) $maxQty = 0;
+                $remainingDetail = $remainingItems->get((int) $poDetailId);
+                $maxQty = (int) ($remainingDetail->delivery_remaining_quantity ?? 0);
+
                 if ($qty > $maxQty) {
-                    throw new \RuntimeException("Qty exceeds remaining for item {$poDetail->product_name}. Max: {$maxQty}");
+                    throw new \RuntimeException("Submitted PD quantity exceeds remaining ordered quantity for item {$poDetail->product_name}. Remaining available: {$maxQty}");
                 }
 
                 PurchaseDeliveryDetails::create([
