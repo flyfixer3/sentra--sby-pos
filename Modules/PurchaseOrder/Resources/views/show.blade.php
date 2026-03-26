@@ -189,12 +189,16 @@
         ? ($purchase_order->purchases->whereNull('deleted_at')->count() > 0)
         : ($purchase_order->purchases()->whereNull('deleted_at')->exists());
 
+    $hasDeliveryFlow = $purchase_order->relationLoaded('purchaseDeliveries')
+        ? ($purchase_order->purchaseDeliveries->count() > 0)
+        : ($purchase_order->purchaseDeliveries()->exists());
+
     // ✅ Create Delivery hanya boleh kalau PO masih ada remaining (Pending/Partial)
     // Kalau Delivered => remaining=0 => tidak boleh create delivery lagi.
     $canCreateDelivery = in_array($statusLower, ['pending', 'partial'], true);
 
-    // ✅ Convert to Purchase hanya boleh kalau belum ada invoice
-    $canConvertToPurchase = !$hasInvoice;
+    // ✅ Convert to Purchase hanya boleh kalau belum ada invoice dan belum masuk PD flow
+    $canConvertToPurchase = !$hasInvoice && !$hasDeliveryFlow;
 
     $totalFulfilledQty = (int) ($totalFulfilledQty ?? 0);
     $totalOrderedQty   = (int) ($totalOrderedQty ?? 0);
@@ -254,6 +258,14 @@
                     class="po-btn po-btn--primary d-print-none">
                         <i class="bi bi-arrow-right-circle"></i> Convert to Purchase
                     </a>
+                @elseif($hasDeliveryFlow)
+                    <span class="po-pill po-pill--muted d-print-none">
+                        This PO already has delivery-based invoice flow. Please create invoice from the related Purchase Delivery instead.
+                    </span>
+                @elseif($hasInvoice)
+                    <span class="po-pill po-pill--muted d-print-none">
+                        Invoice already created.
+                    </span>
                 @endif
 
                 {{-- Secondary actions --}}

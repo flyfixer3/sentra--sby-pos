@@ -6,9 +6,10 @@
         @php
             $statusLower = strtolower(trim((string) ($data->status ?? '')));
             $hasInvoice = ((int) ($data->invoice_count ?? 0)) > 0;
+            $hasDeliveryFlow = ((int) ($data->delivery_count ?? 0)) > 0;
 
-            // ✅ Make Invoice: hanya disable kalau invoice sudah ada
-            $disableInvoice = $hasInvoice;
+            // ✅ Make Invoice: disable kalau invoice sudah ada atau PO sudah masuk delivery flow
+            $disableInvoice = $hasInvoice || $hasDeliveryFlow;
 
             // ✅ Make Delivery: hanya boleh untuk Pending/Partial
             $disableDelivery = !in_array($statusLower, ['pending', 'partial'], true);
@@ -19,7 +20,9 @@
             class="dropdown-item {{ $disableInvoice ? 'disabled' : '' }}"
             onclick="{{ $disableInvoice ? 'return false;' : '' }}">
                 <i class="bi bi-receipt mr-2 text-primary" style="line-height: 1;"></i> Make Invoice
-                @if($disableInvoice)
+                @if($hasDeliveryFlow)
+                    <span class="ml-2 badge badge-light">Use PD</span>
+                @elseif($hasInvoice)
                     <span class="ml-2 badge badge-light">Already invoiced</span>
                 @endif
             </a>

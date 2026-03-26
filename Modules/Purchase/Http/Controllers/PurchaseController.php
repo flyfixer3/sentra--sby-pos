@@ -47,23 +47,17 @@ class PurchaseController extends Controller
 
         $purchaseOrder = $purchaseDelivery->purchaseOrder;
 
-        // ✅ HARD GUARD: 1 PO = 1 INVOICE
-        if ($purchaseDelivery->purchase_order_id) {
-            $existingPurchase = Purchase::where('purchase_order_id', (int) $purchaseDelivery->purchase_order_id)
-                ->whereNull('deleted_at')
-                ->first();
-
-            if ($existingPurchase) {
-                return redirect()
-                    ->route('purchase-deliveries.show', $purchaseDelivery->id)
-                    ->with('error', 'Invoice for this Purchase Order has already been created. Only one invoice is allowed per Purchase Order.');
-            }
+        // strict rule: 1 PD = 1 invoice
+        if ($purchaseDelivery->purchase) {
+            return redirect()
+                ->route('purchase-deliveries.show', $purchaseDelivery->id)
+                ->with('error', 'This Purchase Delivery already has an invoice.');
         }
 
-        // guard lama: PD sudah punya invoice
-        if ($purchaseDelivery->purchase) {
-            return redirect()->back()
-                ->with('error', 'This Purchase Delivery already has an invoice.');
+        if ($purchaseOrder && $purchaseOrder->hasLegacyPurchaseInvoiceConflict((int) $purchaseDelivery->id)) {
+            return redirect()
+                ->route('purchase-deliveries.show', $purchaseDelivery->id)
+                ->with('error', 'This Purchase Order already has a legacy PO-wide invoice. Purchase invoice for this delivery cannot be created to avoid duplicate invoicing.');
         }
 
         Cart::instance('purchase')->destroy();
@@ -297,14 +291,21 @@ class PurchaseController extends Controller
 
             $supplier = Supplier::findOrFail($request->supplier_id);
 
-            // ✅ HARD GUARD: 1 PO = 1 INVOICE
-            if ($purchase_order) {
+            if ($fromDelivery) {
+                if ($purchase_order && $purchase_order->hasLegacyPurchaseInvoiceConflict($purchaseDeliveryId)) {
+                    throw new \Exception("This Purchase Order already has a legacy PO-wide invoice. Purchase invoice for this delivery cannot be created to avoid duplicate invoicing.");
+                }
+            } elseif ($purchase_order) {
+                if ($purchase_order->hasActiveDeliveries()) {
+                    throw new \Exception("This PO already has delivery-based invoice flow. Please create invoice from the related Purchase Delivery instead.");
+                }
+
                 $exists = Purchase::where('purchase_order_id', (int) $purchase_order->id)
                     ->whereNull('deleted_at')
                     ->exists();
 
                 if ($exists) {
-                    throw new \Exception("Invoice for this Purchase Order has already been created. Only one invoice is allowed per Purchase Order.");
+                    throw new \Exception("Invoice for this Purchase Order has already been created.");
                 }
             }
 
@@ -1537,7 +1538,7 @@ class PurchaseController extends Controller
             $roleString = count($roles) ? implode(', ', $roles) : '-';
         }
 
-        $autoNote = 'Auto-created from Purchase (invoice). Please confirm receipt manually.';
+        $autoNote = PurchaseDelivery::AUTO_CREATED_FROM_PURCHASE_NOTE;
 
         // ✅ IMPORTANT: jangan cast null menjadi 0
         $warehouseId = !empty($purchase->warehouse_id) ? (int) $purchase->warehouse_id : null;

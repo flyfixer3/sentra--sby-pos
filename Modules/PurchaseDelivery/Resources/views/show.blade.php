@@ -235,6 +235,10 @@
         ? !empty($purchaseDelivery->purchase)
         : $purchaseDelivery->purchase()->exists();
 
+    $hasLegacyPoInvoiceConflict = $po
+        ? $po->hasLegacyPurchaseInvoiceConflict((int) $purchaseDelivery->id)
+        : false;
+
     $rackInSummaryByProduct = $rackInSummaryByProduct ?? [];
 @endphp
 
@@ -632,40 +636,15 @@
                         </a>
                     @endif
 
-                    @if(!$isConfirmableStatus || !$hasRemaining)
-                        @php
-                            $hasInvoice = \Modules\Purchase\Entities\Purchase::whereNull('deleted_at')
-                                ->where(function($q) use ($purchaseDelivery){
-                                    $q->where('purchase_delivery_id', (int) $purchaseDelivery->id);
-                                    if (!empty($purchaseDelivery->purchase_order_id)) {
-                                        $q->orWhere('purchase_order_id', (int) $purchaseDelivery->purchase_order_id);
-                                    }
-                                })
-                                ->exists();
-
-                            $poIsFullyFulfilled = false;
-                            if (!empty($purchaseDelivery->purchaseOrder)) {
-                                $poIsFullyFulfilled = (bool) $purchaseDelivery->purchaseOrder->isFullyFulfilled();
-                            }
-                        @endphp
-
-                        @if(!$hasInvoice)
-                            @if($poIsFullyFulfilled)
-                                <a href="{{ route('purchases.createFromDelivery', ['purchase_delivery' => $purchaseDelivery]) }}"
-                                   class="btn btn-primary btn-sm">
-                                    Create Purchase (Invoice)
-                                </a>
-                            @else
-                                <button type="button"
-                                        class="btn btn-primary btn-sm"
-                                        disabled
-                                        title="Invoice hanya bisa dibuat jika seluruh qty di Purchase Order sudah diterima (no partial invoice).">
-                                    Create Purchase (Invoice)
-                                </button>
-                            @endif
-                        @else
-                            <span class="pd-muted">Invoice already created</span>
-                        @endif
+                    @if(!$hasInvoice && !$hasLegacyPoInvoiceConflict)
+                        <a href="{{ route('purchases.createFromDelivery', ['purchase_delivery' => $purchaseDelivery]) }}"
+                           class="btn btn-primary btn-sm">
+                            Create Purchase (Invoice)
+                        </a>
+                    @elseif($hasInvoice)
+                        <span class="pd-muted">This purchase delivery already has an invoice.</span>
+                    @elseif($hasLegacyPoInvoiceConflict)
+                        <span class="pd-muted">This Purchase Order already has a legacy PO-wide invoice. Purchase invoice for this delivery is blocked to avoid duplicate invoicing.</span>
                     @endif
                 </div>
             </div>

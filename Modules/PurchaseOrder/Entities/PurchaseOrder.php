@@ -59,6 +59,36 @@ class PurchaseOrder extends BaseModel
             ->exists();
     }
 
+    public function hasActiveDeliveries(): bool
+    {
+        if ($this->relationLoaded('purchaseDeliveries')) {
+            return $this->purchaseDeliveries->count() > 0;
+        }
+
+        return $this->purchaseDeliveries()->exists();
+    }
+
+    public function hasLegacyPurchaseInvoiceConflict(?int $excludePurchaseDeliveryId = null): bool
+    {
+        $q = Purchase::query()
+            ->leftJoin('purchase_deliveries as pd', 'pd.id', '=', 'purchases.purchase_delivery_id')
+            ->where('purchases.purchase_order_id', (int) $this->id)
+            ->whereNull('purchases.deleted_at')
+            ->where(function ($w) {
+                $w->whereNull('purchases.purchase_delivery_id')
+                    ->orWhere('pd.note', PurchaseDelivery::AUTO_CREATED_FROM_PURCHASE_NOTE);
+            });
+
+        if (!empty($excludePurchaseDeliveryId)) {
+            $q->where(function ($w) use ($excludePurchaseDeliveryId) {
+                $w->whereNull('purchases.purchase_delivery_id')
+                    ->orWhere('purchases.purchase_delivery_id', '!=', (int) $excludePurchaseDeliveryId);
+            });
+        }
+
+        return $q->exists();
+    }
+
     /**
      * ✅ Total ordered qty
      */
@@ -152,13 +182,7 @@ class PurchaseOrder extends BaseModel
         $remaining = $this->remainingQuantity();
         $ordered   = $this->totalOrderedQuantity();
 
-        // ✅ invoice exists? => Completed
-        if ($this->hasInvoice()) {
-            $this->update(['status' => 'Completed']);
-            return;
-        }
-
-        // ✅ belum ada invoice, status berdasarkan delivery/fulfilled
+        // ✅ status tetap fulfillment-driven, bukan invoice-driven
         $status = 'Pending';
 
         if ($ordered > 0 && $remaining <= 0) {

@@ -59,7 +59,8 @@ class PurchaseOrdersDataTable extends DataTable
                 // ✅ invoice_count = jumlah purchase (invoice) yang masih aktif (not deleted)
                 'purchases as invoice_count' => function ($q) {
                     $q->whereNull('deleted_at');
-                }
+                },
+                'purchaseDeliveries as delivery_count'
             ]);
     }
 

@@ -30,6 +30,18 @@ class PurchaseOrderPurchasesController extends Controller
             abort(403, 'You can only create Purchase from Purchase Orders in the active branch.');
         }
 
+        if ($purchaseorder->hasActiveDeliveries()) {
+            return redirect()
+                ->route('purchase-orders.show', $purchaseorder->id)
+                ->with('error', 'This PO already has delivery-based invoice flow. Please create invoice from the related Purchase Delivery instead.');
+        }
+
+        if ($purchaseorder->hasInvoice()) {
+            return redirect()
+                ->route('purchase-orders.show', $purchaseorder->id)
+                ->with('error', 'Invoice for this Purchase Order has already been created.');
+        }
+
         $purchaseorder->loadMissing(['purchaseOrderDetails']);
 
         Cart::instance('purchase')->destroy();

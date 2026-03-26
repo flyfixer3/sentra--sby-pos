@@ -14,6 +14,8 @@ class PurchaseDelivery extends BaseModel
 {
     use HasFactory, SoftDeletes;
 
+    public const AUTO_CREATED_FROM_PURCHASE_NOTE = 'Auto-created from Purchase (invoice). Please confirm receipt manually.';
+
     protected $dates = ['deleted_at'];
 
     protected $fillable = [
