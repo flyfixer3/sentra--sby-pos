@@ -13,6 +13,7 @@ use Modules\PurchaseDelivery\Entities\PurchaseDelivery;
 use Modules\PurchaseDelivery\Entities\PurchaseDeliveryDetails;
 use Modules\PurchaseOrder\Entities\PurchaseOrder;
 use Modules\PurchaseOrder\Entities\PurchaseOrderDetails;
+use Modules\Product\Entities\Product;
 use Modules\Product\Entities\Warehouse;
 use Modules\Inventory\Entities\StockRack;
 
@@ -651,7 +652,7 @@ class PurchaseDeliveryController extends Controller
             }
 
             // =========================================================
-            // ✅ Resolver final: PO -> Purchase -> error
+            // ✅ Resolver final: Purchase (persisted final invoice) -> PO -> error
             // =========================================================
             $resolveUnitCost = function (int $productId) use (
                 $poDetailMap,
@@ -660,15 +661,15 @@ class PurchaseDeliveryController extends Controller
                 $purchaseDelivery,
                 $purchaseId
             ): float {
-                // priority 1: PO detail
-                if (isset($poDetailMap[$productId])) {
-                    $c = (float) $extractUnitCost($poDetailMap[$productId]);
+                // priority 1: persisted purchase detail (final invoice)
+                if (isset($purchaseDetailMap[$productId])) {
+                    $c = (float) $extractUnitCost($purchaseDetailMap[$productId]);
                     if ($c > 0) return $c;
                 }
 
-                // priority 2: Purchase detail (invoice)
-                if (isset($purchaseDetailMap[$productId])) {
-                    $c = (float) $extractUnitCost($purchaseDetailMap[$productId]);
+                // priority 2: PO detail fallback
+                if (isset($poDetailMap[$productId])) {
+                    $c = (float) $extractUnitCost($poDetailMap[$productId]);
                     if ($c > 0) return $c;
                 }
 
@@ -1031,6 +1032,13 @@ class PurchaseDeliveryController extends Controller
                     PurchaseDelivery::class,          // ✅ NEW
                     (int) $purchaseDelivery->id       // ✅ NEW
                 );
+
+                $product = Product::find((int) $productId);
+                if ($product) {
+                    $product->update([
+                        'product_cost' => round((float) $unitCost, 2),
+                    ]);
+                }
             }
 
             if (!$anyConfirmedInThisBatch) {
