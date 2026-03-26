@@ -7,6 +7,7 @@
             $statusLower = strtolower(trim((string) ($data->status ?? '')));
             $hasInvoice = ((int) ($data->invoice_count ?? 0)) > 0;
             $hasDeliveryFlow = ((int) ($data->delivery_count ?? 0)) > 0;
+            $isPending = ($statusLower === 'pending');
 
             // ✅ Make Invoice: disable kalau invoice sudah ada atau PO sudah masuk delivery flow
             $disableInvoice = $hasInvoice || $hasDeliveryFlow;
@@ -46,8 +47,13 @@
             </a>
         @endcan
         @can('edit_purchase_orders')
-            <a href="{{ route('purchase-orders.edit', $data->id) }}" class="dropdown-item">
+            <a href="{{ route('purchase-orders.edit', $data->id) }}"
+            class="dropdown-item {{ !$isPending ? 'disabled' : '' }}"
+            onclick="{{ !$isPending ? 'return false;' : '' }}">
                 <i class="bi bi-pencil mr-2 text-primary" style="line-height: 1;"></i> Edit
+                @if(!$isPending)
+                    <span class="ml-2 badge badge-light">Locked</span>
+                @endif
             </a>
         @endcan
         @can('show_purchase_orders')

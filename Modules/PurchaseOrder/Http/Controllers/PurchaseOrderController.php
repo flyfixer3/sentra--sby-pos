@@ -221,6 +221,12 @@ class PurchaseOrderController extends Controller
     {
         abort_if(Gate::denies('edit_purchase_orders'), 403);
 
+        if (strtolower(trim((string) ($purchase_order->status ?? ''))) !== 'pending') {
+            return redirect()
+                ->route('purchase-orders.show', $purchase_order->id)
+                ->with('error', 'This Purchase Order can no longer be edited because it is no longer in Pending status.');
+        }
+
         $purchase_order_details = $purchase_order->purchaseOrderDetails;
 
         Cart::instance('purchase_order')->destroy();
@@ -264,6 +270,12 @@ class PurchaseOrderController extends Controller
     public function update(UpdatePurchaseOrderRequest $request, PurchaseOrder $purchase_order)
     {
         abort_if(Gate::denies('edit_purchase_orders'), 403);
+
+        if (strtolower(trim((string) ($purchase_order->status ?? ''))) !== 'pending') {
+            return redirect()
+                ->route('purchase-orders.show', $purchase_order->id)
+                ->with('error', 'This Purchase Order can no longer be edited because it is no longer in Pending status.');
+        }
 
         $active = session('active_branch');
         if ($active === 'all' || $active === null || $active === '') {
