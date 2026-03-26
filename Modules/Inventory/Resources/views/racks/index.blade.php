@@ -100,7 +100,7 @@
                             <th style="width:140px;">Code</th>
                             <th>Name</th>
                             <th>Description</th>
-                            <th style="width:160px;">Action</th>
+                            <th style="width:210px;">Action</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -124,6 +124,10 @@
                                 <td class="align-middle">{{ $r->description ?? '-' }}</td>
                                 <td class="align-middle">
                                     <div class="d-flex">
+                                        <a href="{{ route('inventory.racks.show', $r->id) }}" class="btn btn-sm btn-dark mr-2">
+                                            <i class="bi bi-eye"></i>
+                                        </a>
+
                                         @can('edit_racks')
                                             <a href="{{ route('inventory.racks.edit', $r->id) }}" class="btn btn-sm btn-info mr-2">
                                                 <i class="bi bi-pencil"></i>

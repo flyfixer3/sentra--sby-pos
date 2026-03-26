@@ -8,6 +8,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
 use App\Support\BranchContext;
 use Modules\Inventory\Entities\Rack;
+use Modules\Inventory\Entities\StockRack;
 use Modules\Product\Entities\Warehouse;
 
 class RackController extends Controller
@@ -196,6 +197,66 @@ class RackController extends Controller
             ->get();
 
         return view('inventory::racks.edit', compact('rack', 'warehouses'));
+    }
+
+    public function show(Rack $rack)
+    {
+        abort_if(Gate::denies('access_racks'), 403);
+
+        $branchId = BranchContext::id();
+        $isAll = ($branchId === 'all' || $branchId === null || $branchId === '');
+
+        $rack = Rack::withoutGlobalScopes()
+            ->select([
+                'racks.*',
+                'warehouses.warehouse_name as warehouse_name',
+                'warehouses.branch_id as warehouse_branch_id',
+                'branches.name as branch_name',
+            ])
+            ->join('warehouses', 'warehouses.id', '=', 'racks.warehouse_id')
+            ->leftJoin('branches', 'branches.id', '=', 'warehouses.branch_id')
+            ->where('racks.id', (int) $rack->id)
+            ->firstOrFail();
+
+        if (!$isAll) {
+            abort_unless((int) $rack->branch_id === (int) $branchId, 403);
+        }
+
+        $products = StockRack::withoutGlobalScopes()
+            ->from('stock_racks as sr')
+            ->join('products as p', 'p.id', '=', 'sr.product_id')
+            ->leftJoin('categories as c', 'c.id', '=', 'p.category_id')
+            ->where('sr.rack_id', (int) $rack->id)
+            ->select([
+                'sr.product_id',
+                DB::raw('MAX(p.product_code) as product_code'),
+                DB::raw('MAX(p.product_name) as product_name'),
+                DB::raw('MAX(p.product_unit) as product_unit'),
+                DB::raw('MAX(c.category_name) as category_name'),
+                DB::raw('COALESCE(SUM(sr.qty_total), 0) as qty_total'),
+                DB::raw('COALESCE(SUM(sr.qty_good), 0) as qty_good'),
+                DB::raw('COALESCE(SUM(sr.qty_defect), 0) as qty_defect'),
+                DB::raw('COALESCE(SUM(sr.qty_damaged), 0) as qty_damaged'),
+            ])
+            ->groupBy('sr.product_id')
+            ->orderByRaw('MAX(p.product_name) asc')
+            ->get()
+            ->map(function ($row) {
+                $fallbackTotal = (int) ($row->qty_good ?? 0) + (int) ($row->qty_defect ?? 0) + (int) ($row->qty_damaged ?? 0);
+                $resolvedTotal = (int) ($row->qty_total ?? 0);
+                $row->qty_total = $resolvedTotal > 0 ? $resolvedTotal : $fallbackTotal;
+
+                return $row;
+            })
+            ->filter(function ($row) {
+                return (int) ($row->qty_total ?? 0) > 0
+                    || (int) ($row->qty_good ?? 0) > 0
+                    || (int) ($row->qty_defect ?? 0) > 0
+                    || (int) ($row->qty_damaged ?? 0) > 0;
+            })
+            ->values();
+
+        return view('inventory::racks.show', compact('rack', 'products'));
     }
 
     public function update(Request $request, Rack $rack)
