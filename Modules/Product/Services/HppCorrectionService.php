@@ -3,6 +3,7 @@
 namespace Modules\Product\Services;
 
 use Illuminate\Support\Facades\DB;
+use Modules\Product\Entities\Product;
 use Modules\Product\Entities\ProductHpp;
 
 class HppCorrectionService
@@ -206,6 +207,13 @@ class HppCorrectionService
                 'old_avg_cost'       => round((float) $currentAvg, 2),
                 'new_avg_cost'       => (float) $newAvg,
             ]);
+
+            $product = Product::find((int) $productId);
+            if ($product) {
+                $product->update([
+                    'product_cost' => round((float) $newCost, 2),
+                ]);
+            }
 
             $summary['corrected'][] = [
                 'product_id'        => $productId,

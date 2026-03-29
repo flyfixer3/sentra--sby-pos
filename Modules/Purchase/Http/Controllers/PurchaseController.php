@@ -21,6 +21,7 @@ use Carbon\Carbon;
 use Modules\Purchase\Http\Requests\StorePurchaseRequest;
 use Modules\Purchase\Http\Requests\UpdatePurchaseRequest;
 use Illuminate\Support\Facades\Schema;
+use Modules\Product\Entities\ProductHpp;
 use Modules\PurchaseDelivery\Entities\PurchaseDeliveryDetails;
 use Spatie\Activitylog\Models\Activity;
 
@@ -391,6 +392,10 @@ class PurchaseController extends Controller
                 ]);
             }
 
+            if ($fromDelivery && $delivery) {
+                $this->synchronizeConfirmedDeliveryCostFromPurchase($purchase, $delivery, (int) $branchId);
+            }
+
             // =========================================================
             // WALK-IN: INCREASE qty_incoming (stocks pool) (tetap sama)
             // =========================================================
@@ -530,6 +535,113 @@ class PurchaseController extends Controller
         }
 
         return $user->hasAnyRole(['Administrator', 'Super Admin']);
+    }
+
+    private function extractPurchaseDetailUnitCost($detail): float
+    {
+        if (!$detail) {
+            return 0.0;
+        }
+
+        foreach (['unit_price', 'price'] as $field) {
+            $value = (float) data_get($detail, $field, 0);
+            if ($value > 0) {
+                return $value;
+            }
+        }
+
+        $qty = (float) data_get($detail, 'quantity', 0);
+        $subTotal = (float) data_get($detail, 'sub_total', 0);
+
+        if ($qty > 0 && $subTotal > 0) {
+            return round($subTotal / $qty, 2);
+        }
+
+        return 0.0;
+    }
+
+    private function synchronizeConfirmedDeliveryCostFromPurchase(Purchase $purchase, PurchaseDelivery $delivery, int $branchId): void
+    {
+        $deliveryStatus = strtolower(trim((string) ($delivery->status ?? 'pending')));
+        if (!in_array($deliveryStatus, ['partial', 'received', 'completed'], true)) {
+            return;
+        }
+
+        $purchase->loadMissing(['purchaseDetails']);
+
+        $changes = [];
+
+        foreach ($purchase->purchaseDetails as $detail) {
+            $productId = (int) ($detail->product_id ?? 0);
+            if ($productId <= 0) {
+                continue;
+            }
+
+            $newCost = (float) $this->extractPurchaseDetailUnitCost($detail);
+            if ($newCost <= 0) {
+                continue;
+            }
+
+            $ledgerRows = ProductHpp::query()
+                ->where('branch_id', (int) $branchId)
+                ->where('product_id', (int) $productId)
+                ->where('source_type', PurchaseDelivery::class)
+                ->where('source_id', (int) $delivery->id)
+                ->where('incoming_qty', '>', 0)
+                ->orderByRaw('COALESCE(effective_at, created_at) ASC')
+                ->orderBy('created_at')
+                ->orderBy('id')
+                ->get(['incoming_unit_cost']);
+
+            if ($ledgerRows->isEmpty()) {
+                continue;
+            }
+
+            $needsCorrection = $ledgerRows->contains(function ($row) use ($newCost) {
+                return round((float) ($row->incoming_unit_cost ?? 0), 2) !== round((float) $newCost, 2);
+            });
+
+            if (!$needsCorrection) {
+                continue;
+            }
+
+            $changes[$productId] = [
+                'old_unit_cost' => (float) ($ledgerRows->first()->incoming_unit_cost ?? 0),
+                'new_unit_cost' => (float) $newCost,
+            ];
+        }
+
+        if (empty($changes)) {
+            return;
+        }
+
+        $service = new \Modules\Product\Services\HppCorrectionService();
+        $productIds = array_keys($changes);
+
+        $summary = $service->applyPurchasePriceCorrection(
+            (int) $branchId,
+            (int) $purchase->id,
+            (string) $purchase->date,
+            (int) $delivery->id,
+            $changes
+        );
+
+        $updatedSaleRows = $service->refreshSaleCostSnapshotSameDay(
+            (int) $branchId,
+            (string) $purchase->date,
+            $productIds
+        );
+
+        activity()
+            ->performedOn($purchase)
+            ->causedBy(auth()->user())
+            ->withProperties([
+                'type' => 'purchase_store_hpp_sync',
+                'summary' => $summary,
+                'updated_sale_detail_rows' => (int) $updatedSaleRows,
+                'purchase_delivery_id' => (int) $delivery->id,
+            ])
+            ->log('HPP synchronized from final purchase details after purchase save');
     }
 
     public function show(Purchase $purchase)
