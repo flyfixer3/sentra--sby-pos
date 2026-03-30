@@ -27,6 +27,99 @@ use Spatie\Activitylog\Models\Activity;
 
 class PurchaseController extends Controller
 {
+    private function buildPurchasePriceRevisionHistory(Purchase $purchase, $activities)
+    {
+        $productNames = $purchase->purchaseDetails
+            ->mapWithKeys(function ($detail) {
+                return [(int) $detail->product_id => (string) ($detail->product_name ?? ('Product #' . $detail->product_id))];
+            });
+
+        $revisionsByProduct = [];
+
+        foreach ($activities->sortBy('created_at') as $activity) {
+            $props = $activity->properties ? $activity->properties->toArray() : [];
+            $type = (string) ($props['type'] ?? '');
+
+            $changes = [];
+
+            if ($type === 'purchase_hpp_sensitive_edit' && isset($props['changed_products']) && is_array($props['changed_products'])) {
+                $changes = $props['changed_products'];
+            } elseif (in_array($type, ['purchase_store_hpp_sync', 'hpp_correction_summary'], true)) {
+                $corrected = data_get($props, 'summary.corrected', []);
+                if (is_array($corrected)) {
+                    foreach ($corrected as $row) {
+                        $pid = (int) ($row['product_id'] ?? 0);
+                        if ($pid <= 0) {
+                            continue;
+                        }
+
+                        $changes[$pid] = [
+                            'old_unit_cost' => (float) ($row['old_unit_cost'] ?? 0),
+                            'new_unit_cost' => (float) ($row['new_unit_cost'] ?? 0),
+                        ];
+                    }
+                }
+            }
+
+            if (empty($changes)) {
+                continue;
+            }
+
+            foreach ($changes as $productId => $change) {
+                $productId = (int) $productId;
+                if ($productId <= 0) {
+                    continue;
+                }
+
+                $oldUnitCost = round((float) ($change['old_unit_cost'] ?? 0), 2);
+                $newUnitCost = round((float) ($change['new_unit_cost'] ?? 0), 2);
+
+                if (!isset($revisionsByProduct[$productId])) {
+                    $revisionsByProduct[$productId] = [
+                        'product_id' => $productId,
+                        'product_name' => $productNames[$productId] ?? ('Product #' . $productId),
+                        'baseline_unit_cost' => $oldUnitCost,
+                        'latest_unit_cost' => $newUnitCost,
+                        'cumulative_delta' => round($newUnitCost - $oldUnitCost, 2),
+                        'entries' => [],
+                    ];
+                } else {
+                    $revisionsByProduct[$productId]['latest_unit_cost'] = $newUnitCost;
+                    $revisionsByProduct[$productId]['cumulative_delta'] = round(
+                        $newUnitCost - (float) $revisionsByProduct[$productId]['baseline_unit_cost'],
+                        2
+                    );
+                }
+
+                $revisionsByProduct[$productId]['entries'][] = [
+                    'type' => $type,
+                    'old_unit_cost' => $oldUnitCost,
+                    'new_unit_cost' => $newUnitCost,
+                    'delta' => round($newUnitCost - $oldUnitCost, 2),
+                    'updated_at' => $activity->created_at,
+                    'updated_by' => $activity->causer->name ?? $activity->causer->email ?? ('User#' . $activity->causer_id),
+                    'reason' => $props['reason'] ?? null,
+                ];
+            }
+        }
+
+        return collect($revisionsByProduct)
+            ->map(function ($row) {
+                $entries = collect($row['entries'])->sortByDesc('updated_at')->values();
+                $latestEntry = $entries->first();
+
+                $row['entries'] = $entries;
+                $row['latest_delta'] = (float) ($latestEntry['delta'] ?? 0);
+                $row['last_updated_at'] = $latestEntry['updated_at'] ?? null;
+                $row['last_updated_by'] = $latestEntry['updated_by'] ?? '-';
+                $row['reference_basis'] = 'First Saved Purchase Price';
+
+                return $row;
+            })
+            ->sortBy('product_name')
+            ->values();
+    }
+
 
     public function index(PurchaseDataTable $dataTable) {
         abort_if(Gate::denies('access_purchases'), 403);
@@ -629,7 +722,8 @@ class PurchaseController extends Controller
             (int) $purchase->id,
             (string) $purchase->date,
             (int) $delivery->id,
-            $changes
+            $changes,
+            $effectiveFrom
         );
 
         $updatedSaleRows = $service->refreshSaleCostSnapshotSameDay(
@@ -714,16 +808,20 @@ class PurchaseController extends Controller
         $activities = Activity::query()
             ->where('subject_type', Purchase::class)
             ->where('subject_id', (int) $purchase->id)
+            ->with('causer')
             ->orderByDesc('id')
             ->limit(50)
             ->get();
+
+        $priceRevisionHistory = $this->buildPurchasePriceRevisionHistory($purchase, $activities);
 
         return view('purchase::show', compact(
             'purchase',
             'supplier',
             'company',
             'relatedDeliveries',
-            'activities'
+            'activities',
+            'priceRevisionHistory'
         ));
     }
 
@@ -1169,7 +1267,8 @@ class PurchaseController extends Controller
                                 'old_unit_cost' => (float) ($v['old_unit_cost'] ?? 0),
                                 'new_unit_cost' => (float) ($v['new_unit_cost'] ?? 0),
                             ];
-                        }, $changedProducts)
+                        }, $changedProducts),
+                        $effectiveFrom
                     );
 
                     $updatedSaleRows = $service->refreshSaleCostSnapshotSameDay(

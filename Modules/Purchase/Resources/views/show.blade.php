@@ -400,6 +400,79 @@
     </div>
 </div>
 
+<div class="container-fluid mt-4">
+    <div class="row">
+        <div class="col-lg-12">
+            <div class="card">
+                <div class="card-header" style="font-weight:800;">
+                    Price Revision History
+                </div>
+                <div class="card-body">
+                    <div class="text-muted small mb-3">
+                        This section shows purchase line price revisions from activity logs. It is separate from invoice discount and does not change the stored invoice line discount meaning.
+                    </div>
+
+                    @if(isset($priceRevisionHistory) && $priceRevisionHistory->count())
+                        <div class="table-responsive">
+                            <table class="table table-sm table-bordered mb-0">
+                                <thead>
+                                    <tr>
+                                        <th>Product</th>
+                                        <th class="text-end">Baseline Price</th>
+                                        <th class="text-end">Latest Price</th>
+                                        <th class="text-end">Latest Delta</th>
+                                        <th class="text-end">Cumulative Variance</th>
+                                        <th>Reference Basis</th>
+                                        <th>Last Updated By</th>
+                                        <th>Last Updated At</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    @foreach($priceRevisionHistory as $row)
+                                        <tr>
+                                            <td>
+                                                <div style="font-weight:800;">{{ $row['product_name'] }}</div>
+                                                <div class="text-muted small">product_id={{ $row['product_id'] }}</div>
+                                            </td>
+                                            <td class="text-end">{{ format_currency($row['baseline_unit_cost']) }}</td>
+                                            <td class="text-end">{{ format_currency($row['latest_unit_cost']) }}</td>
+                                            <td class="text-end">{{ format_currency($row['latest_delta']) }}</td>
+                                            <td class="text-end">{{ format_currency($row['cumulative_delta']) }}</td>
+                                            <td>{{ $row['reference_basis'] }}</td>
+                                            <td>{{ $row['last_updated_by'] }}</td>
+                                            <td>
+                                                {{ $row['last_updated_at'] ? \Carbon\Carbon::parse($row['last_updated_at'])->format('d M Y H:i:s') : '-' }}
+                                            </td>
+                                        </tr>
+                                        <tr>
+                                            <td colspan="8" style="background:rgba(0,0,0,.015);">
+                                                <div style="font-weight:800; margin-bottom:6px;">Revision Entries</div>
+                                                @foreach($row['entries'] as $entry)
+                                                    <div class="small mb-1">
+                                                        <strong>{{ \Carbon\Carbon::parse($entry['updated_at'])->format('d M Y H:i:s') }}</strong>
+                                                        • {{ $entry['updated_by'] ?? '-' }}
+                                                        • {{ format_currency($entry['old_unit_cost']) }} -> {{ format_currency($entry['new_unit_cost']) }}
+                                                        (delta {{ format_currency($entry['delta']) }})
+                                                        @if(!empty($entry['reason']))
+                                                            • Reason: {{ $entry['reason'] }}
+                                                        @endif
+                                                    </div>
+                                                @endforeach
+                                            </td>
+                                        </tr>
+                                    @endforeach
+                                </tbody>
+                            </table>
+                        </div>
+                    @else
+                        <div class="text-muted">No price revision history.</div>
+                    @endif
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
 {{-- =========================================================
      ✅ Edit / Correction Logs (Spatie Activity Log)
      ========================================================= --}}

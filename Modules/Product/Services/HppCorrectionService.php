@@ -158,13 +158,17 @@ class HppCorrectionService
         int $purchaseId,
         string $purchaseDate,
         ?int $purchaseDeliveryId,
-        array $changes
+        array $changes,
+        ?string $effectiveFrom = null
     ): array {
         $hppService = new HppService();
 
-        // effectiveAt = end-of-day purchase date
+        // Use the resolved correction boundary when available so later same-day
+        // sales can see the corrected HPP as-of their own sale timestamp.
         try {
-            $effectiveAt = \Carbon\Carbon::parse($purchaseDate)->setTime(23, 59, 59);
+            $effectiveAt = $effectiveFrom
+                ? \Carbon\Carbon::parse($effectiveFrom)
+                : \Carbon\Carbon::parse($purchaseDate)->setTime(23, 59, 59);
         } catch (\Throwable $e) {
             $effectiveAt = now();
         }
