@@ -617,6 +617,12 @@ class PurchaseController extends Controller
 
         $service = new \Modules\Product\Services\HppCorrectionService();
         $productIds = array_keys($changes);
+        $effectiveFrom = $service->resolvePurchaseCorrectionEffectiveFrom(
+            (int) $branchId,
+            $productIds,
+            (int) $delivery->id,
+            (string) $purchase->date
+        );
 
         $summary = $service->applyPurchasePriceCorrection(
             (int) $branchId,
@@ -629,7 +635,8 @@ class PurchaseController extends Controller
         $updatedSaleRows = $service->refreshSaleCostSnapshotSameDay(
             (int) $branchId,
             (string) $purchase->date,
-            $productIds
+            $productIds,
+            $effectiveFrom
         );
 
         activity()
@@ -1145,6 +1152,12 @@ class PurchaseController extends Controller
                     $service = new \Modules\Product\Services\HppCorrectionService();
 
                     $productIds = array_keys($changedProducts);
+                    $effectiveFrom = $service->resolvePurchaseCorrectionEffectiveFrom(
+                        (int) $branchId,
+                        $productIds,
+                        $purchase->purchase_delivery_id ? (int) $purchase->purchase_delivery_id : null,
+                        (string) $purchase->date
+                    );
 
                     $summary = $service->applyPurchasePriceCorrection(
                         (int) $branchId,
@@ -1162,7 +1175,8 @@ class PurchaseController extends Controller
                     $updatedSaleRows = $service->refreshSaleCostSnapshotSameDay(
                         (int) $branchId,
                         (string) $purchase->date,
-                        $productIds
+                        $productIds,
+                        $effectiveFrom
                     );
 
                     activity()

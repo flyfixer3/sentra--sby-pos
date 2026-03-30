@@ -8,6 +8,46 @@ use Modules\Product\Entities\ProductHpp;
 
 class HppCorrectionService
 {
+    public function resolvePurchaseCorrectionEffectiveFrom(
+        int $branchId,
+        array $productIds,
+        ?int $purchaseDeliveryId,
+        string $purchaseDate
+    ): string {
+        $productIds = array_values(array_unique(array_map('intval', $productIds)));
+
+        $fallback = $purchaseDate . ' 00:00:00';
+
+        if (empty($purchaseDeliveryId) || empty($productIds)) {
+            return $fallback;
+        }
+
+        $sourceType = \Modules\PurchaseDelivery\Entities\PurchaseDelivery::class;
+
+        $row = ProductHpp::query()
+            ->where('branch_id', (int) $branchId)
+            ->whereIn('product_id', $productIds)
+            ->where('source_type', $sourceType)
+            ->where('source_id', (int) $purchaseDeliveryId)
+            ->where('incoming_qty', '>', 0)
+            ->orderByRaw('COALESCE(effective_at, created_at) ASC')
+            ->orderBy('created_at')
+            ->orderBy('id')
+            ->first(['effective_at', 'created_at']);
+
+        if (!$row) {
+            return $fallback;
+        }
+
+        $effectiveFrom = $row->effective_at ?? $row->created_at;
+
+        if (!$effectiveFrom) {
+            return $fallback;
+        }
+
+        return \Carbon\Carbon::parse($effectiveFrom)->format('Y-m-d H:i:s');
+    }
+
     private function getChronologicalIncomingLedgerRows(int $branchId, int $productId)
     {
         return ProductHpp::query()
@@ -236,17 +276,31 @@ class HppCorrectionService
      * Update sale_details.product_cost for sales on the same day as purchase date.
      * This is the "snapshot fix" so profit calculation becomes correct.
      */
-    public function refreshSaleCostSnapshotSameDay(int $branchId, string $purchaseDate, array $productIds): int
+    public function refreshSaleCostSnapshotSameDay(
+        int $branchId,
+        string $purchaseDate,
+        array $productIds,
+        ?string $effectiveFrom = null
+    ): int
     {
         $hppService = new HppService();
 
         $productIds = array_values(array_unique(array_map('intval', $productIds)));
         if (empty($productIds)) return 0;
 
+        try {
+            $effectiveBoundary = $effectiveFrom
+                ? \Carbon\Carbon::parse($effectiveFrom)
+                : \Carbon\Carbon::parse($purchaseDate)->startOfDay();
+        } catch (\Throwable $e) {
+            $effectiveBoundary = \Carbon\Carbon::parse($purchaseDate)->startOfDay();
+        }
+
         $sales = DB::table('sales')
             ->whereNull('deleted_at')
             ->where('branch_id', (int) $branchId)
             ->whereDate('date', '=', $purchaseDate)
+            ->where('created_at', '>=', $effectiveBoundary)
             ->pluck('id')
             ->toArray();
 
@@ -255,15 +309,36 @@ class HppCorrectionService
         $updated = 0;
 
         foreach ($productIds as $pid) {
-            $newCost = (float) $hppService->getHppAsOf((int) $branchId, (int) $pid, $purchaseDate . ' 23:59:59');
-
-            $count = DB::table('sale_details')
+            $saleIdsByProduct = DB::table('sale_details')
                 ->whereIn('sale_id', $sales)
                 ->where('product_id', (int) $pid)
-                ->update([
-                    'product_cost' => round($newCost, 2),
-                    'updated_at'   => now(),
-                ]);
+                ->pluck('sale_id')
+                ->unique()
+                ->values();
+
+            if ($saleIdsByProduct->isEmpty()) {
+                continue;
+            }
+
+            $salesForProduct = DB::table('sales')
+                ->whereIn('id', $saleIdsByProduct)
+                ->get(['id', 'created_at']);
+
+            $now = now();
+            $count = 0;
+
+            foreach ($salesForProduct as $saleRow) {
+                $saleAt = $saleRow->created_at ?? $effectiveBoundary;
+                $newCost = (float) $hppService->getHppAsOf((int) $branchId, (int) $pid, $saleAt);
+
+                $count += (int) DB::table('sale_details')
+                    ->where('sale_id', (int) $saleRow->id)
+                    ->where('product_id', (int) $pid)
+                    ->update([
+                        'product_cost' => round($newCost, 2),
+                        'updated_at'   => $now,
+                    ]);
+            }
 
             $updated += (int) $count;
         }
