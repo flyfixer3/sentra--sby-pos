@@ -7,8 +7,8 @@
 {{-- =========================
     PRODUCTS
 ========================= --}}
-@can('access_products')
-<li class="c-sidebar-nav-item c-sidebar-nav-dropdown {{ request()->routeIs('products.*') || request()->routeIs('product-categories.*') ? 'c-show' : '' }}">
+@if(auth()->check() && (auth()->user()->can('access_products') || auth()->user()->can('view_sale_hpp')))
+<li class="c-sidebar-nav-item c-sidebar-nav-dropdown {{ request()->routeIs('products.*') || request()->routeIs('product-categories.*') || request()->routeIs('hpp-ledger.*') ? 'c-show' : '' }}">
     <a class="c-sidebar-nav-link c-sidebar-nav-dropdown-toggle" href="#">
         <i class="c-sidebar-nav-icon bi bi-journal-bookmark" style="line-height: 1;"></i> Products
     </a>
@@ -55,11 +55,21 @@
         </li>
         @endcan
 
+        @can('access_products')
         <li class="c-sidebar-nav-item">
             <a class="c-sidebar-nav-link {{ request()->routeIs('products.index') ? 'c-active' : '' }}" href="{{ route('products.index') }}">
                 <i class="c-sidebar-nav-icon bi bi-journals" style="line-height: 1;"></i> All Products
             </a>
         </li>
+        @endcan
+
+        @can('view_sale_hpp')
+        <li class="c-sidebar-nav-item">
+            <a class="c-sidebar-nav-link {{ request()->routeIs('hpp-ledger.*') ? 'c-active' : '' }}" href="{{ route('hpp-ledger.index') }}">
+                <i class="c-sidebar-nav-icon bi bi-graph-up" style="line-height: 1;"></i> HPP Ledger
+            </a>
+        </li>
+        @endcan
 
         @can('print_barcodes')
         <li class="c-sidebar-nav-item">
@@ -70,7 +80,7 @@
         @endcan
     </ul>
 </li>
-@endcan
+@endif
 
 {{-- =========================
     INVENTORY (BARU)
@@ -78,7 +88,7 @@
 @can('access_inventories')
 <li class="c-sidebar-nav-item c-sidebar-nav-dropdown {{ request()->is('inventory*') || request()->routeIs('inventory.*') ? 'c-show' : '' }}">
     <a class="c-sidebar-nav-link c-sidebar-nav-dropdown-toggle" href="#">
-        <i class="c-sidebar-nav-icon bi bi-boxes" style="line-height: 1;"></i> Inventory
+        <i class="c-sidebar-nav-icon bi bi-box-seam" style="line-height: 1;"></i> Inventory
     </a>
     <ul class="c-sidebar-nav-dropdown-items">
         <li class="c-sidebar-nav-item">

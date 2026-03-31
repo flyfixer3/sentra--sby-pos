@@ -8,28 +8,76 @@
         border: 1px solid rgba(0, 0, 0, .06);
         border-radius: 14px;
         background: linear-gradient(180deg, #fbfcfe 0%, #f5f7fb 100%);
-        padding: 1rem 1rem .9rem;
+        padding: 1rem 1rem .95rem;
         margin-bottom: 1rem;
     }
+
     .hpp-filter-title {
         font-size: 12px;
         font-weight: 700;
         letter-spacing: .04em;
         text-transform: uppercase;
         color: #6c757d;
-        margin-bottom: .75rem;
+        margin-bottom: .9rem;
     }
+
+    .hpp-filter-grid {
+        row-gap: 1rem;
+    }
+
+    .hpp-filter-field {
+        display: flex;
+        flex-direction: column;
+        width: 100%;
+    }
+
     .hpp-filter-card .form-label {
+        display: block;
+        width: 100%;
         font-size: 12px;
         font-weight: 600;
         color: #6c757d;
         margin-bottom: .35rem;
+        line-height: 1.2;
     }
+
     .hpp-filter-card .form-control,
     .hpp-filter-card .form-select {
         border-radius: .65rem;
-        min-height: 38px;
+        min-height: 40px;
+        width: 100%;
     }
+
+    .hpp-filter-card .form-control::placeholder {
+        color: #9aa4b2;
+    }
+
+    .hpp-filter-actions-col {
+        display: flex;
+        align-items: end;
+    }
+
+    .hpp-filter-actions {
+        display: flex;
+        justify-content: flex-end;
+        align-items: center;
+        gap: .6rem;
+        width: 100%;
+        min-height: 40px;
+    }
+
+    .hpp-filter-actions .btn {
+        min-height: 40px;
+        border-radius: .65rem;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: .45rem;
+        white-space: nowrap;
+        padding-left: 1rem;
+        padding-right: 1rem;
+    }
+
     .hpp-source-badge {
         display: inline-flex;
         align-items: center;
@@ -42,9 +90,25 @@
         color: #343a40;
         text-transform: uppercase;
     }
-    .hpp-source-badge--pd { background: rgba(25, 135, 84, .10); color: #146c43; border-color: rgba(25, 135, 84, .18); }
-    .hpp-source-badge--correction { background: rgba(255, 193, 7, .14); color: #7a5d00; border-color: rgba(255, 193, 7, .25); }
-    .hpp-source-badge--default { background: rgba(13, 110, 253, .08); color: #0a58ca; border-color: rgba(13, 110, 253, .18); }
+
+    .hpp-source-badge--pd {
+        background: rgba(25, 135, 84, .10);
+        color: #146c43;
+        border-color: rgba(25, 135, 84, .18);
+    }
+
+    .hpp-source-badge--correction {
+        background: rgba(255, 193, 7, .14);
+        color: #7a5d00;
+        border-color: rgba(255, 193, 7, .25);
+    }
+
+    .hpp-source-badge--default {
+        background: rgba(13, 110, 253, .08);
+        color: #0a58ca;
+        border-color: rgba(13, 110, 253, .18);
+    }
+
     .hpp-product-code {
         display: inline-flex;
         padding: 3px 8px;
@@ -55,14 +119,17 @@
         background: rgba(25,135,84,.10);
         color: #146c43;
     }
+
     .hpp-row-changed {
         background: rgba(255, 193, 7, .06);
     }
+
     .hpp-card {
         border: 1px solid rgba(0, 0, 0, .06);
         border-radius: 14px;
         box-shadow: 0 6px 18px rgba(0,0,0,.04);
     }
+
     .hpp-table thead th {
         background: rgba(0,0,0,.02);
         font-weight: 800;
@@ -70,6 +137,33 @@
         color: #343a40;
         border-bottom: 1px solid rgba(0,0,0,.06);
         white-space: nowrap;
+    }
+
+    .hpp-filter-card .btn-sm {
+        border-radius: .6rem;
+        padding: .35rem .7rem;
+        font-size: 12px;
+        font-weight: 600;
+    }
+
+    @media (max-width: 991.98px) {
+        .hpp-filter-actions-col {
+            align-items: stretch;
+        }
+
+        .hpp-filter-actions {
+            justify-content: stretch;
+            flex-direction: column-reverse;
+            align-items: stretch;
+        }
+
+        .hpp-filter-actions .btn {
+            width: 100%;
+        }
+
+        .hpp-filter-card .col-lg-1 .btn {
+            width: 100%;
+        }
     }
 </style>
 @endpush
@@ -98,6 +192,14 @@
         if (str_contains($raw, 'correction')) return 'hpp-source-badge hpp-source-badge--correction';
         return 'hpp-source-badge hpp-source-badge--default';
     };
+
+    $selectedProductDisplay = '';
+    if (!empty($selectedProductId)) {
+        $selectedProduct = collect($products)->firstWhere('id', (int) $selectedProductId);
+        if ($selectedProduct) {
+            $selectedProductDisplay = $selectedProduct->product_name . ' (' . $selectedProduct->product_code . ')';
+        }
+    }
 @endphp
 
 <div class="container-fluid">
@@ -105,60 +207,79 @@
         <div class="col-12">
             <div class="card hpp-card">
                 <div class="card-body">
-                    <form method="GET" action="{{ route('hpp-ledger.index') }}" class="hpp-filter-card">
-                        <div class="hpp-filter-title">Ledger Filter</div>
-                        <div class="row g-3 align-items-end">
-                            <div class="col-md-3">
-                                <label for="branch_id" class="form-label">Branch</label>
-                                <select name="branch_id" id="branch_id" class="form-select" required>
-                                    @foreach($branches as $branch)
-                                        <option value="{{ $branch->id }}" {{ (int) $selectedBranchId === (int) $branch->id ? 'selected' : '' }}>
-                                            {{ $branch->name }}
-                                        </option>
-                                    @endforeach
-                                </select>
+                    <form method="GET" action="{{ route('hpp-ledger.index') }}" class="hpp-filter-card" id="hppFilterForm">
+                        <input type="hidden" name="branch_id" value="{{ $selectedBranchId }}">
+                        <input type="hidden" name="product_id" id="product_id" value="{{ $selectedProductId }}">
+
+                        <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-3">
+                            <div class="hpp-filter-title mb-0">Ledger Filter</div>
+
+                            <a href="{{ route('hpp-ledger.index', ['branch_id' => $selectedBranchId]) }}"
+                            class="btn btn-sm btn-outline-secondary d-inline-flex align-items-center gap-1">
+                                <i class="bi bi-arrow-counterclockwise"></i>
+                                <span>Reset</span>
+                            </a>
+                        </div>
+
+                        <div class="row hpp-filter-grid">
+                            <div class="col-lg-4 col-md-6">
+                                <div class="hpp-filter-field">
+                                    <label for="product_search" class="form-label">Product</label>
+                                    <input
+                                        type="text"
+                                        id="product_search"
+                                        class="form-control"
+                                        list="product_options"
+                                        placeholder="Search product name or code"
+                                        value="{{ $selectedProductDisplay }}"
+                                        autocomplete="off"
+                                    >
+                                    <datalist id="product_options">
+                                        <option value="All Products" data-id=""></option>
+                                        @foreach($products as $product)
+                                            <option
+                                                value="{{ $product->product_name }} ({{ $product->product_code }})"
+                                                data-id="{{ $product->id }}"
+                                                data-name="{{ strtolower($product->product_name) }}"
+                                                data-code="{{ strtolower($product->product_code) }}"
+                                            ></option>
+                                        @endforeach
+                                    </datalist>
+                                </div>
                             </div>
 
-                            <div class="col-md-3">
-                                <label for="product_id" class="form-label">Product</label>
-                                <select name="product_id" id="product_id" class="form-select">
-                                    <option value="">All Products</option>
-                                    @foreach($products as $product)
-                                        <option value="{{ $product->id }}" {{ (int) $selectedProductId === (int) $product->id ? 'selected' : '' }}>
-                                            {{ $product->product_name }} ({{ $product->product_code }})
-                                        </option>
-                                    @endforeach
-                                </select>
+                            <div class="col-lg-3 col-md-6">
+                                <div class="hpp-filter-field">
+                                    <label for="source_type" class="form-label">Source Type</label>
+                                    <select name="source_type" id="source_type" class="form-select">
+                                        <option value="">All Sources</option>
+                                        @foreach($sourceTypes as $sourceType)
+                                            <option value="{{ $sourceType }}" {{ $selectedSourceType === $sourceType ? 'selected' : '' }}>
+                                                {{ $sourceLabel($sourceType) }}
+                                            </option>
+                                        @endforeach
+                                    </select>
+                                </div>
                             </div>
 
-                            <div class="col-md-2">
-                                <label for="date_from" class="form-label">Date From</label>
-                                <input type="date" name="date_from" id="date_from" class="form-control" value="{{ $dateFrom }}">
+                            <div class="col-lg-2 col-md-6">
+                                <div class="hpp-filter-field">
+                                    <label for="date_from" class="form-label">Date From</label>
+                                    <input type="date" name="date_from" id="date_from" class="form-control" value="{{ $dateFrom }}">
+                                </div>
                             </div>
 
-                            <div class="col-md-2">
-                                <label for="date_to" class="form-label">Date To</label>
-                                <input type="date" name="date_to" id="date_to" class="form-control" value="{{ $dateTo }}">
+                            <div class="col-lg-2 col-md-6">
+                                <div class="hpp-filter-field">
+                                    <label for="date_to" class="form-label">Date To</label>
+                                    <input type="date" name="date_to" id="date_to" class="form-control" value="{{ $dateTo }}">
+                                </div>
                             </div>
 
-                            <div class="col-md-2">
-                                <label for="source_type" class="form-label">Source Type</label>
-                                <select name="source_type" id="source_type" class="form-select">
-                                    <option value="">All Sources</option>
-                                    @foreach($sourceTypes as $sourceType)
-                                        <option value="{{ $sourceType }}" {{ $selectedSourceType === $sourceType ? 'selected' : '' }}>
-                                            {{ $sourceLabel($sourceType) }}
-                                        </option>
-                                    @endforeach
-                                </select>
-                            </div>
-
-                            <div class="col-12 d-flex justify-content-end gap-2">
-                                <a href="{{ route('hpp-ledger.index', ['branch_id' => $selectedBranchId]) }}" class="btn btn-outline-secondary">
-                                    <i class="bi bi-arrow-counterclockwise"></i> Reset
-                                </a>
-                                <button type="submit" class="btn btn-primary">
-                                    <i class="bi bi-funnel"></i> Apply Filter
+                            <div class="col-lg-1 col-md-12 d-flex align-items-end justify-content-lg-end">
+                                <button type="submit" class="btn btn-primary w-100 w-lg-auto d-inline-flex align-items-center justify-content-center gap-1">
+                                    <i class="bi bi-funnel"></i>
+                                    <span>Apply</span>
                                 </button>
                             </div>
                         </div>
@@ -243,4 +364,71 @@
         </div>
     </div>
 </div>
+
+<script>
+    (function () {
+        const productSearchInput = document.getElementById('product_search');
+        const productIdInput = document.getElementById('product_id');
+        const productOptions = Array.from(document.querySelectorAll('#product_options option'));
+        const form = document.getElementById('hppFilterForm');
+
+        function normalizeText(value) {
+            return (value || '').toString().trim().toLowerCase();
+        }
+
+        function findMatchedOption(inputValue) {
+            const normalizedInput = normalizeText(inputValue);
+
+            if (!normalizedInput || normalizedInput === 'all products') {
+                return { id: '', value: 'All Products' };
+            }
+
+            for (const option of productOptions) {
+                const optionValue = normalizeText(option.value);
+                const optionName = normalizeText(option.dataset.name);
+                const optionCode = normalizeText(option.dataset.code);
+
+                if (
+                    normalizedInput === optionValue ||
+                    normalizedInput === optionName ||
+                    normalizedInput === optionCode ||
+                    optionValue.includes(normalizedInput) ||
+                    optionName.includes(normalizedInput) ||
+                    optionCode.includes(normalizedInput)
+                ) {
+                    return {
+                        id: option.dataset.id || '',
+                        value: option.value
+                    };
+                }
+            }
+
+            return null;
+        }
+
+        function syncProductSelection() {
+            const matched = findMatchedOption(productSearchInput.value);
+
+            if (matched) {
+                productIdInput.value = matched.id;
+                if (matched.id !== '') {
+                    productSearchInput.value = matched.value;
+                } else if (normalizeText(productSearchInput.value) === 'all products') {
+                    productSearchInput.value = 'All Products';
+                }
+                return true;
+            }
+
+            productIdInput.value = '';
+            return false;
+        }
+
+        productSearchInput.addEventListener('change', syncProductSelection);
+        productSearchInput.addEventListener('blur', syncProductSelection);
+
+        form.addEventListener('submit', function () {
+            syncProductSelection();
+        });
+    })();
+</script>
 @endsection
