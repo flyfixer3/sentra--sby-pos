@@ -277,8 +277,8 @@ class HppCorrectionService
     }
 
     /**
-     * Update sale_details.product_cost for sales on the same day as purchase date.
-     * This is the "snapshot fix" so profit calculation becomes correct.
+     * Update sale_details.product_cost for sales on the same business day as the
+     * effective inbound event, and only for sales created after that event time.
      */
     public function refreshSaleCostSnapshotSameDay(
         int $branchId,
@@ -300,10 +300,12 @@ class HppCorrectionService
             $effectiveBoundary = \Carbon\Carbon::parse($purchaseDate)->startOfDay();
         }
 
+        $effectiveDate = $effectiveBoundary->toDateString();
+
         $sales = DB::table('sales')
             ->whereNull('deleted_at')
             ->where('branch_id', (int) $branchId)
-            ->whereDate('date', '=', $purchaseDate)
+            ->whereDate('date', '=', $effectiveDate)
             ->where('created_at', '>=', $effectiveBoundary)
             ->pluck('id')
             ->toArray();

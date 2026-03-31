@@ -726,12 +726,21 @@ class PurchaseController extends Controller
             $effectiveFrom
         );
 
-        $updatedSaleRows = $service->refreshSaleCostSnapshotSameDay(
-            (int) $branchId,
-            (string) $purchase->date,
-            $productIds,
-            $effectiveFrom
-        );
+        $correctedProductIds = collect($summary['corrected'] ?? [])
+            ->pluck('product_id')
+            ->map(fn ($id) => (int) $id)
+            ->filter(fn ($id) => $id > 0)
+            ->values()
+            ->all();
+
+        $updatedSaleRows = empty($correctedProductIds)
+            ? 0
+            : $service->refreshSaleCostSnapshotSameDay(
+                (int) $branchId,
+                (string) $purchase->date,
+                $correctedProductIds,
+                $effectiveFrom
+            );
 
         activity()
             ->performedOn($purchase)
@@ -887,7 +896,7 @@ class PurchaseController extends Controller
         };
 
         foreach ($purchase_details as $purchase_detail) {
-            $product = Product::select('id', 'product_unit', 'product_cost')
+            $product = Product::select('id', 'product_unit')
                 ->find((int) $purchase_detail->product_id);
 
             if ($resolvedWarehouseId) {
@@ -932,7 +941,7 @@ class PurchaseController extends Controller
                     'stock_scope'           => $stockScope,
                     'unit'                  => $product?->product_unit,
                     'product_tax'           => (float) $purchase_detail->product_tax_amount,
-                    'product_cost'          => (float) ($product?->product_cost ?? 0),
+                    'product_cost'          => (float) $unitPrice,
                     'unit_price'            => (float) $unitPrice,
                     'branch_id'             => (int) $branchId,
                 ],
@@ -1074,6 +1083,7 @@ class PurchaseController extends Controller
                 }
 
                 $warehouseId = null;
+                $isConfirmed = false;
                 if ($linkedPd) {
                     $pdStatus = strtolower(trim((string) ($linkedPd->status ?? 'pending')));
                     $isConfirmed = in_array($pdStatus, ['partial', 'received', 'completed'], true);
@@ -1247,46 +1257,57 @@ class PurchaseController extends Controller
                         ])
                         ->log('Purchase price corrected (HPP sensitive edit)');
 
-                    $service = new \Modules\Product\Services\HppCorrectionService();
+                    if ($isConfirmed && !empty($purchase->purchase_delivery_id)) {
+                        $service = new \Modules\Product\Services\HppCorrectionService();
 
-                    $productIds = array_keys($changedProducts);
-                    $effectiveFrom = $service->resolvePurchaseCorrectionEffectiveFrom(
-                        (int) $branchId,
-                        $productIds,
-                        $purchase->purchase_delivery_id ? (int) $purchase->purchase_delivery_id : null,
-                        (string) $purchase->date
-                    );
+                        $productIds = array_keys($changedProducts);
+                        $effectiveFrom = $service->resolvePurchaseCorrectionEffectiveFrom(
+                            (int) $branchId,
+                            $productIds,
+                            $purchase->purchase_delivery_id ? (int) $purchase->purchase_delivery_id : null,
+                            (string) $purchase->date
+                        );
 
-                    $summary = $service->applyPurchasePriceCorrection(
-                        (int) $branchId,
-                        (int) $purchase->id,
-                        (string) $purchase->date,
-                        $purchase->purchase_delivery_id ? (int) $purchase->purchase_delivery_id : null,
-                        array_map(function ($v) {
-                            return [
-                                'old_unit_cost' => (float) ($v['old_unit_cost'] ?? 0),
-                                'new_unit_cost' => (float) ($v['new_unit_cost'] ?? 0),
-                            ];
-                        }, $changedProducts),
-                        $effectiveFrom
-                    );
+                        $summary = $service->applyPurchasePriceCorrection(
+                            (int) $branchId,
+                            (int) $purchase->id,
+                            (string) $purchase->date,
+                            $purchase->purchase_delivery_id ? (int) $purchase->purchase_delivery_id : null,
+                            array_map(function ($v) {
+                                return [
+                                    'old_unit_cost' => (float) ($v['old_unit_cost'] ?? 0),
+                                    'new_unit_cost' => (float) ($v['new_unit_cost'] ?? 0),
+                                ];
+                            }, $changedProducts),
+                            $effectiveFrom
+                        );
 
-                    $updatedSaleRows = $service->refreshSaleCostSnapshotSameDay(
-                        (int) $branchId,
-                        (string) $purchase->date,
-                        $productIds,
-                        $effectiveFrom
-                    );
+                        $correctedProductIds = collect($summary['corrected'] ?? [])
+                            ->pluck('product_id')
+                            ->map(fn ($id) => (int) $id)
+                            ->filter(fn ($id) => $id > 0)
+                            ->values()
+                            ->all();
 
-                    activity()
-                        ->performedOn($purchase)
-                        ->causedBy(auth()->user())
-                        ->withProperties([
-                            'type' => 'hpp_correction_summary',
-                            'summary' => $summary,
-                            'updated_sale_detail_rows' => (int) $updatedSaleRows,
-                        ])
-                        ->log('HPP correction applied & sale cost snapshot refreshed (same day)');
+                        $updatedSaleRows = empty($correctedProductIds)
+                            ? 0
+                            : $service->refreshSaleCostSnapshotSameDay(
+                                (int) $branchId,
+                                (string) $purchase->date,
+                                $correctedProductIds,
+                                $effectiveFrom
+                            );
+
+                        activity()
+                            ->performedOn($purchase)
+                            ->causedBy(auth()->user())
+                            ->withProperties([
+                                'type' => 'hpp_correction_summary',
+                                'summary' => $summary,
+                                'updated_sale_detail_rows' => (int) $updatedSaleRows,
+                            ])
+                            ->log('HPP correction applied & sale cost snapshot refreshed (same day)');
+                    }
                 }
 
                 Cart::instance('purchase')->destroy();

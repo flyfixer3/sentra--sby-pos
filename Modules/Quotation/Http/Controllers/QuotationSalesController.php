@@ -2,10 +2,12 @@
 
 namespace Modules\Quotation\Http\Controllers;
 
+use App\Support\BranchContext;
 use Gloudemans\Shoppingcart\Facades\Cart;
 use Illuminate\Routing\Controller;
 use Illuminate\Support\Facades\Gate;
 use Modules\Product\Entities\Product;
+use Modules\Product\Services\HppService;
 use Modules\Quotation\Entities\Quotation;
 use Modules\Quotation\Http\Requests\StoreQuotationSaleRequest;
 
@@ -16,6 +18,8 @@ class QuotationSalesController extends Controller
         abort_if(Gate::denies('create_quotation_sales'), 403);
 
         $quotation_details = $quotation->quotationDetails;
+        $branchId = (int) (BranchContext::id() ?? 0);
+        $hppService = new HppService();
 
         Cart::instance('sale')->destroy();
 
@@ -43,6 +47,12 @@ class QuotationSalesController extends Controller
         // ]);
         foreach ($quotation_details as $quotation_detail) {
             $product = Product::findOrFail($quotation_detail->product_id);
+            $productCost = (float) $product->product_cost;
+
+            if ($branchId > 0) {
+                $productCost = (float) $hppService->getCurrentHpp($branchId, (int) $quotation_detail->product_id);
+            }
+
             $cart->add([
                 'id'      => $quotation_detail->product_id,
                 'name'    => $quotation_detail->product_name,
@@ -57,7 +67,7 @@ class QuotationSalesController extends Controller
                     'unit'        => $product->product_unit,
                     'stock'       =>$product->product_quantity,
                     'warehouse_id'=> 99,
-                    'product_cost' => $product->product_cost,
+                    'product_cost' => $productCost,
                     'product_tax' => $quotation_detail->product_tax_amount,
                     'unit_price'  => $quotation_detail->unit_price
                 ]

@@ -2,13 +2,16 @@
 
 namespace Modules\Product\Http\Controllers;
 
+use App\Support\BranchContext;
 use Modules\Product\DataTables\ProductDataTable;
 use Illuminate\Contracts\Support\Renderable;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\Storage;
 use Modules\Product\Entities\Product;
+use Modules\Product\Services\HppService;
 use Modules\Mutation\Entities\Mutation;
 use Modules\Product\Http\Requests\StoreProductRequest;
 use Modules\Product\Http\Requests\UpdateProductRequest;
@@ -54,7 +57,24 @@ class ProductController extends Controller
         ->unique('warehouse_id')
         ->sortByDesc('stock_last');
 
-        return view('product::products.show', compact('product'))->with("warehouses",$temp);
+        $activeBranchId = BranchContext::id();
+        $currentBranchHpp = null;
+        $currentBranchStockOnHand = null;
+
+        if (!empty($activeBranchId)) {
+            $currentBranchHpp = (new HppService())->getCurrentHpp((int) $activeBranchId, (int) $product->id);
+            $currentBranchStockOnHand = (int) DB::table('stock_racks')
+                ->where('branch_id', (int) $activeBranchId)
+                ->where('product_id', (int) $product->id)
+                ->sum('qty_total');
+        }
+
+        return view('product::products.show', compact(
+            'product',
+            'currentBranchHpp',
+            'currentBranchStockOnHand',
+            'activeBranchId'
+        ))->with("warehouses",$temp);
     }
 
 

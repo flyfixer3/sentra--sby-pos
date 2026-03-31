@@ -215,6 +215,7 @@ class SaleController extends Controller
 
         $lockedFinancial = null;
         $lockedSaleOrder = null;
+        $hppService = new \Modules\Product\Services\HppService();
 
         Cart::instance('sale')->destroy();
         $cart = Cart::instance('sale');
@@ -444,7 +445,12 @@ class SaleController extends Controller
                             'product_discount'      => $discAmt,
                             'product_discount_type' => $discType,
 
-                            'product_cost'          => (float) ($it->product_cost ?? ($p->product_cost ?? 0)),
+                            'product_cost'          => (float) (
+                                $it->product_cost
+                                ?? (($branchId > 0 && $productId > 0)
+                                    ? $hppService->getCurrentHpp((int) $branchId, (int) $productId)
+                                    : ($p->product_cost ?? 0))
+                            ),
                         ],
                     ]);
                 }
