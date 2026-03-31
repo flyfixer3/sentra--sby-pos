@@ -6,6 +6,7 @@
 |--------------------------------------------------------------------------
 */
 use Modules\Product\Http\Controllers\WarehousesController;
+use Modules\Product\Http\Controllers\HppLedgerController;
 use Modules\Product\Http\Controllers\ProductImportController;
 
 Route::middleware(['auth'])->prefix('warehouses')->group(function () {
@@ -13,6 +14,7 @@ Route::middleware(['auth'])->prefix('warehouses')->group(function () {
 });
 
 Route::group(['middleware' => 'auth'], function () {
+    Route::get('/hpp-ledger', [HppLedgerController::class, 'index'])->name('hpp-ledger.index');
     Route::get('/products/import', [ProductImportController::class, 'index'])->name('products.import.index');
     Route::get('/products/import/template', [ProductImportController::class, 'downloadTemplate'])->name('products.import.template');
     Route::post('/products/import', [ProductImportController::class, 'import'])->name('products.import.store');
