@@ -32,6 +32,7 @@ class ProductCartPurchase extends Component
     public $item_discount;
     public $item_cost_konsyinasi;
     public $data;
+    public $lock_purchase_price_edit = false;
 
     public $stock_mode = 'branch_all';
 
@@ -555,6 +556,11 @@ class ProductCartPurchase extends Component
         $inputValue   = (float) ($this->item_discount[$product_id] ?? 0);
 
         if ($this->cart_instance === 'purchase') {
+            if ($this->lock_purchase_price_edit) {
+                session()->flash('discount_message' . $product_id, 'Purchase item price is locked because the linked Purchase Delivery is already partial.');
+                return;
+            }
+
             $currentUnitPrice = (float) ($cart_item->options->unit_price ?? 0);
             if ($currentUnitPrice <= 0) {
                 $currentUnitPrice = (float) ($cart_item->price ?? 0);

@@ -1,20 +1,36 @@
 <!-- Button trigger Modal -->
-<span
-    wire:click="$emitSelf('discountModalRefresh', '{{ $cart_item->id }}', '{{ $cart_item->rowId }}')"
-    role="button"
-    class="badge badge-warning pointer-event"
-    data-toggle="modal"
-    data-target="#discountModal{{ $cart_item->id }}"
->
-    <i class="bi bi-pencil-square text-white"></i>
-</span>
+@php
+    $isPurchaseCart = isset($cart_instance) && $cart_instance === 'purchase';
+    $isPurchasePriceLocked = $isPurchaseCart && !empty($lock_purchase_price_edit);
+@endphp
+
+@if($isPurchasePriceLocked)
+    <span
+        role="button"
+        class="badge badge-secondary"
+        data-toggle="modal"
+        data-target="#discountModal{{ $cart_item->id }}"
+        title="Purchase item price is locked because linked Purchase Delivery is partial."
+    >
+        <i class="bi bi-lock-fill text-white"></i>
+    </span>
+@else
+    <span
+        wire:click="$emitSelf('discountModalRefresh', '{{ $cart_item->id }}', '{{ $cart_item->rowId }}')"
+        role="button"
+        class="badge badge-warning pointer-event"
+        data-toggle="modal"
+        data-target="#discountModal{{ $cart_item->id }}"
+    >
+        <i class="bi bi-pencil-square text-white"></i>
+    </span>
+@endif
 
 <!-- Modal -->
 <div wire:ignore.self class="modal fade" id="discountModal{{ $cart_item->id }}" tabindex="-1" role="dialog" aria-labelledby="discountModalLabel{{ $cart_item->id }}" aria-hidden="true">
     <div class="modal-dialog" role="document">
         <div class="modal-content">
             @php
-                $isPurchaseCart = isset($cart_instance) && $cart_instance === 'purchase';
                 $currentUnitPrice = (float) ($cart_item->options->unit_price ?? 0);
                 if ($currentUnitPrice <= 0) {
                     $currentUnitPrice = (float) ($cart_item->price ?? 0);
@@ -59,13 +75,20 @@
                         </div>
                     @endif
 
+                    @if($isPurchasePriceLocked)
+                        <div class="alert alert-warning">
+                            <strong>Price Locked:</strong><br>
+                            Linked Purchase Delivery is already in <strong>partial</strong> status, so purchase item price can no longer be edited.
+                        </div>
+                    @endif
+
                     <div class="form-group">
                         <label>
                             {{ $isPurchaseCart ? 'Change By' : 'Discount By' }}
                             <span class="text-danger">*</span>
                         </label>
 
-                        <select wire:model="discount_type.{{ $cart_item->id }}" class="form-control" required>
+                        <select wire:model="discount_type.{{ $cart_item->id }}" class="form-control" required {{ $isPurchasePriceLocked ? 'disabled' : '' }}>
                             @if($isPurchaseCart)
                                 <option value="fixed">Fixed Purchase Price</option>
                                 <option value="percentage">Discount Percentage</option>
@@ -98,6 +121,7 @@
                                 min="0"
                                 max="100"
                                 step="0.01"
+                                {{ $isPurchasePriceLocked ? 'disabled' : '' }}
                             >
                         @else
                             <label>
@@ -111,6 +135,7 @@
                                 placeholder="{{ $isPurchaseCart ? $currentUnitPrice : max(($currentRowPrice - $currentDiscount), 0) }}"
                                 step="0.01"
                                 min="0"
+                                {{ $isPurchasePriceLocked ? 'disabled' : '' }}
                             >
                         @endif
                     </div>
@@ -137,6 +162,7 @@
                                 class="form-control"
                                 placeholder="0"
                                 step="0.01"
+                                {{ $isPurchasePriceLocked ? 'disabled' : '' }}
                             >
                         </div>
                     @endif
@@ -144,7 +170,7 @@
 
                 <div class="modal-footer">
                     <button type="button" class="btn btn-secondary" data-dismiss="modal">Close</button>
-                    <button type="submit" class="btn btn-primary">
+                    <button type="submit" class="btn btn-primary" {{ $isPurchasePriceLocked ? 'disabled' : '' }}>
                         {{ $isPurchaseCart ? 'Save Purchase Price' : 'Save Changes' }}
                     </button>
                 </div>

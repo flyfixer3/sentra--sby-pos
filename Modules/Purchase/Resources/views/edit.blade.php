@@ -34,6 +34,7 @@
                             }
 
                             $pdConfirmed = in_array($pdStatus, ['partial', 'received', 'completed'], true);
+                            $pdPartial = $pdStatus === 'partial';
                         @endphp
 
                         @if($pdConfirmed)
@@ -43,9 +44,15 @@
                                     Related Purchase Delivery has already been confirmed.
                                     You can still edit <b>simple fields</b> such as note / supplier invoice / due date.
                                 </div>
-                                <div class="mt-1">
-                                    Changes to <b>item price / qty / item list</b> are considered <b>HPP-sensitive</b> and are allowed only for <b>Administrator</b>.
-                                </div>
+                                @if($pdPartial)
+                                    <div class="mt-1">
+                                        Linked Purchase Delivery is already <b>partial</b>. <b>Item price is locked</b> and can no longer be edited in this Purchase.
+                                    </div>
+                                @else
+                                    <div class="mt-1">
+                                        Changes to <b>item price / qty / item list</b> are considered <b>HPP-sensitive</b> and are allowed only for <b>Administrator</b>.
+                                    </div>
+                                @endif
                             </div>
                         @endif
 
@@ -107,6 +114,7 @@
                                 :data="$purchase"
                                 :loading_warehouse="$loadingWarehouseId"
                                 :stock_mode="$stock_mode"
+                                :lock_purchase_price_edit="$pdPartial"
                             />
 
                             <div class="form-row">

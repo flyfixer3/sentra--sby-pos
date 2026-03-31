@@ -1047,9 +1047,22 @@ class PurchaseController extends Controller
                     }
                 }
 
+                $priceChanged = collect($changedProducts)->contains(function ($row) {
+                    return round((float) ($row['old_unit_cost'] ?? 0), 2) !== round((float) ($row['new_unit_cost'] ?? 0), 2);
+                });
+
                 // =========================================================
                 // Block non-admin jika ada perubahan HPP-sensitive
                 // =========================================================
+                $linkedPd = null;
+                if (!empty($purchase->purchase_delivery_id)) {
+                    $linkedPd = PurchaseDelivery::find((int) $purchase->purchase_delivery_id);
+                }
+
+                if (!empty($linkedPd) && strtolower(trim((string) ($linkedPd->status ?? 'pending'))) === 'partial' && $priceChanged) {
+                    throw new \RuntimeException('Purchase item price cannot be changed because the linked Purchase Delivery is already partial.');
+                }
+
                 if ($hppSensitiveChanged && !$isAdmin) {
                     throw new \RuntimeException('You are not allowed to edit item price/qty because it affects HPP. Please contact Administrator.');
                 }
@@ -1077,11 +1090,6 @@ class PurchaseController extends Controller
                 // =========================================================
                 // Resolve warehouse FINAL mengikuti PD confirmed saja
                 // =========================================================
-                $linkedPd = null;
-                if (!empty($purchase->purchase_delivery_id)) {
-                    $linkedPd = PurchaseDelivery::find((int) $purchase->purchase_delivery_id);
-                }
-
                 $warehouseId = null;
                 $isConfirmed = false;
                 if ($linkedPd) {
