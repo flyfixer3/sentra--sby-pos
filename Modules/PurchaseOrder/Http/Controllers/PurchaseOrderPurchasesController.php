@@ -55,7 +55,7 @@ class PurchaseOrderPurchasesController extends Controller
 
             $unit_price = (float) ($d->unit_price ?? 0);
 
-            /**
+/**
              * IMPORTANT:
              * - di cart, "price" dipakai sebagai selling/buying price yang kamu gunakan untuk total
              * - sub_total harus ikut price (bukan unit_price), biar konsisten ke perhitungan di cart
@@ -87,7 +87,7 @@ class PurchaseOrderPurchasesController extends Controller
                     'product_discount'      => (float) ($d->product_discount_amount ?? 0),
                     'product_discount_type' => (string) ($d->product_discount_type ?? 'fixed'),
 
-                    // ✅ subtotal konsisten pakai price
+// ✅ subtotal konsisten pakai price
                     'sub_total'             => (float) $updated_sub_total,
 
                     'code'                  => (string) ($d->product_code ?? 'UNKNOWN'),

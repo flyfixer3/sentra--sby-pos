@@ -220,8 +220,12 @@ class PurchaseController extends Controller
 
             $poD = $poDetailMap[(int) $pdItem->product_id] ?? null;
 
-            $price     = (int) ($poD->price ?? 0);
-            $unitPrice = (int) ($poD->unit_price ?? 0);
+            $unitPrice = (float) ($poD->unit_price ?? 0);
+            if ($unitPrice <= 0) {
+                $unitPrice = (float) ($poD->price ?? 0);
+            }
+
+            $price = (float) $unitPrice;
 
             // ✅ stock display:
             // - confirmed => per warehouse PD
@@ -245,7 +249,7 @@ class PurchaseController extends Controller
                 'price'  => $price,
                 'weight' => 1,
                 'options' => [
-                    'sub_total'   => $qty * $price,
+                    'sub_total'   => (float) ($qty * $unitPrice),
                     'code'        => (string) $productCode,
                     'unit_price'  => $unitPrice,
 
@@ -1246,6 +1250,13 @@ class PurchaseController extends Controller
                         ->delete();
                 }
 
+                if ($linkedPd) {
+                    $pdStatus = strtolower(trim((string) ($linkedPd->status ?? 'pending')));
+                    if ($pdStatus === 'pending') {
+                        $this->synchronizePendingDeliveryDetailsFromPurchase($purchase, $linkedPd);
+                    }
+                }
+
                 // =========================================================
                 // Jika admin melakukan HPP-sensitive edit
                 // =========================================================
@@ -1839,6 +1850,77 @@ class PurchaseController extends Controller
         }
 
         return $autoPD;
+    }
+
+    private function synchronizePendingDeliveryDetailsFromPurchase(Purchase $purchase, PurchaseDelivery $delivery): void
+    {
+        if ((int) $purchase->branch_id !== (int) $delivery->branch_id) {
+            throw new \RuntimeException('Cannot synchronize pending Purchase Delivery: branch mismatch.');
+        }
+
+        $deliveryStatus = strtolower(trim((string) ($delivery->status ?? 'pending')));
+        if ($deliveryStatus !== 'pending') {
+            return;
+        }
+
+        $purchase->loadMissing(['purchaseDetails']);
+        $delivery->loadMissing(['purchaseDeliveryDetails']);
+
+        $existingDetailsByProduct = [];
+        foreach ($delivery->purchaseDeliveryDetails as $detail) {
+            $existingDetailsByProduct[(int) $detail->product_id][] = $detail;
+        }
+
+        $usedDeliveryDetailIds = [];
+
+        foreach ($purchase->purchaseDetails as $purchaseDetail) {
+            $productId = (int) ($purchaseDetail->product_id ?? 0);
+            if ($productId <= 0) {
+                continue;
+            }
+
+            $matchedDetail = collect($existingDetailsByProduct[$productId] ?? [])
+                ->first(function ($detail) use ($usedDeliveryDetailIds) {
+                    return !in_array((int) $detail->id, $usedDeliveryDetailIds, true);
+                });
+
+            $payload = [
+                'product_id'   => $productId,
+                'product_name' => (string) ($purchaseDetail->product_name ?? '-'),
+                'product_code' => (string) ($purchaseDetail->product_code ?? 'UNKNOWN'),
+                'quantity'     => (int) ($purchaseDetail->quantity ?? 0),
+                'unit_price'   => (float) ($purchaseDetail->unit_price ?? 0),
+                'sub_total'    => (float) ($purchaseDetail->sub_total ?? 0),
+            ];
+
+            if ($matchedDetail) {
+                $matchedDetail->update($payload);
+                $usedDeliveryDetailIds[] = (int) $matchedDetail->id;
+                continue;
+            }
+
+            $newDetail = PurchaseDeliveryDetails::create(array_merge($payload, [
+                'purchase_delivery_id' => (int) $delivery->id,
+                'qty_received'         => 0,
+                'qty_defect'           => 0,
+                'qty_damaged'          => 0,
+            ]));
+
+            $usedDeliveryDetailIds[] = (int) $newDetail->id;
+        }
+
+        $staleDetailIds = collect($delivery->purchaseDeliveryDetails)
+            ->pluck('id')
+            ->map(fn ($id) => (int) $id)
+            ->reject(fn ($id) => in_array($id, $usedDeliveryDetailIds, true))
+            ->values()
+            ->all();
+
+        if (!empty($staleDetailIds)) {
+            PurchaseDeliveryDetails::where('purchase_delivery_id', (int) $delivery->id)
+                ->whereIn('id', $staleDetailIds)
+                ->delete();
+        }
     }
 
 }
