@@ -3,7 +3,6 @@
 namespace Modules\Product\Services;
 
 use Illuminate\Support\Facades\DB;
-use Modules\Product\Entities\Product;
 use Modules\Product\Entities\ProductHpp;
 
 class HppCorrectionService
@@ -252,12 +251,9 @@ class HppCorrectionService
                 'new_avg_cost'       => (float) $newAvg,
             ]);
 
-            $product = Product::find((int) $productId);
-            if ($product) {
-                $product->update([
-                    'product_cost' => round((float) $newCost, 2),
-                ]);
-            }
+            // product_hpps.avg_cost is the branch HPP source of truth.
+            // products.product_cost remains a legacy compatibility field and is
+            // not synchronized from HPP correction anymore.
 
             $summary['corrected'][] = [
                 'product_id'        => $productId,

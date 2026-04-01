@@ -137,10 +137,15 @@ class ProductCartPurchase extends Component
 
         /**
          * Initial load:
-         * - jangan overwrite stock/code/warehouse context hasil preload controller
-         * - cukup benarkan subtotal yang stale
+         * samakan hasilnya dengan logic tombol centang,
+         * jadi row cart sudah “fully refreshed” sejak awal.
          */
-        $this->normalizeCartRowSubtotals();
+        $cartItems = Cart::instance($this->cart_instance)->content();
+        foreach ($cartItems as $row) {
+            $this->refreshCartRowState($row->rowId, (int) $row->id);
+        }
+
+        $this->global_qty = Cart::instance($this->cart_instance)->count();
         $this->syncQuantityDefaults();
     }
 
@@ -367,6 +372,39 @@ class ProductCartPurchase extends Component
         $this->global_qty = $cart->count();
     }
 
+    private function refreshCartRowState($row_id, $product_id): void
+    {
+        $cart_item = Cart::instance($this->cart_instance)->get($row_id);
+        if (!$cart_item) {
+            return;
+        }
+
+        $warehouseId = null;
+        if ($this->stock_mode === 'warehouse') {
+            $warehouseId = (int) ($cart_item->options->warehouse_id ?? ($this->loading_warehouse->id ?? 0));
+        }
+
+        $context = $this->calculateStockContext((int) $product_id, $warehouseId);
+
+        $unitPrice = (float) ($cart_item->options->unit_price ?? 0);
+        if ($unitPrice <= 0) {
+            $unitPrice = (float) ($cart_item->price ?? 0);
+        }
+
+        $subTotal = $unitPrice * (int) ($cart_item->qty ?? 0);
+
+        Cart::instance($this->cart_instance)->update($row_id, [
+            'options' => $this->mergeOptions($cart_item, [
+                'sub_total'    => $subTotal,
+                'stock'        => $context['stock'],
+                'stock_scope'  => $context['stock_scope'],
+                'warehouse_id' => $context['warehouse_id'],
+            ])
+        ]);
+
+        $this->check_quantity[$product_id] = $context['stock'];
+    }
+
     private function normalizeCartRowSubtotals(): void
     {
         $cart = Cart::instance($this->cart_instance);
@@ -514,34 +552,9 @@ class ProductCartPurchase extends Component
         }
 
         Cart::instance($this->cart_instance)->update($row_id, (int) $this->quantity[$product_id]);
-
-        $cart_item = Cart::instance($this->cart_instance)->get($row_id);
         $this->global_qty = Cart::instance($this->cart_instance)->count();
 
-        $warehouseId = null;
-        if ($this->stock_mode === 'warehouse') {
-            $warehouseId = (int) ($cart_item->options->warehouse_id ?? ($this->loading_warehouse->id ?? 0));
-        }
-
-        $context = $this->calculateStockContext((int) $product_id, $warehouseId);
-
-        $unitPrice = (float) ($cart_item->options->unit_price ?? 0);
-        if ($unitPrice <= 0) {
-            $unitPrice = (float) ($cart_item->price ?? 0);
-        }
-
-        $subTotal = $unitPrice * (int) ($cart_item->qty ?? 0);
-
-        Cart::instance($this->cart_instance)->update($row_id, [
-            'options' => $this->mergeOptions($cart_item, [
-                'sub_total'    => $subTotal,
-                'stock'        => $context['stock'],
-                'stock_scope'  => $context['stock_scope'],
-                'warehouse_id' => $context['warehouse_id'],
-            ])
-        ]);
-
-        $this->check_quantity[$product_id] = $context['stock'];
+        $this->refreshCartRowState($row_id, (int) $product_id);
     }
 
     public function updatedDiscountType($value, $name)
@@ -691,7 +704,6 @@ class ProductCartPurchase extends Component
         if ($product['product_tax_type'] == 1) {
             $price = $product['product_price'] + ($product['product_price'] * ($product['product_order_tax'] / 1));
             $unit_price = $product['product_price'];
-            $product_cost = $product['product_cost'];
             $product_tax = $product['product_price'] * ($product['product_order_tax'] / 1);
             $sub_total = $unit_price;
         } elseif ($product['product_tax_type'] == 2) {
@@ -699,14 +711,16 @@ class ProductCartPurchase extends Component
             $unit_price = $product['product_price'] - ($product['product_price'] * ($product['product_order_tax'] / 1));
             $product_tax = $product['product_price'] * ($product['product_order_tax'] / 1);
             $sub_total = $unit_price;
-            $product_cost = $product['product_cost'];
         } else {
             $price = $product['product_price'];
             $unit_price = $product['product_price'];
             $product_tax = 0.00;
             $sub_total = $unit_price;
-            $product_cost = $product['product_cost'];
         }
+
+        // Purchase cart cost metadata should follow the current transaction-local
+        // purchase unit price, not the legacy products.product_cost field.
+        $product_cost = $unit_price;
 
         return [
             'price' => $price,

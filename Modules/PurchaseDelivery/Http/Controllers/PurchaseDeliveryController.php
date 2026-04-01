@@ -1033,12 +1033,8 @@ class PurchaseDeliveryController extends Controller
                     (int) $purchaseDelivery->id       // ✅ NEW
                 );
 
-                $product = Product::find((int) $productId);
-                if ($product) {
-                    $product->update([
-                        'product_cost' => round((float) $unitCost, 2),
-                    ]);
-                }
+                // product_hpps.avg_cost is the branch HPP source of truth.
+                // Do not sync inbound HPP back into products.product_cost here.
             }
 
             if (!$anyConfirmedInThisBatch) {

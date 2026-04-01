@@ -233,7 +233,7 @@ class PurchaseOrderController extends Controller
         $cart = Cart::instance('purchase_order');
 
         foreach ($purchase_order_details as $purchase_order_detail) {
-            $product = Product::select('id', 'product_unit', 'product_cost')
+            $product = Product::select('id', 'product_unit')
                 ->find((int) $purchase_order_detail->product_id);
 
             $total_stock = Mutation::with('warehouse')
@@ -258,7 +258,6 @@ class PurchaseOrderController extends Controller
                     'stock'                 => (int) $total_stock,
                     'unit'                  => $product?->product_unit,
                     'product_tax'           => (float) $purchase_order_detail->product_tax_amount,
-                    'product_cost'          => (float) ($product?->product_cost ?? 0),
                     'unit_price'            => (float) $purchase_order_detail->unit_price,
                 ],
             ]);

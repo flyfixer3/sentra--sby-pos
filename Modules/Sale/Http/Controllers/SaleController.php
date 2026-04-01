@@ -449,6 +449,8 @@ class SaleController extends Controller
                                 $it->product_cost
                                 ?? (($branchId > 0 && $productId > 0)
                                     ? $hppService->getCurrentHpp((int) $branchId, (int) $productId)
+                                    // Legacy compatibility fallback only when no
+                                    // branch-specific HPP context is available.
                                     : ($p->product_cost ?? 0))
                             ),
                         ],

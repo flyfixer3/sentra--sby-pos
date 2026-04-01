@@ -109,7 +109,6 @@ class ProductCart extends Component
                 'stock'                 => $total_stock,
                 'unit'                  => $product['product_unit'],
                 'product_tax'           => $this->calculate($product)['product_tax'],
-                'product_cost'           => $this->calculate($product)['product_cost'],
                 'unit_price'            => $this->calculate($product)['unit_price']
             ]
         ]);
@@ -211,12 +210,10 @@ class ProductCart extends Component
         $unit_price = 0;
         $product_tax = 0;
         $sub_total = 0;
-        $product_cost = 0;
 
         if ($product['product_tax_type'] == 1) {
             $price = $product['product_price'] + ($product['product_price'] * ($product['product_order_tax'] / 1));
             $unit_price = $product['product_price'];
-            $product_cost = $product['product_cost'];
             $product_tax = $product['product_price'] * ($product['product_order_tax'] / 1);
             $sub_total = $product['product_price'] + ($product['product_price'] * ($product['product_order_tax'] / 1));
         } elseif ($product['product_tax_type'] == 2) {
@@ -224,16 +221,14 @@ class ProductCart extends Component
             $unit_price = $product['product_price'] - ($product['product_price'] * ($product['product_order_tax'] / 1));
             $product_tax = $product['product_price'] * ($product['product_order_tax'] / 1);
             $sub_total = $product['product_price'];
-            $product_cost = $product['product_cost'];
         } else {
             $price = $product['product_price'];
             $unit_price = $product['product_price'];
             $product_tax = 0.00;
             $sub_total = $product['product_price'];
-            $product_cost = $product['product_cost'];
         }
 
-        return ['price' => $price, 'unit_price' => $unit_price, 'product_tax' => $product_tax,'product_cost' => $product_cost, 'sub_total' => $sub_total];
+        return ['price' => $price, 'unit_price' => $unit_price, 'product_tax' => $product_tax, 'sub_total' => $sub_total];
     }
 
     public function updateCartOptions($row_id, $product_id, $cart_item, $discount_amount) {
