@@ -47,10 +47,7 @@
                                     $displayUnitPrice = (float) ($cart_item->price ?? 0);
                                 }
 
-                                $displaySubTotal = (float) ($cart_item->options->sub_total ?? 0);
-                                if ($displaySubTotal <= 0) {
-                                    $displaySubTotal = round($displayUnitPrice * (int) ($cart_item->qty ?? 0), 2);
-                                }
+                                $displaySubTotal = round($displayUnitPrice * (int) ($cart_item->qty ?? 0), 2);
 
                                 $stockScope = (string) ($cart_item->options->stock_scope ?? 'branch');
                                 $isWarehouseScope = $stockScope === 'warehouse';
