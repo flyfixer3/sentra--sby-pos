@@ -135,7 +135,12 @@ class ProductCartPurchase extends Component
             $this->item_cost_konsyinasi = [];
         }
 
-        $this->syncCartToCurrentWarehouse();
+        /**
+         * Initial load:
+         * - jangan overwrite stock/code/warehouse context hasil preload controller
+         * - cukup benarkan subtotal yang stale
+         */
+        $this->normalizeCartRowSubtotals();
         $this->syncQuantityDefaults();
     }
 
@@ -360,6 +365,32 @@ class ProductCartPurchase extends Component
         }
 
         $this->global_qty = $cart->count();
+    }
+
+    private function normalizeCartRowSubtotals(): void
+    {
+        $cart = Cart::instance($this->cart_instance);
+
+        foreach ($cart->content() as $row) {
+            $unitPrice = (float) ($row->options->unit_price ?? 0);
+            if ($unitPrice <= 0) {
+                $unitPrice = (float) ($row->price ?? 0);
+            }
+
+            $expectedSubTotal = round($unitPrice * (int) ($row->qty ?? 0), 2);
+            $storedSubTotal = round((float) ($row->options->sub_total ?? 0), 2);
+
+            if ($storedSubTotal === $expectedSubTotal) {
+                continue;
+            }
+
+            $options = (array) $row->options;
+            $options['sub_total'] = $expectedSubTotal;
+
+            $cart->update($row->rowId, [
+                'options' => $options,
+            ]);
+        }
     }
 
     private function getStockLastByWarehouse(int $productId, int $warehouseId): int

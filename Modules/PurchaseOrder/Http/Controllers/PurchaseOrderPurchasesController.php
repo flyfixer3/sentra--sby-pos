@@ -47,11 +47,38 @@ class PurchaseOrderPurchasesController extends Controller
         Cart::instance('purchase')->destroy();
         $cart = Cart::instance('purchase');
 
+        $getStockAllWarehousesInBranch = function (int $productId) use ($branchId): int {
+            $warehouseIds = DB::table('warehouses')
+                ->where('branch_id', (int) $branchId)
+                ->pluck('id')
+                ->toArray();
+
+            if (empty($warehouseIds)) {
+                return 0;
+            }
+
+            $sum = 0;
+            foreach ($warehouseIds as $warehouseId) {
+                $last = DB::table('mutations')
+                    ->where('product_id', (int) $productId)
+                    ->where('warehouse_id', (int) $warehouseId)
+                    ->latest('id')
+                    ->value('stock_last');
+
+                $sum += (int) ($last ?? 0);
+            }
+
+            return (int) $sum;
+        };
+
         foreach ($purchaseorder->purchaseOrderDetails as $d) {
 
             // ✅ QTY INVOICE = TOTAL PO (sesuai request kamu)
             $qty = (int) ($d->quantity ?? 0);
             if ($qty <= 0) continue;
+
+            $product = Product::select('id', 'product_code')
+                ->find((int) $d->product_id);
 
             $unit_price = (float) ($d->unit_price ?? 0);
 
@@ -63,19 +90,12 @@ class PurchaseOrderPurchasesController extends Controller
             $price = (float) ($d->price ?? 0);
             $updated_sub_total = $qty * $price;
 
-            // ✅ Stock: TOTAL dari ALL warehouses pada active branch
-            // asumsi table stocks punya qty_total dan warehouse_id not null untuk per-warehouse
-            $stockAll = (int) DB::table('stocks')
-                ->where('branch_id', $branchId)
-                ->whereNotNull('warehouse_id')
-                ->where('product_id', (int) $d->product_id)
-                ->sum(DB::raw('COALESCE(qty_total,0)'));
-
-            // fallback terakhir kalau tabel stocks belum lengkap / belum ada record
-            if ($stockAll <= 0) {
-                $p = Product::select('id', 'product_quantity')->find((int) $d->product_id);
-                $stockAll = (int) ($p?->product_quantity ?? 0);
+            $productCode = trim((string) ($d->product_code ?? ''));
+            if ($productCode === '') {
+                $productCode = (string) ($product?->product_code ?? 'UNKNOWN');
             }
+
+            $stockAll = (int) $getStockAllWarehousesInBranch((int) $d->product_id);
 
             $cart->add([
                 'id'      => (int) $d->product_id,
@@ -90,7 +110,7 @@ class PurchaseOrderPurchasesController extends Controller
 // ✅ subtotal konsisten pakai price
                     'sub_total'             => (float) $updated_sub_total,
 
-                    'code'                  => (string) ($d->product_code ?? 'UNKNOWN'),
+                    'code'                  => $productCode,
 
                     // ✅ stock all wh
                     'stock'                 => (int) $stockAll,
