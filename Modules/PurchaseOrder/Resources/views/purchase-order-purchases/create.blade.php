@@ -117,8 +117,9 @@
                                     <div class="col-12 col-lg-3">
                                         <label class="sa-form-label">Supplier</label>
                                         <select class="form-control" name="supplier_id" id="supplier_id" required>
+                                            <option value="">Select a supplier</option>
                                             @foreach(\Modules\People\Entities\Supplier::all() as $supplier)
-                                                <option {{ $purchaseOrder->supplier_id == $supplier->id ? 'selected' : '' }}
+                                                <option {{ (string) old('supplier_id', $purchaseOrder->supplier_id) === (string) $supplier->id ? 'selected' : '' }}
                                                         value="{{ $supplier->id }}">
                                                     {{ $supplier->supplier_name }}
                                                 </option>

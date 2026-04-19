@@ -144,9 +144,10 @@
                                         <label for="customer_id">Customer <span class="text-danger">*</span></label>
 
                                         <select class="form-control" name="customer_id" id="customer_id" required @if($fromDelivery) disabled @endif>
+                                            <option value="">Select a customer</option>
                                             @foreach($customers as $customer)
                                                 @php
-                                                    $selected = (int) old('customer_id', $prefillCustomerId ?: (int)($customers->first()->id ?? 0)) === (int)$customer->id;
+                                                    $selected = (int) old('customer_id', $prefillCustomerId) === (int)$customer->id;
                                                 @endphp
                                                 <option value="{{ $customer->id }}" @if($selected) selected @endif>
                                                     {{ $customer->customer_name }}
@@ -155,7 +156,7 @@
                                         </select>
 
                                         @if($fromDelivery)
-                                            <input type="hidden" name="customer_id" value="{{ (int) old('customer_id', $prefillCustomerId ?: (int)($customers->first()->id ?? 0)) }}">
+                                            <input type="hidden" name="customer_id" value="{{ (int) old('customer_id', $prefillCustomerId) }}">
                                         @endif
                                     </div>
                                 </div>

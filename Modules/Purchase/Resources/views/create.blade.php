@@ -81,10 +81,12 @@
                                     <div class="form-group">
                                         <label>Supplier <span class="text-danger">*</span></label>
                                         <select class="form-control" name="supplier_id" id="supplier_id" required>
+                                            <option value="">Select a supplier</option>
                                             @foreach(\Modules\People\Entities\Supplier::orderBy('supplier_name')->get() as $supplier)
                                                 @php
-                                                    $selected = old('supplier_id')
-                                                        ? ((int)old('supplier_id') === (int)$supplier->id)
+                                                    $oldSupplierId = old('supplier_id', null);
+                                                    $selected = $oldSupplierId !== null
+                                                        ? ((string) $oldSupplierId === (string) $supplier->id)
                                                         : ($prefillSupplierId ? ((int)$prefillSupplierId === (int)$supplier->id) : false);
                                                 @endphp
                                                 <option value="{{ $supplier->id }}" {{ $selected ? 'selected' : '' }}>

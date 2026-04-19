@@ -37,8 +37,11 @@
                                         <div class="form-group">
                                             <label for="supplier_id">Supplier <span class="text-danger">*</span></label>
                                             <select class="form-control" name="supplier_id" id="supplier_id" required>
+                                                <option value="">Select a supplier</option>
                                                 @foreach(\Modules\People\Entities\Supplier::all() as $supplier)
-                                                    <option value="{{ $supplier->id }}">{{ $supplier->supplier_name }}</option>
+                                                    <option value="{{ $supplier->id }}" {{ (string) old('supplier_id') === (string) $supplier->id ? 'selected' : '' }}>
+                                                        {{ $supplier->supplier_name }}
+                                                    </option>
                                                 @endforeach
                                             </select>
                                         </div>

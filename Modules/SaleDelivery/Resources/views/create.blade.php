@@ -79,6 +79,7 @@
                                 class="form-control"
                                 required
                                 {{ $isSaleOrder ? 'disabled' : '' }}>
+                            <option value="">Select a customer</option>
                             @foreach($customers as $c)
                                 <option value="{{ $c->id }}"
                                     {{ (int) $selectedCustomerId === (int) $c->id ? 'selected' : '' }}>
