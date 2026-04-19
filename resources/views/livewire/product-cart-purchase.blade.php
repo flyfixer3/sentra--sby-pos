@@ -83,6 +83,10 @@
                                         class="form-control"
                                         wire:model.defer="gross_price.{{ $cart_item->id }}"
                                         wire:change="updatePricing('{{ $cart_item->rowId }}', '{{ $cart_item->id }}')"
+                                        data-cart-sync-row
+                                        data-cart-sync-field="gross_price"
+                                        data-cart-row-id="{{ $cart_item->rowId }}"
+                                        data-cart-product-id="{{ $cart_item->id }}"
                                         @if($cart_instance === 'purchase' && $lock_purchase_price_edit) disabled @endif
                                     >
                                 </td>
@@ -116,6 +120,10 @@
                                             class="form-control"
                                             wire:model.defer="item_discount.{{ $cart_item->id }}"
                                             wire:change="updatePricing('{{ $cart_item->rowId }}', '{{ $cart_item->id }}')"
+                                            data-cart-sync-row
+                                            data-cart-sync-field="item_discount"
+                                            data-cart-row-id="{{ $cart_item->rowId }}"
+                                            data-cart-product-id="{{ $cart_item->id }}"
                                             @if($cart_instance === 'purchase' && $lock_purchase_price_edit) disabled @endif
                                         >
                                         <div class="input-group-append">
@@ -123,6 +131,10 @@
                                                 class="custom-select"
                                                 wire:model="discount_type.{{ $cart_item->id }}"
                                                 wire:change="changeDiscountType('{{ $cart_item->rowId }}', '{{ $cart_item->id }}', $event.target.value)"
+                                                data-cart-sync-row
+                                                data-cart-sync-field="discount_type"
+                                                data-cart-row-id="{{ $cart_item->rowId }}"
+                                                data-cart-product-id="{{ $cart_item->id }}"
                                                 @if($cart_instance === 'purchase' && $lock_purchase_price_edit) disabled @endif
                                             >
                                                 <option value="fixed">Rp.</option>

@@ -162,6 +162,31 @@ class ProductCart extends Component
         ]);
     }
 
+    public function finalizeCartBeforeSubmit($rows = [])
+    {
+        foreach ((array) $rows as $row) {
+            $productId = (int) ($row['product_id'] ?? 0);
+            if ($productId <= 0 || !array_key_exists('quantity', $row)) {
+                continue;
+            }
+
+            $cartRow = Cart::instance($this->cart_instance)
+                ->content()
+                ->first(function ($item) use ($row, $productId) {
+                    return (string) $item->rowId === (string) ($row['row_id'] ?? '')
+                        || (int) $item->id === $productId;
+                });
+
+            if (!$cartRow) {
+                continue;
+            }
+
+            $quantity = (int) ($row['quantity'] ?? 0);
+            $this->quantity[$productId] = $quantity > 0 ? $quantity : 1;
+            $this->updateQuantity($cartRow->rowId, $productId);
+        }
+    }
+
     public function updatedDiscountType($value, $name) {
         $this->item_discount[$name] = 0;
     }

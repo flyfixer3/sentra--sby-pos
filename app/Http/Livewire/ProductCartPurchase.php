@@ -666,6 +666,51 @@ class ProductCartPurchase extends Component
         $this->syncGlobalDiscount();
     }
 
+    public function finalizeCartBeforeSubmit($rows = [])
+    {
+        foreach ((array) $rows as $row) {
+            $productId = (int) ($row['product_id'] ?? 0);
+            if ($productId <= 0) {
+                continue;
+            }
+
+            $cartRow = $this->findCartRow($row['row_id'] ?? null, $productId);
+            if (!$cartRow) {
+                continue;
+            }
+
+            if (array_key_exists('quantity', $row)) {
+                $quantity = (int) ($row['quantity'] ?? 0);
+                $this->quantity[$productId] = $quantity > 0 ? $quantity : 1;
+            }
+
+            if (array_key_exists('gross_price', $row)) {
+                $this->gross_price[$productId] = max(0, (float) ($row['gross_price'] ?? 0));
+            }
+
+            if (array_key_exists('discount_type', $row)) {
+                $discountType = (string) ($row['discount_type'] ?? 'fixed');
+                $this->discount_type[$productId] = in_array($discountType, ['fixed', 'percentage'], true)
+                    ? $discountType
+                    : 'fixed';
+            }
+
+            if (array_key_exists('item_discount', $row)) {
+                $this->item_discount[$productId] = max(0, (float) ($row['item_discount'] ?? 0));
+            }
+
+            $this->updateQuantity($cartRow->rowId, $productId);
+            $cartRow = $this->findCartRow($cartRow->rowId, $productId);
+
+            if ($cartRow) {
+                $this->updatePricing($cartRow->rowId, $productId);
+            }
+        }
+
+        $this->global_qty = Cart::instance($this->cart_instance)->count();
+        $this->syncGlobalDiscount();
+    }
+
     public function changeDiscountType($row_id, $product_id, $type)
     {
         $productId = (int) $product_id;
