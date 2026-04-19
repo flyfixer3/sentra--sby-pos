@@ -19,6 +19,9 @@ class PurchaseDataTable extends DataTable
             ->setRowClass(function ($data) {
                 return !empty($data->deleted_at) ? 'table-danger' : '';
             })
+            ->addRowAttr('data-href', function ($data) {
+                return !empty($data->deleted_at) ? null : route('purchases.show', $data->id);
+            })
 
             ->addColumn('total_amount', function ($data) {
                 return format_currency($data->total_amount);

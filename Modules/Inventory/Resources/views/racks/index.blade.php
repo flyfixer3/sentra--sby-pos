@@ -105,7 +105,7 @@
                     </thead>
                     <tbody>
                         @forelse($racks as $i => $r)
-                            <tr>
+                            <tr data-href="{{ route('inventory.racks.show', $r->id) }}">
                                 <td class="align-middle">{{ $r->id }}</td>
 
                                 @if($isAllBranch)

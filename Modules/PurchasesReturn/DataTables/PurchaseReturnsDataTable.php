@@ -14,6 +14,9 @@ class PurchaseReturnsDataTable extends DataTable
     public function dataTable($query) {
         return datatables()
             ->eloquent($query)
+            ->addRowAttr('data-href', function ($data) {
+                return route('purchase-returns.show', $data->id);
+            })
             ->addColumn('total_amount', function ($data) {
                 return format_currency($data->total_amount);
             })

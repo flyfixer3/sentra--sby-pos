@@ -17,6 +17,9 @@ class ProductDataTable extends DataTable
     {
         return datatables()
             ->eloquent($query)->with('category')
+            ->addRowAttr('data-href', function ($data) {
+                return route('products.show', $data->id);
+            })
             ->addColumn('action', function ($data) {
                 return view('product::products.partials.actions', compact('data'));
             })

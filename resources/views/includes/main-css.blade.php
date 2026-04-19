@@ -16,4 +16,12 @@
         width: 65px;
         display: inline-block;
     }
+
+    table tbody tr[data-href] {
+        cursor: pointer;
+    }
+
+    table tbody tr[data-href]:hover {
+        background-color: rgba(0, 0, 0, .035);
+    }
 </style>

@@ -40,6 +40,9 @@ class SalesDataTable extends DataTable
             ->setRowClass(function ($row) {
                 return !empty($row->deleted_at) ? 'table-danger' : '';
             })
+            ->addRowAttr('data-href', function ($row) {
+                return !empty($row->deleted_at) ? null : route('sales.show', $row->id);
+            })
 
             // ✅ date tampil dengan jam dari created_at
             ->editColumn('date', function ($row) {

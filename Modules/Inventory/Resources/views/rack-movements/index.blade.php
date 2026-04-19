@@ -92,7 +92,7 @@
                                     ? (($mv->toRack->code ?? '-') . ' - ' . ($mv->toRack->name ?? '-'))
                                     : (string)($mv->toRack->name ?? '-');
                             @endphp
-                            <tr>
+                            <tr data-href="{{ route('inventory.rack-movements.show', $mv->id) }}">
                                 <td>
                                     {{ optional($mv->date)->format('Y-m-d') }} {{ optional($mv->created_at)->format('H:i') }}
                                 </td>

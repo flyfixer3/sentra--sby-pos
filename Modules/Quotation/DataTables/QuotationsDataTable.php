@@ -13,6 +13,9 @@ class QuotationsDataTable extends DataTable
     {
         return datatables()
             ->eloquent($query)
+            ->addRowAttr('data-href', function ($data) {
+                return route('quotations.show', $data->id);
+            })
             ->editColumn('date', function ($data) {
                 $dateText = '-';
                 $timeText = '';

@@ -15,6 +15,9 @@ class BranchesDataTable extends DataTable
     public function dataTable($query) {
         return datatables()
             ->eloquent($query)
+            ->addRowAttr('data-href', function ($data) {
+                return route('branches.show', $data->id);
+            })
             ->addColumn('action', function ($data) {
                 return view('branch::partials.actions', compact('data'));
             });

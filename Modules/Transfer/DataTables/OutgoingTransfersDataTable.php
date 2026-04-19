@@ -19,6 +19,9 @@ class OutgoingTransfersDataTable extends DataTable
     {
         return datatables()
             ->eloquent($query)
+            ->addRowAttr('data-href', function ($row) {
+                return route('transfers.show', $row->id);
+            })
             ->with(['fromWarehouse', 'toBranch'])
             ->addColumn('from_warehouse', function ($row) {
                 return optional($row->fromWarehouse)->warehouse_name ?? '-';

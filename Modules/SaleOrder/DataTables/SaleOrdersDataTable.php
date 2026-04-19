@@ -15,6 +15,9 @@ class SaleOrdersDataTable extends DataTable
     {
         return datatables()
             ->eloquent($query)
+            ->addRowAttr('data-href', function ($row) {
+                return route('sale-orders.show', $row->id);
+            })
             ->addColumn('customer', fn ($row) => e($row->customer?->customer_name ?? '-'))
             ->editColumn('date', function ($row) {
                 if (empty($row->date)) return '-';

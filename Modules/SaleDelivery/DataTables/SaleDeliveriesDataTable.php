@@ -32,6 +32,9 @@ class SaleDeliveriesDataTable extends DataTable
     {
         return datatables()
             ->eloquent($query)
+            ->addRowAttr('data-href', function ($row) {
+                return route('sale-deliveries.show', $row->id);
+            })
 
             ->editColumn('date', fn($row) => $this->formatDateWithCreatedTime($row, 'date'))
 

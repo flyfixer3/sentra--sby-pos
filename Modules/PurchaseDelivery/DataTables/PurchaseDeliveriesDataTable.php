@@ -37,6 +37,9 @@ class PurchaseDeliveriesDataTable extends DataTable
     {
         return datatables()
             ->eloquent($query)
+            ->addRowAttr('data-href', function ($data) {
+                return route('purchase-deliveries.show', $data->id);
+            })
 
             // ✅ date tampil dengan jam dari created_at
             ->editColumn('date', function ($row) {

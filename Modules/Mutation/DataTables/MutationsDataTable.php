@@ -14,6 +14,9 @@ class MutationsDataTable extends DataTable
     {
         return datatables()
             ->eloquent($query)
+            ->addRowAttr('data-href', function ($row) {
+                return route('mutations.show', $row->id);
+            })
 
             // sekarang warehouse_name sudah hasil JOIN (alias), jadi tinggal pakai langsung
             ->editColumn('warehouse_name', function ($row) {
