@@ -117,7 +117,7 @@
                                 </td>
 
                                 <td class="align-middle" style="min-width: 210px;">
-                                    <div class="input-group input-group-sm flex-nowrap">
+                                    <div class="input-group input-group-sm flex-nowrap purchase-discount-control">
                                         <input
                                             type="number"
                                             min="0"
@@ -130,7 +130,7 @@
                                         >
                                         <div class="input-group-append">
                                             <select
-                                                class="custom-select"
+                                                class="custom-select custom-select-sm"
                                                 style="width: 86px;"
                                                 wire:model="discount_type.{{ $cart_item->id }}"
                                                 wire:change="changeDiscountType('{{ $cart_item->rowId }}', '{{ $cart_item->id }}', $event.target.value)"
@@ -257,4 +257,12 @@
             </div>
         </div>
     </div>
+
+    <style>
+        .purchase-discount-control > .form-control,
+        .purchase-discount-control > .input-group-append > .custom-select {
+            height: calc(1.5em + .5rem + 2px);
+            line-height: 1.5;
+        }
+    </style>
 </div>
