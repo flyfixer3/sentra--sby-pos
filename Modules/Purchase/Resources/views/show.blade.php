@@ -329,7 +329,7 @@
                             <thead>
                             <tr>
                                 <th>Product</th>
-                                <th class="text-end">Net Unit Price</th>
+                                <th class="text-end">Net Price</th>
                                 <th class="text-center">Quantity</th>
                                 <th class="text-end">Discount</th>
                                 <th class="text-end">Tax</th>
@@ -340,8 +340,8 @@
                             @foreach($purchase->purchaseDetails as $item)
                                 @php
                                     $unit = (float) ($item->unit_price ?? 0);
-                                    $price = (float) ($item->price ?? 0);
-                                    $shownUnitPrice = $unit > 0 ? $unit : $price;
+                                    $price = $item->price !== null ? (float) $item->price : null;
+                                    $shownUnitPrice = $price !== null ? $price : $unit;
 
                                     $qty = (int) ($item->quantity ?? 0);
 
@@ -375,7 +375,9 @@
                         <div class="col-lg-4 col-sm-6 ms-auto">
                             <div class="totals-wrap">
                                 <div class="totals-row">
-                                    <div class="label">Discount ({{ $purchase->discount_percentage }}%)</div>
+                                    <div class="label">
+                                        Discount{{ (float) $purchase->discount_percentage > 0 ? ' (' . $purchase->discount_percentage . '%)' : '' }}
+                                    </div>
                                     <div class="value">{{ format_currency($purchase->discount_amount) }}</div>
                                 </div>
                                 <div class="totals-row">

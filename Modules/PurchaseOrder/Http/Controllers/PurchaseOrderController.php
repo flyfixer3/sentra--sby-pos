@@ -116,7 +116,7 @@ class PurchaseOrderController extends Controller
                 'status'               => 'Pending',
                 'note'                 => $request->note,
                 'tax_amount'           => (float) $cart->tax(),
-                'discount_amount'      => (float) $cart->discount(),
+                'discount_amount'      => (float) ($request->discount_amount ?? $cart->discount()),
                 'created_by'           => auth()->id(),
             ]);
 
@@ -309,7 +309,7 @@ class PurchaseOrderController extends Controller
                 'total_amount' => $request->total_amount * 1,
                 'note' => $request->note,
                 'tax_amount' => Cart::instance('purchase_order')->tax() * 1,
-                'discount_amount' => Cart::instance('purchase_order')->discount() * 1,
+                'discount_amount' => (float) ($request->discount_amount ?? Cart::instance('purchase_order')->discount()),
             ]);
 
             foreach (Cart::instance('purchase_order')->content() as $cart_item) {

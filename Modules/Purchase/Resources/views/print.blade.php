@@ -56,7 +56,7 @@
                             <thead>
                             <tr>
                                 <th class="align-middle">Product</th>
-                                <th class="align-middle">Net Unit Price</th>
+                                <th class="align-middle">Net Price</th>
                                 <th class="align-middle">Quantity</th>
                                 <th class="align-middle">Discount</th>
                                 <th class="align-middle">Tax</th>
@@ -73,7 +73,7 @@
                                             </span>
                                     </td>
 
-                                    <td class="align-middle">{{ format_currency($item->unit_price) }}</td>
+                                    <td class="align-middle">{{ format_currency($item->price !== null ? $item->price : $item->unit_price) }}</td>
 
                                     <td class="align-middle">
                                         {{ $item->quantity }}
@@ -100,7 +100,7 @@
                             <table class="table">
                                 <tbody>
                                 <tr>
-                                    <td class="left"><strong>Discount ({{ $purchase->discount_percentage }}%)</strong></td>
+                                    <td class="left"><strong>Discount{{ (float) $purchase->discount_percentage > 0 ? ' (' . $purchase->discount_percentage . '%)' : '' }}</strong></td>
                                     <td class="right">{{ format_currency($purchase->discount_amount) }}</td>
                                 </tr>
                                 <tr>

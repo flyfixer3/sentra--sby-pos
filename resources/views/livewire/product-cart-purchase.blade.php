@@ -26,12 +26,12 @@
                 <thead class="thead-dark">
                     <tr>
                         <th class="align-middle">Product</th>
-                        <th class="align-middle">Purchase Unit Price</th>
+                        <th class="align-middle">Gross Price</th>
+                        <th class="align-middle">Net Price</th>
                         <th class="align-middle">Placement</th>
                         <th class="align-middle">Current Stock</th>
                         <th class="align-middle">Quantity</th>
                         <th class="align-middle">Discount</th>
-                        <th class="align-middle">Tax</th>
                         <th class="align-middle">Sub Total</th>
                         <th class="align-middle">Action</th>
                     </tr>
@@ -42,12 +42,14 @@
                             @php
                                 $productCode = $cart_item->options->code ?? 'UNKNOWN';
 
-                                $displayUnitPrice = (float) ($cart_item->options->unit_price ?? 0);
-                                if ($displayUnitPrice <= 0) {
-                                    $displayUnitPrice = (float) ($cart_item->price ?? 0);
+                                $displayGrossPrice = (float) ($cart_item->options->unit_price ?? 0);
+                                if ($displayGrossPrice <= 0) {
+                                    $displayGrossPrice = (float) ($cart_item->price ?? 0) + (float) ($cart_item->options->product_discount ?? 0);
                                 }
 
-                                $displaySubTotal = round($displayUnitPrice * (int) ($cart_item->qty ?? 0), 2);
+                                $displayNetPrice = (float) ($cart_item->price ?? 0);
+                                $displaySubTotal = round($displayNetPrice * (int) ($cart_item->qty ?? 0), 2);
+                                $currentDiscountType = $discount_type[$cart_item->id] ?? ($cart_item->options->product_discount_type ?? 'fixed');
 
                                 $stockScope = (string) ($cart_item->options->stock_scope ?? 'branch');
                                 $isWarehouseScope = $stockScope === 'warehouse';
@@ -67,11 +69,22 @@
                                     <span class="badge badge-success">
                                         {{ $productCode }}
                                     </span>
-                                    @include('livewire.includes.product-cart-modal-sale')
                                 </td>
 
                                 <td class="align-middle">
-                                    {{ format_currency($displayUnitPrice) }}
+                                    <input
+                                        type="number"
+                                        min="0"
+                                        step="0.01"
+                                        class="form-control"
+                                        wire:model.defer="gross_price.{{ $cart_item->id }}"
+                                        wire:change="updatePricing('{{ $cart_item->rowId }}', '{{ $cart_item->id }}')"
+                                        @if($cart_instance === 'purchase' && $lock_purchase_price_edit) disabled @endif
+                                    >
+                                </td>
+
+                                <td class="align-middle">
+                                    {{ format_currency($displayNetPrice) }}
                                 </td>
 
                                 <td class="align-middle text-center">
@@ -103,12 +116,37 @@
                                     @include('livewire.includes.product-cart-quantity')
                                 </td>
 
-                                <td class="align-middle">
-                                    {{ format_currency((float) ($cart_item->options->product_discount ?? 0)) }}
-                                </td>
-
-                                <td class="align-middle">
-                                    {{ format_currency((float) ($cart_item->options->product_tax ?? 0)) }}
+                                <td class="align-middle" style="min-width: 210px;">
+                                    <div class="input-group input-group-sm flex-nowrap">
+                                        <input
+                                            type="number"
+                                            min="0"
+                                            step="0.01"
+                                            max="{{ $currentDiscountType === 'percentage' ? 100 : $displayGrossPrice }}"
+                                            class="form-control"
+                                            wire:model.defer="item_discount.{{ $cart_item->id }}"
+                                            wire:change="updatePricing('{{ $cart_item->rowId }}', '{{ $cart_item->id }}')"
+                                            @if($cart_instance === 'purchase' && $lock_purchase_price_edit) disabled @endif
+                                        >
+                                        <div class="input-group-append">
+                                            <select
+                                                class="custom-select"
+                                                style="width: 86px;"
+                                                wire:model="discount_type.{{ $cart_item->id }}"
+                                                wire:change="changeDiscountType('{{ $cart_item->rowId }}', '{{ $cart_item->id }}', $event.target.value)"
+                                                @if($cart_instance === 'purchase' && $lock_purchase_price_edit) disabled @endif
+                                            >
+                                                <option value="fixed">Fixed</option>
+                                                <option value="percentage">%</option>
+                                            </select>
+                                        </div>
+                                    </div>
+                                    <small class="d-block text-muted mt-1" style="font-size: 11px;">
+                                        Amount: {{ format_currency((float) ($cart_item->options->product_discount ?? 0)) }}
+                                    </small>
+                                    @if(session()->has('discount_message' . $cart_item->id))
+                                        <small class="d-block text-info" style="font-size: 11px;">{{ session('discount_message' . $cart_item->id) }}</small>
+                                    @endif
                                 </td>
 
                                 <td class="align-middle">
@@ -145,7 +183,14 @@
                         <td>(+) {{ format_currency(Cart::instance($cart_instance)->tax()) }}</td>
                     </tr>
                     <tr>
-                        <th>Discount ({{ $global_discount }}%)</th>
+                        <th>
+                            Discount
+                            @if($global_discount_type === 'fixed')
+                                (Fixed)
+                            @else
+                                ({{ $global_discount }}%)
+                            @endif
+                        </th>
                         <td>(-) {{ format_currency(Cart::instance($cart_instance)->discount()) }}</td>
                     </tr>
                     <tr>
@@ -179,8 +224,29 @@
 
         <div class="col-lg-4">
             <div class="form-group">
-                <label for="discount_percentage">Discount (%)</label>
-                <input wire:model.lazy="global_discount" type="number" class="form-control" name="discount_percentage" min="0" max="100" value="{{ $global_discount }}" required>
+                <label for="discount_value">Discount</label>
+                <div class="input-group">
+                    <input
+                        wire:model.lazy="global_discount"
+                        type="number"
+                        class="form-control"
+                        id="discount_value"
+                        min="0"
+                        step="0.01"
+                        max="{{ $global_discount_type === 'percentage' ? 100 : '' }}"
+                        value="{{ $global_discount }}"
+                        required
+                    >
+                    <div class="input-group-append">
+                        <select class="custom-select" wire:model="global_discount_type">
+                            <option value="fixed">Fixed</option>
+                            <option value="percentage">%</option>
+                        </select>
+                    </div>
+                </div>
+                <input type="hidden" name="discount_percentage" value="{{ $global_discount_type === 'percentage' ? $global_discount : 0 }}">
+                <input type="hidden" name="discount_amount" value="{{ Cart::instance($cart_instance)->discount() }}">
+                <input type="hidden" name="discount_type" value="{{ $global_discount_type }}">
             </div>
         </div>
 

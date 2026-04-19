@@ -81,6 +81,9 @@ class PurchaseOrderPurchasesController extends Controller
                 ->find((int) $d->product_id);
 
             $unit_price = (float) ($d->unit_price ?? 0);
+            if ($unit_price <= 0) {
+                $unit_price = (float) ($d->price ?? 0) + (float) ($d->product_discount_amount ?? 0);
+            }
 
 /**
              * IMPORTANT:
@@ -88,6 +91,9 @@ class PurchaseOrderPurchasesController extends Controller
              * - sub_total harus ikut price (bukan unit_price), biar konsisten ke perhitungan di cart
              */
             $price = (float) ($d->price ?? 0);
+            if ($price <= 0) {
+                $price = max(0, $unit_price - (float) ($d->product_discount_amount ?? 0));
+            }
             $updated_sub_total = $qty * $price;
 
             $productCode = trim((string) ($d->product_code ?? ''));

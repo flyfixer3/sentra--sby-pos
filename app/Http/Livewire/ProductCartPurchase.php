@@ -18,6 +18,7 @@ class ProductCartPurchase extends Component
 
     public $cart_instance;
     public $global_discount;
+    public $global_discount_type = 'percentage';
     public $global_tax;
     public $global_qty;
     public $shipping;
@@ -30,6 +31,7 @@ class ProductCartPurchase extends Component
     public $check_quantity;
     public $discount_type;
     public $item_discount;
+    public $gross_price;
     public $item_cost_konsyinasi;
     public $data;
     public $lock_purchase_price_edit = false;
@@ -75,7 +77,12 @@ class ProductCartPurchase extends Component
         if ($data) {
             $this->data = $data;
 
-            $this->global_discount = $data->discount_percentage;
+            $this->global_discount_type = ((float) ($data->discount_percentage ?? 0) > 0 || (float) ($data->discount_amount ?? 0) <= 0)
+                ? 'percentage'
+                : 'fixed';
+            $this->global_discount = $this->global_discount_type === 'fixed'
+                ? (float) ($data->discount_amount ?? 0)
+                : (float) ($data->discount_percentage ?? 0);
             $this->global_tax = $data->tax_percentage;
             $this->global_qty = Cart::instance($this->cart_instance)->count();
             $this->shipping = $data->shipping_amount;
@@ -103,18 +110,16 @@ class ProductCartPurchase extends Component
                 $this->discount_type[$productId] = $cart_item->options->product_discount_type ?? 'fixed';
                 $this->item_cost_konsyinasi[$productId] = (float) ($cart_item->options->product_cost ?? 0);
 
-                $currentUnitPrice = (float) ($cart_item->options->unit_price ?? 0);
-                if ($currentUnitPrice <= 0) {
-                    $currentUnitPrice = (float) ($cart_item->price ?? 0);
-                }
+                $grossPrice = $this->resolveGrossPrice($cart_item);
+                $this->gross_price[$productId] = $grossPrice;
 
                 if (($cart_item->options->product_discount_type ?? 'fixed') === 'fixed') {
-                    $this->item_discount[$productId] = $currentUnitPrice;
+                    $this->item_discount[$productId] = (float) ($cart_item->options->product_discount ?? 0);
                 } else {
                     $discountAmount = (float) ($cart_item->options->product_discount ?? 0);
 
-                    if ($currentUnitPrice > 0) {
-                        $this->item_discount[$productId] = round(($discountAmount / $currentUnitPrice) * 100, 2);
+                    if ($grossPrice > 0) {
+                        $this->item_discount[$productId] = round(($discountAmount / $grossPrice) * 100, 2);
                     } else {
                         $this->item_discount[$productId] = 0;
                     }
@@ -122,6 +127,7 @@ class ProductCartPurchase extends Component
             }
         } else {
             $this->global_discount = 0;
+            $this->global_discount_type = 'percentage';
             $this->global_tax = 0;
             $this->global_qty = 0;
             $this->shipping = 0.00;
@@ -132,6 +138,7 @@ class ProductCartPurchase extends Component
             $this->warehouse_id = [];
             $this->discount_type = [];
             $this->item_discount = [];
+            $this->gross_price = [];
             $this->item_cost_konsyinasi = [];
         }
 
@@ -147,6 +154,7 @@ class ProductCartPurchase extends Component
 
         $this->global_qty = Cart::instance($this->cart_instance)->count();
         $this->syncQuantityDefaults();
+        $this->syncGlobalDiscount();
     }
 
     private function resolveActiveBranchIdFromSessionOrCart()
@@ -258,18 +266,16 @@ class ProductCartPurchase extends Component
             }
 
             if (!isset($this->item_discount[$pid])) {
-                $currentUnitPrice = (float) ($row->options->unit_price ?? 0);
-                if ($currentUnitPrice <= 0) {
-                    $currentUnitPrice = (float) ($row->price ?? 0);
-                }
+                $grossPrice = $this->resolveGrossPrice($row);
+                $this->gross_price[$pid] = $grossPrice;
 
                 if (($row->options->product_discount_type ?? 'fixed') === 'fixed') {
-                    $this->item_discount[$pid] = $currentUnitPrice;
+                    $this->item_discount[$pid] = (float) ($row->options->product_discount ?? 0);
                 } else {
                     $discountAmount = (float) ($row->options->product_discount ?? 0);
 
-                    if ($currentUnitPrice > 0) {
-                        $this->item_discount[$pid] = round(($discountAmount / $currentUnitPrice) * 100, 2);
+                    if ($grossPrice > 0) {
+                        $this->item_discount[$pid] = round(($discountAmount / $grossPrice) * 100, 2);
                     } else {
                         $this->item_discount[$pid] = 0;
                     }
@@ -279,7 +285,67 @@ class ProductCartPurchase extends Component
             if (!isset($this->item_cost_konsyinasi[$pid])) {
                 $this->item_cost_konsyinasi[$pid] = (float) ($row->options->product_cost ?? 0);
             }
+
+            if (!isset($this->gross_price[$pid])) {
+                $this->gross_price[$pid] = $this->resolveGrossPrice($row);
+            }
         }
+    }
+
+    private function resolveGrossPrice($row): float
+    {
+        $gross = (float) ($row->options->unit_price ?? 0);
+        if ($gross <= 0) {
+            $gross = (float) ($row->price ?? 0) + (float) ($row->options->product_discount ?? 0);
+        }
+
+        return max(0, round($gross, 2));
+    }
+
+    private function calculateDiscountAmount(float $grossPrice, string $discountType, float $discountInput): float
+    {
+        $grossPrice = max(0, $grossPrice);
+        $discountInput = max(0, $discountInput);
+
+        if ($discountType === 'percentage') {
+            $discountInput = min(100, $discountInput);
+            return round($grossPrice * ($discountInput / 100), 2);
+        }
+
+        return round(min($discountInput, $grossPrice), 2);
+    }
+
+    private function calculateNetPrice(float $grossPrice, float $discountAmount): float
+    {
+        return round(max(0, $grossPrice - $discountAmount), 2);
+    }
+
+    private function cartSubtotal(): float
+    {
+        return (float) Cart::instance($this->cart_instance)->content()->sum(function ($row) {
+            return (float) ($row->price ?? 0) * (int) ($row->qty ?? 0);
+        });
+    }
+
+    private function syncGlobalDiscount(): void
+    {
+        $discountInput = max(0, (float) ($this->global_discount ?? 0));
+
+        if ($this->global_discount_type === 'fixed') {
+            $subtotal = $this->cartSubtotal();
+            $discountAmount = min($discountInput, $subtotal);
+            $discountPercent = $subtotal > 0 ? (($discountAmount / $subtotal) * 100) : 0;
+            Cart::instance($this->cart_instance)->setGlobalDiscount($discountPercent);
+            return;
+        }
+
+        Cart::instance($this->cart_instance)->setGlobalDiscount(min(100, $discountInput));
+    }
+
+    public function updatedGlobalDiscountType()
+    {
+        $this->global_discount = 0;
+        $this->syncGlobalDiscount();
     }
 
     public function render()
@@ -344,19 +410,19 @@ class ProductCartPurchase extends Component
                 $this->stock_mode === 'warehouse' ? $warehouseId : null
             );
 
-            $unitPrice = (float) ($row->options->unit_price ?? 0);
-            if ($unitPrice <= 0) {
-                $unitPrice = (float) ($row->price ?? 0);
-            }
-
-            $subTotal = $unitPrice * (int) ($row->qty ?? 0);
+            $grossPrice = $this->resolveGrossPrice($row);
+            $discountAmount = (float) ($row->options->product_discount ?? 0);
+            $netPrice = $this->calculateNetPrice($grossPrice, $discountAmount);
+            $subTotal = $netPrice * (int) ($row->qty ?? 0);
 
             $cart->update($row->rowId, [
+                'price' => $netPrice,
                 'options' => $this->mergeOptions($row, [
                     'sub_total'    => $subTotal,
                     'stock'        => $context['stock'],
                     'stock_scope'  => $context['stock_scope'],
                     'warehouse_id' => $context['warehouse_id'],
+                    'unit_price'   => $grossPrice,
                 ])
             ]);
 
@@ -370,6 +436,7 @@ class ProductCartPurchase extends Component
         }
 
         $this->global_qty = $cart->count();
+        $this->syncGlobalDiscount();
     }
 
     private function refreshCartRowState($row_id, $product_id): void
@@ -386,19 +453,19 @@ class ProductCartPurchase extends Component
 
         $context = $this->calculateStockContext((int) $product_id, $warehouseId);
 
-        $unitPrice = (float) ($cart_item->options->unit_price ?? 0);
-        if ($unitPrice <= 0) {
-            $unitPrice = (float) ($cart_item->price ?? 0);
-        }
-
-        $subTotal = $unitPrice * (int) ($cart_item->qty ?? 0);
+        $grossPrice = $this->resolveGrossPrice($cart_item);
+        $discountAmount = (float) ($cart_item->options->product_discount ?? 0);
+        $netPrice = $this->calculateNetPrice($grossPrice, $discountAmount);
+        $subTotal = $netPrice * (int) ($cart_item->qty ?? 0);
 
         Cart::instance($this->cart_instance)->update($row_id, [
+            'price' => $netPrice,
             'options' => $this->mergeOptions($cart_item, [
                 'sub_total'    => $subTotal,
                 'stock'        => $context['stock'],
                 'stock_scope'  => $context['stock_scope'],
                 'warehouse_id' => $context['warehouse_id'],
+                'unit_price'   => $grossPrice,
             ])
         ]);
 
@@ -410,22 +477,22 @@ class ProductCartPurchase extends Component
         $cart = Cart::instance($this->cart_instance);
 
         foreach ($cart->content() as $row) {
-            $unitPrice = (float) ($row->options->unit_price ?? 0);
-            if ($unitPrice <= 0) {
-                $unitPrice = (float) ($row->price ?? 0);
-            }
-
-            $expectedSubTotal = round($unitPrice * (int) ($row->qty ?? 0), 2);
+            $grossPrice = $this->resolveGrossPrice($row);
+            $discountAmount = (float) ($row->options->product_discount ?? 0);
+            $netPrice = $this->calculateNetPrice($grossPrice, $discountAmount);
+            $expectedSubTotal = round($netPrice * (int) ($row->qty ?? 0), 2);
             $storedSubTotal = round((float) ($row->options->sub_total ?? 0), 2);
 
-            if ($storedSubTotal === $expectedSubTotal) {
+            if ($storedSubTotal === $expectedSubTotal && round((float) $row->price, 2) === round($netPrice, 2)) {
                 continue;
             }
 
             $options = (array) $row->options;
             $options['sub_total'] = $expectedSubTotal;
+            $options['unit_price'] = $grossPrice;
 
             $cart->update($row->rowId, [
+                'price' => $netPrice,
                 'options' => $options,
             ]);
         }
@@ -493,13 +560,13 @@ class ProductCartPurchase extends Component
             'id'      => $product['id'],
             'name'    => $product['product_name'],
             'qty'     => 1,
-            'price'   => $calc['unit_price'],
+            'price'   => $calc['price'],
             'weight'  => 1,
             'options' => [
                 'purchase_detail_id'    => null,
                 'product_discount'      => 0.00,
                 'product_discount_type' => 'fixed',
-                'sub_total'             => $calc['unit_price'],
+                'sub_total'             => $calc['sub_total'],
                 'code'                  => $product['product_code'],
                 'stock'                 => $context['stock'],
                 'stock_scope'           => $context['stock_scope'],
@@ -517,14 +584,17 @@ class ProductCartPurchase extends Component
         $this->quantity[$product['id']] = 1;
         $this->warehouse_id[$product['id']] = $context['warehouse_id'];
         $this->discount_type[$product['id']] = 'fixed';
-        $this->item_discount[$product['id']] = (float) $calc['unit_price'];
+        $this->item_discount[$product['id']] = 0;
+        $this->gross_price[$product['id']] = (float) $calc['unit_price'];
         $this->item_cost_konsyinasi[$product['id']] = (float) ($calc['product_cost'] ?? 0);
+        $this->syncGlobalDiscount();
     }
 
     public function removeItem($row_id)
     {
         Cart::instance($this->cart_instance)->remove($row_id);
         $this->global_qty = Cart::instance($this->cart_instance)->count();
+        $this->syncGlobalDiscount();
     }
 
     public function updatedGlobalQuantity()
@@ -539,7 +609,7 @@ class ProductCartPurchase extends Component
 
     public function updatedGlobalDiscount()
     {
-        Cart::instance($this->cart_instance)->setGlobalDiscount((int) $this->global_discount);
+        $this->syncGlobalDiscount();
     }
 
     public function updateQuantity($row_id, $product_id)
@@ -555,31 +625,34 @@ class ProductCartPurchase extends Component
         $this->global_qty = Cart::instance($this->cart_instance)->count();
 
         $this->refreshCartRowState($row_id, (int) $product_id);
+        $this->syncGlobalDiscount();
     }
 
-    public function updatedDiscountType($value, $name)
+    public function changeDiscountType($row_id, $product_id, $type)
     {
-        $productId = (int) $name;
+        $productId = (int) $product_id;
+        $type = in_array($type, ['fixed', 'percentage'], true) ? $type : 'fixed';
+        $this->discount_type[$productId] = $type;
 
-        if ($value === 'fixed') {
-            $row = Cart::instance($this->cart_instance)
-                ->content()
-                ->first(function ($item) use ($productId) {
-                    return (int) $item->id === $productId;
-                });
+        $row = Cart::instance($this->cart_instance)->get($row_id);
 
-            if ($row) {
-                $currentUnitPrice = (float) ($row->options->unit_price ?? 0);
-                if ($currentUnitPrice <= 0) {
-                    $currentUnitPrice = (float) ($row->price ?? 0);
-                }
-
-                $this->item_discount[$productId] = $currentUnitPrice;
-                return;
-            }
+        if (!$row) {
+            $this->item_discount[$productId] = 0;
+            return;
         }
 
-        $this->item_discount[$productId] = 0;
+        $grossPrice = $this->resolveGrossPrice($row);
+        $discountAmount = (float) ($row->options->product_discount ?? 0);
+
+        if ($type === 'fixed') {
+            $this->item_discount[$productId] = $discountAmount;
+        } else {
+            $this->item_discount[$productId] = $grossPrice > 0
+                ? round(($discountAmount / $grossPrice) * 100, 2)
+                : 0;
+        }
+
+        $this->updatePricing($row_id, $productId);
     }
 
     public function discountModalRefresh($product_id, $row_id)
@@ -589,6 +662,11 @@ class ProductCartPurchase extends Component
 
     public function setProductDiscount($row_id, $product_id)
     {
+        $this->updatePricing($row_id, $product_id);
+    }
+
+    public function updatePricing($row_id, $product_id)
+    {
         $cart_item = Cart::instance($this->cart_instance)->get($row_id);
 
         if (!$cart_item) {
@@ -596,101 +674,39 @@ class ProductCartPurchase extends Component
             return;
         }
 
-        $discountType = $this->discount_type[$product_id] ?? 'fixed';
-        $inputValue   = (float) ($this->item_discount[$product_id] ?? 0);
-
-        if ($this->cart_instance === 'purchase') {
-            if ($this->lock_purchase_price_edit) {
-                session()->flash('discount_message' . $product_id, 'Purchase item price is locked because the linked Purchase Delivery is already partial.');
-                return;
-            }
-
-            $currentUnitPrice = (float) ($cart_item->options->unit_price ?? 0);
-            if ($currentUnitPrice <= 0) {
-                $currentUnitPrice = (float) ($cart_item->price ?? 0);
-            }
-
-            $newUnitPrice = $currentUnitPrice;
-            $discountAmount = 0;
-
-            if ($discountType === 'fixed') {
-                if ($inputValue <= 0) {
-                    session()->flash('discount_message' . $product_id, 'Purchase unit price must be greater than 0.');
-                    return;
-                }
-
-                $newUnitPrice = round($inputValue, 2);
-                $discountAmount = round(max($currentUnitPrice - $newUnitPrice, 0), 2);
-            } else {
-                if ($inputValue < 0 || $inputValue > 100) {
-                    session()->flash('discount_message' . $product_id, 'Percentage must be between 0 and 100.');
-                    return;
-                }
-
-                $discountAmount = round($currentUnitPrice * ($inputValue / 100), 2);
-                $newUnitPrice = round($currentUnitPrice - $discountAmount, 2);
-
-                if ($newUnitPrice < 0) {
-                    $newUnitPrice = 0;
-                }
-            }
-
-            $this->updateCartOptions(
-                $row_id,
-                $product_id,
-                $cart_item,
-                $discountAmount,
-                $this->item_cost_konsyinasi[$product_id] ?? ($cart_item->options->product_cost ?? 0),
-                $this->warehouse_id[$product_id] ?? (int) ($cart_item->options->warehouse_id ?? 0),
-                $newUnitPrice,
-                $newUnitPrice
-            );
-
-            if ($discountType === 'fixed') {
-                $this->item_discount[$product_id] = $newUnitPrice;
-            } else {
-                $this->item_discount[$product_id] = $inputValue;
-            }
-
-            session()->flash('discount_message' . $product_id, 'Purchase price updated successfully!');
+        if ($this->cart_instance === 'purchase' && $this->lock_purchase_price_edit) {
+            session()->flash('discount_message' . $product_id, 'Purchase item price is locked because the linked Purchase Delivery is already partial.');
             return;
         }
 
-        if ($discountType === 'fixed') {
-            $discount_amount = 0;
+        $discountType = $this->discount_type[$product_id] ?? 'fixed';
+        $discountInput = (float) ($this->item_discount[$product_id] ?? 0);
+        $grossPrice = max(0, (float) ($this->gross_price[$product_id] ?? $this->resolveGrossPrice($cart_item)));
 
-            if (!empty($inputValue)) {
-                $discount_amount = ($cart_item->price + ($cart_item->options->product_discount ?? 0)) - $inputValue;
-            }
+        $discountAmount = $this->calculateDiscountAmount($grossPrice, $discountType, $discountInput);
+        $netPrice = $this->calculateNetPrice($grossPrice, $discountAmount);
 
-            $this->updateCartOptions(
-                $row_id,
-                $product_id,
-                $cart_item,
-                $discount_amount,
-                $this->item_cost_konsyinasi[$product_id] ?? 0,
-                $this->warehouse_id[$product_id] ?? (int) ($cart_item->options->warehouse_id ?? 0),
-                (float) ($cart_item->options->unit_price ?? 0),
-                (float) ($inputValue ?: $cart_item->price)
-            );
+        if ($discountType === 'percentage') {
+            $this->item_discount[$product_id] = min(100, max(0, $discountInput));
         } else {
-            $basePrice = (float) ($cart_item->price + ($cart_item->options->product_discount ?? 0));
-            $discount_amount = round($basePrice * ($inputValue / 100), 2);
-            $newRowPrice = round($basePrice - $discount_amount, 2);
-
-            $this->updateCartOptions(
-                $row_id,
-                $product_id,
-                $cart_item,
-                $discount_amount,
-                $this->item_cost_konsyinasi[$product_id] ?? 0,
-                $this->warehouse_id[$product_id] ?? (int) ($cart_item->options->warehouse_id ?? 0),
-                (float) ($cart_item->options->unit_price ?? 0),
-                $newRowPrice
-            );
+            $this->item_discount[$product_id] = $discountAmount;
         }
 
-        session()->flash('discount_message' . $product_id, 'Discount added to the product!');
+        $this->gross_price[$product_id] = $grossPrice;
+
+        $this->updateCartOptions(
+            $row_id,
+            $product_id,
+            $cart_item,
+            $discountAmount,
+            $grossPrice,
+            $this->warehouse_id[$product_id] ?? (int) ($cart_item->options->warehouse_id ?? 0),
+            $grossPrice,
+            $netPrice
+        );
+
+        $this->syncGlobalDiscount();
+        session()->flash('discount_message' . $product_id, 'Purchase pricing updated successfully!');
     }
 
     public function calculate($product)
@@ -700,27 +716,6 @@ class ProductCartPurchase extends Component
         $product_tax = 0;
         $sub_total = 0;
         $product_cost = 0;
-
-        if ($product['product_tax_type'] == 1) {
-            $price = $product['product_price'] + ($product['product_price'] * ($product['product_order_tax'] / 1));
-            $unit_price = $product['product_price'];
-            $product_tax = $product['product_price'] * ($product['product_order_tax'] / 1);
-            $sub_total = $unit_price;
-        } elseif ($product['product_tax_type'] == 2) {
-            $price = $product['product_price'];
-            $unit_price = $product['product_price'] - ($product['product_price'] * ($product['product_order_tax'] / 1));
-            $product_tax = $product['product_price'] * ($product['product_order_tax'] / 1);
-            $sub_total = $unit_price;
-        } else {
-            $price = $product['product_price'];
-            $unit_price = $product['product_price'];
-            $product_tax = 0.00;
-            $sub_total = $unit_price;
-        }
-
-        // Purchase cart cost metadata should follow the current transaction-local
-        // purchase unit price, not the legacy products.product_cost field.
-        $product_cost = $unit_price;
 
         return [
             'price' => $price,
@@ -759,13 +754,8 @@ class ProductCartPurchase extends Component
             ? (float) $overrideUnitPrice
             : (float) ($freshItem->options->unit_price ?? $finalRowPrice);
 
-        if ($finalUnitPrice <= 0) {
-            $finalUnitPrice = $finalRowPrice;
-        }
-
-        if ($finalRowPrice <= 0) {
-            $finalRowPrice = $finalUnitPrice;
-        }
+        $finalUnitPrice = max(0, round($finalUnitPrice, 2));
+        $finalRowPrice = max(0, round($finalRowPrice, 2));
 
         Cart::instance($this->cart_instance)->update($row_id, [
             'price' => $finalRowPrice,
@@ -777,7 +767,7 @@ class ProductCartPurchase extends Component
         }
 
         $finalQty = (int) ($updatedItem->qty ?? 0);
-        $finalSubTotal = round($finalUnitPrice * $finalQty, 2);
+        $finalSubTotal = round($finalRowPrice * $finalQty, 2);
 
         Cart::instance($this->cart_instance)->update($row_id, [
             'options' => $this->mergeOptions($updatedItem, [

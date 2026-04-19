@@ -558,13 +558,15 @@ class PurchaseDeliveryController extends Controller
                     'purchase_price',
                     'net_unit_cost',
                     'net_price',
-                    'unit_price',
                     'price',
+                    'unit_price',
                 ];
 
                 foreach ($candidates as $f) {
-                    $v = (float) data_get($d, $f, 0);
-                    if ($v > 0) return $v;
+                    $rawValue = data_get($d, $f, null);
+                    if ($rawValue !== null && $rawValue !== '') {
+                        return max(0, (float) $rawValue);
+                    }
                 }
 
                 $qty = (float) data_get($d, 'quantity', 0);

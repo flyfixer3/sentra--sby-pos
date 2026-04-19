@@ -220,12 +220,15 @@ class PurchaseController extends Controller
 
             $poD = $poDetailMap[(int) $pdItem->product_id] ?? null;
 
-            $unitPrice = (float) ($poD->unit_price ?? 0);
-            if ($unitPrice <= 0) {
-                $unitPrice = (float) ($poD->price ?? 0);
+            $grossPrice = (float) ($poD->unit_price ?? 0);
+            if ($grossPrice <= 0) {
+                $grossPrice = (float) ($poD->price ?? 0) + (float) ($poD->product_discount_amount ?? 0);
             }
 
-            $price = (float) $unitPrice;
+            $price = (float) ($poD->price ?? 0);
+            if ($price <= 0) {
+                $price = max(0, $grossPrice - (float) ($poD->product_discount_amount ?? 0));
+            }
 
             // ✅ stock display:
             // - confirmed => per warehouse PD
@@ -249,9 +252,9 @@ class PurchaseController extends Controller
                 'price'  => $price,
                 'weight' => 1,
                 'options' => [
-                    'sub_total'   => (float) ($qty * $unitPrice),
+                    'sub_total'   => (float) ($qty * $price),
                     'code'        => (string) $productCode,
-                    'unit_price'  => $unitPrice,
+                    'unit_price'  => $grossPrice,
 
                     // ✅ warehouse_id hanya ada kalau PD sudah confirmed
                     'warehouse_id'=> $warehouseId ? (int) $warehouseId : null,
@@ -432,7 +435,7 @@ class PurchaseController extends Controller
                 'payment_method' => $request->payment_method,
                 'note' => $request->note,
                 'tax_amount' => Cart::instance('purchase')->tax() * 1,
-                'discount_amount' => Cart::instance('purchase')->discount() * 1,
+                'discount_amount' => (float) ($request->discount_amount ?? Cart::instance('purchase')->discount()),
 
                 'branch_id' => $branchId,
 
@@ -640,10 +643,10 @@ class PurchaseController extends Controller
             return 0.0;
         }
 
-        foreach (['unit_price', 'price'] as $field) {
-            $value = (float) data_get($detail, $field, 0);
-            if ($value > 0) {
-                return $value;
+        foreach (['price', 'unit_price'] as $field) {
+            $rawValue = data_get($detail, $field, null);
+            if ($rawValue !== null && $rawValue !== '') {
+                return max(0, (float) $rawValue);
             }
         }
 
@@ -918,21 +921,26 @@ class PurchaseController extends Controller
                 $itemWarehouseId = null;
             }
 
-            $unitPrice = (float) ($purchase_detail->unit_price ?? 0);
-            if ($unitPrice <= 0) {
-                $unitPrice = (float) ($purchase_detail->price ?? 0);
+            $grossPrice = (float) ($purchase_detail->unit_price ?? 0);
+            if ($grossPrice <= 0) {
+                $grossPrice = (float) ($purchase_detail->price ?? 0) + (float) ($purchase_detail->product_discount_amount ?? 0);
+            }
+
+            $netPrice = (float) ($purchase_detail->price ?? 0);
+            if ($netPrice <= 0) {
+                $netPrice = max(0, $grossPrice - (float) ($purchase_detail->product_discount_amount ?? 0));
             }
 
             $subTotal = (float) ($purchase_detail->sub_total ?? 0);
             if ($subTotal <= 0) {
-                $subTotal = (float) $unitPrice * (int) ($purchase_detail->quantity ?? 0);
+                $subTotal = (float) $netPrice * (int) ($purchase_detail->quantity ?? 0);
             }
 
             $cart->add([
                 'id'      => (int) $purchase_detail->product_id,
                 'name'    => (string) $purchase_detail->product_name,
                 'qty'     => (int) $purchase_detail->quantity,
-                'price'   => (float) $unitPrice,
+                'price'   => (float) $netPrice,
                 'weight'  => 1,
                 'options' => [
                     'purchase_detail_id'    => (int) $purchase_detail->id,
@@ -945,8 +953,8 @@ class PurchaseController extends Controller
                     'stock_scope'           => $stockScope,
                     'unit'                  => $product?->product_unit,
                     'product_tax'           => (float) $purchase_detail->product_tax_amount,
-                    'product_cost'          => (float) $unitPrice,
-                    'unit_price'            => (float) $unitPrice,
+                    'product_cost'          => (float) $grossPrice,
+                    'unit_price'            => (float) $grossPrice,
                     'branch_id'             => (int) $branchId,
                 ],
             ]);
@@ -984,9 +992,9 @@ class PurchaseController extends Controller
                 foreach ($oldDetails as $d) {
                     $pid = (int) $d->product_id;
 
-                    $oldUnit = (float) ($d->unit_price ?? 0);
+                    $oldUnit = (float) ($d->price ?? 0);
                     if ($oldUnit <= 0) {
-                        $oldUnit = (float) ($d->price ?? 0);
+                        $oldUnit = (float) ($d->unit_price ?? 0);
                     }
 
                     $oldMap[$pid] = [
@@ -1002,9 +1010,9 @@ class PurchaseController extends Controller
                 foreach (Cart::instance('purchase')->content() as $cart_item) {
                     $pid = (int) $cart_item->id;
 
-                    $newUnit = (float) ($cart_item->options->unit_price ?? 0);
+                    $newUnit = (float) ($cart_item->price ?? 0);
                     if ($newUnit <= 0) {
-                        $newUnit = (float) ($cart_item->price ?? 0);
+                        $newUnit = (float) ($cart_item->options->unit_price ?? 0);
                     }
 
                     $newMap[$pid] = [
@@ -1139,7 +1147,7 @@ class PurchaseController extends Controller
                     'payment_method' => $request->payment_method,
                     'note' => $request->note,
                     'tax_amount' => Cart::instance('purchase')->tax() * 1,
-                    'discount_amount' => Cart::instance('purchase')->discount() * 1,
+                    'discount_amount' => (float) ($request->discount_amount ?? Cart::instance('purchase')->discount()),
                     'branch_id' => $branchId,
                     'warehouse_id' => $warehouseId ? (int) $warehouseId : null,
                 ];
@@ -1187,15 +1195,11 @@ class PurchaseController extends Controller
                     }
 
                     $detailPrice = (float) ($cart_item->price ?? 0);
-                    if ($detailPrice <= 0) {
-                        $detailPrice = (float) $detailUnitPrice;
-                    }
-
                     $detailQty = (int) ($cart_item->qty ?? 0);
 
                     $detailSubTotal = (float) ($cart_item->options->sub_total ?? 0);
                     if ($detailSubTotal <= 0) {
-                        $detailSubTotal = round($detailUnitPrice * $detailQty, 2);
+                        $detailSubTotal = round($detailPrice * $detailQty, 2);
                     }
 
                     $payload = [
