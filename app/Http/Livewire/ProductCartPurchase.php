@@ -320,6 +320,24 @@ class ProductCartPurchase extends Component
         return round(max(0, $grossPrice - $discountAmount), 2);
     }
 
+    private function findCartRow($row_id, $product_id = null)
+    {
+        $cart = Cart::instance($this->cart_instance);
+        $rowId = (string) $row_id;
+
+        $row = $cart->content()->first(function ($item) use ($rowId) {
+            return (string) $item->rowId === $rowId;
+        });
+
+        if ($row || !$product_id) {
+            return $row;
+        }
+
+        return $cart->content()->first(function ($item) use ($product_id) {
+            return (int) $item->id === (int) $product_id;
+        });
+    }
+
     private function cartSubtotal(): float
     {
         return (float) Cart::instance($this->cart_instance)->content()->sum(function ($row) {
@@ -441,7 +459,7 @@ class ProductCartPurchase extends Component
 
     private function refreshCartRowState($row_id, $product_id): void
     {
-        $cart_item = Cart::instance($this->cart_instance)->get($row_id);
+        $cart_item = $this->findCartRow($row_id, $product_id);
         if (!$cart_item) {
             return;
         }
@@ -458,7 +476,7 @@ class ProductCartPurchase extends Component
         $netPrice = $this->calculateNetPrice($grossPrice, $discountAmount);
         $subTotal = $netPrice * (int) ($cart_item->qty ?? 0);
 
-        Cart::instance($this->cart_instance)->update($row_id, [
+        Cart::instance($this->cart_instance)->update($cart_item->rowId, [
             'price' => $netPrice,
             'options' => $this->mergeOptions($cart_item, [
                 'sub_total'    => $subTotal,
@@ -592,7 +610,14 @@ class ProductCartPurchase extends Component
 
     public function removeItem($row_id)
     {
-        Cart::instance($this->cart_instance)->remove($row_id);
+        $row = $this->findCartRow($row_id);
+        if (!$row) {
+            $this->global_qty = Cart::instance($this->cart_instance)->count();
+            $this->syncGlobalDiscount();
+            return;
+        }
+
+        Cart::instance($this->cart_instance)->remove($row->rowId);
         $this->global_qty = Cart::instance($this->cart_instance)->count();
         $this->syncGlobalDiscount();
     }
@@ -614,17 +639,30 @@ class ProductCartPurchase extends Component
 
     public function updateQuantity($row_id, $product_id)
     {
+        $cart_item = $this->findCartRow($row_id, $product_id);
+        if (!$cart_item) {
+            $this->global_qty = Cart::instance($this->cart_instance)->count();
+            $this->syncGlobalDiscount();
+            return;
+        }
+
+        $quantity = (int) ($this->quantity[$product_id] ?? $cart_item->qty ?? 1);
+        if ($quantity <= 0) {
+            $quantity = 1;
+            $this->quantity[$product_id] = $quantity;
+        }
+
         if ($this->cart_instance == 'sale' || $this->cart_instance == 'purchase_return') {
-            if ((int) ($this->check_quantity[$product_id] ?? 0) < (int) ($this->quantity[$product_id] ?? 0)) {
+            if ((int) ($this->check_quantity[$product_id] ?? 0) < $quantity) {
                 session()->flash('message', 'The requested quantity is not available in stock.');
                 return;
             }
         }
 
-        Cart::instance($this->cart_instance)->update($row_id, (int) $this->quantity[$product_id]);
+        Cart::instance($this->cart_instance)->update($cart_item->rowId, $quantity);
         $this->global_qty = Cart::instance($this->cart_instance)->count();
 
-        $this->refreshCartRowState($row_id, (int) $product_id);
+        $this->refreshCartRowState($cart_item->rowId, (int) $product_id);
         $this->syncGlobalDiscount();
     }
 
@@ -634,7 +672,7 @@ class ProductCartPurchase extends Component
         $type = in_array($type, ['fixed', 'percentage'], true) ? $type : 'fixed';
         $this->discount_type[$productId] = $type;
 
-        $row = Cart::instance($this->cart_instance)->get($row_id);
+        $row = $this->findCartRow($row_id, $productId);
 
         if (!$row) {
             $this->item_discount[$productId] = 0;
@@ -652,7 +690,7 @@ class ProductCartPurchase extends Component
                 : 0;
         }
 
-        $this->updatePricing($row_id, $productId);
+        $this->updatePricing($row->rowId, $productId);
     }
 
     public function discountModalRefresh($product_id, $row_id)
@@ -667,7 +705,7 @@ class ProductCartPurchase extends Component
 
     public function updatePricing($row_id, $product_id)
     {
-        $cart_item = Cart::instance($this->cart_instance)->get($row_id);
+        $cart_item = $this->findCartRow($row_id, $product_id);
 
         if (!$cart_item) {
             session()->flash('discount_message' . $product_id, 'Cart item not found.');
@@ -695,7 +733,7 @@ class ProductCartPurchase extends Component
         $this->gross_price[$product_id] = $grossPrice;
 
         $this->updateCartOptions(
-            $row_id,
+            $cart_item->rowId,
             $product_id,
             $cart_item,
             $discountAmount,
@@ -741,7 +779,7 @@ class ProductCartPurchase extends Component
             $this->stock_mode === 'warehouse' ? (int) $warehouse_id : null
         );
 
-        $freshItem = Cart::instance($this->cart_instance)->get($row_id);
+        $freshItem = $this->findCartRow($row_id, $product_id);
         if (!$freshItem) {
             return;
         }
@@ -757,11 +795,11 @@ class ProductCartPurchase extends Component
         $finalUnitPrice = max(0, round($finalUnitPrice, 2));
         $finalRowPrice = max(0, round($finalRowPrice, 2));
 
-        Cart::instance($this->cart_instance)->update($row_id, [
+        Cart::instance($this->cart_instance)->update($freshItem->rowId, [
             'price' => $finalRowPrice,
         ]);
 
-        $updatedItem = Cart::instance($this->cart_instance)->get($row_id);
+        $updatedItem = $this->findCartRow($freshItem->rowId, $product_id);
         if (!$updatedItem) {
             return;
         }
@@ -769,7 +807,7 @@ class ProductCartPurchase extends Component
         $finalQty = (int) ($updatedItem->qty ?? 0);
         $finalSubTotal = round($finalRowPrice * $finalQty, 2);
 
-        Cart::instance($this->cart_instance)->update($row_id, [
+        Cart::instance($this->cart_instance)->update($updatedItem->rowId, [
             'options' => $this->mergeOptions($updatedItem, [
                 'sub_total'             => $finalSubTotal,
                 'stock'                 => $context['stock'],
