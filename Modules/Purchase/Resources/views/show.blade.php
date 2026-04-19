@@ -420,7 +420,7 @@
                                         <th>Product</th>
                                         <th class="text-end">Baseline Price</th>
                                         <th class="text-end">Latest Price</th>
-                                        <th class="text-end">Latest Delta</th>
+                                        <th class="text-end">Latest Difference</th>
                                         <th class="text-end">Cumulative Variance</th>
                                         <th>Reference Basis</th>
                                         <th>Last Updated By</th>
