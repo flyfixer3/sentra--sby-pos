@@ -107,7 +107,7 @@
                                 </td>
 
                                 <td class="align-middle">
-                                    <div class="input-group input-group-sm flex-nowrap purchase-discount-control">
+                                    <div class="input-group flex-nowrap purchase-discount-control">
                                         <input
                                             type="number"
                                             min="0"
@@ -120,7 +120,7 @@
                                         >
                                         <div class="input-group-append">
                                             <select
-                                                class="custom-select custom-select-sm"
+                                                class="custom-select"
                                                 wire:model="discount_type.{{ $cart_item->id }}"
                                                 wire:change="changeDiscountType('{{ $cart_item->rowId }}', '{{ $cart_item->id }}', $event.target.value)"
                                                 @if($cart_instance === 'purchase' && $lock_purchase_price_edit) disabled @endif
@@ -299,12 +299,25 @@
 
         .purchase-discount-control > .form-control,
         .purchase-discount-control > .input-group-append > .custom-select {
-            height: calc(1.5em + .5rem + 2px);
+            height: calc(1.5em + .75rem + 2px);
             line-height: 1.5;
         }
 
+        .purchase-discount-control > .form-control {
+            flex: 0 1 70%;
+            width: 70%;
+            min-width: 0;
+        }
+
+        .purchase-discount-control > .input-group-append {
+            flex: 0 0 30%;
+            width: 30%;
+        }
+
         .purchase-discount-control .custom-select {
-            width: 92px;
+            width: 100%;
+            padding-left: .45rem;
+            padding-right: 1.45rem;
         }
 
         .current-stock-cell .stock-badge {
