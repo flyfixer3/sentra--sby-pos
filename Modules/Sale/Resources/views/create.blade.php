@@ -108,6 +108,8 @@
                         @if($isLockedBySO)
                             <input type="hidden" name="tax_percentage" value="{{ number_format((float)$lockedFinancial['tax_percentage'], 2, '.', '') }}">
                             <input type="hidden" name="discount_percentage" value="{{ number_format((float)$lockedFinancial['discount_percentage'], 2, '.', '') }}">
+                            <input type="hidden" name="discount_type" value="percentage">
+                            <input type="hidden" name="header_discount_value" value="{{ number_format((float)$lockedFinancial['discount_percentage'], 2, '.', '') }}">
                             <input type="hidden" name="fee_amount" value="{{ (int)$lockedFinancial['fee_amount'] }}">
                             <input type="hidden" name="shipping_amount" value="{{ (int)$lockedFinancial['shipping_amount'] }}">
 

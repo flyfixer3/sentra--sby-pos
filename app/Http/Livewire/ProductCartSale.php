@@ -15,6 +15,8 @@ class ProductCartSale extends Component
 
     public $cart_instance;
     public $global_discount;
+    public $header_discount_type = 'percentage';
+    public $header_discount_value = 0;
     public $global_tax;
     public $global_qty;
     public $shipping;
@@ -43,6 +45,8 @@ class ProductCartSale extends Component
 
         // default init (biar aman di semua scenario)
         $this->global_discount = 0;
+        $this->header_discount_type = 'percentage';
+        $this->header_discount_value = 0;
         $this->global_tax = 0;
         $this->global_qty = 0;
         $this->shipping = 0;
@@ -63,6 +67,8 @@ class ProductCartSale extends Component
 
             // ✅ FIX: pake float biar 23.90% gak jadi 23%
             $this->global_discount = (float) data_get($data, 'discount_percentage', 0);
+            $this->header_discount_type = 'percentage';
+            $this->header_discount_value = (float) $this->global_discount;
             $this->global_tax      = (float) data_get($data, 'tax_percentage', 0);
 
             // uang tetap int (sesuai DB kamu sekarang)
@@ -116,6 +122,10 @@ class ProductCartSale extends Component
 
         // ✅ NEW: tiap render juga update DP info (karena subtotal bisa berubah saat qty berubah)
         $this->loadSaleOrderDepositInfo();
+
+        if ($this->header_discount_type === 'fixed') {
+            $this->syncHeaderDiscountToCart();
+        }
 
         // keep global_qty konsisten
         $this->global_qty = Cart::instance($this->cart_instance)->count();
@@ -307,8 +317,53 @@ class ProductCartSale extends Component
         if ($val > 100) $val = 100;
 
         $this->global_discount = $val;
+        $this->header_discount_type = 'percentage';
+        $this->header_discount_value = $val;
 
         Cart::instance($this->cart_instance)->setGlobalDiscount((float) $val);
+    }
+
+    public function updatedHeaderDiscountType()
+    {
+        $this->header_discount_type = $this->header_discount_type === 'fixed' ? 'fixed' : 'percentage';
+        $this->syncHeaderDiscountToCart();
+    }
+
+    public function updatedHeaderDiscountValue()
+    {
+        $this->syncHeaderDiscountToCart();
+    }
+
+    private function syncHeaderDiscountToCart(): void
+    {
+        $this->header_discount_type = $this->header_discount_type === 'fixed' ? 'fixed' : 'percentage';
+
+        $value = round((float) ($this->header_discount_value ?? 0), 2);
+        if ($value < 0) {
+            $value = 0;
+        }
+
+        if ($this->header_discount_type === 'percentage') {
+            if ($value > 100) {
+                $value = 100;
+            }
+
+            $this->header_discount_value = $value;
+            $this->global_discount = $value;
+            Cart::instance($this->cart_instance)->setGlobalDiscount((float) $value);
+            return;
+        }
+
+        $subtotal = (float) Cart::instance($this->cart_instance)->subtotal(0, '.', '');
+        $percentage = $subtotal > 0 ? round(($value / $subtotal) * 100, 2) : 0;
+
+        if ($percentage > 100) {
+            $percentage = 100;
+        }
+
+        $this->header_discount_value = $value;
+        $this->global_discount = $percentage;
+        Cart::instance($this->cart_instance)->setGlobalDiscount((float) $percentage);
     }
 
     public function updateQuantity($row_id, $product_id)

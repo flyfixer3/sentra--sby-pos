@@ -124,6 +124,51 @@ class SaleController extends Controller
         return max(0, $prev);
     }
 
+    private function resolveHeaderDiscount($request, int $itemsSubtotal, int $taxAmount, int $fee, int $shipping): array
+    {
+        $discountType = (string) ($request->discount_type ?? 'percentage');
+        $discountType = $discountType === 'fixed' ? 'fixed' : 'percentage';
+
+        $rawValue = $request->header_discount_value ?? $request->discount_percentage ?? 0;
+        $discountValue = is_numeric($rawValue) ? (float) $rawValue : 0.0;
+
+        if ($discountValue < 0) {
+            throw new \RuntimeException('Discount cannot be negative.');
+        }
+
+        if ($discountType === 'percentage' && $discountValue > 100) {
+            throw new \RuntimeException('Discount percentage cannot exceed 100%.');
+        }
+
+        $baseBeforeDiscount = max(0, $itemsSubtotal + $taxAmount + $fee + $shipping);
+
+        if ($discountType === 'fixed') {
+            $discountAmount = (int) round($discountValue);
+
+            if ($discountAmount > $baseBeforeDiscount) {
+                throw new \RuntimeException('Discount amount cannot be greater than total before discount.');
+            }
+
+            $discountPercentage = $itemsSubtotal > 0
+                ? round(($discountAmount / $itemsSubtotal) * 100, 2)
+                : 0.0;
+        } else {
+            $discountPercentage = round($discountValue, 2);
+            $discountAmount = (int) floor($itemsSubtotal * ($discountPercentage / 100));
+        }
+
+        $grandTotal = $itemsSubtotal + $taxAmount + $fee + $shipping - $discountAmount;
+        if ($grandTotal < 0) {
+            throw new \RuntimeException('Grand Total cannot be negative.');
+        }
+
+        return [
+            'percentage' => (float) $discountPercentage,
+            'amount' => (int) $discountAmount,
+            'grand_total' => (int) $grandTotal,
+        ];
+    }
+
     private function deliveredQtyFromDeliveryItem(SaleDeliveryItem $item): int
     {
         $confirmedQty = (int) (
@@ -734,19 +779,22 @@ class SaleController extends Controller
                 // Defaults (non-locked)
                 // ======================================================
                 $effectiveTaxPct  = round((float) ($request->tax_percentage ?? 0), 2);
-                $effectiveDiscPct = round((float) ($request->discount_percentage ?? 0), 2);
-
                 $effectiveTaxPct = max(0, min(100, $effectiveTaxPct));
-                $effectiveDiscPct = max(0, min(100, $effectiveDiscPct));
 
                 $effectiveShipping = (int) ($request->shipping_amount ?? 0);
                 $effectiveFee      = (int) ($request->fee_amount ?? 0);
 
                 $taxAmount      = (int) floor($itemsSubtotal * ($effectiveTaxPct / 100));
-                $discountAmount = (int) floor($itemsSubtotal * ($effectiveDiscPct / 100));
-
-                $computedGrandTotal = (int) ($itemsSubtotal + $taxAmount - $discountAmount + $effectiveFee + $effectiveShipping);
-                if ($computedGrandTotal < 0) $computedGrandTotal = 0;
+                $headerDiscount = $this->resolveHeaderDiscount(
+                    $request,
+                    (int) $itemsSubtotal,
+                    (int) $taxAmount,
+                    (int) $effectiveFee,
+                    (int) $effectiveShipping
+                );
+                $effectiveDiscPct = (float) $headerDiscount['percentage'];
+                $discountAmount = (int) $headerDiscount['amount'];
+                $computedGrandTotal = (int) $headerDiscount['grand_total'];
 
                 // ======================================================
                 // LOCKED BY SALE ORDER (invoice from delivery)
@@ -1351,9 +1399,41 @@ class SaleController extends Controller
     public function update(UpdateSaleRequest $request, Sale $sale) {
         DB::transaction(function () use ($request, $sale) {
 
-            $due_amount = $request->total_amount - $request->paid_amount;
+            $itemsSubtotal = 0;
+            $totalQty = 0;
 
-            if ($due_amount == $request->total_amount) {
+            foreach (Cart::instance('sale')->content() as $cart_item) {
+                $qty = (int) ($cart_item->qty ?? 0);
+                $price = (int) ($cart_item->price ?? 0);
+                if ($qty <= 0) {
+                    continue;
+                }
+
+                $totalQty += $qty;
+                $itemsSubtotal += ($qty * max(0, $price));
+            }
+
+            $itemsSubtotal = max(0, (int) $itemsSubtotal);
+            $taxPct = max(0, min(100, round((float) ($request->tax_percentage ?? 0), 2)));
+            $shipping = max(0, (int) ($request->shipping_amount ?? 0));
+            $fee = max(0, (int) ($request->fee_amount ?? 0));
+            $taxAmount = (int) floor($itemsSubtotal * ($taxPct / 100));
+
+            $headerDiscount = $this->resolveHeaderDiscount(
+                $request,
+                (int) $itemsSubtotal,
+                (int) $taxAmount,
+                (int) $fee,
+                (int) $shipping
+            );
+
+            $discountPercentage = (float) $headerDiscount['percentage'];
+            $discountAmount = (int) $headerDiscount['amount'];
+            $computedGrandTotal = (int) $headerDiscount['grand_total'];
+
+            $due_amount = $computedGrandTotal - (int) $request->paid_amount;
+
+            if ($due_amount == $computedGrandTotal) {
                 $payment_status = 'Unpaid';
             } elseif ($due_amount > 0) {
                 $payment_status = 'Partial';
@@ -1370,19 +1450,19 @@ class SaleController extends Controller
                 'reference' => $request->reference,
                 'customer_id' => $request->customer_id,
                 'customer_name' => Customer::findOrFail($request->customer_id)->customer_name,
-                'tax_percentage' => $request->tax_percentage,
-                'discount_percentage' => $request->discount_percentage,
-                'shipping_amount' => $request->shipping_amount * 1,
-                'fee_amount' => $request->fee_amount * 1,
+                'tax_percentage' => (float) $taxPct,
+                'discount_percentage' => (float) $discountPercentage,
+                'shipping_amount' => (int) $shipping,
+                'fee_amount' => (int) $fee,
                 'paid_amount' => $request->paid_amount * 1,
-                'total_amount' => $request->total_amount * 1,
-                'total_quantity' => $request->total_quantity,
+                'total_amount' => (int) $computedGrandTotal,
+                'total_quantity' => (int) $totalQty,
                 'due_amount' => $due_amount * 1,
                 'payment_status' => $payment_status,
                 'payment_method' => $request->payment_method,
                 'note' => $request->note,
-                'tax_amount' => Cart::instance('sale')->tax() * 1,
-                'discount_amount' => Cart::instance('sale')->discount() * 1,
+                'tax_amount' => (int) $taxAmount,
+                'discount_amount' => (int) $discountAmount,
             ];
 
             if (Schema::hasColumn('sales', 'warehouse_id')) {

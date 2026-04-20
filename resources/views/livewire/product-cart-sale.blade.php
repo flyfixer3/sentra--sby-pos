@@ -199,7 +199,12 @@
                             $summaryTax  = max(0, $taxAmount);
                             $summaryShip = max(0, $shipInputTotal);
                             $summaryFee  = max(0, $feeInputTotal);
-                            $summaryDisc = max(0, $discAmount);
+                            if (($header_discount_type ?? 'percentage') === 'fixed') {
+                                $maxFixedDiscount = $itemsSubtotal + $summaryTax + $summaryShip + $summaryFee;
+                                $summaryDisc = min(max(0, (int) round((float) ($header_discount_value ?? 0))), max(0, $maxFixedDiscount));
+                            } else {
+                                $summaryDisc = max(0, $discAmount);
+                            }
 
                             $grandTotal = max(0, ($itemsSubtotal + $summaryTax - $summaryDisc + $summaryShip + $summaryFee));
                             $payNow = $grandTotal;
@@ -233,7 +238,14 @@
                         @endif
                     @else
                         <tr>
-                            <th>Discount ({{ number_format((float)($global_discount ?? 0), 2, '.', '') }}%)</th>
+                            <th>
+                                Discount
+                                @if(($header_discount_type ?? 'percentage') === 'percentage')
+                                    ({{ number_format((float)($global_discount ?? 0), 2, '.', '') }}%)
+                                @else
+                                    (Rp)
+                                @endif
+                            </th>
                             <td>(-) {{ format_currency((float)$summaryDisc) }}</td>
                         </tr>
                     @endif
@@ -316,18 +328,35 @@
 
         <div class="{{ $cart_instance == 'sale' ? 'col-lg-3' : 'col-lg-4' }}">
             <div class="form-group">
-                <label for="discount_percentage">Discount (%)</label>
-                <input
-                    wire:model.lazy="global_discount"
-                    type="number"
-                    class="form-control"
-                    name="discount_percentage"
-                    min="0"
-                    max="100"
-                    required
-                    step="0.01"
-                    @if($isLockedBySO) readonly @endif
-                >
+                <label for="header_discount_value">Discount</label>
+                <div class="input-group">
+                    <input
+                        wire:model.lazy="header_discount_value"
+                        type="number"
+                        class="form-control"
+                        name="header_discount_value"
+                        min="0"
+                        @if(($header_discount_type ?? 'percentage') === 'percentage') max="100" @endif
+                        required
+                        step="0.01"
+                        @if($isLockedBySO) readonly @endif
+                    >
+
+                     <div class="input-group-append">
+                        <select
+                            wire:model.lazy="header_discount_type"
+                            class="form-control"
+                            name="discount_type"
+                            style="max-width: 90px;"
+                            @if($isLockedBySO) disabled @endif
+                        >
+                            <option value="fixed">Rp</option>
+                            <option value="percentage">%</option>
+                        </select>
+                    </div>
+                </div>
+
+                <input type="hidden" name="discount_percentage" value="{{ number_format((float)($global_discount ?? 0), 2, '.', '') }}">
             </div>
         </div>
 
