@@ -121,7 +121,7 @@
 
                         <hr>
 
-                        <div class="mt-2">
+                        <div class="mt-2" data-so-product-table-host>
                             <livewire:sale-order.product-table :prefillItems="$items" />
                         </div>
 
@@ -336,7 +336,69 @@
         document.getElementById('so_grand_text').innerText = soFormatRupiah(grand);
     }
 
+    function soGetProductTableComponentId(form) {
+        const host = form?.querySelector('[data-so-product-table-host]');
+        const componentRoot = host ? host.querySelector('[wire\\:id]') : null;
+        return componentRoot ? componentRoot.getAttribute('wire:id') : null;
+    }
+
+    function soSetSubmitState(form, syncing) {
+        const submitButtons = form?.querySelectorAll('button[type="submit"]') || [];
+        submitButtons.forEach((button) => {
+            if (!button.dataset.originalHtml) {
+                button.dataset.originalHtml = button.innerHTML;
+            }
+
+            button.disabled = !!syncing;
+            button.innerHTML = syncing
+                ? '<span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span> Finalizing...'
+                : button.dataset.originalHtml;
+        });
+    }
+
+    function soFlushCartFieldChanges(form) {
+        const selectors = [
+            'input[name^="items["][name$="[quantity]"]',
+            'input[name^="items["][name$="[price]"]',
+            'input[name^="items["][name$="[discount_value]"]',
+            'select[name^="items["][name$="[product_discount_type]"]'
+        ];
+
+        form.querySelectorAll(selectors.join(',')).forEach((element) => {
+            element.dispatchEvent(new Event('change', { bubbles: true }));
+        });
+    }
+
+    function soPrepareBeforeSubmit(form) {
+        if (!form) return true;
+        if (form.dataset.soReadyToSubmit === '1') return true;
+        if (form.dataset.soSyncing === '1') return false;
+
+        const componentId = soGetProductTableComponentId(form);
+        if (!componentId || !window.Livewire || typeof window.Livewire.find !== 'function') {
+            return true;
+        }
+
+        form.dataset.soSyncing = '1';
+        soSetSubmitState(form, true);
+        soFlushCartFieldChanges(form);
+
+        window.setTimeout(() => {
+            const component = window.Livewire.find(componentId);
+            if (!component) {
+                form.dataset.soSyncing = '0';
+                soSetSubmitState(form, false);
+                return;
+            }
+
+            component.call('syncAllRowsBeforeSubmit');
+        }, 0);
+
+        return false;
+    }
+
     document.addEventListener('DOMContentLoaded', function () {
+        const form = document.getElementById('soEditForm');
         const discEl = document.getElementById('so_header_discount_value');
         discEl?.addEventListener('input', function () {
             discEl.value = soNormalizeDecimalString(discEl.value);
@@ -371,6 +433,24 @@
                 soRecalc();
             });
         }
+
+        form?.addEventListener('submit', function (event) {
+            if (!soPrepareBeforeSubmit(form)) {
+                event.preventDefault();
+            }
+        });
+
+        window.addEventListener('sale-order-cart-synced', function () {
+            const activeForm = document.getElementById('soEditForm');
+            if (!activeForm || activeForm.dataset.soSyncing !== '1') {
+                return;
+            }
+
+            activeForm.dataset.soReadyToSubmit = '1';
+            activeForm.dataset.soSyncing = '0';
+            soSetSubmitState(activeForm, false);
+            activeForm.requestSubmit();
+        });
     });
 </script>
 @endpush

@@ -208,6 +208,15 @@ class ProductTable extends Component
         $this->normalizeRow($index, $field);
     }
 
+    public function syncAllRowsBeforeSubmit(): void
+    {
+        foreach (array_keys($this->items) as $index) {
+            $this->normalizeRow((int) $index);
+        }
+
+        $this->dispatchBrowserEvent('sale-order-cart-synced');
+    }
+
     private function normalizeRow(int $index, string $field = ''): void
     {
         $unitPrice = max(0, (int)($this->items[$index]['original_price'] ?? 0));
