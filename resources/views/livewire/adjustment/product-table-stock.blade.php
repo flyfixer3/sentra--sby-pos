@@ -1,4 +1,6 @@
 <div>
+    @include('includes.defect-type-picker-assets')
+
     @if (session()->has('message'))
         <div class="alert alert-warning alert-dismissible fade show" role="alert">
             <div class="alert-body">
@@ -347,12 +349,15 @@
                 const currentDef = [];
                 perWrap.querySelectorAll('tbody.defect-tbody tr').forEach(tr => {
                     const idx = asInt(tr.getAttribute('data-row'));
-                    const defect_type = tr.querySelector('input.defect-type')?.value || '';
+                    const picker = tr.querySelector('.defect-type-picker');
+                    const defect_type = picker ? (picker.querySelector('.defect-type-legacy-input')?.value || '') : '';
+                    const defect_types_json = picker ? (picker.querySelector('.defect-types-json-input')?.value || '[]') : '[]';
                     const description = tr.querySelector('textarea.defect-desc')?.value || '';
                     const rack_id = tr.querySelector('select.defect-rack')?.value || '';
                     currentDef.push({
                         row: idx,
                         defect_type: defect_type,
+                        defect_types_json: defect_types_json,
                         description: description,
                         rack_id: rack_id
                     });
@@ -396,12 +401,7 @@
                         <tr data-row="${i}">
                             <td class="text-center">${i+1}</td>
                             <td>
-                                <input type="text"
-                                       class="form-control form-control-sm defect-type"
-                                       name="items[${idx}][defects][${i}][defect_type]"
-                                       value="${(prev.defect_type || '').replace(/"/g,'&quot;')}"
-                                       placeholder="bubble / scratch"
-                                       required>
+                                ${window.renderDefectTypePickerHtml(`items[${idx}][defects][${i}]`, prev.defect_types_json || prev.defect_types || prev.defect_type || [])}
                             </td>
                             <td>
                                 <textarea class="form-control form-control-sm defect-desc"
@@ -422,6 +422,8 @@
                         </tr>
                     `);
                 }
+
+                window.initDefectTypePickers(tbody);
             }
 
             function buildDamagedRows(idx, qty, old){
@@ -498,6 +500,7 @@
                     oldDef = oldDef.map((x, i) => ({
                         row: i,
                         defect_type: x.defect_type || x.type || x.defectType || '',
+                        defect_types_json: x.defect_types_json || x.defect_types || '',
                         description: x.defect_description || x.description || '',
                         rack_id: x.to_rack_id || x.rack_id || ''
                     }));
@@ -698,9 +701,10 @@
                         // validate each row
                         perWrap.querySelectorAll('tbody.defect-tbody tr').forEach(tr => {
                             const rackVal = tr.querySelector('select.defect-rack')?.value || '';
-                            const typeVal = tr.querySelector('input.defect-type')?.value || '';
+                            const picker = tr.querySelector('.defect-type-picker');
+                            const selectedTypes = picker && window.getSelectedDefectTypes ? window.getSelectedDefectTypes(picker) : [];
                             if(def > 0){
-                                if(String(typeVal).trim() === ''){
+                                if(!selectedTypes.length){
                                     ok = false;
                                     msg.push('DEFECT: Defect Type wajib diisi per unit.');
                                 }
@@ -849,7 +853,10 @@
 
                         // per-unit change
                         if(t.classList && (
-                            t.classList.contains('defect-type') ||
+                            t.classList.contains('defect-type-option') ||
+                            t.classList.contains('defect-type-add-input') ||
+                            t.classList.contains('defect-type-legacy-input') ||
+                            t.classList.contains('defect-types-json-input') ||
                             t.classList.contains('defect-desc') ||
                             t.classList.contains('defect-rack') ||
                             t.classList.contains('damaged-type') ||

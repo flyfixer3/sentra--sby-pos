@@ -321,6 +321,8 @@
 </div>
 @endsection
 
+@include('includes.defect-type-picker-assets')
+
 @push('page_scripts')
 <script>
 (function(){
@@ -433,13 +435,17 @@
                 ? 'bubble / scratch / distortion'
                 : 'pecah sudut kiri saat bongkar peti';
 
+            const detailField = type === 'defect'
+                ? window.renderDefectTypePickerHtml(`units[${i}]`, [])
+                : `<input class="form-control form-control-sm" required
+                            name="units[${i}][${key}]"
+                            placeholder="${placeholder}">`;
+
             tbody.insertAdjacentHTML('beforeend', `
                 <tr>
                     <td class="text-center align-middle">${i+1}</td>
                     <td class="align-middle">
-                        <input class="form-control form-control-sm" required
-                            name="units[${i}][${key}]"
-                            placeholder="${placeholder}">
+                        ${detailField}
                     </td>
                     <td class="align-middle">
                         <textarea class="form-control form-control-sm"
@@ -452,6 +458,10 @@
                     </td>
                 </tr>
             `);
+        }
+
+        if (type === 'defect' && window.initDefectTypePickers) {
+            window.initDefectTypePickers(tbody);
         }
     }
 

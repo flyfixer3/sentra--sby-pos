@@ -20,6 +20,7 @@ class ProductDefectItem extends Model
         'reference_type',
         'quantity',
         'defect_type',
+        'defect_types',
         'description',
         'photo_path',
         'created_by',
@@ -33,6 +34,7 @@ class ProductDefectItem extends Model
         'reference_id' => 'integer',
         'quantity'     => 'integer',
         'created_by'   => 'integer',
+        'defect_types' => 'array',
     ];
 
     public function product()

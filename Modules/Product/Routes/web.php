@@ -8,6 +8,7 @@
 use Modules\Product\Http\Controllers\WarehousesController;
 use Modules\Product\Http\Controllers\HppLedgerController;
 use Modules\Product\Http\Controllers\ProductImportController;
+use Modules\Product\Http\Controllers\DefectTypeController;
 
 Route::middleware(['auth'])->prefix('warehouses')->group(function () {
     Route::get('{id}/preview', [WarehousesController::class, 'preview'])->name('warehouses.preview');
@@ -15,6 +16,8 @@ Route::middleware(['auth'])->prefix('warehouses')->group(function () {
 
 Route::group(['middleware' => 'auth'], function () {
     Route::get('/hpp-ledger', [HppLedgerController::class, 'index'])->name('hpp-ledger.index');
+    Route::get('/defect-types', [DefectTypeController::class, 'index'])->name('defect-types.index');
+    Route::post('/defect-types', [DefectTypeController::class, 'store'])->name('defect-types.store');
     Route::get('/products/import', [ProductImportController::class, 'index'])->name('products.import.index');
     Route::get('/products/import/template', [ProductImportController::class, 'downloadTemplate'])->name('products.import.template');
     Route::post('/products/import', [ProductImportController::class, 'import'])->name('products.import.store');

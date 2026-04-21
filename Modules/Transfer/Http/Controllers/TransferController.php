@@ -2,6 +2,7 @@
 
 namespace Modules\Transfer\Http\Controllers;
 
+use App\Support\DefectTypeSupport;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
 use Illuminate\Support\Facades\Auth;
@@ -1171,9 +1172,9 @@ class TransferController extends Controller
                 }
                 foreach ($defects as $d) {
                     $rid = (int) ($d['to_rack_id'] ?? 0);
-                    $type = trim((string) ($d['defect_type'] ?? ''));
+                    $types = DefectTypeSupport::extractFromPayload((array) $d);
                     if ($rid <= 0) abort(422, "Row #".($rowIndex+1).": To Rack is required for each defect unit.");
-                    if ($type === '') abort(422, "Row #".($rowIndex+1).": Defect Type is required for each defect unit.");
+                    if (empty($types)) abort(422, "Row #".($rowIndex+1).": Defect Type is required for each defect unit.");
                     $rackIdsToValidate[] = $rid;
                 }
             }
@@ -1384,6 +1385,7 @@ class TransferController extends Controller
                     foreach ($defectsPayload as $i => $d) {
                         $toRackId = (int) ($d['to_rack_id'] ?? 0);
                         $photoPath = null;
+                        $defectTypes = DefectTypeSupport::extractFromPayload((array) $d);
 
                         if ($request->hasFile("items.$rowIndex.defects.$i.photo")) {
                             $file = $request->file("items.$rowIndex.defects.$i.photo");
@@ -1411,7 +1413,8 @@ class TransferController extends Controller
                             'reference_id'   => (int) $transfer->id,
                             'reference_type' => TransferRequest::class,
                             'quantity'       => 1,
-                            'defect_type'    => $d['defect_type'] ?? null,
+                            'defect_type'    => DefectTypeSupport::legacyLabel($defectTypes, $d['defect_type'] ?? null),
+                            'defect_types'   => !empty($defectTypes) ? $defectTypes : null,
                             'description'    => $d['defect_description'] ?? null,
                             'photo_path'     => $photoPath,
                             'created_by'     => auth()->id(),

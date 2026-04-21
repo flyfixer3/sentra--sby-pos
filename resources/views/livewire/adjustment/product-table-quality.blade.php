@@ -1,4 +1,6 @@
 <div>
+    @include('includes.defect-type-picker-assets')
+
     @if (session()->has('message'))
         <div class="alert alert-warning alert-dismissible fade show" role="alert">
             <div class="alert-body">
@@ -119,6 +121,7 @@
                                         $row = (array)($defects[$i] ?? []);
                                         $defType = (string)($row['defect_type'] ?? '');
                                         $desc = (string)($row['description'] ?? '');
+                                        $selectedDefectTypes = \App\Support\DefectTypeSupport::extractFromPayload($row);
                                     @endphp
 
                                     <div class="border rounded p-2 mb-2">
@@ -130,12 +133,12 @@
                                         <div class="form-row">
                                             <div class="col-md-4">
                                                 <label class="mb-1">Defect Type <span class="text-danger">*</span></label>
-                                                <input type="text"
-                                                       class="form-control"
-                                                       name="items[{{ $key }}][defects][{{ $i }}][defect_type]"
-                                                       wire:model.lazy="products.{{ $key }}.defects.{{ $i }}.defect_type"
-                                                       value="{{ $defType }}"
-                                                       required>
+                                                <div wire:ignore>
+                                                    @include('includes.defect-type-picker', [
+                                                        'namePrefix' => "items[$key][defects][$i]",
+                                                        'selected' => !empty($selectedDefectTypes) ? $selectedDefectTypes : ($defType !== '' ? [$defType] : []),
+                                                    ])
+                                                </div>
                                             </div>
 
                                             <div class="col-md-5">
@@ -239,3 +242,19 @@
         </table>
     </div>
 </div>
+
+@once
+    @push('page_scripts')
+    <script>
+        document.addEventListener('livewire:load', function () {
+            if (window.Livewire && typeof window.Livewire.hook === 'function') {
+                window.Livewire.hook('message.processed', function () {
+                    if (window.initDefectTypePickers) {
+                        window.initDefectTypePickers(document);
+                    }
+                });
+            }
+        });
+    </script>
+    @endpush
+@endonce

@@ -10,6 +10,8 @@
     </ol>
 @endsection
 
+@include('includes.defect-type-picker-assets')
+
 @section('content')
     <div class="container-fluid mb-4">
         <div class="row">
@@ -757,9 +759,11 @@
         const snapshotCurrentDomToDataset = () => {
             const currentDef = [];
             perWrap.querySelectorAll('.defect-tbody tr').forEach((tr) => {
+                const picker = tr.querySelector('.defect-type-picker');
                 currentDef.push({
                     to_rack_id: tr.querySelector('select.defect-rack-select')?.value || '',
-                    defect_type: tr.querySelector('input.defect-type-input')?.value || '',
+                    defect_type: picker ? (picker.querySelector('.defect-type-legacy-input')?.value || '') : '',
+                    defect_types_json: picker ? (picker.querySelector('.defect-types-json-input')?.value || '[]') : '[]',
                     defect_description: tr.querySelector('textarea.defect-desc-input')?.value || ''
                 });
             });
@@ -848,14 +852,7 @@
                 </td>
 
                 <td class="align-middle">
-                    <input
-                        type="text"
-                        class="form-control form-control-sm defect-type-input"
-                        name="items[${idx}][defects][${i}][defect_type]"
-                        value="${String(prev.defect_type || '').replace(/"/g, '&quot;')}"
-                        placeholder="contoh: bubble / retak ringan"
-                        required
-                    >
+                    ${window.renderDefectTypePickerHtml(`items[${idx}][defects][${i}]`, prev.defect_types_json || prev.defect_types || prev.defect_type || [])}
                 </td>
 
                 <td class="align-middle">
@@ -878,6 +875,8 @@
             `;
             defectTbody.appendChild(tr);
         }
+
+        window.initDefectTypePickers(defectTbody);
 
         // ============================================
         // rebuild damaged rows sesuai damagedCount
@@ -1048,7 +1047,8 @@
 
             for (let i = 0; i < defectRows.length; i++) {
                 const rackSel = defectRows[i].querySelector('select.defect-rack-select');
-                const typeInput = defectRows[i].querySelector('input.defect-type-input');
+                const picker = defectRows[i].querySelector('.defect-type-picker');
+                const selectedTypes = picker && window.getSelectedDefectTypes ? window.getSelectedDefectTypes(picker) : [];
 
                 if (!rackSel || !rackSel.value) {
                     statusBadge.className = 'badge badge-warning row-status';
@@ -1057,7 +1057,7 @@
                     return false;
                 }
 
-                if (!typeInput || !typeInput.value.trim()) {
+                if (!selectedTypes.length) {
                     statusBadge.className = 'badge badge-warning row-status';
                     statusBadge.textContent = 'NEED INFO';
                     hint.textContent = 'Defect Type wajib diisi untuk setiap defect item.';

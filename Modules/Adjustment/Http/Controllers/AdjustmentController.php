@@ -2,6 +2,7 @@
 
 namespace Modules\Adjustment\Http\Controllers;
 
+use App\Support\DefectTypeSupport;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
 use Illuminate\Support\Facades\Auth;
@@ -518,10 +519,10 @@ class AdjustmentController extends Controller
 
                             foreach ($defects as $i => $d) {
                                 $rackId     = (int) ($d['to_rack_id'] ?? 0);
-                                $defectType = (string) ($d['defect_type'] ?? '');
+                                $defectTypes = DefectTypeSupport::extractFromPayload((array) $d);
                                 $desc       = (string) ($d['defect_description'] ?? '');
 
-                                if ($rackId <= 0 || trim($defectType) === '') {
+                                if ($rackId <= 0 || empty($defectTypes)) {
                                     throw new \RuntimeException("Row #{$idx}: defect detail #" . ($i + 1) . " rack/type is required.");
                                 }
 
@@ -541,7 +542,8 @@ class AdjustmentController extends Controller
                                     'reference_id'   => (int) $adjustment->id,
                                     'reference_type' => Adjustment::class,
                                     'quantity'       => 1,
-                                    'defect_type'    => $defectType,
+                                    'defect_type'    => DefectTypeSupport::legacyLabel($defectTypes, $d['defect_type'] ?? null),
+                                    'defect_types'   => !empty($defectTypes) ? $defectTypes : null,
                                     'description'    => trim($desc) !== '' ? $desc : null,
                                     'photo_path'     => $photoPath,
                                     'created_by'     => (int) Auth::id(),
@@ -1248,7 +1250,7 @@ class AdjustmentController extends Controller
                     }
                     foreach ($defectUnits as $i => $u) {
                         $u = (array) $u;
-                        if (trim((string) ($u['defect_type'] ?? '')) === '') {
+                        if (empty(DefectTypeSupport::extractFromPayload($u))) {
                             throw new \Illuminate\Http\Exceptions\HttpResponseException(
                                 redirect()->back()->withInput()->with('error', "Defect Type is required for each DEFECT unit (line #" . ($key + 1) . ", row #" . ($i + 1) . ").")
                             );
@@ -1489,6 +1491,7 @@ class AdjustmentController extends Controller
                     for ($i = 0; $i < $qty; $i++) {
                         $u = (array) ($defectUnits[$i] ?? []);
                         $unitRackId = (int) ($u['rack_id'] ?? $rackId);
+                        $defectTypes = DefectTypeSupport::extractFromPayload($u);
                         $this->assertRackBelongsToWarehouse($unitRackId, $newWarehouseId);
 
                         ProductDefectItem::create([
@@ -1499,7 +1502,8 @@ class AdjustmentController extends Controller
                             'reference_id'    => (int) $adjustment->id,
                             'reference_type'  => Adjustment::class,
                             'quantity'        => 1,
-                            'defect_type'     => trim((string) ($u['defect_type'] ?? '')),
+                            'defect_type'     => DefectTypeSupport::legacyLabel($defectTypes, $u['defect_type'] ?? null),
+                            'defect_types'    => !empty($defectTypes) ? $defectTypes : null,
                             'description'     => trim((string) ($u['description'] ?? '')) ?: ($itemNote ?: null),
                             'photo_path'      => null,
                             'created_by'      => (int) Auth::id(),
@@ -1938,8 +1942,7 @@ class AdjustmentController extends Controller
 
                         for ($i = 0; $i < $qty; $i++) {
                             $d = (array) ($defects[$i] ?? []);
-                            $defectType = trim((string) ($d['defect_type'] ?? ''));
-                            if ($defectType === '') {
+                            if (empty(DefectTypeSupport::extractFromPayload($d))) {
                                 throw new \RuntimeException(
                                     "Line #" . ($idx + 1) . ": defect_type is required for unit #" . ($i + 1)
                                 );
@@ -1964,7 +1967,7 @@ class AdjustmentController extends Controller
                         // Create per-unit rows
                         for ($i = 0; $i < $qty; $i++) {
                             $d = (array) ($defects[$i] ?? []);
-                            $defectType = trim((string) ($d['defect_type'] ?? ''));
+                            $defectTypes = DefectTypeSupport::extractFromPayload($d);
                             $desc       = trim((string) ($d['description'] ?? ''));
 
                             $photoPath = null;
@@ -1980,7 +1983,8 @@ class AdjustmentController extends Controller
                                 'reference_id'   => (int) $adjustment->id,
                                 'reference_type' => Adjustment::class,
                                 'quantity'       => 1,
-                                'defect_type'    => $defectType,
+                                'defect_type'    => DefectTypeSupport::legacyLabel($defectTypes, $d['defect_type'] ?? null),
+                                'defect_types'   => !empty($defectTypes) ? $defectTypes : null,
                                 'description'    => $desc !== '' ? $desc : null,
                                 'photo_path'     => $photoPath,
                                 'created_by'     => (int) Auth::id(),

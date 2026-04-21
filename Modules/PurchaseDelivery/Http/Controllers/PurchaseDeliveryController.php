@@ -2,6 +2,7 @@
 
 namespace Modules\PurchaseDelivery\Http\Controllers;
 
+use App\Support\DefectTypeSupport;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
 use Illuminate\Support\Facades\DB;
@@ -791,7 +792,8 @@ class PurchaseDeliveryController extends Controller
                     $rackAgg[$rackId]['defect']++;
                     $rackAgg[$rackId]['total']++;
 
-                    if (empty($d['defect_type']) || !trim((string)$d['defect_type'])) {
+                    $defectTypes = DefectTypeSupport::extractFromPayload((array) $d);
+                    if (empty($defectTypes)) {
                         throw new \RuntimeException("Defect type is required (detail_id={$detailId}, row={$k}).");
                     }
                 }
@@ -844,6 +846,7 @@ class PurchaseDeliveryController extends Controller
                         }
 
                         $rackId = (int) ($d['rack_id'] ?? 0);
+                        $defectTypes = DefectTypeSupport::extractFromPayload((array) $d);
 
                         ProductDefectItem::create([
                             'branch_id'      => (int) $purchaseDelivery->branch_id,
@@ -853,7 +856,8 @@ class PurchaseDeliveryController extends Controller
                             'reference_id'   => (int) $purchaseDelivery->id,
                             'reference_type' => PurchaseDelivery::class,
                             'quantity'       => 1,
-                            'defect_type'    => $d['defect_type'] ?? null,
+                            'defect_type'    => DefectTypeSupport::legacyLabel($defectTypes, $d['defect_type'] ?? null),
+                            'defect_types'   => !empty($defectTypes) ? $defectTypes : null,
                             'description'    => $d['defect_description'] ?? null,
                             'photo_path'     => $photoPath,
                             'created_by'     => auth()->id(),
