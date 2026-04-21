@@ -88,7 +88,34 @@ class SaleOrderController extends Controller
                 : $requestedUnitPrice;
 
             $unitPrice = max($requestedUnitPrice, $netPrice, $masterUnitPrice);
-            $itemDiscountAmount = max(0, $unitPrice - $netPrice);
+            $discountType = (string) ($row['product_discount_type'] ?? 'fixed') === 'percentage'
+                ? 'percentage'
+                : 'fixed';
+
+            if ($discountType === 'percentage') {
+                $discountValue = array_key_exists('discount_value', $row)
+                    ? (float) $row['discount_value']
+                    : 0.0;
+
+                if ($discountValue < 0 || $discountValue > 100) {
+                    throw new \RuntimeException('Item discount percentage cannot exceed 100%.');
+                }
+
+                $itemDiscountAmount = (int) round($unitPrice * ($discountValue / 100));
+                $netPrice = max(0, $unitPrice - $itemDiscountAmount);
+            } else {
+                $nominalDiscount = array_key_exists('discount_value', $row) && $row['discount_value'] !== null
+                    ? max(0, (int) $row['discount_value'])
+                    : max(0, $unitPrice - $netPrice);
+
+                if ($nominalDiscount > $unitPrice) {
+                    throw new \RuntimeException('Item discount amount cannot be greater than unit price.');
+                }
+
+                $itemDiscountAmount = $nominalDiscount;
+                $netPrice = max(0, $unitPrice - $itemDiscountAmount);
+            }
+
             $subTotal = (int) ($qty * $netPrice);
 
             $items[] = [
@@ -97,7 +124,7 @@ class SaleOrderController extends Controller
                 'unit_price' => $unitPrice,
                 'price' => $netPrice,
                 'product_discount_amount' => $itemDiscountAmount,
-                'product_discount_type' => 'fixed',
+                'product_discount_type' => $discountType,
                 'sub_total' => $subTotal,
             ];
 
@@ -115,6 +142,50 @@ class SaleOrderController extends Controller
             'qty_by_product' => $qtyByProduct,
             'sell_subtotal' => (int) $sellSubtotal,
             'master_subtotal' => (int) $masterSubtotal,
+        ];
+    }
+
+    private function resolveHeaderDiscount(Request $request, int $itemsSubtotal, int $taxAmount, int $shipping, int $fee): array
+    {
+        $discountType = (string) ($request->discount_type ?? 'percentage') === 'fixed' ? 'fixed' : 'percentage';
+        $rawValue = $request->header_discount_value ?? $request->discount_percentage ?? 0;
+        $discountValue = is_numeric($rawValue) ? (float) $rawValue : 0.0;
+
+        if ($discountValue < 0) {
+            throw new \RuntimeException('Discount cannot be negative.');
+        }
+
+        if ($discountType === 'percentage' && $discountValue > 100) {
+            throw new \RuntimeException('Discount percentage cannot exceed 100%.');
+        }
+
+        $baseBeforeDiscount = max(0, $itemsSubtotal + $taxAmount + $shipping + $fee);
+
+        if ($discountType === 'fixed') {
+            $discountAmount = (int) round($discountValue);
+
+            if ($discountAmount > $baseBeforeDiscount) {
+                throw new \RuntimeException('Discount amount cannot be greater than total before discount.');
+            }
+
+            $discountPercentage = $itemsSubtotal > 0
+                ? round(($discountAmount / $itemsSubtotal) * 100, 2)
+                : 0.0;
+        } else {
+            $discountPercentage = round($discountValue, 2);
+            $discountAmount = (int) round($itemsSubtotal * ($discountPercentage / 100));
+        }
+
+        $grandTotal = (int) round($itemsSubtotal + $taxAmount + $shipping + $fee - $discountAmount);
+
+        if ($grandTotal < 0) {
+            throw new \RuntimeException('Grand Total cannot be negative.');
+        }
+
+        return [
+            'percentage' => (float) $discountPercentage,
+            'amount' => (int) $discountAmount,
+            'grand_total' => (int) $grandTotal,
         ];
     }
 
@@ -302,8 +373,9 @@ class SaleOrderController extends Controller
                 'note' => 'nullable|string|max:5000',
 
                 'tax_percentage' => 'required|numeric|min:0|max:100',
-                'discount_percentage' => 'required|numeric|min:0|max:100',
-                'auto_discount' => 'nullable|in:1',
+                'discount_type' => 'required|in:fixed,percentage',
+                'header_discount_value' => 'required|numeric|min:0',
+                'discount_percentage' => 'nullable|numeric|min:0|max:100',
 
                 'shipping_amount' => 'required|integer|min:0',
                 'fee_amount' => 'required|integer|min:0',
@@ -324,6 +396,7 @@ class SaleOrderController extends Controller
                 'items.*.price' => 'nullable|integer|min:0',
                 'items.*.original_price' => 'nullable|integer|min:0',
                 'items.*.unit_price' => 'nullable|integer|min:0',
+                'items.*.discount_value' => 'nullable|numeric|min:0',
                 'items.*.product_discount_amount' => 'nullable|integer|min:0',
                 'items.*.product_discount_type' => 'nullable|in:fixed,percentage',
                 'items.*.sub_total' => 'nullable|integer|min:0',
@@ -404,26 +477,8 @@ class SaleOrderController extends Controller
                 $normalizedItems = $itemSnapshot['items'];
                 $qtyByProduct = $itemSnapshot['qty_by_product'];
                 $sellSubtotal = (int) $itemSnapshot['sell_subtotal'];
-                $masterSubtotal = (int) $itemSnapshot['master_subtotal'];
 
                 if (empty($qtyByProduct)) abort(422, 'Items are empty.');
-
-                $autoDiscount = (string) $request->auto_discount === '1';
-                $requestedDiscountPct = max(0, min(100, (float) $request->discount_percentage));
-
-                $priceDiffDiscountAmount = max(0, (int)$masterSubtotal - (int)$sellSubtotal);
-
-                if ($autoDiscount) {
-                    $discountAmount = (int) $priceDiffDiscountAmount;
-                    $discountPct = 0.0;
-
-                    if ($masterSubtotal > 0 && $discountAmount > 0) {
-                        $discountPct = round(($discountAmount / $masterSubtotal) * 100, 2);
-                    }
-                } else {
-                    $discountPct = (float) $requestedDiscountPct;
-                    $discountAmount = (int) round($sellSubtotal * ($discountPct / 100));
-                }
 
                 // totals
                 $taxPct = (float) $request->tax_percentage;
@@ -431,7 +486,10 @@ class SaleOrderController extends Controller
                 $fee = (int) $request->fee_amount;
 
                 $taxAmount = (int) round($sellSubtotal * ($taxPct / 100));
-                $grandTotal = (int) round($sellSubtotal + $taxAmount + $shipping + $fee - ($autoDiscount ? 0 : $discountAmount));
+                $headerDiscount = $this->resolveHeaderDiscount($request, $sellSubtotal, $taxAmount, $shipping, $fee);
+                $discountPct = (float) $headerDiscount['percentage'];
+                $discountAmount = (int) $headerDiscount['amount'];
+                $grandTotal = (int) $headerDiscount['grand_total'];
 
                 // ==========================
                 // Deposit planned (max)
@@ -884,8 +942,9 @@ class SaleOrderController extends Controller
                 'note' => 'nullable|string|max:5000',
 
                 'tax_percentage' => 'required|numeric|min:0|max:100',
-                'discount_percentage' => 'required|numeric|min:0|max:100',
-                'auto_discount' => 'nullable|in:1',
+                'discount_type' => 'required|in:fixed,percentage',
+                'header_discount_value' => 'required|numeric|min:0',
+                'discount_percentage' => 'nullable|numeric|min:0|max:100',
 
                 'shipping_amount' => 'required|integer|min:0',
                 'fee_amount' => 'required|integer|min:0',
@@ -901,6 +960,7 @@ class SaleOrderController extends Controller
                 'items.*.price' => 'nullable|integer|min:0',
                 'items.*.original_price' => 'nullable|integer|min:0',
                 'items.*.unit_price' => 'nullable|integer|min:0',
+                'items.*.discount_value' => 'nullable|numeric|min:0',
                 'items.*.product_discount_amount' => 'nullable|integer|min:0',
                 'items.*.product_discount_type' => 'nullable|in:fixed,percentage',
                 'items.*.sub_total' => 'nullable|integer|min:0',
@@ -951,27 +1011,9 @@ class SaleOrderController extends Controller
                 $normalizedItems = $itemSnapshot['items'];
                 $qtyByProduct = $itemSnapshot['qty_by_product'];
                 $sellSubtotal = (int) $itemSnapshot['sell_subtotal'];
-                $masterSubtotal = (int) $itemSnapshot['master_subtotal'];
 
                 if (empty($qtyByProduct)) {
                     throw new \RuntimeException('Items are empty.');
-                }
-
-                $autoDiscount = (string) $request->auto_discount === '1';
-                $requestedDiscountPct = max(0, min(100, (float) $request->discount_percentage));
-
-                $priceDiffDiscountAmount = max(0, (int) $masterSubtotal - (int) $sellSubtotal);
-
-                if ($autoDiscount) {
-                    $discountAmount = (int) $priceDiffDiscountAmount;
-                    $discountPct = 0.0;
-
-                    if ($masterSubtotal > 0 && $discountAmount > 0) {
-                        $discountPct = round(($discountAmount / $masterSubtotal) * 100, 2);
-                    }
-                } else {
-                    $discountPct = (float) $requestedDiscountPct;
-                    $discountAmount = (int) round($sellSubtotal * ($discountPct / 100));
                 }
 
                 $taxPct = (float) $request->tax_percentage;
@@ -979,29 +1021,17 @@ class SaleOrderController extends Controller
                 $fee = (int) $request->fee_amount;
 
                 $taxAmount = (int) round($sellSubtotal * ($taxPct / 100));
-                $grandTotal = (int) round($sellSubtotal + $taxAmount + $shipping + $fee - ($autoDiscount ? 0 : $discountAmount));
+                $headerDiscount = $this->resolveHeaderDiscount($request, $sellSubtotal, $taxAmount, $shipping, $fee);
+                $discountPct = (float) $headerDiscount['percentage'];
+                $discountAmount = (int) $headerDiscount['amount'];
+                $grandTotal = (int) $headerDiscount['grand_total'];
 
-                // deposit (same rule)
-                $depositPct = (float) ($request->deposit_percentage ?? 0);
-                $depositPct = max(0, min(100, $depositPct));
-                $depositAmountInput = $request->deposit_amount;
-                $depositAmount = (int) (is_numeric($depositAmountInput) ? $depositAmountInput : 0);
-
-                if ($depositAmount <= 0 && $depositPct > 0) {
-                    $depositAmount = (int) round($grandTotal * ($depositPct / 100));
+                if ((int) ($saleOrder->deposit_amount ?? 0) > $grandTotal) {
+                    throw new \RuntimeException('Existing Deposit amount cannot be greater than Grand Total.');
                 }
 
-                if ($depositAmount < 0) $depositAmount = 0;
-                if ($depositAmount > $grandTotal) {
-                    throw new \RuntimeException('Deposit amount cannot be greater than Grand Total.');
-                }
-
-                $depositCode = $request->deposit_code ? (string) $request->deposit_code : null;
-                $depositPaymentMethod = $request->deposit_payment_method ? (string) $request->deposit_payment_method : null;
-
-                if ($depositAmount > 0) {
-                    if (empty($depositCode)) throw new \RuntimeException('Deposit To is required when Deposit > 0.');
-                    if (empty($depositPaymentMethod)) throw new \RuntimeException('Deposit Payment Method is required when Deposit > 0.');
+                if ((int) ($saleOrder->deposit_received_amount ?? 0) > $grandTotal) {
+                    throw new \RuntimeException('Existing DP Received cannot be greater than Grand Total.');
                 }
 
                 $saleOrder->update([
@@ -1022,10 +1052,11 @@ class SaleOrderController extends Controller
                     'subtotal_amount' => (int) $sellSubtotal,
                     'total_amount' => (int) $grandTotal,
 
-                    'deposit_percentage' => $depositPct,
-                    'deposit_amount' => (int) $depositAmount,
-                    'deposit_payment_method' => $depositPaymentMethod,
-                    'deposit_code' => $depositCode,
+                    'deposit_percentage' => (float) ($saleOrder->deposit_percentage ?? 0),
+                    'deposit_amount' => (int) ($saleOrder->deposit_amount ?? 0),
+                    'deposit_payment_method' => $saleOrder->deposit_payment_method,
+                    'deposit_code' => $saleOrder->deposit_code,
+                    'deposit_received_amount' => (int) ($saleOrder->deposit_received_amount ?? 0),
                 ]);
 
                 // replace items

@@ -69,6 +69,7 @@ class SaleController extends Controller
         $soTaxAmount = max(0, (int) ($saleOrder->tax_amount ?? 0));
         $soShip = max(0, (int) ($saleOrder->shipping_amount ?? 0));
         $soFee = max(0, (int) ($saleOrder->fee_amount ?? 0));
+        $soHeaderDiscount = max(0, (int) ($soSubtotal + $soTaxAmount + $soShip + $soFee - $soGrand));
         $dpTotalReceived = max(0, (int) ($saleOrder->deposit_received_amount ?? 0));
 
         $prevSubtotal = $this->getPrevInvoiceItemsSubtotalForSO((int) $saleOrder->id, $branchId);
@@ -76,8 +77,9 @@ class SaleController extends Controller
         $taxAlloc = $this->calcCumulativeAlloc($soTaxAmount, $soSubtotal, $prevSubtotal, $invoiceItemsSubtotal);
         $shipAlloc = $this->calcCumulativeAlloc($soShip, $soSubtotal, $prevSubtotal, $invoiceItemsSubtotal);
         $feeAlloc = $this->calcCumulativeAlloc($soFee, $soSubtotal, $prevSubtotal, $invoiceItemsSubtotal);
+        $discountAlloc = $this->calcCumulativeAlloc($soHeaderDiscount, $soSubtotal, $prevSubtotal, $invoiceItemsSubtotal);
 
-        $invoiceGrand = max(0, (int) ($invoiceItemsSubtotal + $taxAlloc + $shipAlloc + $feeAlloc));
+        $invoiceGrand = max(0, (int) ($invoiceItemsSubtotal + $taxAlloc + $shipAlloc + $feeAlloc - $discountAlloc));
 
         $dpAlloc = 0;
         if ($dpTotalReceived > 0 && $soGrand > 0 && $invoiceGrand > 0) {
@@ -90,6 +92,7 @@ class SaleController extends Controller
             'tax_amount' => (int) $taxAlloc,
             'shipping_amount' => (int) $shipAlloc,
             'fee_amount' => (int) $feeAlloc,
+            'discount_amount' => (int) $discountAlloc,
             'grand_total' => (int) $invoiceGrand,
             'dp_allocated_amount' => (int) $dpAlloc,
             'dp_total_received' => (int) $dpTotalReceived,
@@ -513,9 +516,11 @@ class SaleController extends Controller
             $taxAlloc = (int) ($alloc['tax_amount'] ?? 0);
             $shipAlloc = (int) ($alloc['shipping_amount'] ?? 0);
             $feeAlloc = (int) ($alloc['fee_amount'] ?? 0);
+            $discountAlloc = (int) ($alloc['discount_amount'] ?? 0);
             $invoiceEstimatedGrand = (int) ($alloc['grand_total'] ?? 0);
             $dpAllocated = (int) ($alloc['dp_allocated_amount'] ?? 0);
             $dpTotalReceived = (int) ($alloc['dp_total_received'] ?? 0);
+            $lockedFinancial['discount_info_invoice_est'] = $discountAlloc;
 
             // ✅ suggested pay now selalu ada (kalau DP=0 ya = total invoice)
             $suggestedPayNow = max(0, $invoiceEstimatedGrand - $dpAllocated);
@@ -806,10 +811,10 @@ class SaleController extends Controller
                     $allocTax = (int) ($alloc['tax_amount'] ?? 0);
                     $allocShip = (int) ($alloc['shipping_amount'] ?? 0);
                     $allocFee = (int) ($alloc['fee_amount'] ?? 0);
+                    $allocDiscount = (int) ($alloc['discount_amount'] ?? 0);
 
-                    // ✅ jangan apply discount lagi.
                     $effectiveDiscPct = round((float) ($lockedSaleOrder->discount_percentage ?? 0), 2);
-                    $discountAmount = 0;
+                    $discountAmount = (int) $allocDiscount;
 
                     $effectiveTaxPct = round((float) ($lockedSaleOrder->tax_percentage ?? 0), 2);
 

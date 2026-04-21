@@ -17,17 +17,10 @@
     if (!is_array($items)) $items = [];
 
     $oldTax = old('tax_percentage', (float)($saleOrder->tax_percentage ?? 0));
-    $oldDiscount = old('discount_percentage', (float)($saleOrder->discount_percentage ?? 0));
+    $oldDiscountType = old('discount_type', 'percentage');
+    $oldHeaderDiscountValue = old('header_discount_value', (float)($saleOrder->discount_percentage ?? 0));
     $oldShipping = old('shipping_amount', (int)($saleOrder->shipping_amount ?? 0));
     $oldFee = old('fee_amount', (int)($saleOrder->fee_amount ?? 0));
-
-    $baseGrandBeforeDiscount = (int)($saleOrder->subtotal_amount ?? 0)
-        + (int)($saleOrder->tax_amount ?? 0)
-        + (int)($saleOrder->fee_amount ?? 0)
-        + (int)($saleOrder->shipping_amount ?? 0);
-    $storedOrderDiscountApplied = max(0, $baseGrandBeforeDiscount - (int)($saleOrder->total_amount ?? 0));
-
-    $oldAutoDiscount = old('auto_discount', $storedOrderDiscountApplied > 0 ? '' : '1');
 
     // deposit readonly display
     $dpPct = (float)($saleOrder->deposit_percentage ?? 0);
@@ -143,24 +136,28 @@
                             </div>
 
                             <div class="col-lg-4 mb-3">
-                                <div class="d-flex align-items-center justify-content-between">
-                                    <label class="form-label mb-0">Discount (%)</label>
-
-                                    <label class="mb-0 small d-flex align-items-center gap-2">
-                                        <input type="checkbox" name="auto_discount" id="so_auto_discount" value="1"
-                                            {{ (string)$oldAutoDiscount === '1' ? 'checked' : '' }}>
-                                        Auto (from price diff)
-                                    </label>
+                                <label class="form-label">Header Discount</label>
+                                <div class="input-group">
+                                    <input type="text"
+                                           inputmode="decimal"
+                                           placeholder="0"
+                                           name="header_discount_value" id="so_header_discount_value"
+                                           class="form-control"
+                                           style="flex: 0 0 70%; max-width: 70%;"
+                                           value="{{ $oldHeaderDiscountValue }}" required>
+                                    <select name="discount_type" id="so_discount_type"
+                                            class="form-control"
+                                            style="flex: 0 0 30%; max-width: 30%;"
+                                            required>
+                                        <option value="fixed" {{ $oldDiscountType === 'fixed' ? 'selected' : '' }}>Rp</option>
+                                        <option value="percentage" {{ $oldDiscountType !== 'fixed' ? 'selected' : '' }}>%</option>
+                                    </select>
                                 </div>
-
-                                <input type="text"
-                                       inputmode="decimal"
-                                       placeholder="0"
-                                       name="discount_percentage" id="so_discount_percentage"
-                                       class="form-control" value="{{ $oldDiscount }}" required>
+                                <input type="hidden" name="discount_percentage" id="so_discount_percentage"
+                                       value="{{ $oldDiscountType === 'fixed' ? 0 : $oldHeaderDiscountValue }}">
 
                                 <div class="small text-muted">
-                                    Auto: informasi dari selisih Unit vs Net per item. Manual: discount order-level mengurangi Grand Total.
+                                    Header discount terpisah dari item discount per baris.
                                 </div>
                             </div>
 
@@ -212,7 +209,7 @@
 
                                 <div class="small text-muted">
                                     Grand Total dihitung dari item (qty × sell price) + tax + fee + shipping.<br>
-                                    Item discount sudah masuk ke Net Price per baris. Header discount hanya mengurangi total saat Auto OFF.
+                                    Item discount sudah masuk ke Net Price per baris. Header discount mengurangi Grand Total.
                                 </div>
                             </div>
                         </div>
@@ -298,59 +295,38 @@
     function soComputeSubtotalSell(rows) {
         return rows.reduce((sum, r) => sum + (r.qty * r.price), 0);
     }
-    function soComputeDiffDiscount(rows) {
-        return rows.reduce((sum, r) => {
-            const base = r.orig > 0 ? r.orig : r.price;
-            const diff = Math.max(0, base - r.price);
-            return sum + (r.qty * diff);
-        }, 0);
-    }
-    function soComputeOriginalSubtotal(rows) {
-        return rows.reduce((sum, r) => sum + (r.qty * (r.orig > 0 ? r.orig : r.price)), 0);
-    }
+    function soComputeHeaderDiscount(subtotalSell, taxAmt, fee, shipping) {
+        const type = document.getElementById('so_discount_type')?.value === 'fixed' ? 'fixed' : 'percentage';
+        const valueEl = document.getElementById('so_header_discount_value');
+        const pctEl = document.getElementById('so_discount_percentage');
+        const rawValue = soParseFloat(valueEl?.value);
 
-    function soIsAutoDiscount() {
-        return !!document.getElementById('so_auto_discount')?.checked;
-    }
-    function soApplyAutoDiscountPercentFromPriceDiff(rows) {
-        const discEl = document.getElementById('so_discount_percentage');
-        if (!discEl) return;
-
-        const originalSubtotal = soComputeOriginalSubtotal(rows);
-        if (originalSubtotal <= 0) {
-            discEl.value = soToFixed2(0);
-            return;
+        if (type === 'fixed') {
+            const base = Math.max(0, subtotalSell + taxAmt + fee + shipping);
+            const amount = Math.min(Math.max(0, Math.round(rawValue)), base);
+            if (pctEl) pctEl.value = subtotalSell > 0 ? soToFixed2((amount / subtotalSell) * 100) : '0';
+            return amount;
         }
 
-        const diffDiscount = soComputeDiffDiscount(rows);
-        let pct = (diffDiscount / originalSubtotal) * 100;
-        pct = soClamp(pct, 0, 100);
-        discEl.value = soToFixed2(pct);
+        const pct = soClamp(rawValue, 0, 100);
+        if (valueEl) valueEl.value = soNormalizeDecimalString(valueEl.value);
+        if (pctEl) pctEl.value = soToFixed2(pct);
+        return Math.round(subtotalSell * (pct / 100));
     }
 
     function soRecalc() {
         const rows = soGetRows();
 
         const subtotalSell = soComputeSubtotalSell(rows);
-        const diffDiscount = soComputeDiffDiscount(rows);
-
-        if (soIsAutoDiscount()) {
-            soApplyAutoDiscountPercentFromPriceDiff(rows);
-        }
 
         const taxPct  = soClamp(soParseFloat(document.getElementById('so_tax_percentage')?.value), 0, 100);
-        const discPct = soClamp(soParseFloat(document.getElementById('so_discount_percentage')?.value), 0, 100);
-
         const fee      = Math.max(0, soParseInt(document.getElementById('so_fee_amount')?.value));
         const shipping = Math.max(0, soParseInt(document.getElementById('so_shipping_amount')?.value));
 
         const taxAmt = Math.round(subtotalSell * (taxPct / 100));
+        const discAmt = soComputeHeaderDiscount(subtotalSell, taxAmt, fee, shipping);
 
-        let discAmt = 0;
-        if (soIsAutoDiscount()) discAmt = Math.round(diffDiscount);
-        else discAmt = Math.round(subtotalSell * (discPct / 100));
-
-        const grand = Math.round(subtotalSell + taxAmt + fee + shipping - (soIsAutoDiscount() ? 0 : discAmt));
+        const grand = Math.max(0, Math.round(subtotalSell + taxAmt + fee + shipping - discAmt));
 
         document.getElementById('so_subtotal_text').innerText = soFormatRupiah(subtotalSell);
         document.getElementById('so_tax_text').innerText = soFormatRupiah(taxAmt);
@@ -361,7 +337,7 @@
     }
 
     document.addEventListener('DOMContentLoaded', function () {
-        const discEl = document.getElementById('so_discount_percentage');
+        const discEl = document.getElementById('so_header_discount_value');
         discEl?.addEventListener('input', function () {
             discEl.value = soNormalizeDecimalString(discEl.value);
         });
@@ -373,20 +349,28 @@
             if (
                 n.includes('[quantity]') ||
                 n.includes('[price]') ||
+                n.includes('[discount_value]') ||
                 id === 'so_tax_percentage' ||
-                id === 'so_discount_percentage' ||
+                id === 'so_header_discount_value' ||
                 id === 'so_fee_amount' ||
                 id === 'so_shipping_amount'
             ) {
-                if (id === 'so_discount_percentage') {
-                    const chk = document.getElementById('so_auto_discount');
-                    if (chk && chk.checked) chk.checked = false;
-                }
                 soRecalc();
             }
         });
 
+        document.addEventListener('change', function (e) {
+            const id = e.target?.id || '';
+            if (id === 'so_discount_type') soRecalc();
+        });
+
         soRecalc();
+
+        if (window.Livewire && typeof window.Livewire.hook === 'function') {
+            window.Livewire.hook('message.processed', () => {
+                soRecalc();
+            });
+        }
     });
 </script>
 @endpush
