@@ -1,0 +1,13 @@
+{
+    "name": "Crm",
+    "alias": "crm",
+    "description": "Customer Relationship Management (Phase 1)",
+    "keywords": ["crm"],
+    "priority": 0,
+    "providers": [
+        "Modules\\Crm\\Providers\\CrmServiceProvider"
+    ],
+    "aliases": {},
+    "files": [],
+    "requires": []
+}

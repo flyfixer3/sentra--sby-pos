@@ -40,6 +40,22 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('/transactions', [AccountingTransactionController::class, 'upsert']);
     });
 
-
 });
 
+Route::middleware('auth:sanctum')->group(function () {
+    Route::get('/me', [\App\Http\Controllers\Api\MeController::class, 'me']);
+    Route::get('/branches', [\App\Http\Controllers\Api\MeController::class, 'branches']);
+});
+
+Route::middleware('auth:sanctum')->group(function () {
+});
+
+use Illuminate\Support\Facades\Gate;
+
+Route::middleware('auth:sanctum')->get('/_diag/gate', function () {
+    return response()->json([
+        'user' => auth('sanctum')->user()?->id,
+        'roles' => method_exists(auth('sanctum')->user(), 'getRoleNames') ? auth('sanctum')->user()->getRoleNames() : [],
+        'allows_show_leads' => Gate::allows('show_crm_leads'),
+    ]);
+});

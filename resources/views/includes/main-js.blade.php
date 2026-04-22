@@ -8,6 +8,8 @@
 
 @livewireScripts
 
+@include('includes.session-timeout')
+
 @stack('page_scripts')
 
 <script>

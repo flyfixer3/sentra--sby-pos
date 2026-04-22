@@ -16,3 +16,13 @@ yarn-error.log
 .vercel
 .DS_Store
 .codex
+
+# Local temp/debug artifacts
+/CON
+*.txt
+*.bak
+*.bak*
+temp*
+route_list*
+routes_dump*
+test-php.php

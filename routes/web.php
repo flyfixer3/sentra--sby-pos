@@ -19,6 +19,10 @@ Auth::routes(['register' => false]);
 Route::group(['middleware' => 'auth'], function () {
     Route::get('/home', 'HomeController@index')->name('home');
 
+    Route::post('/session/keep-alive', function () {
+        return response()->json(['ok' => true]);
+    })->name('session.keep-alive');
+
     Route::get('/sales-purchases/chart-data', 'HomeController@salesPurchasesChart')
         ->name('sales-purchases.chart');
 

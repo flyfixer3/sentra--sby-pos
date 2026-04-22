@@ -14,11 +14,23 @@ class AuthServiceProvider extends ServiceProvider
         $this->registerPolicies();
 
         Gate::before(function ($user, $ability) {
-            return $user->hasRole('Super Admin') ? true : null;
+            $roles = method_exists($user, 'getRoleNames')
+                ? $user->getRoleNames()->map(fn ($role) => strtolower((string) $role))->all()
+                : [];
+
+            return in_array('super admin', $roles, true) || in_array('administrator', $roles, true)
+                ? true
+                : null;
         });
 
         Gate::define('view_all_branches', function ($user) {
-            return $user->hasAnyRole(['Owner', 'Super Admin']);
+            $roles = method_exists($user, 'getRoleNames')
+                ? $user->getRoleNames()->map(fn ($role) => strtolower((string) $role))->all()
+                : [];
+
+            return in_array('owner', $roles, true)
+                || in_array('super admin', $roles, true)
+                || in_array('administrator', $roles, true);
         });
     }
 

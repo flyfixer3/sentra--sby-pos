@@ -15,11 +15,13 @@ return [
     |
     */
 
-    'paths' => ['*'],
+    'paths' => ['api/*', 'sanctum/csrf-cookie', 'masuk', 'logout', 'me', 'branches', 'crm/*'],
 
     'allowed_methods' => ['*'],
 
-    'allowed_origins' => ['*', 'http://localhost:3000','http://192.168.18.103:3000', 'http://test.dkiasys.com', 'https://test.dkiasys.com'],
+    // Restrict via env for production. Example:
+    // CORS_ALLOWED_ORIGINS=https://crm.example.com,https://admin.example.com
+    'allowed_origins' => array_filter(array_map('trim', explode(',', env('CORS_ALLOWED_ORIGINS', 'http://localhost:3000,http://127.0.0.1:3000,http://localhost:3001,http://127.0.0.1:3001')))),
 
     'allowed_origins_patterns' => [],
 
@@ -27,8 +29,11 @@ return [
 
     'exposed_headers' => [],
 
-    'max_age' => 0,
+    'max_age' => 600,
 
-    'supports_credentials' => true,
+    // Using bearer tokens for API => not required, keep false by default
+    'supports_credentials' => (bool) env('CORS_SUPPORTS_CREDENTIALS', false),
 
 ];
+
+
