@@ -18,6 +18,7 @@ Route::group(['middleware' => 'auth'], function () {
     Route::get('/hpp-ledger', [HppLedgerController::class, 'index'])->name('hpp-ledger.index');
     Route::get('/defect-types', [DefectTypeController::class, 'index'])->name('defect-types.index');
     Route::post('/defect-types', [DefectTypeController::class, 'store'])->name('defect-types.store');
+    Route::delete('/defect-types', [DefectTypeController::class, 'destroy'])->name('defect-types.destroy');
     Route::get('/products/import', [ProductImportController::class, 'index'])->name('products.import.index');
     Route::get('/products/import/template', [ProductImportController::class, 'downloadTemplate'])->name('products.import.template');
     Route::post('/products/import', [ProductImportController::class, 'import'])->name('products.import.store');

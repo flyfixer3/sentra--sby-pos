@@ -4,6 +4,9 @@
 
     $canManageDefectTypes = $canManageDefectTypes
         ?? (auth()->check() && auth()->user()->hasAnyRole(['Administrator', 'Super Admin']));
+
+    $canDeleteDefectTypes = $canDeleteDefectTypes
+        ?? (auth()->check() && auth()->user()->hasAnyRole(['Administrator', 'Super Admin']));
 @endphp
 
 @once
@@ -41,6 +44,15 @@
             grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
             gap: 6px 12px;
         }
+        .defect-type-check-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 8px;
+            border: 1px solid rgba(0,0,0,.06);
+            border-radius: 8px;
+            padding: 4px 6px;
+        }
         .defect-type-check {
             display: flex;
             align-items: center;
@@ -48,9 +60,23 @@
             font-size: 12px;
             color: #212529;
             margin: 0;
+            flex: 1;
         }
         .defect-type-check input {
             margin: 0;
+        }
+        .defect-type-remove-btn {
+            border: 0;
+            background: transparent;
+            color: #adb5bd;
+            font-size: 14px;
+            line-height: 1;
+            padding: 2px 4px;
+            border-radius: 4px;
+        }
+        .defect-type-remove-btn:hover {
+            color: #dc3545;
+            background: rgba(220,53,69,.08);
         }
         .defect-type-add {
             margin-top: 10px;
@@ -73,7 +99,9 @@
 
             window.DEFECT_TYPE_OPTIONS = @json($defectTypeOptions);
             window.CAN_MANAGE_DEFECT_TYPES = @json((bool) $canManageDefectTypes);
+            window.CAN_DELETE_DEFECT_TYPES = @json((bool) $canDeleteDefectTypes);
             window.DEFECT_TYPE_CREATE_URL = @json(route('defect-types.store'));
+            window.DEFECT_TYPE_DELETE_URL = @json(route('defect-types.destroy'));
             window.DEFECT_TYPE_CSRF = @json(csrf_token());
 
             function escapeHtml(value) {
@@ -168,11 +196,18 @@
                 const options = normalizeDefectTypes(window.DEFECT_TYPE_OPTIONS || []);
                 list.innerHTML = options.map((label) => {
                     const checked = selected.includes(label) ? 'checked' : '';
+                    const removeHtml = window.CAN_DELETE_DEFECT_TYPES
+                        ? ('<button type="button" class="defect-type-remove-btn" data-defect-type="' + escapeHtml(label) + '" title="Remove defect type">&times;</button>')
+                        : '';
+
                     return ''
-                        + '<label class="defect-type-check">'
-                        + '  <input type="checkbox" class="defect-type-option" value="' + escapeHtml(label) + '" ' + checked + '>'
-                        + '  <span>' + escapeHtml(label) + '</span>'
-                        + '</label>';
+                        + '<div class="defect-type-check-row">'
+                        + '  <label class="defect-type-check">'
+                        + '    <input type="checkbox" class="defect-type-option" value="' + escapeHtml(label) + '" ' + checked + '>'
+                        + '    <span>' + escapeHtml(label) + '</span>'
+                        + '  </label>'
+                        + removeHtml
+                        + '</div>';
                 }).join('');
 
                 updatePickerSummary(picker, selected);
@@ -191,6 +226,59 @@
                 });
 
                 picker.addEventListener('click', async function (event) {
+                    const removeBtn = event.target.closest('.defect-type-remove-btn');
+                    if (removeBtn) {
+                        event.preventDefault();
+                        if (!window.CAN_DELETE_DEFECT_TYPES) return;
+
+                        const note = picker.querySelector('.defect-type-add-note');
+                        const value = String(removeBtn.getAttribute('data-defect-type') || '').trim();
+                        if (value === '') return;
+
+                        if (!window.confirm('Remove defect type "' + value + '" from master list?')) return;
+
+                        removeBtn.disabled = true;
+                        if (note) note.textContent = 'Removing...';
+
+                        try {
+                            const response = await fetch(window.DEFECT_TYPE_DELETE_URL, {
+                                method: 'DELETE',
+                                headers: {
+                                    'Content-Type': 'application/json',
+                                    'Accept': 'application/json',
+                                    'X-CSRF-TOKEN': window.DEFECT_TYPE_CSRF,
+                                    'X-Requested-With': 'XMLHttpRequest'
+                                },
+                                body: JSON.stringify({ name: value })
+                            });
+
+                            const payload = await response.json();
+                            if (!response.ok || !payload || payload.success !== true) {
+                                throw new Error((payload && payload.message) ? payload.message : 'Failed to remove defect type.');
+                            }
+
+                            const removedName = String((payload.data && payload.data.name) ? payload.data.name : value).trim();
+
+                            window.DEFECT_TYPE_OPTIONS = normalizeDefectTypes(window.DEFECT_TYPE_OPTIONS || []).filter((entry) => (
+                                String(entry).trim().toLowerCase() !== removedName.toLowerCase()
+                            ));
+
+                            document.querySelectorAll('.defect-type-picker').forEach((targetPicker) => {
+                                const next = readSelectedFromPicker(targetPicker).filter((entry) => (
+                                    String(entry).trim().toLowerCase() !== removedName.toLowerCase()
+                                ));
+                                targetPicker.dataset.selected = JSON.stringify(normalizeDefectTypes(next));
+                                renderPickerChecklist(targetPicker);
+                            });
+
+                            if (note) note.textContent = 'Removed from master list.';
+                        } catch (error) {
+                            if (note) note.textContent = error.message || 'Failed to remove defect type.';
+                        }
+
+                        return;
+                    }
+
                     const button = event.target.closest('.defect-type-add-btn');
                     if (!button) return;
 
@@ -259,11 +347,18 @@
 
                 const checklistHtml = options.map((label) => {
                     const checked = values.includes(label) ? 'checked' : '';
+                    const removeHtml = window.CAN_DELETE_DEFECT_TYPES
+                        ? ('<button type="button" class="defect-type-remove-btn" data-defect-type="' + escapeHtml(label) + '" title="Remove defect type">&times;</button>')
+                        : '';
+
                     return ''
-                        + '<label class="defect-type-check">'
-                        + '  <input type="checkbox" class="defect-type-option" value="' + escapeHtml(label) + '" ' + checked + '>'
-                        + '  <span>' + escapeHtml(label) + '</span>'
-                        + '</label>';
+                        + '<div class="defect-type-check-row">'
+                        + '  <label class="defect-type-check">'
+                        + '    <input type="checkbox" class="defect-type-option" value="' + escapeHtml(label) + '" ' + checked + '>'
+                        + '    <span>' + escapeHtml(label) + '</span>'
+                        + '  </label>'
+                        + removeHtml
+                        + '</div>';
                 }).join('');
 
                 const addHtml = window.CAN_MANAGE_DEFECT_TYPES ? (
