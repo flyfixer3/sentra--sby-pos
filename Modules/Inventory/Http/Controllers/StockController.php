@@ -10,6 +10,7 @@ use Illuminate\Support\Facades\Schema;
 use Modules\Inventory\DataTables\StocksDataTable;
 use Modules\Branch\Entities\Branch;
 use Modules\Product\Entities\Warehouse;
+use Modules\Product\Entities\DefectType;
 
 class StockController extends Controller
 {
@@ -300,10 +301,25 @@ class StockController extends Controller
             ];
         })->values();
 
+        $defectTypes = collect();
+        if ($type === 'defect') {
+            $defectTypes = DefectType::query()
+                ->orderBy('name')
+                ->pluck('name')
+                ->map(function ($name) {
+                    return [
+                        'value' => (string) $name,
+                        'label' => (string) $name,
+                    ];
+                })
+                ->values();
+        }
+
         return response()->json([
             'success' => true,
             'warehouses' => $warehouses,
             'racks' => $racks,
+            'defect_types' => $defectTypes,
         ]);
     }
 
@@ -328,6 +344,12 @@ class StockController extends Controller
 
         $warehouseId = $request->filled('warehouse_id') ? (int) $request->warehouse_id : null;
         $rackId = $request->filled('rack_id') ? (int) $request->rack_id : null;
+        $selectedDefectTypes = collect((array) $request->get('defect_types', []))
+            ->map(fn ($value) => trim((string) $value))
+            ->filter()
+            ->unique()
+            ->values()
+            ->all();
 
         $toPhotoUrl = function (?string $photoPath): ?string {
             $photoPath = $photoPath ? trim($photoPath) : null;
@@ -376,7 +398,7 @@ class StockController extends Controller
                     'i.warehouse_id',
                     'i.rack_id',
                     'i.quantity',
-                    'i.defect_type',
+                    'i.defect_types',
                     'i.description',
                     'i.photo_path',
                     'i.reference_type',
@@ -394,9 +416,20 @@ class StockController extends Controller
             }
             if (!empty($warehouseId)) $q->where('i.warehouse_id', $warehouseId);
             if (!empty($rackId)) $q->where('i.rack_id', $rackId);
+            if (!empty($selectedDefectTypes)) {
+                $q->where(function ($qq) use ($selectedDefectTypes) {
+                    foreach ($selectedDefectTypes as $defectType) {
+                        $qq->orWhereJsonContains('i.defect_types', $defectType);
+                    }
+                });
+            }
 
             $rows = $q->get()->map(function ($r) use ($toPhotoUrl) {
                 $r->photo_url = $toPhotoUrl($r->photo_path ?? null);
+                $types = json_decode((string) ($r->defect_types ?? '[]'), true);
+                $types = is_array($types) ? array_values(array_filter(array_map('strval', $types))) : [];
+                $r->defect_types = $types;
+                $r->defect_types_text = !empty($types) ? implode(', ', $types) : '-';
                 return $r;
             });
 

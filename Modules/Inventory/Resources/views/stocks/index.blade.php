@@ -260,19 +260,36 @@
 
                 <div class="p-2 border rounded mb-3" style="background:#f8fafc;">
                     <div class="row g-2">
-                        <div class="col-md-4">
+                        <div class="col-md-3">
                             <label class="small text-muted mb-1 d-block">Warehouse</label>
                             <select id="qWarehouse" class="form-control form-control-modern">
                                 <option value="">All Warehouses</option>
                             </select>
                         </div>
-                        <div class="col-md-4">
+                        <div class="col-md-3">
                             <label class="small text-muted mb-1 d-block">Rack</label>
                             <select id="qRack" class="form-control form-control-modern">
                                 <option value="">All Racks</option>
                             </select>
                         </div>
-                        <div class="col-md-4 d-flex align-items-end">
+                        <div class="col-md-3" id="qDefectTypeFilterWrap" style="">
+                            <label class="small text-muted mb-1 d-block">Defect Type</label>
+                            <div class="dropdown q-defect-type-filter">
+                                <button class="btn form-control form-control-modern q-defect-type-trigger w-100 text-left d-flex align-items-center justify-content-between"
+                                        type="button"
+                                        id="qDefectTypeDropdown"
+                                        data-toggle="dropdown"
+                                        aria-haspopup="true"
+                                        aria-expanded="false">
+                                    <span id="qDefectTypeSummary">All Defect Types</span>
+                                    <span class="text-muted">▾</span>
+                                </button>
+                                <div class="dropdown-menu p-2 w-100" aria-labelledby="qDefectTypeDropdown" id="qDefectTypeMenu">
+                                    <div class="small text-muted px-1">Loading...</div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-3 d-flex align-items-end">
                             <button class="btn btn-primary btn-modern w-100" type="button" onclick="reloadQualityTable()">
                                 Apply Filter
                             </button>
@@ -361,6 +378,40 @@
         border: 1px solid rgba(59, 130, 246, .25);
         background: rgba(59, 130, 246, .08);
     }
+    .q-defect-type-filter .dropdown-menu{
+        max-height: 240px;
+        overflow-y: auto;
+        border-radius: 10px;
+        border-color: #e2e8f0;
+        box-shadow: 0 10px 24px rgba(15, 23, 42, .12);
+    }
+    .q-defect-type-filter .q-defect-type-trigger{
+        background: #fff;
+        color: #495057;
+        font-weight: 400;
+        height: calc(1.5em + .75rem + 2px);
+        padding: .375rem .75rem;
+        box-shadow: none;
+    }
+    .q-defect-type-filter .q-defect-type-trigger:hover{
+        background: #fff;
+        color: #495057;
+    }
+    .q-defect-type-filter .q-defect-type-trigger:focus{
+        border-color: #93c5fd;
+        box-shadow: 0 0 0 0.2rem rgba(147,197,253,0.25);
+    }
+    .q-defect-type-filter .form-check{
+        padding: 6px 8px 6px 28px;
+        margin: 0;
+        border-radius: 8px;
+    }
+    .q-defect-type-filter .form-check:hover{
+        background: #f8fafc;
+    }
+    .q-defect-type-filter .form-check-input{
+        margin-top: .2rem;
+    }
 </style>
 @endpush
 
@@ -422,6 +473,7 @@ var qType = '';
 var qProductId = 0;
 var qBranchId = 0;
 var qIsAll = 0;
+var qDefectTypeOptions = [];
 
 function resetStockDetailUI(){
     document.getElementById('stockDetailBody').innerHTML =
@@ -440,6 +492,8 @@ function resetQualityUI(){
         '<tr><td colspan="9" class="text-center text-muted">Memuat data...</td></tr>';
     document.getElementById('qWarehouse').innerHTML = '<option value="">All Warehouses</option>';
     document.getElementById('qRack').innerHTML = '<option value="">All Racks</option>';
+    qDefectTypeOptions = [];
+    renderQualityDefectTypeFilter([]);
 }
 
 function resetStockDetailFilters(){
@@ -455,6 +509,79 @@ function fillOptions(selectEl, items, placeholderAllText){
         html += '<option value="' + escapeHtml(it.value) + '">' + escapeHtml(it.label) + '</option>';
     });
     selectEl.innerHTML = html;
+}
+
+function getSelectedQualityDefectTypes(){
+    return Array.prototype.slice.call(document.querySelectorAll('.q-defect-type-checkbox:checked'))
+        .map(function(input){ return input.value || ''; })
+        .filter(function(value){ return value !== ''; });
+}
+
+function updateQualityDefectTypeSummary(){
+    var selected = getSelectedQualityDefectTypes();
+    var summaryEl = document.getElementById('qDefectTypeSummary');
+    if (!summaryEl) return;
+
+    if (selected.length === 0) {
+        summaryEl.textContent = 'All Defect Types';
+    } else if (selected.length === 1) {
+        summaryEl.textContent = selected[0];
+    } else {
+        summaryEl.textContent = selected.length + ' selected';
+    }
+}
+
+function renderQualityDefectTypeFilter(items){
+    var wrap = document.getElementById('qDefectTypeFilterWrap');
+    var menu = document.getElementById('qDefectTypeMenu');
+    if (!wrap || !menu) return;
+
+    if (qType !== 'defect') {
+        wrap.style.display = 'none';
+        menu.innerHTML = '';
+        updateQualityDefectTypeSummary();
+        return;
+    }
+
+    wrap.style.display = '';
+    qDefectTypeOptions = items || [];
+
+    if (!qDefectTypeOptions.length) {
+        menu.innerHTML = '<div class="small text-muted px-1">No defect types available.</div>';
+        updateQualityDefectTypeSummary();
+        return;
+    }
+
+    var html = ''
+        + '<div class="d-flex justify-content-between align-items-center mb-2 px-1">'
+        + '  <span class="small text-muted">Match any selected type</span>'
+        + '  <button type="button" class="btn btn-link btn-sm p-0" onclick="clearQualityDefectTypes()">Clear</button>'
+        + '</div>';
+
+    qDefectTypeOptions.forEach(function(it, index){
+        var value = String(it.value || '');
+        var id = 'qDefectType_' + index;
+        html += ''
+            + '<label class="form-check" for="' + escapeHtml(id) + '">'
+            + '  <input class="form-check-input q-defect-type-checkbox" type="checkbox" value="' + escapeHtml(value) + '" id="' + escapeHtml(id) + '">'
+            + '  <span class="form-check-label">' + escapeHtml(it.label || value) + '</span>'
+            + '</label>';
+    });
+
+    menu.innerHTML = html;
+    Array.prototype.slice.call(menu.querySelectorAll('.q-defect-type-checkbox')).forEach(function(input){
+        input.addEventListener('change', updateQualityDefectTypeSummary);
+    });
+
+    updateQualityDefectTypeSummary();
+}
+
+function clearQualityDefectTypes(){
+    Array.prototype.slice.call(document.querySelectorAll('.q-defect-type-checkbox')).forEach(function(input){
+        input.checked = false;
+    });
+    updateQualityDefectTypeSummary();
+    reloadQualityTable();
 }
 
 // ✅ buka modal stock detail dari row datatable
@@ -603,6 +730,7 @@ function loadQualityOptionsAndData(){
         if (res && res.success) {
             fillOptions(document.getElementById('qWarehouse'), res.warehouses, 'All Warehouses');
             fillOptions(document.getElementById('qRack'), res.racks, 'All Racks');
+            renderQualityDefectTypeFilter(res.defect_types || []);
         }
         reloadQualityTable();
     })
@@ -621,9 +749,13 @@ function reloadQualityTable(){
 
     var wh = (document.getElementById('qWarehouse') || {}).value || '';
     var rack = (document.getElementById('qRack') || {}).value || '';
+    var defectTypes = qType === 'defect' ? getSelectedQualityDefectTypes() : [];
 
     if (wh) qs.set('warehouse_id', wh);
     if (rack) qs.set('rack_id', rack);
+    defectTypes.forEach(function(defectType){
+        qs.append('defect_types[]', defectType);
+    });
 
     fetch('/inventory/stocks/quality-details/' + qType + '/' + qProductId + '?' + qs.toString(), {
         headers: { 'X-Requested-With':'XMLHttpRequest', 'Accept':'application/json' }
@@ -654,7 +786,7 @@ function reloadQualityTable(){
             var descText = '-';
 
             if (qType === 'defect') {
-                typeText = escapeHtml(row.defect_type || '-');
+                typeText = escapeHtml(row.defect_types_text || '-');
                 descText = escapeHtml(row.description || '-');
             } else {
                 typeText = escapeHtml(row.reason || '-');
