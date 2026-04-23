@@ -272,7 +272,7 @@
                                 <option value="">All Racks</option>
                             </select>
                         </div>
-                        <div class="col-md-3" id="qDefectTypeFilterWrap" style="">
+                        <div class="col-md-3" id="qDefectTypeFilterWrap" style="display:none;">
                             <label class="small text-muted mb-1 d-block">Defect Type</label>
                             <div class="dropdown q-defect-type-filter">
                                 <button class="btn form-control form-control-modern q-defect-type-trigger w-100 text-left d-flex align-items-center justify-content-between"
