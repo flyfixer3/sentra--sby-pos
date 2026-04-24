@@ -122,20 +122,30 @@ class Checkout extends Component
             return;
         }
 
+        $cart_item = Cart::instance($this->cart_instance)->get($row_id);
+        if (!$cart_item) {
+            return;
+        }
+
+        $options = (array) $cart_item->options;
+
         Cart::instance($this->cart_instance)->update($row_id, $this->quantity[$product_id]);
 
         $cart_item = Cart::instance($this->cart_instance)->get($row_id);
+        if (!$cart_item) {
+            return;
+        }
 
         Cart::instance($this->cart_instance)->update($row_id, [
             'options' => [
                 'sub_total'             => $cart_item->price * $cart_item->qty,
-                'code'                  => $cart_item->options->code,
-                'stock'                 => $cart_item->options->stock,
-                'unit'                  => $cart_item->options->unit,
-                'product_tax'           => $cart_item->options->product_tax,
-                'unit_price'            => $cart_item->options->unit_price,
-                'product_discount'      => $cart_item->options->product_discount,
-                'product_discount_type' => $cart_item->options->product_discount_type,
+                'code'                  => $options['code'] ?? null,
+                'stock'                 => $options['stock'] ?? 0,
+                'unit'                  => $options['unit'] ?? null,
+                'product_tax'           => $options['product_tax'] ?? 0,
+                'unit_price'            => $options['unit_price'] ?? $cart_item->price,
+                'product_discount'      => $options['product_discount'] ?? 0,
+                'product_discount_type' => $options['product_discount_type'] ?? 'fixed',
             ]
         ]);
     }

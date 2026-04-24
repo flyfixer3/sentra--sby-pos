@@ -388,6 +388,18 @@ class ProductCartSale extends Component
         $reservedStock = (int) ($cart_item->options->reserved_stock ?? 0);
         $sellableStock = (int) ($cart_item->options->sellable_stock ?? 0);
         $isDeliveryInvoice = $this->isSaleDeliveryInvoiceRow($cart_item);
+        $code = $cart_item->options->code;
+        $unit = $cart_item->options->unit;
+        $productTax = $cart_item->options->product_tax;
+        $productCost = $cart_item->options->product_cost;
+        $unitPrice = $cart_item->options->unit_price;
+        $productDiscount = $cart_item->options->product_discount;
+        $productDiscountType = $cart_item->options->product_discount_type;
+        $invoiceSource = $cart_item->options->invoice_source ?? null;
+        $deliveredQty = (int) ($cart_item->options->delivered_qty ?? 0);
+        $alreadyInvoicedQty = (int) ($cart_item->options->already_invoiced_qty ?? 0);
+        $remainingInvoiceableQty = (int) ($cart_item->options->remaining_invoiceable_qty ?? 0);
+        $currentStockQty = (int) ($cart_item->options->current_stock_qty ?? 0);
 
         if ($isDeliveryInvoice) {
             $stock = max(0, (int) ($cart_item->options->remaining_invoiceable_qty ?? 0));
@@ -424,27 +436,27 @@ class ProductCartSale extends Component
         Cart::instance($this->cart_instance)->update($row_id, [
             'options' => [
                 'sub_total'             => $subTotal,
-                'code'                  => $cart_item->options->code,
+                'code'                  => $code,
                 'stock'                 => (int) $stock,
                 'reserved_stock'        => (int) $reservedStock,
                 'sellable_stock'        => (int) $sellableStock,
                 'stock_scope'           => $stockScope,
-                'unit'                  => $cart_item->options->unit,
+                'unit'                  => $unit,
 
                 // ✅ jangan di-null lagi, preserve
                 'warehouse_id'          => $warehouseId ?: null,
                 'warehouse_name'        => $warehouseName,
-                'invoice_source'        => $cart_item->options->invoice_source ?? null,
-                'delivered_qty'         => (int) ($cart_item->options->delivered_qty ?? 0),
-                'already_invoiced_qty'  => (int) ($cart_item->options->already_invoiced_qty ?? 0),
-                'remaining_invoiceable_qty' => (int) ($cart_item->options->remaining_invoiceable_qty ?? 0),
-                'current_stock_qty'     => (int) ($cart_item->options->current_stock_qty ?? 0),
+                'invoice_source'        => $invoiceSource,
+                'delivered_qty'         => $deliveredQty,
+                'already_invoiced_qty'  => $alreadyInvoicedQty,
+                'remaining_invoiceable_qty' => $remainingInvoiceableQty,
+                'current_stock_qty'     => $currentStockQty,
 
-                'product_tax'           => $cart_item->options->product_tax,
-                'product_cost'          => $cart_item->options->product_cost,
-                'unit_price'            => $cart_item->options->unit_price,
-                'product_discount'      => $cart_item->options->product_discount,
-                'product_discount_type' => $cart_item->options->product_discount_type,
+                'product_tax'           => $productTax,
+                'product_cost'          => $productCost,
+                'unit_price'            => $unitPrice,
+                'product_discount'      => $productDiscount,
+                'product_discount_type' => $productDiscountType,
             ]
         ]);
 

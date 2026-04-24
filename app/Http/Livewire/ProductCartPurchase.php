@@ -320,6 +320,38 @@ class ProductCartPurchase extends Component
         return round(max(0, $grossPrice - $discountAmount), 2);
     }
 
+    private function resolveDiscountPricing($row, int $productId, ?float $grossPrice = null): array
+    {
+        $grossPrice = $grossPrice !== null
+            ? max(0, round($grossPrice, 2))
+            : $this->resolveGrossPrice($row);
+
+        $discountType = (string) ($this->discount_type[$productId] ?? ($row->options->product_discount_type ?? 'fixed'));
+        $discountType = in_array($discountType, ['fixed', 'percentage'], true) ? $discountType : 'fixed';
+
+        if (array_key_exists($productId, (array) $this->item_discount)) {
+            $discountInput = (float) ($this->item_discount[$productId] ?? 0);
+        } elseif ($discountType === 'percentage') {
+            $storedDiscount = (float) ($row->options->product_discount ?? 0);
+            $discountInput = $grossPrice > 0 ? round(($storedDiscount / $grossPrice) * 100, 2) : 0;
+        } else {
+            $discountInput = (float) ($row->options->product_discount ?? 0);
+        }
+
+        $discountAmount = $this->calculateDiscountAmount($grossPrice, $discountType, $discountInput);
+        $netPrice = $this->calculateNetPrice($grossPrice, $discountAmount);
+
+        return [
+            'type' => $discountType,
+            'input' => $discountType === 'percentage'
+                ? min(100, max(0, $discountInput))
+                : $discountAmount,
+            'amount' => $discountAmount,
+            'gross' => $grossPrice,
+            'net' => $netPrice,
+        ];
+    }
+
     private function findCartRow($row_id, $product_id = null)
     {
         $cart = Cart::instance($this->cart_instance);
@@ -471,9 +503,10 @@ class ProductCartPurchase extends Component
 
         $context = $this->calculateStockContext((int) $product_id, $warehouseId);
 
-        $grossPrice = $this->resolveGrossPrice($cart_item);
-        $discountAmount = (float) ($cart_item->options->product_discount ?? 0);
-        $netPrice = $this->calculateNetPrice($grossPrice, $discountAmount);
+        $pricing = $this->resolveDiscountPricing($cart_item, (int) $product_id);
+        $grossPrice = $pricing['gross'];
+        $discountAmount = $pricing['amount'];
+        $netPrice = $pricing['net'];
         $subTotal = $netPrice * (int) ($cart_item->qty ?? 0);
 
         Cart::instance($this->cart_instance)->update($cart_item->rowId, [
@@ -484,10 +517,15 @@ class ProductCartPurchase extends Component
                 'stock_scope'  => $context['stock_scope'],
                 'warehouse_id' => $context['warehouse_id'],
                 'unit_price'   => $grossPrice,
+                'product_discount' => $discountAmount,
+                'product_discount_type' => $pricing['type'],
             ])
         ]);
 
         $this->check_quantity[$product_id] = $context['stock'];
+        $this->discount_type[$product_id] = $pricing['type'];
+        $this->item_discount[$product_id] = $pricing['input'];
+        $this->gross_price[$product_id] = $grossPrice;
     }
 
     private function normalizeCartRowSubtotals(): void
@@ -762,18 +800,14 @@ class ProductCartPurchase extends Component
             return;
         }
 
-        $discountType = $this->discount_type[$product_id] ?? 'fixed';
-        $discountInput = (float) ($this->item_discount[$product_id] ?? 0);
         $grossPrice = max(0, (float) ($this->gross_price[$product_id] ?? $this->resolveGrossPrice($cart_item)));
+        $pricing = $this->resolveDiscountPricing($cart_item, (int) $product_id, $grossPrice);
+        $discountType = $pricing['type'];
+        $discountAmount = $pricing['amount'];
+        $netPrice = $pricing['net'];
 
-        $discountAmount = $this->calculateDiscountAmount($grossPrice, $discountType, $discountInput);
-        $netPrice = $this->calculateNetPrice($grossPrice, $discountAmount);
-
-        if ($discountType === 'percentage') {
-            $this->item_discount[$product_id] = min(100, max(0, $discountInput));
-        } else {
-            $this->item_discount[$product_id] = $discountAmount;
-        }
+        $this->discount_type[$product_id] = $discountType;
+        $this->item_discount[$product_id] = $pricing['input'];
 
         $this->gross_price[$product_id] = $grossPrice;
 
