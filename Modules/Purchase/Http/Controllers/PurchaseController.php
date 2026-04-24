@@ -317,7 +317,9 @@ class PurchaseController extends Controller
 
     public function store(StorePurchaseRequest $request)
     {
-        DB::transaction(function () use ($request) {
+        $autoDeliveryRedirectUrl = null;
+
+        DB::transaction(function () use ($request, &$autoDeliveryRedirectUrl) {
 
             $branchId = $this->getActiveBranchId();
 
@@ -557,6 +559,8 @@ class PurchaseController extends Controller
                 DB::table('purchases')
                     ->where('id', (int) $purchase->id)
                     ->update(['purchase_delivery_id' => (int) $autoPD->id]);
+
+                $autoDeliveryRedirectUrl = route('purchase-deliveries.confirm', (int) $autoPD->id);
             }
 
             Cart::instance('purchase')->destroy();
@@ -600,7 +604,19 @@ class PurchaseController extends Controller
         });
 
         toast('Purchase Created!', 'success');
-        return redirect()->route('purchases.index');
+
+        $redirect = redirect()->route('purchases.index');
+
+        if (!empty($autoDeliveryRedirectUrl)) {
+            $redirect->with('auto_delivery_notice', [
+                'title' => 'Purchase Created',
+                'message' => 'A Purchase Delivery has been automatically created. Please confirm the Purchase Delivery to complete the receiving process.',
+                'primary_label' => 'Go to Purchase Delivery',
+                'url' => $autoDeliveryRedirectUrl,
+            ]);
+        }
+
+        return $redirect;
     }
 
     /**

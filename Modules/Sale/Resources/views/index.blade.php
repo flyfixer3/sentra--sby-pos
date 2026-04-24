@@ -50,6 +50,8 @@
 @endsection
 
 @section('content')
+    @php($autoDeliveryNotice = session('auto_delivery_notice'))
+
     <div class="container-fluid">
         <div class="row">
             <div class="col-12">
@@ -98,6 +100,30 @@
                 </div>
             </div>
         </div>
+
+        @if(!empty($autoDeliveryNotice['url']))
+            <div class="modal fade" id="saleAutoDeliveryNoticeModal" tabindex="-1" role="dialog" aria-labelledby="saleAutoDeliveryNoticeLabel" aria-hidden="true">
+                <div class="modal-dialog modal-dialog-centered" role="document">
+                    <div class="modal-content">
+                        <div class="modal-header">
+                            <h5 class="modal-title" id="saleAutoDeliveryNoticeLabel">{{ $autoDeliveryNotice['title'] ?? 'Sale Created' }}</h5>
+                            <button type="button" class="close" data-dismiss="modal" aria-label="Close">
+                                <span aria-hidden="true">&times;</span>
+                            </button>
+                        </div>
+                        <div class="modal-body">
+                            {{ $autoDeliveryNotice['message'] ?? '' }}
+                        </div>
+                        <div class="modal-footer">
+                            <button type="button" class="btn btn-outline-secondary" data-dismiss="modal">Close</button>
+                            <a href="{{ $autoDeliveryNotice['url'] }}" class="btn btn-primary">
+                                {{ $autoDeliveryNotice['primary_label'] ?? 'Go to Sale Delivery' }}
+                            </a>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        @endif
     </div>
 @endsection
 
@@ -146,4 +172,42 @@
         });
     })();
     </script>
+
+    @if(!empty($autoDeliveryNotice['url']))
+    <script>
+    (function () {
+        function openModal(modalId) {
+            var modalEl = document.getElementById(modalId);
+            if (!modalEl) return false;
+
+            try {
+                if (typeof bootstrap !== 'undefined' && bootstrap.Modal) {
+                    bootstrap.Modal.getOrCreateInstance(modalEl).show();
+                    return true;
+                }
+            } catch (e) {}
+
+            try {
+                if (typeof coreui !== 'undefined' && coreui.Modal) {
+                    coreui.Modal.getOrCreateInstance(modalEl).show();
+                    return true;
+                }
+            } catch (e) {}
+
+            try {
+                if (window.jQuery && typeof jQuery(modalEl).modal === 'function') {
+                    jQuery(modalEl).modal('show');
+                    return true;
+                }
+            } catch (e) {}
+
+            return false;
+        }
+
+        document.addEventListener('DOMContentLoaded', function () {
+            openModal('saleAutoDeliveryNoticeModal');
+        });
+    })();
+    </script>
+    @endif
 @endpush

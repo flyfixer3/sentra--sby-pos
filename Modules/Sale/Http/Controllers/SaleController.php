@@ -557,8 +557,10 @@ class SaleController extends Controller
     {
         abort_if(Gate::denies('create_sales'), 403);
 
+        $autoDeliveryRedirectUrl = null;
+
         try {
-            DB::transaction(function () use ($request) {
+            DB::transaction(function () use ($request, &$autoDeliveryRedirectUrl) {
                 $branchId = BranchContext::id();
 
                 $customer = Customer::query()
@@ -992,12 +994,16 @@ class SaleController extends Controller
                         }
                     }
                 } else {
-                    $this->autoCreateSaleDeliveryFromSale(
+                    $autoDelivery = $this->autoCreateSaleDeliveryFromSale(
                         $sale,
                         $branchId,
                         $request->quotation_id ? (int) $request->quotation_id : null,
                         null
                     );
+
+                    if ($autoDelivery) {
+                        $autoDeliveryRedirectUrl = route('sale-deliveries.confirm.form', (int) $autoDelivery->id);
+                    }
                 }
 
                 Cart::instance('sale')->destroy();
@@ -1095,7 +1101,19 @@ class SaleController extends Controller
             });
 
             toast('Sale Created!', 'success');
-            return redirect()->route('sales.index');
+
+            $redirect = redirect()->route('sales.index');
+
+            if (!empty($autoDeliveryRedirectUrl)) {
+                $redirect->with('auto_delivery_notice', [
+                    'title' => 'Sale Created',
+                    'message' => 'A Sale Delivery has been automatically created. Please confirm the Sale Delivery to complete the delivery process.',
+                    'primary_label' => 'Go to Sale Delivery',
+                    'url' => $autoDeliveryRedirectUrl,
+                ]);
+            }
+
+            return $redirect;
 
         } catch (\Throwable $e) {
             toast($e->getMessage(), 'error');
@@ -1108,7 +1126,7 @@ class SaleController extends Controller
         int $branchId,
         ?int $quotationId = null,
         ?int $saleOrderId = null
-    ): void {
+    ): ?SaleDelivery {
         $details = SaleDetails::query()
             ->where('sale_id', (int) $sale->id)
             ->get();
@@ -1123,7 +1141,7 @@ class SaleController extends Controller
             ->exists();
 
         if ($exists) {
-            return;
+            return null;
         }
 
         $deliveryData = [
@@ -1228,6 +1246,8 @@ class SaleController extends Controller
                 'reference' => make_reference_id('SDO', (int) $delivery->id),
             ]);
         }
+
+        return $delivery;
     }
 
     public function pdf(Sale $sale)
