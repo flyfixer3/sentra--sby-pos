@@ -109,11 +109,11 @@
             font-weight: 800;
         }
 
-        .col-no   { width: 7%;  text-align: center; }
-        .col-name { width: 50%; }
-        .col-qty  { width: 10%; text-align: center; }
-        .col-unit { width: 10%; text-align: center; }
-        .col-note { width: 23%; }
+        .col-no    { width: 7%;  text-align: center; }
+        .col-code  { width: 21%; text-align: center; }
+        .col-name  { width: 44%; }
+        .col-qty   { width: 13%; text-align: center; }
+        .col-unit  { width: 15%; text-align: center; }
 
         /* =========================
            SIGNATURE
@@ -255,26 +255,28 @@
         <thead>
             <tr>
                 <th class="col-no">No</th>
+                <th class="col-code">Product Code</th>
                 <th class="col-name">Item</th>
                 <th class="col-qty">Qty</th>
                 <th class="col-unit">Unit</th>
-                <th class="col-note">Keterangan</th>
             </tr>
         </thead>
         <tbody>
             @foreach($saleDelivery->items as $i => $it)
                 @php
                     $name = $it->product->product_name ?? ('Product #' . $it->product_id);
-                    $unit = $it->product->product_unit ?? '';
+                    $code = trim((string) ($it->product->product_code ?? ''));
+                    $unit = trim((string) ($it->product->product_unit ?? ''));
                     $qty  = (int) ($it->quantity ?? 0);
-                    $note = $notesByItemId[(int) $it->id] ?? '';
+                    if ($code === '') $code = '-';
+                    if ($unit === '' || strtolower($unit) === 'unit') $unit = 'pcs';
                 @endphp
                 <tr>
                     <td class="text-center">{{ $i + 1 }}</td>
+                    <td>{{ $code }}</td>
                     <td>{{ $name }}</td>
                     <td class="text-center">{{ number_format($qty) }}</td>
                     <td class="text-center">{{ $unit }}</td>
-                    <td>{{ $note }}</td>
                 </tr>
             @endforeach
         </tbody>
