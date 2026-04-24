@@ -119,7 +119,7 @@
                                 @for($i = 0; $i < $qty; $i++)
                                     @php
                                         $row = (array)($defects[$i] ?? []);
-                                        $defType = (string)($row['defect_type'] ?? '');
+                                        $defType = \App\Support\DefectTypeSupport::text($row, '');
                                         $desc = (string)($row['description'] ?? '');
                                         $selectedDefectTypes = \App\Support\DefectTypeSupport::extractFromPayload($row);
                                     @endphp

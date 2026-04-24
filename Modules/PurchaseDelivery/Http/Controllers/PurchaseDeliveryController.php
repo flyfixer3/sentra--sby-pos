@@ -856,7 +856,6 @@ class PurchaseDeliveryController extends Controller
                             'reference_id'   => (int) $purchaseDelivery->id,
                             'reference_type' => PurchaseDelivery::class,
                             'quantity'       => 1,
-                            'defect_type'    => DefectTypeSupport::legacyLabel($defectTypes, $d['defect_type'] ?? null),
                             'defect_types'   => !empty($defectTypes) ? $defectTypes : null,
                             'description'    => $d['defect_description'] ?? null,
                             'photo_path'     => $photoPath,

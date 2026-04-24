@@ -233,13 +233,14 @@ class AdjustmentController extends Controller
             ->whereNull('moved_out_at')
             ->orderBy('rack_id')
             ->orderBy('id')
-            ->get(['id', 'rack_id', 'defect_type', 'description'])
+            ->get(['id', 'rack_id', 'defect_types', 'description'])
             ->map(function ($d) use ($rackLabelMap) {
                 return [
                     'id'          => (int) $d->id,
                     'rack_id'     => (int) $d->rack_id,
                     'rack_label'  => $rackLabelMap[(int)$d->rack_id] ?? ('Rack #' . (int)$d->rack_id),
-                    'defect_type' => (string) ($d->defect_type ?? ''),
+                    'defect_types' => DefectTypeSupport::labels($d->defect_types),
+                    'defect_types_text' => DefectTypeSupport::text($d->defect_types, ''),
                     'description' => (string) ($d->description ?? ''),
                 ];
             })
@@ -542,7 +543,6 @@ class AdjustmentController extends Controller
                                     'reference_id'   => (int) $adjustment->id,
                                     'reference_type' => Adjustment::class,
                                     'quantity'       => 1,
-                                    'defect_type'    => DefectTypeSupport::legacyLabel($defectTypes, $d['defect_type'] ?? null),
                                     'defect_types'   => !empty($defectTypes) ? $defectTypes : null,
                                     'description'    => trim($desc) !== '' ? $desc : null,
                                     'photo_path'     => $photoPath,
@@ -1502,7 +1502,6 @@ class AdjustmentController extends Controller
                             'reference_id'    => (int) $adjustment->id,
                             'reference_type'  => Adjustment::class,
                             'quantity'        => 1,
-                            'defect_type'     => DefectTypeSupport::legacyLabel($defectTypes, $u['defect_type'] ?? null),
                             'defect_types'    => !empty($defectTypes) ? $defectTypes : null,
                             'description'     => trim((string) ($u['description'] ?? '')) ?: ($itemNote ?: null),
                             'photo_path'      => null,
@@ -1944,7 +1943,7 @@ class AdjustmentController extends Controller
                             $d = (array) ($defects[$i] ?? []);
                             if (empty(DefectTypeSupport::extractFromPayload($d))) {
                                 throw new \RuntimeException(
-                                    "Line #" . ($idx + 1) . ": defect_type is required for unit #" . ($i + 1)
+                                    "Line #" . ($idx + 1) . ": defect types are required for unit #" . ($i + 1)
                                 );
                             }
                         }
@@ -1983,7 +1982,6 @@ class AdjustmentController extends Controller
                                 'reference_id'   => (int) $adjustment->id,
                                 'reference_type' => Adjustment::class,
                                 'quantity'       => 1,
-                                'defect_type'    => DefectTypeSupport::legacyLabel($defectTypes, $d['defect_type'] ?? null),
                                 'defect_types'   => !empty($defectTypes) ? $defectTypes : null,
                                 'description'    => $desc !== '' ? $desc : null,
                                 'photo_path'     => $photoPath,
@@ -2372,11 +2370,11 @@ class AdjustmentController extends Controller
                     ->whereNull('moved_out_at')
                     ->orderBy('rack_id')
                     ->orderBy('id')
-                    ->get(['id', 'rack_id', 'defect_type', 'description'])
+                    ->get(['id', 'rack_id', 'defect_types', 'description'])
                     ->map(fn($u) => [
                         'id'      => (int) $u->id,
                         'rack_id' => (int) $u->rack_id,
-                        'info'    => (string) ($u->defect_type ?? ''),
+                        'info'    => DefectTypeSupport::text($u->defect_types, ''),
                     ])
                     ->values()
                     ->all();
@@ -2470,7 +2468,7 @@ class AdjustmentController extends Controller
                 $rows = $q->orderBy('rack_id')->orderBy('id')->get();
 
                 $units = $rows->map(function ($u) {
-                    $dt = trim((string) ($u->defect_type ?? ''));
+                    $dt = DefectTypeSupport::text($u->defect_types, '');
                     $ds = trim((string) ($u->description ?? ''));
 
                     $info = 'Type: ' . ($dt !== '' ? $dt : '-');

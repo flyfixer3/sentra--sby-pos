@@ -484,7 +484,7 @@
                                                                 @foreach($defList as $k => $d)
                                                                     <tr>
                                                                         <td class="text-center align-middle">{{ $k + 1 }}</td>
-                                                                        <td class="align-middle">{{ $d->defect_type ?? '-' }}</td>
+                                                                        <td class="align-middle">{{ \App\Support\DefectTypeSupport::text($d->defect_types ?? [], '-') }}</td>
                                                                         <td class="align-middle">{{ $d->description ?? '-' }}</td>
                                                                         <td class="text-center align-middle">
                                                                             @if(!empty($d->photo_path))

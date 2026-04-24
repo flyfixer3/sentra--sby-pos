@@ -100,9 +100,7 @@ class DefectTypeController extends Controller
 
         $inUse = ProductDefectItem::query()
             ->where(function ($query) use ($typeName, $normalizedType) {
-                $query->whereRaw('LOWER(defect_type) = ?', [$normalizedType])
-                    ->orWhereRaw("LOWER(REPLACE(defect_type, ' ', '')) = ?", [str_replace(' ', '', $normalizedType)])
-                    ->orWhereRaw('LOWER(CAST(defect_types AS CHAR)) LIKE ?', ['%' . $normalizedType . '%']);
+                $query->whereRaw('LOWER(CAST(defect_types AS CHAR)) LIKE ?', ['%' . $normalizedType . '%']);
             })
             ->exists();
 

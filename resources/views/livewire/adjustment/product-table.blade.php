@@ -515,7 +515,7 @@
                             perWrap.querySelectorAll('.defect-tbody tr').forEach(tr => {
                                 currentDef.push({
                                     to_rack_id: tr.querySelector('select.defect-rack-select')?.value || '',
-                                    defect_type: tr.querySelector('input.defect-type-input')?.value || '',
+                                    defect_types_json: tr.querySelector('input.defect-type-input')?.value || '',
                                     defect_description: tr.querySelector('textarea.defect-desc-input')?.value || ''
                                 });
                             });
@@ -583,8 +583,8 @@
                                 </td>
                                 <td class="align-middle">
                                     <input type="text" class="form-control form-control-sm defect-type-input"
-                                           name="items[${idx}][defects][${i}][defect_type]"
-                                           value="${String(prev.defect_type || '').replace(/"/g,'&quot;')}"
+                                           name="items[${idx}][defects][${i}][defect_types_json]"
+                                           value="${String(prev.defect_types_json || '').replace(/"/g,'&quot;')}"
                                            placeholder="contoh: bubble / retak ringan"
                                            required>
                                 </td>

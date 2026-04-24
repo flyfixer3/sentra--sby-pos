@@ -762,7 +762,6 @@
                 const picker = tr.querySelector('.defect-type-picker');
                 currentDef.push({
                     to_rack_id: tr.querySelector('select.defect-rack-select')?.value || '',
-                    defect_type: picker ? (picker.querySelector('.defect-type-legacy-input')?.value || '') : '',
                     defect_types_json: picker ? (picker.querySelector('.defect-types-json-input')?.value || '[]') : '[]',
                     defect_description: tr.querySelector('textarea.defect-desc-input')?.value || ''
                 });
@@ -852,7 +851,7 @@
                 </td>
 
                 <td class="align-middle">
-                    ${window.renderDefectTypePickerHtml(`items[${idx}][defects][${i}]`, prev.defect_types_json || prev.defect_types || prev.defect_type || [])}
+                    ${window.renderDefectTypePickerHtml(`items[${idx}][defects][${i}]`, prev.defect_types_json || prev.defect_types || [])}
                 </td>
 
                 <td class="align-middle">

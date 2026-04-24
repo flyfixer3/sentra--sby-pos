@@ -172,16 +172,10 @@
 
             function updatePickerHiddenInputs(picker, selected) {
                 const jsonInput = picker.querySelector('.defect-types-json-input');
-                const legacyInput = picker.querySelector('.defect-type-legacy-input');
 
                 if (jsonInput) jsonInput.value = JSON.stringify(selected);
-                if (legacyInput) legacyInput.value = selected.join(', ');
                 picker.dataset.selected = JSON.stringify(selected);
 
-                if (legacyInput) {
-                    legacyInput.dispatchEvent(new Event('input', { bubbles: true }));
-                    legacyInput.dispatchEvent(new Event('change', { bubbles: true }));
-                }
                 if (jsonInput) {
                     jsonInput.dispatchEvent(new Event('input', { bubbles: true }));
                     jsonInput.dispatchEvent(new Event('change', { bubbles: true }));
@@ -375,7 +369,6 @@
 
                 return ''
                     + '<div class="defect-type-picker" data-selected="' + escapeHtml(JSON.stringify(values)) + '">'
-                    + '  <input type="hidden" class="defect-type-legacy-input" name="' + escapeHtml(namePrefix) + '[defect_type]" value="' + escapeHtml(values.join(', ')) + '">'
                     + '  <input type="hidden" class="defect-types-json-input" name="' + escapeHtml(namePrefix) + '[defect_types_json]" value="' + escapeHtml(JSON.stringify(values)) + '">'
                     + '  <div class="defect-type-summary">' + summaryHtml + '</div>'
                     + '  <div class="defect-type-checklist">' + checklistHtml + '</div>'

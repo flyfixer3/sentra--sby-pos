@@ -317,7 +317,7 @@ class ProductTable extends Component
                 // ✅ qty + detail arrays
                 'qty' => 1,
                 'defects' => [
-                    ['defect_type' => '', 'description' => '']
+                    ['defect_types_json' => '', 'description' => '']
                 ],
                 'damaged_items' => [
                     ['reason' => '', 'description' => '']
@@ -492,8 +492,8 @@ class ProductTable extends Component
             $arr = array_values($arr);
 
             for ($i = 0; $i < $qty; $i++) {
-                if (!isset($arr[$i])) $arr[$i] = ['defect_type' => '', 'description' => ''];
-                if (!isset($arr[$i]['defect_type'])) $arr[$i]['defect_type'] = '';
+                if (!isset($arr[$i])) $arr[$i] = ['defect_types_json' => '', 'description' => ''];
+                if (!isset($arr[$i]['defect_types_json'])) $arr[$i]['defect_types_json'] = '';
                 if (!isset($arr[$i]['description'])) $arr[$i]['description'] = '';
             }
             $arr = array_slice($arr, 0, $qty);

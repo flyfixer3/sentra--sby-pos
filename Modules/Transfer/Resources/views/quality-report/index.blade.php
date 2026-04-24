@@ -216,7 +216,7 @@
                                         <td class="text-center">
                                             <span class="badge badge-soft-warning fw-semibold">{{ number_format((int) $d->quantity) }}</span>
                                         </td>
-                                        <td>{{ $d->defect_type ?? '-' }}</td>
+                                        <td>{{ $d->defect_types_text ?? '-' }}</td>
                                         <td>{{ $d->description ?? '-' }}</td>
                                         <td class="text-center">
                                             @if(!empty($d->photo_path))

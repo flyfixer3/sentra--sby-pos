@@ -48,21 +48,36 @@ class DefectTypeSupport
             $types = self::normalizeList($payload['defect_types_json']);
         }
 
-        if (empty($types) && !empty($payload['defect_type'])) {
-            $types = self::normalizeList((string) $payload['defect_type']);
-        }
-
         return $types;
     }
 
-    public static function legacyLabel(array $types, ?string $fallback = null): ?string
+    public static function labels($source): array
     {
-        $types = self::normalizeList($types);
-        if (!empty($types)) {
-            return implode(', ', $types);
+        if (is_object($source)) {
+            if (isset($source->defect_types)) {
+                return self::normalizeList($source->defect_types);
+            }
+
+            return [];
         }
 
-        $fallback = trim((string) $fallback);
-        return $fallback !== '' ? $fallback : null;
+        if (is_array($source)) {
+            if (array_key_exists('defect_types', $source)) {
+                return self::normalizeList($source['defect_types']);
+            }
+
+            if (array_key_exists('defect_types_json', $source)) {
+                return self::normalizeList($source['defect_types_json']);
+            }
+        }
+
+        return self::normalizeList($source);
+    }
+
+    public static function text($source, string $empty = '-'): string
+    {
+        $types = self::labels($source);
+
+        return !empty($types) ? implode(', ', $types) : $empty;
     }
 }

@@ -2,6 +2,7 @@
 
 namespace Modules\SaleDelivery\Http\Controllers;
 
+use App\Support\DefectTypeSupport;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
 use App\Support\BranchContext;
@@ -197,7 +198,8 @@ class SaleDeliveryConfirmController extends Controller
 
                     $defectData[$pid][$wid][] = [
                         'id' => (int) $r->id,
-                        'defect_type' => (string) ($r->defect_type ?? ''),
+                        'defect_types' => DefectTypeSupport::labels($r),
+                        'defect_types_text' => DefectTypeSupport::text($r, ''),
                         'description' => (string) ($r->description ?? ''),
                         'rack_id' => (int) ($r->rack_id ?? 0),
                     ];

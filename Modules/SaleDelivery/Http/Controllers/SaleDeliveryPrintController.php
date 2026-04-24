@@ -2,6 +2,7 @@
 
 namespace Modules\SaleDelivery\Http\Controllers;
 
+use App\Support\DefectTypeSupport;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
 use App\Support\BranchContext;
@@ -152,7 +153,13 @@ class SaleDeliveryPrintController extends Controller
 
                 if ($defect > 0) {
                     $rows = $defectsByProduct->get($pid, collect());
-                    $types = $rows->pluck('defect_type')->filter()->unique()->values()->take(3)->toArray();
+                    $types = $rows
+                        ->flatMap(fn ($row) => DefectTypeSupport::labels($row->defect_types ?? []))
+                        ->filter()
+                        ->unique()
+                        ->values()
+                        ->take(3)
+                        ->toArray();
                     $typeText = !empty($types) ? implode(', ', $types) : 'Defect';
 
                     $desc = $rows->pluck('description')->filter()->first();

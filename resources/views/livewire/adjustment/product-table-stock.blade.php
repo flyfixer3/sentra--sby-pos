@@ -350,13 +350,11 @@
                 perWrap.querySelectorAll('tbody.defect-tbody tr').forEach(tr => {
                     const idx = asInt(tr.getAttribute('data-row'));
                     const picker = tr.querySelector('.defect-type-picker');
-                    const defect_type = picker ? (picker.querySelector('.defect-type-legacy-input')?.value || '') : '';
                     const defect_types_json = picker ? (picker.querySelector('.defect-types-json-input')?.value || '[]') : '[]';
                     const description = tr.querySelector('textarea.defect-desc')?.value || '';
                     const rack_id = tr.querySelector('select.defect-rack')?.value || '';
                     currentDef.push({
                         row: idx,
-                        defect_type: defect_type,
                         defect_types_json: defect_types_json,
                         description: description,
                         rack_id: rack_id
@@ -401,7 +399,7 @@
                         <tr data-row="${i}">
                             <td class="text-center">${i+1}</td>
                             <td>
-                                ${window.renderDefectTypePickerHtml(`items[${idx}][defects][${i}]`, prev.defect_types_json || prev.defect_types || prev.defect_type || [])}
+                                ${window.renderDefectTypePickerHtml(`items[${idx}][defects][${i}]`, prev.defect_types_json || prev.defect_types || [])}
                             </td>
                             <td>
                                 <textarea class="form-control form-control-sm defect-desc"
@@ -499,7 +497,6 @@
                     // normalisasi key
                     oldDef = oldDef.map((x, i) => ({
                         row: i,
-                        defect_type: x.defect_type || x.type || x.defectType || '',
                         defect_types_json: x.defect_types_json || x.defect_types || '',
                         description: x.defect_description || x.description || '',
                         rack_id: x.to_rack_id || x.rack_id || ''
@@ -855,7 +852,6 @@
                         if(t.classList && (
                             t.classList.contains('defect-type-option') ||
                             t.classList.contains('defect-type-add-input') ||
-                            t.classList.contains('defect-type-legacy-input') ||
                             t.classList.contains('defect-types-json-input') ||
                             t.classList.contains('defect-desc') ||
                             t.classList.contains('defect-rack') ||

@@ -2,6 +2,7 @@
 
 namespace Modules\Transfer\Http\Controllers;
 
+use App\Support\DefectTypeSupport;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
 use Illuminate\Support\Facades\DB;
@@ -143,7 +144,7 @@ class TransferQualityReportController extends Controller
                 'd.product_id',
                 'p.product_name as product_name',
                 'd.quantity',
-                'd.defect_type',
+                'd.defect_types',
                 'd.description',
 
                 'd.photo_path',
@@ -194,7 +195,7 @@ class TransferQualityReportController extends Controller
             ->when($q !== '', function ($qr) use ($q) {
                 $qr->where(function ($sub) use ($q) {
                     $sub->where('p.product_name', 'like', "%{$q}%")
-                        ->orWhere('d.defect_type', 'like', "%{$q}%")
+                        ->orWhereRaw('CAST(d.defect_types AS CHAR) like ?', ["%{$q}%"])
                         ->orWhere('d.description', 'like', "%{$q}%")
                         ->orWhere('tr.reference', 'like', "%{$q}%")
                         ->orWhere('po.reference', 'like', "%{$q}%")
@@ -332,6 +333,12 @@ class TransferQualityReportController extends Controller
 
         if ($type === 'all' || $type === 'defect') {
             $defects = collect($defectsQuery->orderByDesc('d.id')->limit(500)->get());
+            $defects = $defects->map(function ($row) {
+                $row->defect_types = DefectTypeSupport::labels($row->defect_types ?? []);
+                $row->defect_types_text = DefectTypeSupport::text($row->defect_types, '-');
+
+                return $row;
+            });
         }
 
         if ($type === 'all' || $type === 'damaged') {

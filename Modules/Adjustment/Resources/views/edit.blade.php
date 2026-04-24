@@ -430,7 +430,6 @@
 
         tbody.innerHTML = '';
         for (let i=0;i<qty;i++) {
-            const key = type === 'defect' ? 'defect_type' : 'reason';
             const placeholder = type === 'defect'
                 ? 'bubble / scratch / distortion'
                 : 'pecah sudut kiri saat bongkar peti';
@@ -438,7 +437,7 @@
             const detailField = type === 'defect'
                 ? window.renderDefectTypePickerHtml(`units[${i}]`, [])
                 : `<input class="form-control form-control-sm" required
-                            name="units[${i}][${key}]"
+                            name="units[${i}][reason]"
                             placeholder="${placeholder}">`;
 
             tbody.insertAdjacentHTML('beforeend', `

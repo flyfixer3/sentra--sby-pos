@@ -837,11 +837,17 @@ class TransferController extends Controller
                 $note = 'GOOD';
             }
 
-            // DEFECT: tampilkan defect_type + description singkat
+            // DEFECT: tampilkan daftar defect types + description singkat
             if ($cond === 'defect') {
                 $rows = $defectsByProduct->get($pid, collect());
 
-                $types = $rows->pluck('defect_type')->filter()->unique()->values()->take(3)->toArray();
+                $types = $rows
+                    ->flatMap(fn ($row) => DefectTypeSupport::labels($row->defect_types ?? []))
+                    ->filter()
+                    ->unique()
+                    ->values()
+                    ->take(3)
+                    ->toArray();
                 $typeText = !empty($types) ? implode(', ', $types) : 'Defect';
 
                 $desc = $rows->pluck('description')->filter()->first();
@@ -1106,7 +1112,7 @@ class TransferController extends Controller
 
             'items.*.defects'                         => 'nullable|array',
             'items.*.defects.*.to_rack_id'            => 'nullable|integer|min:1',
-            'items.*.defects.*.defect_type'           => 'nullable|string|max:255',
+            'items.*.defects.*.defect_types_json'     => 'nullable|string',
             'items.*.defects.*.defect_description'    => 'nullable|string|max:2000',
             'items.*.defects.*.photo'                 => 'nullable|image|mimes:jpg,jpeg,png,webp|max:2048',
 
@@ -1413,7 +1419,6 @@ class TransferController extends Controller
                             'reference_id'   => (int) $transfer->id,
                             'reference_type' => TransferRequest::class,
                             'quantity'       => 1,
-                            'defect_type'    => DefectTypeSupport::legacyLabel($defectTypes, $d['defect_type'] ?? null),
                             'defect_types'   => !empty($defectTypes) ? $defectTypes : null,
                             'description'    => $d['defect_description'] ?? null,
                             'photo_path'     => $photoPath,

@@ -6,10 +6,6 @@
 
 <div class="defect-type-picker" data-selected='@json($selected)'>
     <input type="hidden"
-           class="defect-type-legacy-input"
-           name="{{ $namePrefix }}[defect_type]"
-           value="{{ \App\Support\DefectTypeSupport::legacyLabel($selected) }}">
-    <input type="hidden"
            class="defect-types-json-input"
            name="{{ $namePrefix }}[defect_types_json]"
            value='@json($selected)'>

@@ -596,7 +596,7 @@
                     const id = parseInt(u.id||0);
                     const checked = (modalDefectIds||[]).includes(id) ? 'checked' : '';
 
-                    const dt = (u.defect_type || '').trim();
+                    const dt = (u.defect_types_text || '').trim();
                     const ds = (u.description || '').trim();
                     const label = `ID: ${id}` + (dt ? ` | Type: ${dt}` : '') + (ds ? ` | Desc: ${ds}` : '');
 

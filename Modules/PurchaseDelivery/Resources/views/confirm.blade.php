@@ -541,7 +541,6 @@
             const picker = tr.querySelector('.defect-type-picker');
             out.defect.push({
                 rack_id: tr.querySelector('.defect-rack')?.value || '',
-                defect_type: picker ? (picker.querySelector('.defect-type-legacy-input')?.value || '') : '',
                 defect_types_json: picker ? (picker.querySelector('.defect-types-json-input')?.value || '[]') : '[]',
                 defect_description: tr.querySelector('.defect-desc-input')?.value || ''
             });
@@ -682,7 +681,7 @@
                     </select>
                 </td>
                 <td class="align-middle">
-                    ${window.renderDefectTypePickerHtml(`items[${idx}][defects][${i}]`, prev.defect_types_json || prev.defect_types || prev.defect_type || [])}
+                    ${window.renderDefectTypePickerHtml(`items[${idx}][defects][${i}]`, prev.defect_types_json || prev.defect_types || [])}
                 </td>
                 <td class="align-middle">
                     <textarea class="form-control form-control-sm defect-desc-input"

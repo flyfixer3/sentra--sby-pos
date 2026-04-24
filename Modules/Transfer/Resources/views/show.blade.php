@@ -379,7 +379,7 @@
                                         : 'Product ID ' . $d->product_id }}
                                 </td>
                                 <td class="text-center">{{ $d->quantity }}</td>
-                                <td>{{ $d->defect_type }}</td>
+                                <td>{{ \App\Support\DefectTypeSupport::text($d->defect_types ?? [], '-') }}</td>
                                 <td>{{ $d->description ?? '-' }}</td>
                                 <td class="text-center">
                                     @if(!empty($d->photo_path))

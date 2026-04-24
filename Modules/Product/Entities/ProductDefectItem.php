@@ -19,7 +19,6 @@ class ProductDefectItem extends Model
         'reference_id',
         'reference_type',
         'quantity',
-        'defect_type',
         'defect_types',
         'description',
         'photo_path',
@@ -35,6 +34,10 @@ class ProductDefectItem extends Model
         'quantity'     => 'integer',
         'created_by'   => 'integer',
         'defect_types' => 'array',
+    ];
+
+    protected $appends = [
+        'defect_types_text',
     ];
 
     public function product()
@@ -60,5 +63,10 @@ class ProductDefectItem extends Model
     public function scopeAvailable($q)
     {
         return $q->whereNull('moved_out_at');
+    }
+
+    public function getDefectTypesTextAttribute(): string
+    {
+        return \App\Support\DefectTypeSupport::text($this->defect_types, '-');
     }
 }

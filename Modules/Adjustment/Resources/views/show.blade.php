@@ -291,7 +291,7 @@
                                                 <tr>
                                                     <td class="text-center">{{ $i+1 }}</td>
                                                     <td>{{ $rackText }}</td>
-                                                    <td>{{ $it->defect_type ?? '-' }}</td>
+                                                    <td>{{ \App\Support\DefectTypeSupport::text($it->defect_types ?? [], '-') }}</td>
                                                     <td>{{ $it->description ?? '-' }}</td>
                                                     <td class="text-center">
                                                         @if(!empty($it->photo_path))

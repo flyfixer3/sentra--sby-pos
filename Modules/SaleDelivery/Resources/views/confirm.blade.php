@@ -960,7 +960,7 @@
                     sub: [
                         `Warehouse: ${getWarehouseName(oneWid)}`,
                         'DEFECT (1 pc)',
-                        (r.defect_type ? String(r.defect_type) : ''),
+                        (r.defect_types_text ? String(r.defect_types_text) : ''),
                         (r.description ? fmtText(r.description, 70) : ''),
                         (r.rack_id ? ('Rack #' + String(r.rack_id)) : ''),
                     ].filter(Boolean).join(' | ')
