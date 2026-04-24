@@ -23,6 +23,7 @@ use Modules\Crm\Http\Controllers\Api\PermissionsController;
 
 Route::middleware([
     'api',
+    'throttle:60,1',
     Modules\Crm\Http\Middleware\ForceJsonResponse::class,
 ])->post('/tracking/cta-click', [CtaClicksController::class, 'store']);
 
@@ -49,6 +50,7 @@ Route::middleware([
 
 Route::middleware($middlewares)->prefix('crm')->group(function () {
     Route::get('/users', [UsersController::class, 'index']);
+    Route::post('/users/{id}/access', [UsersController::class, 'toggleAccess']);
 
     Route::get('/cta-clicks', [CtaClicksController::class, 'index']);
     Route::get('/products', [ProductsController::class, 'index']);

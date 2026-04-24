@@ -820,6 +820,146 @@
                                         </div>
                                     </div>
                                 </div>
+
+                                <!-- CRM -->
+                                <div class="col-12 mb-3">
+                                    <div class="card border-0 shadow" style="border-left: 3px solid #6366f1 !important;">
+                                        <div class="card-header" style="background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%); color: white;">
+                                            <strong>CRM — Sentra Autoglass</strong>
+                                            <small class="ml-2" style="opacity:0.8;">Permission khusus website CRM, tidak mempengaruhi modul POS lain.</small>
+                                        </div>
+                                        <div class="card-body">
+                                            <div class="row">
+                                                {{-- Akses Umum --}}
+                                                <div class="col-12 mb-2"><small class="text-muted font-weight-bold text-uppercase">Akses Umum</small></div>
+                                                <div class="col-lg-3 col-md-4 col-6">
+                                                    <div class="custom-control custom-switch">
+                                                        <input type="checkbox" class="custom-control-input" id="access_crm" name="permissions[]" value="access_crm" {{ old('access_crm') ? 'checked' : '' }}>
+                                                        <label class="custom-control-label" for="access_crm">Masuk CRM</label>
+                                                    </div>
+                                                </div>
+                                                <div class="col-lg-3 col-md-4 col-6">
+                                                    <div class="custom-control custom-switch">
+                                                        <input type="checkbox" class="custom-control-input" id="view_all_branches" name="permissions[]" value="view_all_branches" {{ old('view_all_branches') ? 'checked' : '' }}>
+                                                        <label class="custom-control-label" for="view_all_branches">Semua Cabang</label>
+                                                    </div>
+                                                </div>
+                                                <div class="col-lg-3 col-md-4 col-6">
+                                                    <div class="custom-control custom-switch">
+                                                        <input type="checkbox" class="custom-control-input" id="show_crm_reports" name="permissions[]" value="show_crm_reports" {{ old('show_crm_reports') ? 'checked' : '' }}>
+                                                        <label class="custom-control-label" for="show_crm_reports">Lihat Laporan</label>
+                                                    </div>
+                                                </div>
+                                                <div class="col-lg-3 col-md-4 col-6">
+                                                    <div class="custom-control custom-switch">
+                                                        <input type="checkbox" class="custom-control-input" id="manage_crm_permissions" name="permissions[]" value="manage_crm_permissions" {{ old('manage_crm_permissions') ? 'checked' : '' }}>
+                                                        <label class="custom-control-label" for="manage_crm_permissions">Kelola Permission</label>
+                                                    </div>
+                                                </div>
+
+                                                {{-- Lead --}}
+                                                <div class="col-12 mt-3 mb-2"><small class="text-muted font-weight-bold text-uppercase">Lead</small></div>
+                                                <div class="col-lg-2 col-md-4 col-6">
+                                                    <div class="custom-control custom-switch">
+                                                        <input type="checkbox" class="custom-control-input" id="create_crm_leads" name="permissions[]" value="create_crm_leads" {{ old('create_crm_leads') ? 'checked' : '' }}>
+                                                        <label class="custom-control-label" for="create_crm_leads">Buat</label>
+                                                    </div>
+                                                </div>
+                                                <div class="col-lg-2 col-md-4 col-6">
+                                                    <div class="custom-control custom-switch">
+                                                        <input type="checkbox" class="custom-control-input" id="show_crm_leads" name="permissions[]" value="show_crm_leads" {{ old('show_crm_leads') ? 'checked' : '' }}>
+                                                        <label class="custom-control-label" for="show_crm_leads">Lihat</label>
+                                                    </div>
+                                                </div>
+                                                <div class="col-lg-2 col-md-4 col-6">
+                                                    <div class="custom-control custom-switch">
+                                                        <input type="checkbox" class="custom-control-input" id="edit_crm_leads" name="permissions[]" value="edit_crm_leads" {{ old('edit_crm_leads') ? 'checked' : '' }}>
+                                                        <label class="custom-control-label" for="edit_crm_leads">Edit</label>
+                                                    </div>
+                                                </div>
+                                                <div class="col-lg-2 col-md-4 col-6">
+                                                    <div class="custom-control custom-switch">
+                                                        <input type="checkbox" class="custom-control-input" id="delete_crm_leads" name="permissions[]" value="delete_crm_leads" {{ old('delete_crm_leads') ? 'checked' : '' }}>
+                                                        <label class="custom-control-label" for="delete_crm_leads">Hapus</label>
+                                                    </div>
+                                                </div>
+                                                <div class="col-lg-2 col-md-4 col-6">
+                                                    <div class="custom-control custom-switch">
+                                                        <input type="checkbox" class="custom-control-input" id="comment_crm_leads" name="permissions[]" value="comment_crm_leads" {{ old('comment_crm_leads') ? 'checked' : '' }}>
+                                                        <label class="custom-control-label" for="comment_crm_leads">Catatan</label>
+                                                    </div>
+                                                </div>
+                                                <div class="col-lg-2 col-md-4 col-6">
+                                                    <div class="custom-control custom-switch">
+                                                        <input type="checkbox" class="custom-control-input" id="convert_crm_leads" name="permissions[]" value="convert_crm_leads" {{ old('convert_crm_leads') ? 'checked' : '' }}>
+                                                        <label class="custom-control-label" for="convert_crm_leads">Konversi</label>
+                                                    </div>
+                                                </div>
+
+                                                {{-- Perintah Kerja --}}
+                                                <div class="col-12 mt-3 mb-2"><small class="text-muted font-weight-bold text-uppercase">Perintah Kerja (PK)</small></div>
+                                                <div class="col-lg-2 col-md-4 col-6">
+                                                    <div class="custom-control custom-switch">
+                                                        <input type="checkbox" class="custom-control-input" id="create_crm_service_orders" name="permissions[]" value="create_crm_service_orders" {{ old('create_crm_service_orders') ? 'checked' : '' }}>
+                                                        <label class="custom-control-label" for="create_crm_service_orders">Buat PK</label>
+                                                    </div>
+                                                </div>
+                                                <div class="col-lg-2 col-md-4 col-6">
+                                                    <div class="custom-control custom-switch">
+                                                        <input type="checkbox" class="custom-control-input" id="show_crm_service_orders" name="permissions[]" value="show_crm_service_orders" {{ old('show_crm_service_orders') ? 'checked' : '' }}>
+                                                        <label class="custom-control-label" for="show_crm_service_orders">Lihat PK</label>
+                                                    </div>
+                                                </div>
+                                                <div class="col-lg-2 col-md-4 col-6">
+                                                    <div class="custom-control custom-switch">
+                                                        <input type="checkbox" class="custom-control-input" id="edit_crm_service_orders" name="permissions[]" value="edit_crm_service_orders" {{ old('edit_crm_service_orders') ? 'checked' : '' }}>
+                                                        <label class="custom-control-label" for="edit_crm_service_orders">Edit PK</label>
+                                                    </div>
+                                                </div>
+                                                <div class="col-lg-2 col-md-4 col-6">
+                                                    <div class="custom-control custom-switch">
+                                                        <input type="checkbox" class="custom-control-input" id="delete_crm_service_orders" name="permissions[]" value="delete_crm_service_orders" {{ old('delete_crm_service_orders') ? 'checked' : '' }}>
+                                                        <label class="custom-control-label" for="delete_crm_service_orders">Hapus PK</label>
+                                                    </div>
+                                                </div>
+                                                <div class="col-lg-2 col-md-4 col-6">
+                                                    <div class="custom-control custom-switch">
+                                                        <input type="checkbox" class="custom-control-input" id="assign_crm_service_orders" name="permissions[]" value="assign_crm_service_orders" {{ old('assign_crm_service_orders') ? 'checked' : '' }}>
+                                                        <label class="custom-control-label" for="assign_crm_service_orders">Assign Teknisi</label>
+                                                    </div>
+                                                </div>
+
+                                                {{-- Foto & Garansi --}}
+                                                <div class="col-12 mt-3 mb-2"><small class="text-muted font-weight-bold text-uppercase">Foto & Garansi</small></div>
+                                                <div class="col-lg-3 col-md-4 col-6">
+                                                    <div class="custom-control custom-switch">
+                                                        <input type="checkbox" class="custom-control-input" id="upload_crm_photos" name="permissions[]" value="upload_crm_photos" {{ old('upload_crm_photos') ? 'checked' : '' }}>
+                                                        <label class="custom-control-label" for="upload_crm_photos">Upload Foto</label>
+                                                    </div>
+                                                </div>
+                                                <div class="col-lg-3 col-md-4 col-6">
+                                                    <div class="custom-control custom-switch">
+                                                        <input type="checkbox" class="custom-control-input" id="delete_crm_photos" name="permissions[]" value="delete_crm_photos" {{ old('delete_crm_photos') ? 'checked' : '' }}>
+                                                        <label class="custom-control-label" for="delete_crm_photos">Hapus Foto</label>
+                                                    </div>
+                                                </div>
+                                                <div class="col-lg-3 col-md-4 col-6">
+                                                    <div class="custom-control custom-switch">
+                                                        <input type="checkbox" class="custom-control-input" id="show_crm_warranties" name="permissions[]" value="show_crm_warranties" {{ old('show_crm_warranties') ? 'checked' : '' }}>
+                                                        <label class="custom-control-label" for="show_crm_warranties">Lihat Garansi</label>
+                                                    </div>
+                                                </div>
+                                                <div class="col-lg-3 col-md-4 col-6">
+                                                    <div class="custom-control custom-switch">
+                                                        <input type="checkbox" class="custom-control-input" id="upsert_crm_warranties" name="permissions[]" value="upsert_crm_warranties" {{ old('upsert_crm_warranties') ? 'checked' : '' }}>
+                                                        <label class="custom-control-label" for="upsert_crm_warranties">Ubah Garansi</label>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
                             </div>
 
                         </div>

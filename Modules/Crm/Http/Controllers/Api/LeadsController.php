@@ -217,11 +217,15 @@ class LeadsController extends Controller
         $ctaClickId = $data['cta_click_id'] ?? null;
         unset($data['cta_click_id']);
 
-        $lead = Lead::create(array_merge($data, [ 'branch_id' => $branchId ]));
-        $this->syncLeadProducts($lead, $leadProducts, $branchId);
-        $this->syncAssignees($lead, $assignedUserIds, $branchId);
+        $lead = DB::transaction(function () use ($data, $leadProducts, $assignedUserIds, $ctaClickId, $branchId) {
+            $lead = Lead::create(array_merge($data, ['branch_id' => $branchId]));
+            $this->syncLeadProducts($lead, $leadProducts, $branchId);
+            $this->syncAssignees($lead, $assignedUserIds, $branchId);
+            $this->attachCtaClick($lead, $ctaClickId);
+            return $lead;
+        });
+
         $this->notifyLeadUsers($lead, $assignedUserIds, $data['sales_owner_user_ids'] ?? null, 'assigned');
-        $this->attachCtaClick($lead, $ctaClickId);
 
         if (function_exists('activity')) {
             activity()->performedOn($lead)
@@ -402,29 +406,31 @@ class LeadsController extends Controller
             'scheduled_at' => ['nullable', 'date'],
         ]);
 
-        $tmpSpk = 'SPK-TMP-' . strtoupper(bin2hex(random_bytes(4)));
+        $so = DB::transaction(function () use ($branchId, $lead, $payload) {
+            $tmpSpk = 'SPK-TMP-' . strtoupper(bin2hex(random_bytes(4)));
 
-        $so = ServiceOrder::create([
-            'branch_id' => $branchId,
-            'lead_id' => $lead->id,
-            'customer_id' => (int) $payload['customer_id'],
-            'spk_number' => $tmpSpk,
-            'title' => $payload['title'],
-            'description' => $payload['description'] ?? null,
-            'address_snapshot' => $payload['address_snapshot'],
-            'map_link_snapshot' => $payload['map_link_snapshot'] ?? null,
-            'status' => 'scheduled',
-            'scheduled_at' => $payload['scheduled_at'] ?? null,
-        ]);
+            $so = ServiceOrder::create([
+                'branch_id' => $branchId,
+                'lead_id' => $lead->id,
+                'customer_id' => (int) $payload['customer_id'],
+                'spk_number' => $tmpSpk,
+                'title' => $payload['title'],
+                'description' => $payload['description'] ?? null,
+                'address_snapshot' => $payload['address_snapshot'],
+                'map_link_snapshot' => $payload['map_link_snapshot'] ?? null,
+                'status' => 'scheduled',
+                'scheduled_at' => $payload['scheduled_at'] ?? null,
+            ]);
 
-        if (function_exists('make_reference_id')) {
-            $finalSpk = make_reference_id('SPK', (int) $so->id);
-        } else {
-            $finalSpk = 'SPK-' . str_pad((string) $so->id, 6, '0', STR_PAD_LEFT);
-        }
-        $so->update(['spk_number' => $finalSpk]);
+            $finalSpk = function_exists('make_reference_id')
+                ? make_reference_id('SPK', (int) $so->id)
+                : 'SPK-' . str_pad((string) $so->id, 6, '0', STR_PAD_LEFT);
 
-        $lead->update(['status' => 'terjadwal', 'customer_id' => $payload['customer_id']]);
+            $so->update(['spk_number' => $finalSpk]);
+            $lead->update(['status' => 'terjadwal', 'customer_id' => $payload['customer_id']]);
+
+            return $so;
+        });
 
         if (function_exists('activity')) {
             activity()->performedOn($lead)
