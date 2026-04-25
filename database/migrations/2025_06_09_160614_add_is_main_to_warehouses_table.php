@@ -14,7 +14,7 @@ class AddIsMainToWarehousesTable extends Migration
     public function up()
     {
         Schema::table('warehouses', function (Blueprint $table) {
-            $table->boolean('is_main')->default(false)->after('branch_id');
+            $table->boolean('is_main')->default(false);
         });
     }
 
