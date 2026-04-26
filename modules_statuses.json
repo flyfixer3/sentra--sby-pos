@@ -23,5 +23,6 @@
     "Transfer": true,
     "Inventory": true,
     "SaleDelivery": true,
-    "SaleOrder": true
+    "SaleOrder": true,
+    "Crm": true
 }

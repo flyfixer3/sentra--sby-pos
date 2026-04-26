@@ -37,6 +37,32 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Authenticated User Inactivity Timeout
+    |--------------------------------------------------------------------------
+    |
+    | This controls how many minutes an authenticated web user may be idle
+    | before the CRM logs them out. Set to 0 to disable the custom inactivity
+    | timeout and rely only on Laravel's normal session lifetime.
+    |
+    */
+
+    'inactivity_timeout' => env('SESSION_INACTIVITY_TIMEOUT', env('SESSION_LIFETIME', 120)),
+
+    /*
+    |--------------------------------------------------------------------------
+    | Inactivity Warning Time
+    |--------------------------------------------------------------------------
+    |
+    | Authenticated pages show a warning this many minutes before the inactivity
+    | timeout. The value is clamped by the frontend if it is longer than the
+    | timeout.
+    |
+    */
+
+    'inactivity_warning' => env('SESSION_INACTIVITY_WARNING', 1),
+
+    /*
+    |--------------------------------------------------------------------------
     | Session Encryption
     |--------------------------------------------------------------------------
     |

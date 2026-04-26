@@ -74,7 +74,8 @@ class User extends Authenticatable implements HasMedia
     public function allAvailableBranches()
     {
         // tetap dukung role Super Admin (kalau kamu pakai)
-        if ($this->hasRole('Super Admin')) {
+        $roleNames = $this->getRoleNames()->map(fn ($role) => strtolower((string) $role))->all();
+        if (in_array('super admin', $roleNames, true) || in_array('administrator', $roleNames, true)) {
             return \Modules\Branch\Entities\Branch::query()->orderBy('name')->get();
         }
 

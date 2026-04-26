@@ -61,7 +61,6 @@ class LoginController extends Controller
         }
 
         $user['token'] = $user->createToken('api-token')->plainTextToken;
-        $user['user_role'] = 'TC_OWNER';
 
         // return dd($user);
         return new UserCredentialResource($user);
@@ -76,6 +75,29 @@ class LoginController extends Controller
     //     ], 200);
     // }
     
+    public function logout(Request $request)
+    {
+        if ($request->is('api/*')) {
+            $user = $request->user('sanctum');
+            $token = $user ? $user->currentAccessToken() : null;
+
+            if ($token) {
+                $token->delete();
+            }
+
+            return response()->json([
+                'message' => 'Logout successfully.'
+            ], 200);
+        }
+
+        Auth::guard('web')->logout();
+
+        $request->session()->invalidate();
+        $request->session()->regenerateToken();
+
+        return redirect('/login');
+    }
+
     function changePassword(ChangePasswordRequest $request)
     {
         $validatedData = $request->validated();

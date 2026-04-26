@@ -7,6 +7,8 @@ use Illuminate\Support\Facades\Schema;
 
 trait HasBranchScope
 {
+    protected static array $branchColumnCache = [];
+
     public static function bootHasBranchScope()
     {
         static::addGlobalScope('branch', function (Builder $builder) {
@@ -26,7 +28,11 @@ trait HasBranchScope
 
             $table = $builder->getModel()->getTable();
 
-            if (Schema::hasColumn($table, 'branch_id')) {
+            if (!array_key_exists($table, static::$branchColumnCache)) {
+                static::$branchColumnCache[$table] = Schema::hasColumn($table, 'branch_id');
+            }
+
+            if (static::$branchColumnCache[$table]) {
                 $builder->where($table . '.branch_id', (int) $active);
             }
         });

@@ -8,6 +8,7 @@ use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
+use Modules\Crm\Entities\Lead;
 use Modules\People\Entities\Customer;
 use Modules\Product\Entities\Product;
 use Modules\Product\Entities\Warehouse;
@@ -200,6 +201,10 @@ class SaleOrderController extends Controller
         abort_if(Gate::denies('create_sale_orders'), 403);
 
         try {
+            if ($request->filled('branch_id')) {
+                BranchContext::set($request->get('branch_id'));
+            }
+
             // ✅ Block jika active_branch = "all" / kosong
             $active = session('active_branch');
             if ($active === 'all' || empty($active)) {
@@ -222,7 +227,7 @@ class SaleOrderController extends Controller
                 ->get();
 
             $source = (string) $request->get('source', 'manual');
-            abort_unless(in_array($source, ['manual', 'quotation', 'sale'], true), 403);
+            abort_unless(in_array($source, ['manual', 'quotation', 'sale', 'lead'], true), 403);
 
             $prefillCustomerId = null;
             $prefillWarehouseId = null; // tetap nullable
@@ -311,6 +316,50 @@ class SaleOrderController extends Controller
                 }
             }
 
+            if ($source === 'lead') {
+                $leadId = (int) $request->get('lead_id', 0);
+                if ($leadId <= 0) abort(422, 'lead_id is required');
+
+                $lead = Lead::query()
+                    ->where('id', $leadId)
+                    ->where('branch_id', $branchId)
+                    ->with(['product', 'leadProducts'])
+                    ->firstOrFail();
+
+                $prefillCustomerId = $lead->customer_id ? (int) $lead->customer_id : null;
+                $prefillDate = date('Y-m-d');
+                $leadLabel = '#' . $lead->id . ($lead->ref_code ? ' / Ref: ' . $lead->ref_code : '');
+                $prefillNote = trim('Created from CRM Lead ' . $leadLabel . "\n" . (string) ($lead->notes ?? ''));
+                $prefillRefText = 'CRM Lead: ' . $leadLabel;
+
+                $leadItems = $lead->leadProducts->isNotEmpty()
+                    ? $lead->leadProducts
+                    : collect($lead->product_id ? [[
+                        'product_id' => (int) $lead->product_id,
+                        'quantity' => 1,
+                        'unit_price' => (int) ($lead->estimated_price ?: ($lead->product?->product_price ?? 0)),
+                        'product_name' => $lead->product?->product_name ?: $lead->product_name,
+                        'product_code' => $lead->product?->product_code ?: $lead->product_code,
+                    ]] : []);
+
+                foreach ($leadItems as $item) {
+                    $unitPrice = (int) (is_array($item) ? $item['unit_price'] : $item->unit_price);
+                    $quantity = max((int) (is_array($item) ? $item['quantity'] : $item->quantity), 1);
+                    $prefillItems[] = [
+                        'product_id' => (int) (is_array($item) ? $item['product_id'] : $item->product_id),
+                        'quantity'   => $quantity,
+                        'price'      => $unitPrice,
+                        'original_price' => $unitPrice,
+                        'unit_price' => $unitPrice,
+                        'product_discount_amount' => 0,
+                        'product_discount_type' => 'fixed',
+                        'sub_total' => $unitPrice * $quantity,
+                        'product_name' => is_array($item) ? $item['product_name'] : $item->product_name,
+                        'product_code' => is_array($item) ? $item['product_code'] : $item->product_code,
+                    ];
+                }
+            }
+
             // ✅ Master product untuk dropdown + untuk inject label ke prefillItems
             $products = Product::query()
                 ->select('id', 'product_name', 'product_code')
@@ -360,10 +409,14 @@ class SaleOrderController extends Controller
         abort_if(Gate::denies('create_sale_orders'), 403);
 
         try {
+            if ($request->filled('branch_id')) {
+                BranchContext::set($request->get('branch_id'));
+            }
+
             $branchId = BranchContext::id();
 
             $source = (string) $request->get('source', 'manual');
-            abort_unless(in_array($source, ['manual', 'quotation', 'sale'], true), 403);
+            abort_unless(in_array($source, ['manual', 'quotation', 'sale', 'lead'], true), 403);
 
             $rules = [
                 'date' => 'required|date',
@@ -404,6 +457,7 @@ class SaleOrderController extends Controller
 
             if ($source === 'quotation') $rules['quotation_id'] = 'required|integer';
             if ($source === 'sale') $rules['sale_id'] = 'required|integer';
+            if ($source === 'lead') $rules['lead_id'] = 'required|integer';
 
             $request->validate($rules);
 
@@ -420,6 +474,7 @@ class SaleOrderController extends Controller
 
                 $quotationId = null;
                 $saleId = null;
+                $lead = null;
 
                 if ($source === 'quotation') {
                     $quotationId = (int) $request->quotation_id;
@@ -451,6 +506,14 @@ class SaleOrderController extends Controller
                         ->exists();
 
                     if ($exists) abort(422, 'Sale Order for this invoice already exists.');
+                }
+
+                if ($source === 'lead') {
+                    $lead = Lead::query()
+                        ->where('id', (int) $request->lead_id)
+                        ->where('branch_id', $branchId)
+                        ->lockForUpdate()
+                        ->firstOrFail();
                 }
 
                 $productIds = collect($request->items)
@@ -583,6 +646,13 @@ class SaleOrderController extends Controller
                         'product_discount_type' => (string) ($row['product_discount_type'] ?? 'fixed'),
                         'sub_total' => (int) $row['sub_total'],
                     ]);
+                }
+
+                if ($lead) {
+                    $lead->forceFill([
+                        'sale_order_id' => (int) $so->id,
+                        'status' => 'deal',
+                    ])->save();
                 }
 
                 // reserve stock (existing)

@@ -16,17 +16,22 @@ class SuperUserSeeder extends Seeder
      */
     public function run()
     {
-        $user = User::create([
-            'name' => 'Administrator',
-            'email' => 'stefanusalvinwijaya@gmail.com',
-            'password' => Hash::make(12345678),
-            'is_active' => 1
+        $user = User::updateOrCreate(
+            ['email' => 'stefanusalvinwijaya@gmail.com'],
+            [
+                'name' => 'Administrator',
+                'password' => Hash::make(12345678),
+                'is_active' => 1,
+            ]
+        );
+
+        $superAdmin = Role::firstOrCreate([
+            'name' => 'Super Admin',
+            'guard_name' => 'web',
         ]);
 
-        $superAdmin = Role::create([
-            'name' => 'Super Admin'
-        ]);
-
-        $user->assignRole($superAdmin);
+        if (!$user->hasRole('Super Admin')) {
+            $user->assignRole($superAdmin);
+        }
     }
 }

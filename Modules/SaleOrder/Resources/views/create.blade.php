@@ -119,6 +119,11 @@
                             <input type="hidden" name="sale_id" value="{{ request('sale_id') }}">
                         @endif
 
+                        @if($source === 'lead')
+                            <input type="hidden" name="lead_id" value="{{ request('lead_id') }}">
+                            <input type="hidden" name="branch_id" value="{{ request('branch_id') }}">
+                        @endif
+
                         <div class="row">
                             <div class="col-md-3 mb-3">
                                 <label class="form-label">Date</label>
