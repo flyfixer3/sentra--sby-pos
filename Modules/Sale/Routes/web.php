@@ -2,6 +2,7 @@
 
 use Barryvdh\DomPDF\Facade\Pdf;
 use Illuminate\Support\Facades\Route;
+use Modules\Branch\Entities\Branch;
 
 Route::group(['middleware' => 'auth'], function () {
     /**
@@ -51,35 +52,49 @@ Route::group(['middleware' => 'auth'], function () {
     // Jangan pakai alias \PDF, karena di config/app.php alias "PDF" ter-mapping ke Snappy (wkhtmltopdf).
     // Untuk shared hosting / environment tanpa wkhtmltopdf, ini akan error dan PDF gagal load.
     // Gunakan DomPDF facade (Barryvdh\DomPDF\Facade\Pdf) melalui controller.
-    Route::get('/sales/pdf/{sale}', 'SaleController@pdf')->name('sales.pdf');
+    Route::get('/sales/pdf/{sale}', 'SaleController@pdf')
+        ->middleware('branch.selected')
+        ->name('sales.pdf');
 
     Route::get('/sales/pos/pdf/{id}', function ($id) {
         $sale = \Modules\Sale\Entities\Sale::findOrFail($id);
         $customer = \Modules\People\Entities\Customer::findOrFail($sale->customer_id);
+        $branch = !empty($sale->branch_id)
+            ? Branch::withoutGlobalScopes()->find((int) $sale->branch_id)
+            : null;
 
         $pdf = Pdf::loadView('sale::print-pos', [
             'sale' => $sale,
             'customer' => $customer,
+            'branch' => $branch,
         ])->setPaper('a5', 'landscape');
 
         return $pdf->stream('sale-' . $sale->reference . '.pdf');
-    })->name('sales.pos.pdf');
+    })->middleware('branch.selected')->name('sales.pos.pdf');
 
     Route::get('/sales/pos/debug/{id}', function ($id) {
         $sale = \Modules\Sale\Entities\Sale::findOrFail($id);
         $customer = \Modules\People\Entities\Customer::findOrFail($sale->customer_id);
+        $branch = !empty($sale->branch_id)
+            ? Branch::withoutGlobalScopes()->find((int) $sale->branch_id)
+            : null;
 
         return view('sale::print-pos', [
             'sale' => $sale,
             'customer' => $customer,
+            'branch' => $branch,
         ]);
-    })->name('sales.pos.debug');
+    })->middleware('branch.selected')->name('sales.pos.debug');
 
     /**
      * ============================
      * SALE PAYMENT RECEIPT (READ-ONLY)
      * ============================
      */
-    Route::get('/sale-payments/receipt/{salePayment}', 'SalePaymentsController@receipt')->name('sale-payments.receipt');
-    Route::get('/sale-payments/receipt/{salePayment}/debug', 'SalePaymentsController@receiptDebug')->name('sale-payments.receipt.debug');
+    Route::get('/sale-payments/receipt/{salePayment}', 'SalePaymentsController@receipt')
+        ->middleware('branch.selected')
+        ->name('sale-payments.receipt');
+    Route::get('/sale-payments/receipt/{salePayment}/debug', 'SalePaymentsController@receiptDebug')
+        ->middleware('branch.selected')
+        ->name('sale-payments.receipt.debug');
 });

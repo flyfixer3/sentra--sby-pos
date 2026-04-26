@@ -13,6 +13,7 @@
 
 use Modules\People\Entities\Customer;
 use Modules\Quotation\Entities\Quotation;
+use Modules\Branch\Entities\Branch;
 
 Route::group(['middleware' => 'auth'], function () {
 
@@ -39,12 +40,16 @@ Route::group(['middleware' => 'auth'], function () {
     Route::get('/quotations/pdf/{id}', function ($id) {
         $quotation = Quotation::findOrFail($id);
         $customer = Customer::findOrFail($quotation->customer_id);
+        $branch = !empty($quotation->branch_id)
+            ? Branch::withoutGlobalScopes()->find((int) $quotation->branch_id)
+            : null;
 
         $pdf = \PDF::loadView('quotation::print', [
             'quotation' => $quotation,
             'customer' => $customer,
+            'branch' => $branch,
         ])->setPaper('a4');
 
         return $pdf->stream('quotation-'. $quotation->reference .'.pdf');
-    })->name('quotations.pdf');
+    })->middleware('branch.selected')->name('quotations.pdf');
 });

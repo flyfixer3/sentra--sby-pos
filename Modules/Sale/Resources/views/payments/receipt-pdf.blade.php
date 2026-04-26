@@ -73,8 +73,10 @@
 <body>
 
 @php
-    $companyName = settings()->company_name ?? 'Company';
-    $branchName = $companyName; // kalau kamu punya setting per branch, bisa diganti di sini
+    $settings = settings();
+    $printBranch = $branch ?? $sale->branch ?? null;
+    $companyName = $printBranch->name ?? $settings->company_name ?? 'Company';
+    $branchName = $companyName;
 
     $invoiceNo = 'INV/' . ($sale->reference ?? $sale->id);
     $invoiceDate = !empty($sale->date) ? \Carbon\Carbon::parse($sale->date)->format('d M, Y') : '-';

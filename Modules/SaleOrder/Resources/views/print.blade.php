@@ -246,10 +246,12 @@
     $statusText = strtoupper((string) ($saleOrder->status ?? 'PENDING'));
     $dateText = $saleOrder->date ? \Carbon\Carbon::parse($saleOrder->date)->format('d M Y') : '-';
 
-    $companyName = settings()->company_name ?? 'Company';
-    $companyAddress = settings()->company_address ?? '-';
-    $companyEmail = settings()->company_email ?? '-';
-    $companyPhone = settings()->company_phone ?? '-';
+    $settings = settings();
+    $printBranch = $branch ?? null;
+    $companyName = $printBranch->name ?? $settings->company_name ?? 'Company';
+    $companyAddress = $printBranch->address ?? $settings->company_address ?? '-';
+    $companyEmail = $printBranch->email ?? $settings->company_email ?? '-';
+    $companyPhone = $printBranch->phone ?? $settings->company_phone ?? '-';
 @endphp
 
 <table class="document-header">

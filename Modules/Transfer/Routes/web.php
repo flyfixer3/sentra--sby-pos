@@ -34,6 +34,7 @@ Route::middleware(['auth'])
          * - return pdf_url + copy_number
          */
         Route::post('/{transfer}/print-prepare', [TransferController::class, 'preparePrint'])
+            ->middleware('branch.selected')
             ->name('print.prepare');
 
         /**
@@ -41,6 +42,7 @@ Route::middleware(['auth'])
          * DB update already done in print.prepare
          */
         Route::get('/{transfer}/print-pdf', [TransferController::class, 'printPdf'])
+            ->middleware('branch.selected')
             ->name('print.pdf');
 
         Route::delete('/{id}', [TransferController::class, 'destroy'])->name('destroy');

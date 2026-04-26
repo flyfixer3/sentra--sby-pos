@@ -24,7 +24,9 @@ Route::group(['middleware' => 'auth'], function () {
     Route::post('/products/import', [ProductImportController::class, 'import'])->name('products.import.store');
 
     //Print Barcode
-    Route::get('/products/print-barcode', 'BarcodeController@printBarcode')->name('barcode.print');
+    Route::get('/products/print-barcode', 'BarcodeController@printBarcode')
+        ->middleware('branch.selected')
+        ->name('barcode.print');
     //Product
     Route::resource('products', 'ProductController');
     //Product Category

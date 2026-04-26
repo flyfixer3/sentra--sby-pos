@@ -1,5 +1,7 @@
 <?php
 
+use Modules\Branch\Entities\Branch;
+
 /*
 |--------------------------------------------------------------------------
 | Web Routes
@@ -17,14 +19,18 @@ Route::group(['middleware' => 'auth'], function() {
     Route::get('/purchase-returns/pdf/{id}', function ($id) {
         $purchaseReturn = \Modules\PurchasesReturn\Entities\PurchaseReturn::findOrFail($id);
         $supplier = \Modules\People\Entities\Supplier::findOrFail($purchaseReturn->supplier_id);
+        $branch = !empty($purchaseReturn->branch_id)
+            ? Branch::withoutGlobalScopes()->find((int) $purchaseReturn->branch_id)
+            : null;
 
         $pdf = \PDF::loadView('purchasesreturn::print', [
             'purchase_return' => $purchaseReturn,
             'supplier' => $supplier,
+            'branch' => $branch,
         ])->setPaper('a4');
 
         return $pdf->stream('purchase-return-'. $purchaseReturn->reference .'.pdf');
-    })->name('purchase-returns.pdf');
+    })->middleware('branch.selected')->name('purchase-returns.pdf');
 
     //Purchase Returns
     Route::resource('purchase-returns', 'PurchasesReturnController');

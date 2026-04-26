@@ -35,11 +35,16 @@
 </head>
 <body>
 <div class="wrap">
+    @php
+        $settings = settings();
+        $printBranch = $branch ?? $sale->branch ?? null;
+        $companyName = $printBranch->name ?? $settings->company_name ?? 'Company';
+    @endphp
 
     <div class="text-center mb-10">
         <img src="{{ public_path('images/logo-dark.png') }}" alt="Logo" style="height: 28px; margin-bottom: 6px;">
         <div class="h1">PAYMENT RECEIPT</div>
-        <div class="muted">{{ settings()->company_name }}</div>
+        <div class="muted">{{ $companyName }}</div>
     </div>
 
     <div class="box mb-14 clearfix">

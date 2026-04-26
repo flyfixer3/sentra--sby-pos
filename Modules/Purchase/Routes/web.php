@@ -14,6 +14,7 @@
 use Modules\People\Entities\Supplier;
 use Modules\Purchase\Entities\Purchase;
 use Modules\Purchase\Http\Controllers\PurchaseController;
+use Modules\Branch\Entities\Branch;
 
 Route::group(['middleware' => 'auth'], function () {
 
@@ -63,12 +64,16 @@ Route::group(['middleware' => 'auth'], function () {
     Route::get('purchases/pdf/{id}', function ($id) {
         $purchase  = Purchase::findOrFail($id);
         $supplier  = Supplier::findOrFail($purchase->supplier_id);
+        $branch = !empty($purchase->branch_id)
+            ? Branch::withoutGlobalScopes()->find((int) $purchase->branch_id)
+            : null;
 
         $pdf = \PDF::loadView('purchase::print', [
             'purchase'  => $purchase,
             'supplier'  => $supplier,
+            'branch'    => $branch,
         ])->setPaper('a4');
 
         return $pdf->stream('purchase-' . $purchase->reference . '.pdf');
-    })->name('purchases.pdf');
+    })->middleware('branch.selected')->name('purchases.pdf');
 });

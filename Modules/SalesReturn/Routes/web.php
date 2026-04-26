@@ -1,5 +1,7 @@
 <?php
 
+use Modules\Branch\Entities\Branch;
+
 /*
 |--------------------------------------------------------------------------
 | Web Routes
@@ -16,14 +18,18 @@ Route::group(['middleware' => 'auth'], function () {
     Route::get('/sale-returns/pdf/{id}', function ($id) {
         $saleReturn = \Modules\SalesReturn\Entities\SaleReturn::findOrFail($id);
         $customer = \Modules\People\Entities\Customer::findOrFail($saleReturn->customer_id);
+        $branch = !empty($saleReturn->branch_id)
+            ? Branch::withoutGlobalScopes()->find((int) $saleReturn->branch_id)
+            : null;
 
         $pdf = \PDF::loadView('salesreturn::print', [
             'sale_return' => $saleReturn,
             'customer' => $customer,
+            'branch' => $branch,
         ])->setPaper('a4');
 
         return $pdf->stream('sale-return-'. $saleReturn->reference .'.pdf');
-    })->name('sale-returns.pdf');
+    })->middleware('branch.selected')->name('sale-returns.pdf');
 
     //Sale Returns
     Route::resource('sale-returns', 'SalesReturnController');

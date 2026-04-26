@@ -169,11 +169,13 @@
 <body>
 
 @php
-    // ========= Company Info (safe fallback) =========
-    $companyName = settings()->company_name ?? 'Company';
-    $companyAddress = settings()->company_address ?? '-';
-    $companyEmail = settings()->company_email ?? '-';
-    $companyPhone = settings()->company_phone ?? '-';
+    // ========= Branch / Company Info (safe fallback) =========
+    $settings = settings();
+    $printBranch = $branch ?? $sale->branch ?? null;
+    $companyName = $printBranch->name ?? $settings->company_name ?? 'Company';
+    $companyAddress = $printBranch->address ?? $settings->company_address ?? '-';
+    $companyEmail = $printBranch->email ?? $settings->company_email ?? '-';
+    $companyPhone = $printBranch->phone ?? $settings->company_phone ?? '-';
 
     // ========= Invoice numbers =========
     $invoiceNo = 'INV/' . ($sale->reference ?? $sale->id);

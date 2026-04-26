@@ -13,6 +13,7 @@ use App\Helpers\Helper;
 use Modules\Sale\Entities\SalePayment;
 use Barryvdh\DomPDF\Facade\Pdf;
 use Modules\People\Entities\Customer;
+use Modules\Branch\Entities\Branch;
 
 class SalePaymentsController extends Controller
 {
@@ -199,6 +200,9 @@ class SalePaymentsController extends Controller
         }
 
         $customer = Customer::query()->find($sale->customer_id);
+        $branch = !empty($sale->branch_id)
+            ? Branch::withoutGlobalScopes()->find((int) $sale->branch_id)
+            : null;
 
         $paidBefore = (int) SalePayment::query()
             ->where('sale_id', (int) $sale->id)
@@ -226,6 +230,7 @@ class SalePaymentsController extends Controller
             // optional kalau mau tampilkan di receipt
             'dpAllocated' => $dpAllocated,
             'netTotal' => $netTotal,
+            'branch' => $branch,
         ])->setPaper('a5', 'portrait');
 
         return $pdf->stream('receipt-' . ($salePayment->reference ?? $salePayment->id) . '.pdf');
@@ -243,6 +248,9 @@ class SalePaymentsController extends Controller
         }
 
         $customer = Customer::query()->find($sale->customer_id);
+        $branch = !empty($sale->branch_id)
+            ? Branch::withoutGlobalScopes()->find((int) $sale->branch_id)
+            : null;
 
         $paidBefore = (int) SalePayment::query()
             ->where('sale_id', (int) $sale->id)
@@ -261,6 +269,7 @@ class SalePaymentsController extends Controller
             'paidBefore' => $paidBefore,
             'paidAfter' => $paidAfter,
             'remaining' => $remaining,
+            'branch' => $branch,
         ]);
     }
 }

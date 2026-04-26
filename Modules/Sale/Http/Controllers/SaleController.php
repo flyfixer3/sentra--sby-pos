@@ -10,6 +10,7 @@ use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\Schema;
 use Modules\People\Entities\Customer;
 use Modules\People\Entities\Supplier;
+use Modules\Branch\Entities\Branch;
 use Modules\Product\Entities\Warehouse;
 use Modules\Sale\Entities\Sale;
 use Modules\Quotation\Entities\Quotation;
@@ -1254,19 +1255,30 @@ class SaleController extends Controller
     {
         abort_if(Gate::denies('show_sales'), 403);
 
-        $branchId = BranchContext::id();
+        $activeBranchId = BranchContext::id();
+        $saleBranchId = (int) ($sale->branch_id ?? 0);
 
-        $sale->load(['creator', 'updater', 'saleDetails']);
+        if ($activeBranchId && $saleBranchId > 0) {
+            abort_if($saleBranchId !== (int) $activeBranchId, 403);
+        }
+
+        $branchId = $saleBranchId > 0 ? $saleBranchId : $activeBranchId;
+
+        $sale->load(['creator', 'updater', 'saleDetails', 'branch']);
+        $branch = $sale->branch ?: ($branchId ? Branch::withoutGlobalScopes()->find((int) $branchId) : null);
 
         $customer = Customer::query()
             ->where('id', $sale->customer_id)
             ->where(function ($q) use ($branchId) {
-                $q->whereNull('branch_id')->orWhere('branch_id', $branchId);
+                $q->whereNull('branch_id');
+                if ($branchId) {
+                    $q->orWhere('branch_id', (int) $branchId);
+                }
             })
             ->firstOrFail();
 
         $saleDeliveries = SaleDelivery::query()
-            ->where('branch_id', $branchId)
+            ->when($branchId, fn ($q) => $q->where('branch_id', (int) $branchId))
             ->where('sale_id', (int) $sale->id)
             ->orderByDesc('id')
             ->get();
@@ -1283,7 +1295,7 @@ class SaleController extends Controller
 
             if ($saleOrderId > 0) {
                 $saleOrder = \Modules\SaleOrder\Entities\SaleOrder::query()
-                    ->where('branch_id', $branchId)
+                    ->when($branchId, fn ($q) => $q->where('branch_id', (int) $branchId))
                     ->where('id', $saleOrderId)
                     ->first();
 
@@ -1311,6 +1323,7 @@ class SaleController extends Controller
             'saleDeliveries' => $saleDeliveries,
             'saleOrderDepositInfo' => $saleOrderDepositInfo,
             'salePayments' => $salePayments,
+            'branch' => $branch,
         ])->setPaper('a4');
 
         return $pdf->stream('sale-' . $sale->reference . '.pdf');

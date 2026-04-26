@@ -34,9 +34,14 @@
 <div class="wrap">
 
     <div class="text-center mb-10">
+        @php
+            $settings = settings();
+            $printBranch = $branch ?? null;
+            $companyName = $printBranch->name ?? $settings->company_name ?? 'Company';
+        @endphp
         <img src="{{ public_path('images/logo-dark.png') }}" alt="Logo" style="height: 28px; margin-bottom: 6px;">
         <div class="h1">DP RECEIPT</div>
-        <div class="muted">{{ settings()->company_name }}</div>
+        <div class="muted">{{ $companyName }}</div>
     </div>
 
     @php

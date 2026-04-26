@@ -82,6 +82,15 @@
   </style>
 </head>
 <body>
+  @php
+      $settings = settings();
+      $printBranch = $branch ?? $sale->branch ?? null;
+      $branchName = $printBranch->name ?? $settings->company_name ?? '-';
+      $branchAddress = $printBranch->address ?? $settings->company_address ?? '-';
+      $branchPhone = $printBranch->phone ?? $settings->company_phone ?? '-';
+      $branchEmail = $printBranch->email ?? $settings->company_email ?? '-';
+  @endphp
+
   <!-- Header -->
   <div class="header">
     <table width="100%">
@@ -155,9 +164,10 @@
         </ul>
 
         <strong>Cabang:</strong><br>
-        Tangerang | Bekasi | Surabaya<br>
-        Hotline: 0812-8800-9878<br>
-        Email: sentraautoglass.sby@gmail.com
+        {{ $branchName }}<br>
+        {{ $branchAddress }}<br>
+        Hotline: {{ $branchPhone }}<br>
+        Email: {{ $branchEmail }}
       </td>
 
       <!-- Signature & Total -->

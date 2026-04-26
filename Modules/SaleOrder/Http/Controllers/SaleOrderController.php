@@ -10,6 +10,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
 use Modules\Crm\Entities\Lead;
 use Modules\People\Entities\Customer;
+use Modules\Branch\Entities\Branch;
 use Modules\Product\Entities\Product;
 use Modules\Product\Entities\Warehouse;
 use Modules\Quotation\Entities\Quotation;
@@ -46,9 +47,14 @@ class SaleOrderController extends Controller
             'items.product',
         ]);
 
+        $branch = !empty($saleOrder->branch_id)
+            ? Branch::withoutGlobalScopes()->find((int) $saleOrder->branch_id)
+            : null;
+
         return Pdf::loadView('saleorder::print', [
             'saleOrder' => $saleOrder,
             'customer' => $saleOrder->customer,
+            'branch' => $branch,
         ])->setPaper('a4');
     }
 
@@ -744,7 +750,7 @@ class SaleOrderController extends Controller
         abort_if(Gate::denies('show_sale_orders'), 403);
 
         $branchId = BranchContext::id();
-        if ((int) $saleOrder->branch_id !== (int) $branchId) {
+        if ($branchId && (int) $saleOrder->branch_id !== (int) $branchId) {
             abort(403, 'Wrong branch context.');
         }
 
@@ -787,7 +793,7 @@ class SaleOrderController extends Controller
         abort_if(Gate::denies('show_sale_orders'), 403);
 
         $branchId = BranchContext::id();
-        if ((int) $saleOrder->branch_id !== (int) $branchId) {
+        if ($branchId && (int) $saleOrder->branch_id !== (int) $branchId) {
             abort(403, 'Wrong branch context.');
         }
 
@@ -813,11 +819,14 @@ class SaleOrderController extends Controller
         abort_if(\Illuminate\Support\Facades\Gate::denies('show_sale_orders'), 403);
 
         $branchId = \App\Support\BranchContext::id();
-        if ((int) $saleOrder->branch_id !== (int) $branchId) {
+        if ($branchId && (int) $saleOrder->branch_id !== (int) $branchId) {
             abort(403, 'Wrong branch context.');
         }
 
         $saleOrder->load(['customer']);
+        $branch = !empty($saleOrder->branch_id)
+            ? Branch::withoutGlobalScopes()->find((int) $saleOrder->branch_id)
+            : null;
 
         $dpReceived = (int) ($saleOrder->deposit_received_amount ?? 0);
         if ($dpReceived <= 0) {
@@ -865,6 +874,7 @@ class SaleOrderController extends Controller
             'paidBefore' => $paidBefore,
             'paidAfter' => $paidAfter,
             'remaining' => $remaining,
+            'branch' => $branch,
         ])->setPaper('a4');
 
         $ref = $salePayment->reference ?? ('SO-' . $saleOrder->id);
