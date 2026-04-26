@@ -177,29 +177,8 @@
             vertical-align: top;
         }
 
-        .note-wrap {
-            width: 56%;
-            padding-right: 16px;
-        }
-
         .totals-wrap {
             width: 44%;
-        }
-
-        .note-box {
-            border: 1px solid #e5e7eb;
-            border-radius: 8px;
-            padding: 12px 14px;
-            min-height: 132px;
-        }
-
-        .note-title {
-            margin: 0 0 8px 0;
-            font-size: 11px;
-            font-weight: 700;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-            color: #374151;
         }
 
         .totals-box {
@@ -261,7 +240,6 @@
     $isManualOrderDiscount = $appliedOrderDiscount > 0;
     $discInfo = $isManualOrderDiscount ? $appliedOrderDiscount : $storedDiscountAmount;
 
-    $dpPlanned = (int) ($saleOrder->deposit_amount ?? 0);
     $dpReceived = (int) ($saleOrder->deposit_received_amount ?? 0);
     $remainingAfterDp = max(0, $total - $dpReceived);
 
@@ -317,7 +295,6 @@
                     Status:
                     <span class="status-pill">{{ $statusText }}</span>
                 </div>
-                <div class="panel-line">DP Planned (Max): <span class="fw-semibold">{{ format_currency($dpPlanned) }}</span></div>
                 <div class="panel-line">DP Received: <span class="fw-semibold">{{ format_currency($dpReceived) }}</span></div>
             </div>
         </td>
@@ -360,16 +337,7 @@
 
 <table class="summary-section">
     <tr>
-        <td class="note-wrap">
-            <div class="note-box">
-                <div class="note-title">Notes</div>
-                @if(!empty($saleOrder->note))
-                    <div>{{ $saleOrder->note }}</div>
-                @else
-                    <div class="muted">No additional notes.</div>
-                @endif
-            </div>
-        </td>
+        <td style="width: 56%;">&nbsp;</td>
         <td class="totals-wrap">
             <div class="totals-box">
                 <table class="totals-table">
@@ -398,10 +366,6 @@
                     <tr class="grand-row">
                         <td>Grand Total</td>
                         <td class="amount">{{ format_currency($total) }}</td>
-                    </tr>
-                    <tr>
-                        <td class="label">DP Planned (Max)</td>
-                        <td class="amount">{{ format_currency($dpPlanned) }}</td>
                     </tr>
                     <tr>
                         <td class="label">DP Received</td>

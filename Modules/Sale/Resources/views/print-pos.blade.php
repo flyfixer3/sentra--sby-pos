@@ -89,7 +89,7 @@
         <td><img src="{{ public_path('images/logo.png') }}" alt="Logo"></td>
         <td style="text-align: right; font-size: 10px;">
           <strong>Invoice</strong><br>
-          No: {{ $sale->note }}<br>
+          No: {{ $sale->reference }}<br>
           Tanggal: {{ \Carbon\Carbon::parse($sale->date)->format('d M Y') }}
         </td>
       </tr>
@@ -153,9 +153,6 @@
           <li>Garansi hanya berlaku apabila tidak ada kerusakan akibat benturan atau kecelakaan.</li>
           <li>Komplain setelah masa garansi tidak akan diterima.</li>
         </ul>
-
-        <strong>Catatan:</strong><br>
-        Mohon simpan invoice ini sebagai bukti resmi pemasangan kaca mobil.<br><br>
 
         <strong>Cabang:</strong><br>
         Tangerang | Bekasi | Surabaya<br>

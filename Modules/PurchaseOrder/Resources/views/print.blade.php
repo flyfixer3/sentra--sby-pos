@@ -142,20 +142,8 @@
             padding: 0;
         }
 
-        .note-box {
-            width: 58%;
-            padding-right: 12px;
-        }
-
         .summary-box {
             width: 42%;
-        }
-
-        .note {
-            border: 1px solid #e3e3e3;
-            padding: 9px 10px;
-            min-height: 58px;
-            line-height: 1.4;
         }
 
         .summary {
@@ -294,12 +282,7 @@
 
 <table class="summary-wrap">
     <tr>
-        <td class="note-box">
-            <div class="note">
-                <strong>Note</strong><br>
-                {{ $purchase_order->note ?: '-' }}
-            </div>
-        </td>
+        <td style="width: 58%;">&nbsp;</td>
         <td class="summary-box">
             <table class="summary">
                 <tr>

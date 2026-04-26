@@ -250,13 +250,6 @@
                     <span class="badge {{ $psBadge }}">{{ strtoupper($sale->payment_status ?? 'UNPAID') }}</span>
                 </div>
 
-                @if(!empty($sale->note))
-                    <div class="info-line" style="margin-top:8px;">
-                        <span class="muted">Note:</span><br>
-                        <span class="fw-semibold">{{ $sale->note }}</span>
-                    </div>
-                @endif
-
                 @if($allocatedDp > 0)
                     <div class="info-line" style="margin-top:10px;">
                         <div class="muted" style="margin-bottom:4px;">Deposit (DP) from Sale Order</div>
@@ -307,19 +300,6 @@
 
 <table class="summary-wrap">
     <tr>
-        <!-- <td class="note-box">
-            <div class="card" style="padding:10px 12px;">
-                <div class="fw-bold" style="margin-bottom:6px;">Summary Notes</div>
-                <div class="muted" style="line-height:1.45;">
-                    - Grand Total adalah total invoice normal.<br>
-                    @if($allocatedDp > 0)
-                        - DP (dari Sale Order) ditampilkan sebagai pengurang tagihan di invoice ini.<br>
-                        - DP tidak tercatat sebagai “invoice payment”, karena payment DP sudah tercatat saat Sale Order.<br>
-                    @endif
-                    - Total Paid (Invoice) adalah pembayaran yang dicatat lewat Add Payment pada invoice ini.
-                </div>
-            </div>
-        </td> -->
         <td class="summary-box">
             <div class="card" style="padding:10px 12px;">
                 <table class="summary">

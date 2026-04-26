@@ -95,9 +95,6 @@
         <tr>
             <td>
                 Deposit (DP) Received
-                @if(!empty($salePayment->note))
-                    <div class="muted" style="margin-top: 3px;">Note: {{ $salePayment->note }}</div>
-                @endif
             </td>
             <td class="text-right"><strong>{{ format_currency((int)($salePayment->amount ?? 0)) }}</strong></td>
         </tr>
@@ -125,10 +122,6 @@
             </tr>
             </tbody>
         </table>
-
-        <div class="muted" style="margin-top:10px;font-size:11px;line-height:1.45;">
-            Catatan: DP ini akan ditampilkan sebagai pengurang tagihan saat Invoice dibuat dari Sale Delivery (allocated pro-rata).
-        </div>
     </div>
 
     <div class="text-center muted" style="margin-top: 12px; font-size: 11px;">

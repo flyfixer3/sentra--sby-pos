@@ -84,9 +84,6 @@
         <tr>
             <td>
                 Payment Received
-                @if(!empty($salePayment->note))
-                    <div class="muted" style="margin-top: 3px;">Note: {{ $salePayment->note }}</div>
-                @endif
             </td>
             <td class="text-right"><strong>{{ format_currency((int)($salePayment->amount ?? 0)) }}</strong></td>
         </tr>
