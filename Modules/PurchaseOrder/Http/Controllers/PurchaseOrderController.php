@@ -2,6 +2,8 @@
 
 namespace Modules\PurchaseOrder\Http\Controllers;
 
+use App\Support\BranchContext;
+use Barryvdh\DomPDF\Facade\Pdf;
 use Gloudemans\Shoppingcart\Facades\Cart;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
@@ -21,6 +23,42 @@ use Modules\PurchaseOrder\Http\Requests\UpdatePurchaseOrderRequest;
 
 class PurchaseOrderController extends Controller
 {
+    public function pdf(PurchaseOrder $purchase_order)
+    {
+        abort_if(Gate::denies('show_purchase_orders'), 403);
+
+        $activeBranch = BranchContext::active();
+
+        $purchase_order = PurchaseOrder::withoutGlobalScopes()
+            ->with([
+                'purchaseOrderDetails',
+                'supplier',
+                'branch',
+            ])
+            ->findOrFail((int) $purchase_order->id);
+
+        if ($activeBranch !== 'all' && $activeBranch !== null && $activeBranch !== '') {
+            abort_if((int) $purchase_order->branch_id !== (int) $activeBranch, 403);
+        }
+
+        $purchase_order->loadMissing([
+            'purchaseOrderDetails',
+            'supplier',
+            'branch',
+        ]);
+
+        $supplier = $purchase_order->supplier;
+        $branch = $purchase_order->branch;
+
+        $pdf = Pdf::loadView('purchase-orders::print', [
+            'purchase_order' => $purchase_order,
+            'supplier' => $supplier,
+            'branch' => $branch,
+        ])->setPaper('a4');
+
+        return $pdf->stream('purchase-order-' . $purchase_order->reference . '.pdf');
+    }
+
     public function index(PurchaseOrdersDataTable $dataTable)
     {
         abort_if(Gate::denies('access_purchase_orders'), 403);
