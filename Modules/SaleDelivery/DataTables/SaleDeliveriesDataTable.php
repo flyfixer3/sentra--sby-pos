@@ -38,16 +38,16 @@ class SaleDeliveriesDataTable extends DataTable
 
             ->editColumn('date', fn($row) => $this->formatDateWithCreatedTime($row, 'date'))
 
-            ->addColumn('customer_name', fn($row) => $row->customer?->customer_name ?? '-')
+            ->editColumn('customer_name', fn($row) => $row->customer_name ?? '-')
 
-            ->addColumn('items_count', fn($row) => (int) ($row->items_count ?? 0))
+            ->editColumn('items_count', fn($row) => (int) ($row->items_count ?? 0))
 
-            ->addColumn('status', function ($row) {
+            ->editColumn('status', function ($row) {
                 return view('saledelivery::partials.status', ['data' => $row]);
             })
 
-            ->addColumn('created_by_name', fn($row) => $row->creator?->name ?? '-')
-            ->addColumn('confirmed_by_name', fn($row) => $row->confirmer?->name ?? '-')
+            ->editColumn('created_by_name', fn($row) => $row->created_by_name ?? '-')
+            ->editColumn('confirmed_by_name', fn($row) => $row->confirmed_by_name ?? '-')
 
             ->addColumn('action', function ($row) {
                 return view('saledelivery::partials.actions', ['data' => $row]);
@@ -62,9 +62,16 @@ class SaleDeliveriesDataTable extends DataTable
             ? $model->query()
             : $model->newQuery()->withoutGlobalScopes();
 
-        return $q->latest('id')
-                ->with(['customer', 'creator', 'confirmer'])
-                ->withCount('items');
+        return $q->select([
+                'sale_deliveries.*',
+                'customers.customer_name as customer_name',
+                'u_created.name as created_by_name',
+                'u_confirmed.name as confirmed_by_name',
+            ])
+            ->leftJoin('customers', 'customers.id', '=', 'sale_deliveries.customer_id')
+            ->leftJoin('users as u_created', 'u_created.id', '=', 'sale_deliveries.created_by')
+            ->leftJoin('users as u_confirmed', 'u_confirmed.id', '=', 'sale_deliveries.confirmed_by')
+            ->withCount('items');
     }
 
     public function html()
@@ -98,26 +105,31 @@ class SaleDeliveriesDataTable extends DataTable
             Column::make('reference')
                 ->className('text-center align-middle'),
 
-            Column::computed('customer_name')
+            Column::make('customer_name')
+                ->name('customers.customer_name')
                 ->title('Customer')
                 ->className('text-center align-middle'),
 
-            Column::computed('items_count')
+            Column::make('items_count')
                 ->title('Items')
                 ->className('text-center align-middle'),
 
-            Column::computed('status')
+            Column::make('status')
                 ->className('text-center align-middle'),
 
-            Column::computed('created_by_name')
+            Column::make('created_by_name')
+                ->name('u_created.name')
                 ->title('Created By')
                 ->className('text-center align-middle'),
 
-            Column::computed('confirmed_by_name')
+            Column::make('confirmed_by_name')
+                ->name('u_confirmed.name')
                 ->title('Confirmed By')
                 ->className('text-center align-middle'),
 
             Column::computed('action')
+                ->orderable(false)
+                ->searchable(false)
                 ->exportable(false)
                 ->printable(false)
                 ->className('text-center align-middle'),

@@ -46,24 +46,24 @@ class PurchaseDeliveriesDataTable extends DataTable
                 return $this->formatDateWithCreatedTime($row, 'date');
             })
 
-            ->addColumn('purchase_order', function ($data) {
+            ->editColumn('purchase_order', function ($data) {
                 // dari PO: ambil reference PO, kalau walk-in: WALK-IN
                 if (!empty($data->po_reference)) return $data->po_reference;
                 return 'WALK-IN';
             })
 
-            ->addColumn('supplier', function ($data) {
+            ->editColumn('supplier', function ($data) {
                 // prioritas: supplier PO, kalau null => supplier dari purchase (walk-in)
                 if (!empty($data->po_supplier_name)) return $data->po_supplier_name;
                 if (!empty($data->walkin_supplier_name)) return $data->walkin_supplier_name;
                 return '-';
             })
 
-            ->addColumn('warehouse', function ($data) {
+            ->editColumn('warehouse', function ($data) {
                 return $data->warehouse_name ?? '-';
             })
 
-            ->addColumn('status', function ($data) {
+            ->editColumn('status', function ($data) {
                 return view('purchase-deliveries::partials.status', compact('data'));
             })
 
@@ -82,6 +82,9 @@ class PurchaseDeliveriesDataTable extends DataTable
                 'purchases.supplier_name as walkin_supplier_name',
                 'warehouses.warehouse_name as warehouse_name',
             ])
+            ->selectRaw("COALESCE(purchase_orders.reference, 'WALK-IN') as purchase_order")
+            ->selectRaw("COALESCE(suppliers.supplier_name, purchases.supplier_name, '-') as supplier")
+            ->selectRaw("COALESCE(warehouses.warehouse_name, '-') as warehouse")
             ->leftJoin('purchase_orders', 'purchase_orders.id', '=', 'purchase_deliveries.purchase_order_id')
             ->leftJoin('suppliers', 'suppliers.id', '=', 'purchase_orders.supplier_id')
             // ✅ ini kunci walk-in: purchases.purchase_delivery_id -> purchase_deliveries.id
@@ -112,7 +115,8 @@ class PurchaseDeliveriesDataTable extends DataTable
     protected function getColumns()
     {
         return [
-            Column::computed('purchase_order')
+            Column::make('purchase_order')
+                ->name('purchase_order')
                 ->title('PO No.')
                 ->className('text-center align-middle'),
 
@@ -120,18 +124,22 @@ class PurchaseDeliveriesDataTable extends DataTable
                 ->title('Date Time')
                 ->className('text-center align-middle'),
 
-            Column::computed('supplier')
+            Column::make('supplier')
+                ->name('supplier')
                 ->title('Supplier')
                 ->className('text-center align-middle'),
 
-            Column::computed('warehouse')
+            Column::make('warehouse')
+                ->name('warehouse')
                 ->title('Warehouse')
                 ->className('text-center align-middle'),
 
-            Column::computed('status')
+            Column::make('status')
                 ->className('text-center align-middle'),
 
             Column::computed('action')
+                ->orderable(false)
+                ->searchable(false)
                 ->exportable(false)
                 ->printable(false)
                 ->className('text-center align-middle'),
