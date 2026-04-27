@@ -86,11 +86,8 @@ class MutationsDataTable extends DataTable
                 return e($note);
             })
 
-            ->editColumn('date', function ($row) {
-                return $row->date ? Carbon::parse($row->date)->format('d-m-Y') : '-';
-            })
             ->editColumn('created_at', function ($row) {
-                return $row->created_at ? Carbon::parse($row->created_at)->format('d-m-Y H:i:s') : '-';
+                return $row->created_at ? Carbon::parse($row->created_at)->format('d-m-Y H:i') : '-';
             })
 
             // ✅ Karena note HTML
@@ -222,8 +219,8 @@ class MutationsDataTable extends DataTable
             ->dom("<'row'<'col-md-3'l><'col-md-5 mb-2'B><'col-md-4'f>> .
                 'tr' .
                 <'row'<'col-md-5'i><'col-md-7 mt-2'p>>")
-            // ✅ created_at kolom terakhir (0-based = 12)
-            ->orderBy(12, 'desc')
+            // ✅ created_at kolom terakhir (0-based = 11)
+            ->orderBy(11, 'desc')
             ->buttons(
                 Button::make('excel')->text('<i class="bi bi-file-earmark-excel-fill"></i> Excel'),
                 Button::make('print')->text('<i class="bi bi-printer-fill"></i> Print'),
@@ -310,13 +307,6 @@ class MutationsDataTable extends DataTable
             Column::make('stock_last')
                 ->title('Stock Last')
                 ->name('mutations.stock_last')
-                ->orderable(true)
-                ->searchable(false)
-                ->className('text-center align-middle'),
-
-            Column::make('date')
-                ->title('Date')
-                ->name('mutations.date')
                 ->orderable(true)
                 ->searchable(false)
                 ->className('text-center align-middle'),

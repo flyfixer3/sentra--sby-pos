@@ -11,6 +11,27 @@ use Yajra\DataTables\Services\DataTable;
 
 class SaleOrdersDataTable extends DataTable
 {
+    private function formatDateWithCreatedTime($row, string $field = 'date'): string
+    {
+        $date = $row->{$field} ?? null;
+        $createdAt = $row->created_at ?? null;
+
+        if (empty($date) && empty($createdAt)) {
+            return '-';
+        }
+
+        if (empty($date) && !empty($createdAt)) {
+            return Carbon::parse($createdAt)->format('d-m-Y H:i');
+        }
+
+        $datePart = Carbon::parse($date)->format('Y-m-d');
+        $timePart = !empty($createdAt)
+            ? Carbon::parse($createdAt)->format('H:i')
+            : '00:00';
+
+        return Carbon::parse($datePart . ' ' . $timePart)->format('d-m-Y H:i');
+    }
+
     public function dataTable($query)
     {
         return datatables()
@@ -20,8 +41,7 @@ class SaleOrdersDataTable extends DataTable
             })
             ->addColumn('customer', fn ($row) => e($row->customer?->customer_name ?? '-'))
             ->editColumn('date', function ($row) {
-                if (empty($row->date)) return '-';
-                return Carbon::parse($row->date)->format('d-m-Y');
+                return $this->formatDateWithCreatedTime($row, 'date');
             })
             ->editColumn('status', function ($row) {
                 $s = strtolower((string) ($row->status ?? 'pending'));
@@ -130,7 +150,7 @@ class SaleOrdersDataTable extends DataTable
             ->dom("<'row'<'col-md-3'l><'col-md-5 mb-2'B><'col-md-4'f>>" .
                   "tr" .
                   "<'row'<'col-md-5'i><'col-md-7 mt-2'p>>")
-            ->orderBy(0)
+            ->orderBy(5, 'desc')
             ->buttons(
                 Button::make('excel')->text('<i class="bi bi-file-earmark-excel-fill"></i> Excel'),
                 Button::make('print')->text('<i class="bi bi-printer-fill"></i> Print'),
@@ -142,12 +162,12 @@ class SaleOrdersDataTable extends DataTable
     protected function getColumns()
     {
         return [
-            Column::make('id')->title('#'),
             Column::make('reference')->title('Reference'),
             Column::make('date')->title('Date'),
             Column::computed('customer')->title('Customer')->orderable(false)->searchable(false),
             Column::make('status')->title('Status'),
             Column::computed('action')->exportable(false)->printable(false)->width(120)->addClass('text-center'),
+            Column::make('created_at')->visible(false),
         ];
     }
 

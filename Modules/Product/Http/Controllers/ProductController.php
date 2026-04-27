@@ -51,6 +51,8 @@ class ProductController extends Controller
 
     public function show(Product $product) {
         abort_if(Gate::denies('show_products'), 403);
+        $product->loadMissing(['creator', 'updater']);
+
         $temp = Mutation::with('warehouse')->where('product_id',$product->id)
         ->latest()
         ->get()

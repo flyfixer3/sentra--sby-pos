@@ -73,6 +73,11 @@
     $dpMax    = (int)($saleOrder->deposit_amount ?? 0);
     $dpRec    = (int)($saleOrder->deposit_received_amount ?? 0);
     $remainingAfterDp = max(0, $total - $dpRec);
+
+    $createdByName = optional($saleOrder->creator)->name ?? '-';
+    $updatedByName = optional($saleOrder->updater)->name ?? '-';
+    $createdAtText = $saleOrder->created_at ? \Carbon\Carbon::parse($saleOrder->created_at)->format('d M Y H:i') : '-';
+    $updatedAtText = $saleOrder->updated_at ? \Carbon\Carbon::parse($saleOrder->updated_at)->format('d M Y H:i') : '-';
 @endphp
 
 <div class="container-fluid">
@@ -190,6 +195,30 @@
                     <div>{{ $saleOrder->note }}</div>
                 </div>
             @endif
+        </div>
+    </div>
+
+    <div class="card mb-3 shadow-sm">
+        <div class="card-body">
+            <h6 class="mb-3">Audit Information</h6>
+            <div class="row">
+                <div class="col-md-3 mb-2 mb-md-0">
+                    <div class="text-muted small">Created By</div>
+                    <div class="fw-semibold">{{ $createdByName }}</div>
+                </div>
+                <div class="col-md-3 mb-2 mb-md-0">
+                    <div class="text-muted small">Created At</div>
+                    <div class="fw-semibold">{{ $createdAtText }}</div>
+                </div>
+                <div class="col-md-3 mb-2 mb-md-0">
+                    <div class="text-muted small">Last Updated By</div>
+                    <div class="fw-semibold">{{ $updatedByName }}</div>
+                </div>
+                <div class="col-md-3">
+                    <div class="text-muted small">Last Updated At</div>
+                    <div class="fw-semibold">{{ $updatedAtText }}</div>
+                </div>
+            </div>
         </div>
     </div>
 

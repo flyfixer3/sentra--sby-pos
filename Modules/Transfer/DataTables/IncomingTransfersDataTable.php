@@ -39,7 +39,7 @@ class IncomingTransfersDataTable extends DataTable
                 return 'Belum';
             })
             ->addColumn('action', fn ($row) => view('transfer::partials.actions-incoming', compact('row')))
-            ->editColumn('created_at', fn ($row) => $row->created_at ? Carbon::parse($row->created_at)->format('d-m-Y H:i:s') : '-')
+            ->editColumn('created_at', fn ($row) => $row->created_at ? Carbon::parse($row->created_at)->format('d-m-Y H:i') : '-')
             ->rawColumns(['action','status_badge']);
     }
 

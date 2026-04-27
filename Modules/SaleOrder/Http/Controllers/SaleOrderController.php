@@ -758,6 +758,8 @@ class SaleOrderController extends Controller
             'customer',
             'warehouse',
             'items.product',
+            'creator',
+            'updater',
             'deliveries' => function ($q) {
                 $q->orderBy('id', 'desc');
             },

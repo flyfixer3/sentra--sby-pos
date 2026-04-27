@@ -111,6 +111,22 @@
                                     <th>Note</th>
                                     <td>{{ $product->product_note ?? 'N/A' }}</td>
                                 </tr>
+                                <tr>
+                                    <th>Created By</th>
+                                    <td>{{ optional($product->creator)->name ?? '-' }}</td>
+                                </tr>
+                                <tr>
+                                    <th>Created At</th>
+                                    <td>{{ $product->created_at ? \Carbon\Carbon::parse($product->created_at)->format('d M Y H:i') : '-' }}</td>
+                                </tr>
+                                <tr>
+                                    <th>Last Updated By</th>
+                                    <td>{{ optional($product->updater)->name ?? '-' }}</td>
+                                </tr>
+                                <tr>
+                                    <th>Last Updated At</th>
+                                    <td>{{ $product->updated_at ? \Carbon\Carbon::parse($product->updated_at)->format('d M Y H:i') : '-' }}</td>
+                                </tr>
                             </table>
                         </div>
                     </div>

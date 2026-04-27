@@ -66,7 +66,7 @@ class TransfersDataTable extends DataTable
                 return view('transfer::partials.actions', ['data' => $row]);
             })
             ->editColumn('created_at', function ($row) {
-                return $row->created_at ? Carbon::parse($row->created_at)->format('d-m-Y H:i:s') : '-';
+                return $row->created_at ? Carbon::parse($row->created_at)->format('d-m-Y H:i') : '-';
             })
             ->rawColumns(['status_badge', 'print_count', 'action']);
     }
