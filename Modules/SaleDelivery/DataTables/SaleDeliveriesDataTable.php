@@ -40,6 +40,8 @@ class SaleDeliveriesDataTable extends DataTable
 
             ->editColumn('customer_name', fn($row) => $row->customer_name ?? '-')
 
+            ->editColumn('sale_order_reference', fn($row) => $row->sale_order_reference ?? 'WALK-IN')
+
             ->editColumn('items_count', fn($row) => (int) ($row->items_count ?? 0))
 
             ->editColumn('status', function ($row) {
@@ -64,10 +66,12 @@ class SaleDeliveriesDataTable extends DataTable
 
         return $q->select([
                 'sale_deliveries.*',
+                'sale_orders.reference as sale_order_reference',
                 'customers.customer_name as customer_name',
                 'u_created.name as created_by_name',
                 'u_confirmed.name as confirmed_by_name',
             ])
+            ->leftJoin('sale_orders', 'sale_orders.id', '=', 'sale_deliveries.sale_order_id')
             ->leftJoin('customers', 'customers.id', '=', 'sale_deliveries.customer_id')
             ->leftJoin('users as u_created', 'u_created.id', '=', 'sale_deliveries.created_by')
             ->leftJoin('users as u_confirmed', 'u_confirmed.id', '=', 'sale_deliveries.confirmed_by')
@@ -85,8 +89,8 @@ class SaleDeliveriesDataTable extends DataTable
                 "tr" .
                 "<'row'<'col-md-5'i><'col-md-7 mt-2'p>>"
             )
-            // ✅ FIX: index created_at sekarang di kolom ke-8 (bukan 9)
-            ->orderBy(8)
+            // created_at hidden column index (0-based = 9)
+            ->orderBy(9)
             ->buttons(
                 Button::make('excel')->text('<i class="bi bi-file-earmark-excel-fill"></i> Excel'),
                 Button::make('print')->text('<i class="bi bi-printer-fill"></i> Print'),
@@ -103,6 +107,12 @@ class SaleDeliveriesDataTable extends DataTable
                 ->className('text-center align-middle'),
 
             Column::make('reference')
+                ->title('SD No.')
+                ->className('text-center align-middle'),
+
+            Column::make('sale_order_reference')
+                ->name('sale_orders.reference')
+                ->title('Sale Order')
                 ->className('text-center align-middle'),
 
             Column::make('customer_name')

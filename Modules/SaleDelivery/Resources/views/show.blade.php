@@ -75,6 +75,12 @@
                                     <strong>{{ $soRef ?? ('SO#'.$saleDelivery->sale_order_id) }}</strong>
                                 </a>
                             </span>
+                        @else
+                            <span class="me-2">
+                                <i class="bi bi-clipboard-check me-1"></i>
+                                Sale Order:
+                                <span class="badge bg-secondary text-dark">WALK-IN</span>
+                            </span>
                         @endif
 
                         @if($saleDelivery->quotation_id)

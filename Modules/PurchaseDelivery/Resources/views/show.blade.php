@@ -326,7 +326,7 @@
                                     {{ $po->reference ?? ('PO #' . $po->id) }}
                                 </a>
                             @else
-                                -
+                                <span class="pd-pill pd-pill--info">WALK-IN</span>
                             @endif
                         </div>
 

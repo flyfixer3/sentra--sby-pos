@@ -46,6 +46,10 @@ class PurchaseDeliveriesDataTable extends DataTable
                 return $this->formatDateWithCreatedTime($row, 'date');
             })
 
+            ->editColumn('id', function ($row) {
+                return 'PD #' . (int) $row->id;
+            })
+
             ->editColumn('purchase_order', function ($data) {
                 // dari PO: ambil reference PO, kalau walk-in: WALK-IN
                 if (!empty($data->po_reference)) return $data->po_reference;
@@ -103,7 +107,7 @@ class PurchaseDeliveriesDataTable extends DataTable
                 "tr" .
                 "<'row'<'col-md-5'i><'col-md-7 mt-2'p>>"
             )
-            ->orderBy(1)
+            ->orderBy(2)
             ->buttons(
                 Button::make('excel')->text('<i class="bi bi-file-earmark-excel-fill"></i> Excel'),
                 Button::make('print')->text('<i class="bi bi-printer-fill"></i> Print'),
@@ -115,6 +119,11 @@ class PurchaseDeliveriesDataTable extends DataTable
     protected function getColumns()
     {
         return [
+            Column::make('id')
+                ->name('purchase_deliveries.id')
+                ->title('PD No.')
+                ->className('text-center align-middle'),
+
             Column::make('purchase_order')
                 ->name('purchase_order')
                 ->title('PO No.')
