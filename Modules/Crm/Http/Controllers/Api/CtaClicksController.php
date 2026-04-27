@@ -72,28 +72,58 @@ class CtaClicksController extends Controller
     {
         abort_if(Gate::denies('show_crm_leads'), 403);
 
-        $limit = min(max((int) $request->query('limit', 20), 1), 50);
-        $search = trim((string) $request->query('search', ''));
-        $refCode = trim((string) $request->query('ref_code', ''));
-        $source = trim((string) $request->query('source', ''));
+        $limit = min(max((int) $request->query('limit', 20), 1), 200);
+        $page  = max((int) $request->query('page', 1), 1);
+        $search    = trim((string) $request->query('search', ''));
+        $refCode   = trim((string) $request->query('ref_code', ''));
+        $source    = trim((string) $request->query('source', ''));
+        $converted = trim((string) $request->query('converted', '')); // 'yes' | 'no'
+        $todayOnly = (bool) $request->query('today', false);
 
-        $rows = CtaClick::query()
-            ->when($refCode !== '', fn ($query) => $query->where('ref_code', 'like', '%' . $refCode . '%'))
-            ->when($source !== '', fn ($query) => $query->where('source', 'like', '%' . $source . '%'))
-            ->when($search !== '', function ($query) use ($search) {
-                $query->where(function ($inner) use ($search) {
+        $baseQuery = CtaClick::query()
+            ->when($refCode !== '', fn ($q) => $q->where('ref_code', 'like', '%' . $refCode . '%'))
+            ->when($source !== '', fn ($q) => $q->where('source', 'like', '%' . $source . '%'))
+            ->when($search !== '', function ($q) use ($search) {
+                $q->where(function ($inner) use ($search) {
                     $inner->where('ref_code', 'like', '%' . $search . '%')
-                        ->orWhere('source', 'like', '%' . $search . '%')
-                        ->orWhere('utm_source', 'like', '%' . $search . '%')
-                        ->orWhere('utm_campaign', 'like', '%' . $search . '%');
+                          ->orWhere('source', 'like', '%' . $search . '%')
+                          ->orWhere('utm_source', 'like', '%' . $search . '%')
+                          ->orWhere('utm_campaign', 'like', '%' . $search . '%');
                 });
             })
+            ->when($converted === 'yes', fn ($q) => $q->whereNotNull('lead_id'))
+            ->when($converted === 'no',  fn ($q) => $q->whereNull('lead_id'))
+            ->when($todayOnly, fn ($q) => $q->whereDate('last_clicked_at', now()->toDateString()));
+
+        $total = (clone $baseQuery)->count();
+
+        $rows = (clone $baseQuery)
             ->latest('last_clicked_at')
+            ->offset(($page - 1) * $limit)
             ->limit($limit)
             ->with('lead:id,contact_name,status')
             ->get();
 
-        return response()->json(['data' => $rows]);
+        // Summary counts (independent of current filters, only search applied)
+        $summaryBase = CtaClick::query()
+            ->when($search !== '', function ($q) use ($search) {
+                $q->where(function ($inner) use ($search) {
+                    $inner->where('ref_code', 'like', '%' . $search . '%')
+                          ->orWhere('source', 'like', '%' . $search . '%')
+                          ->orWhere('utm_source', 'like', '%' . $search . '%')
+                          ->orWhere('utm_campaign', 'like', '%' . $search . '%');
+                });
+            });
+
+        $unconvertedCount = (clone $summaryBase)->whereNull('lead_id')->count();
+        $todayCount       = (clone $summaryBase)->whereDate('last_clicked_at', now()->toDateString())->count();
+
+        return response()->json([
+            'data'              => $rows,
+            'total'             => $total,
+            'unconverted_count' => $unconvertedCount,
+            'today_count'       => $todayCount,
+        ]);
     }
 
     protected function normalizePayload(array $data, Request $request): array

@@ -81,6 +81,7 @@ Route::middleware($middlewares)->prefix('crm')->group(function () {
     // Technicians
     Route::post('/service-orders/{id}/assign-technicians', [TechniciansController::class, 'assign']);
     Route::post('/service-orders/{id}/accept', [TechniciansController::class, 'accept']);
+    Route::post('/service-orders/{id}/depart', [TechniciansController::class, 'depart']);
     Route::post('/service-orders/{id}/start', [TechniciansController::class, 'start']);
     Route::post('/service-orders/{id}/complete', [TechniciansController::class, 'complete']);
     // Technicians list for active branch

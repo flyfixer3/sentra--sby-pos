@@ -80,6 +80,29 @@ class TechniciansController extends Controller
         return response()->json(['message' => 'Accept not implemented in Phase-1 minimal scope'], 501);
     }
 
+    public function depart(Request $request, int $id)
+    {
+        $this->requireBranch();
+        $so = ServiceOrder::findOrFail($id);
+
+        $row = $this->actingTechnicianRow($so, $request);
+        if (!$row) abort(422, 'You are not assigned to this service order.');
+
+        if ($so->status !== 'scheduled') {
+            abort(422, 'Can only depart from a scheduled service order.');
+        }
+
+        // Idempotent — only record first departure
+        if (!$so->departed_at) {
+            $so->update(['departed_at' => now()]);
+        }
+
+        return response()->json([
+            'message'     => 'Departure recorded',
+            'departed_at' => $so->fresh()->departed_at,
+        ]);
+    }
+
     public function start(Request $request, int $id)
     {
         $this->requireBranch();

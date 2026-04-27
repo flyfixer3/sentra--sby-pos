@@ -21,6 +21,7 @@ class StoreServiceOrderRequest extends FormRequest
             'description' => ['nullable', 'string'],
             'address_snapshot' => ['required', 'string', 'max:500'],
             'map_link_snapshot' => ['nullable', 'string', 'max:500'],
+            'install_location_type' => ['nullable', 'in:workshop,customer_home'],
             'scheduled_at' => ['nullable', 'date'],
         ];
     }
