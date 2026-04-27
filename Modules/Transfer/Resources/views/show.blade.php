@@ -53,16 +53,18 @@
                     @endif
                 @endcan
 
-                @if (
-                    $status === 'shipped'
-                    && session('active_branch') !== 'all'
-                    && (int) session('active_branch') === (int) $transfer->to_branch_id
-                )
-                    <a href="{{ route('transfers.confirm', $transfer->id) }}"
-                       class="btn btn-sm btn-success">
-                        <i class="bi bi-check-circle"></i> Konfirmasi
-                    </a>
-                @endif
+                @can('confirm_transfers')
+                    @if (
+                        $status === 'shipped'
+                        && session('active_branch') !== 'all'
+                        && (int) session('active_branch') === (int) $transfer->to_branch_id
+                    )
+                        <a href="{{ route('transfers.confirm', $transfer->id) }}"
+                           class="btn btn-sm btn-success">
+                            <i class="bi bi-check-circle"></i> Konfirmasi
+                        </a>
+                    @endif
+                @endcan
 
                 {{-- Cancel modal + button --}}
                 @include('transfer::partials.cancel-transfer-modal', ['transfer' => $transfer])

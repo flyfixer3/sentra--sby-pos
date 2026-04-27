@@ -91,12 +91,14 @@
 
                 {{-- Actions --}}
                 <div class="d-flex flex-wrap gap-2 align-items-center">
-                    @if(session('active_branch') && $canConfirm)
-                        <a href="{{ route('sale-deliveries.confirm.form', $saleDelivery->id) }}"
-                           class="btn btn-primary">
-                            <i class="bi bi-check2-circle me-1"></i> Confirm Delivery
-                        </a>
-                    @endif
+                    @can('confirm_sale_deliveries')
+                        @if(session('active_branch') && $canConfirm)
+                            <a href="{{ route('sale-deliveries.confirm.form', $saleDelivery->id) }}"
+                               class="btn btn-primary">
+                                <i class="bi bi-check2-circle me-1"></i> Confirm Delivery
+                            </a>
+                        @endif
+                    @endcan
 
                     @if($canCreateInvoice)
                         <form method="POST"

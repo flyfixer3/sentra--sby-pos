@@ -1,7 +1,7 @@
 @php
     $selected = \App\Support\DefectTypeSupport::normalizeList($selected ?? []);
     $canManagePickerDefectTypes = $canManagePickerDefectTypes
-        ?? (auth()->check() && auth()->user()->hasAnyRole(['Administrator', 'Super Admin']));
+        ?? (auth()->check() && auth()->user()->hasAnyRole(['Super Admin']));
 @endphp
 
 <div class="defect-type-picker" data-selected='@json($selected)'>
@@ -30,7 +30,7 @@
                     <button type="button" class="btn btn-outline-primary defect-type-add-btn">Add</button>
                 </div>
             </div>
-            <div class="defect-type-add-note">Admin can add a new master defect type here.</div>
+            <div class="defect-type-add-note">Super Admin can add a new master defect type here.</div>
         </div>
     @endif
 </div>

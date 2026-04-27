@@ -630,11 +630,13 @@
                         </a>
                     @endif
 
-                    @if($isConfirmableStatus && $hasRemaining)
-                        <a href="{{ route('purchase-deliveries.confirm', $purchaseDelivery->id) }}" class="btn btn-primary btn-sm">
-                            {{ $rawStatus === 'partial' ? 'Confirm Remaining' : 'Confirm Delivery' }}
-                        </a>
-                    @endif
+                    @can('confirm_purchase_deliveries')
+                        @if($isConfirmableStatus && $hasRemaining)
+                            <a href="{{ route('purchase-deliveries.confirm', $purchaseDelivery->id) }}" class="btn btn-primary btn-sm">
+                                {{ $rawStatus === 'partial' ? 'Confirm Remaining' : 'Confirm Delivery' }}
+                            </a>
+                        @endif
+                    @endcan
 
                     @if(!$hasInvoice && !$hasLegacyPoInvoiceConflict)
                         <a href="{{ route('purchases.createFromDelivery', ['purchase_delivery' => $purchaseDelivery]) }}"

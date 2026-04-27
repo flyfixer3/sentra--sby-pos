@@ -17,9 +17,11 @@ Route::group(['middleware' => 'auth'], function () {
 
         // CONFIRM
         Route::get('sale-deliveries/{saleDelivery}/confirm', [SaleDeliveryConfirmController::class, 'confirmForm'])
-            ->name('sale-deliveries.confirm.form');
+            ->name('sale-deliveries.confirm.form')
+            ->middleware('can:confirm_sale_deliveries');
         Route::post('sale-deliveries/{saleDelivery}/confirm', [SaleDeliveryConfirmController::class, 'confirmStore'])
-            ->name('sale-deliveries.confirm.store');
+            ->name('sale-deliveries.confirm.store')
+            ->middleware('can:confirm_sale_deliveries');
 
         // EDIT / UPDATE
         Route::get('sale-deliveries/{saleDelivery}/edit', [SaleDeliveryController::class, 'edit'])->name('sale-deliveries.edit');

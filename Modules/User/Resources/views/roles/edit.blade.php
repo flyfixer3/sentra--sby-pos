@@ -824,6 +824,43 @@
                                     </div>
                                 </div>
 
+                                <!-- Warehouse Operations -->
+                                <div class="col-lg-4 col-md-6 mb-3">
+                                    <div class="card h-100 border-0 shadow">
+                                        <div class="card-header">
+                                            Warehouse Operations
+                                        </div>
+                                        <div class="card-body">
+                                            <div class="row">
+                                                <div class="col-12">
+                                                    <div class="custom-control custom-switch">
+                                                        <input type="checkbox" class="custom-control-input"
+                                                               id="confirm_purchase_deliveries" name="permissions[]"
+                                                               value="confirm_purchase_deliveries" {{ $role->hasPermissionTo('confirm_purchase_deliveries') ? 'checked' : '' }}>
+                                                        <label class="custom-control-label" for="confirm_purchase_deliveries">Confirm Purchase Deliveries</label>
+                                                    </div>
+                                                </div>
+                                                <div class="col-12">
+                                                    <div class="custom-control custom-switch">
+                                                        <input type="checkbox" class="custom-control-input"
+                                                               id="confirm_transfers" name="permissions[]"
+                                                               value="confirm_transfers" {{ $role->hasPermissionTo('confirm_transfers') ? 'checked' : '' }}>
+                                                        <label class="custom-control-label" for="confirm_transfers">Confirm Transfers</label>
+                                                    </div>
+                                                </div>
+                                                <div class="col-12">
+                                                    <div class="custom-control custom-switch">
+                                                        <input type="checkbox" class="custom-control-input"
+                                                               id="confirm_sale_deliveries" name="permissions[]"
+                                                               value="confirm_sale_deliveries" {{ $role->hasPermissionTo('confirm_sale_deliveries') ? 'checked' : '' }}>
+                                                        <label class="custom-control-label" for="confirm_sale_deliveries">Confirm Sale Deliveries</label>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
                                 <!-- CRM -->
                                 <div class="col-12 mb-3">
                                     <div class="card border-0 shadow" style="border-left: 3px solid #6366f1 !important;">

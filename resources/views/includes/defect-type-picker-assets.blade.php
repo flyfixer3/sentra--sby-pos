@@ -3,10 +3,10 @@
         ?? \Modules\Product\Entities\DefectType::query()->orderBy('name')->pluck('name')->values()->all();
 
     $canManageDefectTypes = $canManageDefectTypes
-        ?? (auth()->check() && auth()->user()->hasAnyRole(['Administrator', 'Super Admin']));
+        ?? (auth()->check() && auth()->user()->hasAnyRole(['Super Admin']));
 
     $canDeleteDefectTypes = $canDeleteDefectTypes
-        ?? (auth()->check() && auth()->user()->hasAnyRole(['Administrator', 'Super Admin']));
+        ?? (auth()->check() && auth()->user()->hasAnyRole(['Super Admin']));
 @endphp
 
 @once

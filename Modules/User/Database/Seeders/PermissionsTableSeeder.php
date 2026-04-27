@@ -128,7 +128,6 @@ class PermissionsTableSeeder extends Seeder
             'access_purchase_deliveries',
             'show_purchase_deliveries',
             'edit_purchase_deliveries',
-            'confirm_purchase_deliveries',
 
             //Purchase Payments
             'access_purchase_payments',
@@ -178,6 +177,14 @@ class PermissionsTableSeeder extends Seeder
             'view_sale_hpp',
         ];
 
+        // Warehouse confirmation permissions are selectable in role management,
+        // but are not part of the generic Admin sync list.
+        $warehouseOperationPermissions = [
+            'confirm_purchase_deliveries',
+            'confirm_transfers',
+            'confirm_sale_deliveries',
+        ];
+
         foreach ($permissions as $permission) {
             Permission::firstOrCreate([
                 'name' => $permission,
@@ -186,6 +193,13 @@ class PermissionsTableSeeder extends Seeder
         }
 
         foreach ($internalPermissions as $permission) {
+            Permission::firstOrCreate([
+                'name' => $permission,
+                'guard_name' => 'web',
+            ]);
+        }
+
+        foreach ($warehouseOperationPermissions as $permission) {
             Permission::firstOrCreate([
                 'name' => $permission,
                 'guard_name' => 'web',

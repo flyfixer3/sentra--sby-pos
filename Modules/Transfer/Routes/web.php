@@ -22,8 +22,12 @@ Route::middleware(['auth'])
 
         Route::get('/{transfer}/show', [TransferController::class, 'show'])->name('show');
 
-        Route::get('/{transfer}/confirm', [TransferController::class, 'showConfirmationForm'])->name('confirm');
-        Route::put('/{transfer}/confirm', [TransferController::class, 'storeConfirmation'])->name('confirm.store');
+        Route::get('/{transfer}/confirm', [TransferController::class, 'showConfirmationForm'])
+            ->name('confirm')
+            ->middleware('can:confirm_transfers');
+        Route::put('/{transfer}/confirm', [TransferController::class, 'storeConfirmation'])
+            ->name('confirm.store')
+            ->middleware('can:confirm_transfers');
 
         /**
          * ✅ NEW: prepare print via AJAX
