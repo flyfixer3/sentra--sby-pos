@@ -23,10 +23,10 @@ class ProductCartSale extends Component
     public $platform_fee = 0;
     public $is_locked_by_so = false;
 
-    // [product_id] => sellable stock pada branch (GOOD - RESERVED)
+    // [line_key] => sellable stock pada branch (GOOD - RESERVED)
     public $check_quantity;
 
-    // [product_id] => qty
+    // [line_key] => qty
     public $quantity;
 
     public $discount_type;
@@ -82,25 +82,26 @@ class ProductCartSale extends Component
             $this->updatedGlobalTax();
             $this->updatedGlobalDiscount();
 
-            // init per-item states from cart
+            // init per-row states from cart. The cart package may recalculate rowId
+            // when options change, so use a stable line_key when available.
             $cart_items = Cart::instance($this->cart_instance)->content();
             foreach ($cart_items as $cart_item) {
-                $pid = (int) $cart_item->id;
+                $lineKey = $this->getLineKey($cart_item);
 
-                $this->check_quantity[$pid] = (int) ($cart_item->options->stock ?? 0);
-                $this->quantity[$pid] = (int) $cart_item->qty;
+                $this->check_quantity[$lineKey] = (int) ($cart_item->options->stock ?? 0);
+                $this->quantity[$lineKey] = (int) $cart_item->qty;
 
-                $this->discount_type[$pid] = (string) ($cart_item->options->product_discount_type ?? 'fixed');
-                $this->item_cost_konsyinasi[$pid] = (float) ($cart_item->options->product_cost ?? 0);
+                $this->discount_type[$lineKey] = (string) ($cart_item->options->product_discount_type ?? 'fixed');
+                $this->item_cost_konsyinasi[$lineKey] = (float) ($cart_item->options->product_cost ?? 0);
 
                 if (($cart_item->options->product_discount_type ?? 'fixed') === 'fixed') {
-                    $this->item_discount[$pid] = (float) ($cart_item->price ?? 0);
+                    $this->item_discount[$lineKey] = (float) ($cart_item->price ?? 0);
                 } else {
                     $priceBase = ((float) ($cart_item->price + ($cart_item->options->product_discount ?? 0)) > 0)
                         ? (float) ($cart_item->price + ($cart_item->options->product_discount ?? 0))
                         : 1;
                     $disc = (float) ($cart_item->options->product_discount ?? 0);
-                    $this->item_discount[$pid] = round(100 * ($disc / $priceBase), 2);
+                    $this->item_discount[$lineKey] = round(100 * ($disc / $priceBase), 2);
                 }
             }
         } else {
@@ -224,6 +225,27 @@ class ProductCartSale extends Component
         return (string) ($cartItem->options->invoice_source ?? '') === 'sale_delivery';
     }
 
+    private function getLineKey($cartItem): string
+    {
+        $lineKey = (string) ($cartItem->options->line_key ?? '');
+
+        return $lineKey !== '' ? $lineKey : (string) $cartItem->rowId;
+    }
+
+    private function makeDefaultLineKey(int $productId): string
+    {
+        return 'product_' . $productId;
+    }
+
+    private function findCartRowByLineKey(string $lineKey)
+    {
+        return Cart::instance($this->cart_instance)
+            ->content()
+            ->first(function ($item) use ($lineKey) {
+                return $this->getLineKey($item) === $lineKey;
+            });
+    }
+
     public function productSelected($result)
     {
         $cart = Cart::instance($this->cart_instance);
@@ -241,7 +263,10 @@ class ProductCartSale extends Component
 
         $calc = $this->calculate($product);
 
-        $cart->add([
+        $pid = (int) ($product['id'] ?? 0);
+        $lineKey = $this->makeDefaultLineKey($pid);
+
+        $cartItem = $cart->add([
             'id'      => (int) ($product['id'] ?? 0),
             'name'    => (string) ($product['product_name'] ?? '-'),
             'qty'     => 1,
@@ -273,17 +298,18 @@ class ProductCartSale extends Component
                 'product_tax'           => (int) ($calc['product_tax'] ?? 0),
                 'product_cost'          => (int) ($calc['product_cost'] ?? 0),
                 'unit_price'            => (int) ($calc['unit_price'] ?? 0),
+                'line_key'              => $lineKey,
             ]
         ]);
 
-        $pid = (int) ($product['id'] ?? 0);
+        $lineKey = $this->getLineKey($cartItem);
 
         $this->global_qty = $cart->count();
-        $this->check_quantity[$pid] = (int) $stockTotal;
-        $this->quantity[$pid] = 1;
-        $this->discount_type[$pid] = 'fixed';
-        $this->item_discount[$pid] = null;
-        $this->item_cost_konsyinasi[$pid] = 0;
+        $this->check_quantity[$lineKey] = (int) $stockTotal;
+        $this->quantity[$lineKey] = (int) $cartItem->qty;
+        $this->discount_type[$lineKey] = 'fixed';
+        $this->item_discount[$lineKey] = null;
+        $this->item_cost_konsyinasi[$lineKey] = 0;
 
         // ✅ safety biar state gak blank setelah rerender
         $this->syncQuantityDefaults();
@@ -366,20 +392,18 @@ class ProductCartSale extends Component
         Cart::instance($this->cart_instance)->setGlobalDiscount((float) $percentage);
     }
 
-    public function updateQuantity($row_id, $product_id)
+    public function updateQuantity($row_id, $product_id, $line_key = null)
     {
         $product_id = (int) $product_id;
+        $cart_item = Cart::instance($this->cart_instance)->get($row_id);
+        $lineKey = (string) ($line_key ?: $this->getLineKey($cart_item));
 
         // ✅ fallback kalau state qty kosong (penyebab utama blank)
-        $qty = (int) ($this->quantity[$product_id] ?? 0);
+        $qty = (int) ($this->quantity[$lineKey] ?? 0);
         if ($qty <= 0) {
-            $row = Cart::instance($this->cart_instance)->get($row_id);
-            $qty = $row ? (int) $row->qty : 1;
-            $this->quantity[$product_id] = $qty;
+            $qty = $cart_item ? (int) $cart_item->qty : 1;
+            $this->quantity[$lineKey] = $qty;
         }
-
-        // ambil cart row terbaru
-        $cart_item = Cart::instance($this->cart_instance)->get($row_id);
 
         // ✅ preserve warehouse context dari cart options (kalau create from delivery)
         $warehouseId   = (int) ($cart_item->options->warehouse_id ?? 0);
@@ -411,7 +435,7 @@ class ProductCartSale extends Component
             $sellableStock = (int) ($stockContext['sellable'] ?? 0);
         }
 
-        $this->check_quantity[$product_id] = (int) $stock;
+        $this->check_quantity[$lineKey] = (int) $stock;
 
         if ($this->cart_instance === 'sale' || $this->cart_instance === 'purchase_return') {
             if ((int) $stock < (int) $qty) {
@@ -457,6 +481,7 @@ class ProductCartSale extends Component
                 'unit_price'            => $unitPrice,
                 'product_discount'      => $productDiscount,
                 'product_discount_type' => $productDiscountType,
+                'line_key'              => $lineKey,
             ]
         ]);
 
@@ -472,11 +497,16 @@ class ProductCartSale extends Component
                 continue;
             }
 
+            $lineKey = (string) ($row['line_key'] ?? '');
             $cartRow = Cart::instance($this->cart_instance)
                 ->content()
-                ->first(function ($item) use ($row, $productId) {
+                ->first(function ($item) use ($row, $productId, $lineKey) {
+                    if ($lineKey !== '' && $this->getLineKey($item) === $lineKey) {
+                        return true;
+                    }
+
                     return (string) $item->rowId === (string) ($row['row_id'] ?? '')
-                        || (int) $item->id === $productId;
+                        || ((int) $item->id === $productId && $lineKey === '');
                 });
 
             if (!$cartRow) {
@@ -484,8 +514,9 @@ class ProductCartSale extends Component
             }
 
             $quantity = (int) ($row['quantity'] ?? 0);
-            $this->quantity[$productId] = $quantity > 0 ? $quantity : 1;
-            $this->updateQuantity($cartRow->rowId, $productId);
+            $lineKey = $lineKey !== '' ? $lineKey : $this->getLineKey($cartRow);
+            $this->quantity[$lineKey] = $quantity > 0 ? $quantity : 1;
+            $this->updateQuantity($cartRow->rowId, $productId, $lineKey);
         }
 
         $this->syncQuantityDefaults();
@@ -493,15 +524,11 @@ class ProductCartSale extends Component
 
     public function updatedDiscountType($value, $name)
     {
-        $productId = (int) $name;
-        $row = Cart::instance($this->cart_instance)
-            ->content()
-            ->first(function ($item) use ($productId) {
-                return (int) $item->id === $productId;
-            });
+        $lineKey = (string) $name;
+        $row = $this->findCartRowByLineKey($lineKey);
 
         if (!$row) {
-            $this->item_discount[$productId] = 0;
+            $this->item_discount[$lineKey] = 0;
             return;
         }
 
@@ -511,42 +538,44 @@ class ProductCartSale extends Component
         }
 
         if ($value === 'fixed') {
-            $this->item_discount[$productId] = $basePrice;
+            $this->item_discount[$lineKey] = $basePrice;
         } else {
-            $this->item_discount[$productId] = 0;
+            $this->item_discount[$lineKey] = 0;
         }
     }
 
-    public function discountModalRefresh($product_id, $row_id)
+    public function discountModalRefresh($product_id, $row_id, $line_key = null)
     {
         $product_id = (int) $product_id;
         $row = Cart::instance($this->cart_instance)->get($row_id);
+        $lineKey = (string) ($line_key ?: ($row ? $this->getLineKey($row) : ''));
         if ($row) {
             $basePrice = (float) (($row->price ?? 0) + ($row->options->product_discount ?? 0));
-            if (($this->discount_type[$product_id] ?? 'fixed') === 'fixed') {
-                $this->item_discount[$product_id] = (float) ($row->price ?? 0);
+            if (($this->discount_type[$lineKey] ?? 'fixed') === 'fixed') {
+                $this->item_discount[$lineKey] = (float) ($row->price ?? 0);
             } else {
-                $this->item_discount[$product_id] = $basePrice > 0
+                $this->item_discount[$lineKey] = $basePrice > 0
                     ? round((float) ($row->options->product_discount ?? 0) / $basePrice * 100, 2)
                     : 0;
             }
         }
 
-        $this->updateQuantity($row_id, $product_id);
+        $this->updateQuantity($row_id, $product_id, $lineKey);
     }
 
-    public function setProductDiscount($row_id, $product_id)
+    public function setProductDiscount($row_id, $product_id, $line_key = null)
     {
         $product_id = (int) $product_id;
         $cart_item = Cart::instance($this->cart_instance)->get($row_id);
+        $lineKey = (string) ($line_key ?: ($cart_item ? $this->getLineKey($cart_item) : ''));
 
         if (!$cart_item) {
-            session()->flash('discount_message' . $product_id, 'Cart item not found.');
+            session()->flash('discount_message' . $lineKey, 'Cart item not found.');
             return;
         }
 
-        $discountType = (string) ($this->discount_type[$product_id] ?? 'fixed');
-        $inputValue = (float) ($this->item_discount[$product_id] ?? 0);
+        $discountType = (string) ($this->discount_type[$lineKey] ?? 'fixed');
+        $inputValue = (float) ($this->item_discount[$lineKey] ?? 0);
 
         $basePrice = (float) (($cart_item->price ?? 0) + ($cart_item->options->product_discount ?? 0));
         if ($basePrice < 0) {
@@ -562,7 +591,7 @@ class ProductCartSale extends Component
             $discountAmount = max(0, $basePrice - $newRowPrice);
         } else {
             if ($inputValue < 0 || $inputValue > 100) {
-                session()->flash('discount_message' . $product_id, 'Percentage must be between 0 and 100.');
+                session()->flash('discount_message' . $lineKey, 'Percentage must be between 0 and 100.');
                 return;
             }
 
@@ -583,19 +612,20 @@ class ProductCartSale extends Component
             return;
         }
 
-        $this->updateCartOptions($row_id, $product_id, $updatedItem, $discountAmount);
+        $this->updateCartOptions($row_id, $product_id, $updatedItem, $discountAmount, $lineKey);
 
         if ($discountType === 'fixed') {
-            $this->item_discount[$product_id] = $newRowPrice;
+            $this->item_discount[$lineKey] = $newRowPrice;
         } else {
-            $this->item_discount[$product_id] = $inputValue;
+            $this->item_discount[$lineKey] = $inputValue;
         }
 
-        session()->flash('discount_message' . $product_id, 'Discount added to the product!');
+        session()->flash('discount_message' . $lineKey, 'Discount added to the product!');
     }
 
-    public function updateCartOptions($row_id, $product_id, $cart_item, $discount_amount)
+    public function updateCartOptions($row_id, $product_id, $cart_item, $discount_amount, $line_key = null)
     {
+        $lineKey = (string) ($line_key ?: $this->getLineKey($cart_item));
         $warehouseId   = (int) ($cart_item->options->warehouse_id ?? 0);
         $warehouseName = (string) ($cart_item->options->warehouse_name ?? '');
         $stockScope    = (string) ($cart_item->options->stock_scope ?? 'branch');
@@ -634,10 +664,11 @@ class ProductCartSale extends Component
             'product_cost'          => $cart_item->options->product_cost,
             'unit_price'            => $cart_item->options->unit_price,
             'product_discount'      => (float) $discount_amount,
-            'product_discount_type' => $this->discount_type[$product_id] ?? 'fixed',
+            'product_discount_type' => $this->discount_type[$lineKey] ?? 'fixed',
+            'line_key'              => $lineKey,
         ]]);
 
-        $this->check_quantity[$product_id] = (int) $stock;
+        $this->check_quantity[$lineKey] = (int) $stock;
     }
 
     /**
@@ -689,35 +720,36 @@ class ProductCartSale extends Component
         foreach ($cart_items as $row) {
             $pid = (int) $row->id;
             if ($pid <= 0) continue;
+            $lineKey = $this->getLineKey($row);
 
             // ✅ inti fix: kalau state qty belum ada, isi dari cart qty
-            if (!isset($this->quantity[$pid]) || $this->quantity[$pid] === null || $this->quantity[$pid] === '') {
-                $this->quantity[$pid] = (int) $row->qty;
+            if (!isset($this->quantity[$lineKey]) || $this->quantity[$lineKey] === null || $this->quantity[$lineKey] === '') {
+                $this->quantity[$lineKey] = (int) $row->qty;
             }
 
             // safety: stock state
-            if (!isset($this->check_quantity[$pid])) {
-                $this->check_quantity[$pid] = (int) ($row->options->stock ?? 0);
+            if (!isset($this->check_quantity[$lineKey])) {
+                $this->check_quantity[$lineKey] = (int) ($row->options->stock ?? 0);
             }
 
             // safety: discount type
-            if (!isset($this->discount_type[$pid]) || !$this->discount_type[$pid]) {
-                $this->discount_type[$pid] = (string) ($row->options->product_discount_type ?? 'fixed');
+            if (!isset($this->discount_type[$lineKey]) || !$this->discount_type[$lineKey]) {
+                $this->discount_type[$lineKey] = (string) ($row->options->product_discount_type ?? 'fixed');
             }
 
-            if (!isset($this->item_discount[$pid])) {
+            if (!isset($this->item_discount[$lineKey])) {
                 if (($row->options->product_discount_type ?? 'fixed') === 'fixed') {
-                    $this->item_discount[$pid] = (float) ($row->price ?? 0);
+                    $this->item_discount[$lineKey] = (float) ($row->price ?? 0);
                 } else {
                     $priceBase = ((float)($row->price + ($row->options->product_discount ?? 0)) > 0)
                         ? (float)($row->price + ($row->options->product_discount ?? 0))
                         : 1;
-                    $this->item_discount[$pid] = round(100 * (((float)($row->options->product_discount ?? 0)) / $priceBase));
+                    $this->item_discount[$lineKey] = round(100 * (((float)($row->options->product_discount ?? 0)) / $priceBase));
                 }
             }
 
-            if (!isset($this->item_cost_konsyinasi[$pid])) {
-                $this->item_cost_konsyinasi[$pid] = (float) ($row->options->product_cost ?? 0);
+            if (!isset($this->item_cost_konsyinasi[$lineKey])) {
+                $this->item_cost_konsyinasi[$lineKey] = (float) ($row->options->product_cost ?? 0);
             }
         }
     }

@@ -2,6 +2,10 @@
 @php
     $isPurchaseCart = isset($cart_instance) && $cart_instance === 'purchase';
     $isPurchasePriceLocked = $isPurchaseCart && !empty($lock_purchase_price_edit);
+    $lineKey = $lineKey ?? (string) ($cart_item->options->line_key ?? $cart_item->rowId);
+    $safeLineKey = $safeLineKey ?? preg_replace('/[^A-Za-z0-9_-]/', '_', $lineKey);
+    $discountModalId = 'discountModal' . $safeLineKey;
+    $discountModalLabelId = 'discountModalLabel' . $safeLineKey;
 @endphp
 
 @if($isPurchasePriceLocked)
@@ -9,25 +13,25 @@
         role="button"
         class="badge badge-secondary"
         data-toggle="modal"
-        data-target="#discountModal{{ $cart_item->id }}"
+        data-target="#{{ $discountModalId }}"
         title="Purchase item price is locked because linked Purchase Delivery is partial."
     >
         <i class="bi bi-lock-fill text-white"></i>
     </span>
 @else
     <span
-        wire:click="$emitSelf('discountModalRefresh', '{{ $cart_item->id }}', '{{ $cart_item->rowId }}')"
+        wire:click="$emitSelf('discountModalRefresh', '{{ $cart_item->id }}', '{{ $cart_item->rowId }}', '{{ $lineKey }}')"
         role="button"
         class="badge badge-warning pointer-event"
         data-toggle="modal"
-        data-target="#discountModal{{ $cart_item->id }}"
+        data-target="#{{ $discountModalId }}"
     >
         <i class="bi bi-pencil-square text-white"></i>
     </span>
 @endif
 
 <!-- Modal -->
-<div wire:ignore.self class="modal fade" id="discountModal{{ $cart_item->id }}" tabindex="-1" role="dialog" aria-labelledby="discountModalLabel{{ $cart_item->id }}" aria-hidden="true">
+<div wire:ignore.self class="modal fade" id="{{ $discountModalId }}" tabindex="-1" role="dialog" aria-labelledby="{{ $discountModalLabelId }}" aria-hidden="true">
     <div class="modal-dialog" role="document">
         <div class="modal-content">
             @php
@@ -38,11 +42,11 @@
 
                 $currentRowPrice  = (float) ($cart_item->price ?? 0);
                 $currentDiscount  = (float) ($cart_item->options->product_discount ?? 0);
-                $currentDiscountType = $discount_type[$cart_item->id] ?? ($cart_item->options->product_discount_type ?? 'fixed');
+                $currentDiscountType = $discount_type[$lineKey] ?? ($cart_item->options->product_discount_type ?? 'fixed');
             @endphp
 
             <div class="modal-header">
-                <h5 class="modal-title" id="discountModalLabel{{ $cart_item->id }}">
+                <h5 class="modal-title" id="{{ $discountModalLabelId }}">
                     {{ $cart_item->name }}
                     <br>
                     <span class="badge badge-success">
@@ -54,12 +58,12 @@
                 </button>
             </div>
 
-            <form wire:submit.prevent="setProductDiscount('{{ $cart_item->rowId }}', '{{ $cart_item->id }}')" method="POST">
+            <form wire:submit.prevent="setProductDiscount('{{ $cart_item->rowId }}', '{{ $cart_item->id }}', '{{ $lineKey }}')" method="POST">
                 <div class="modal-body">
-                    @if (session()->has('discount_message' . $cart_item->id))
+                    @if (session()->has('discount_message' . $lineKey))
                         <div class="alert alert-success alert-dismissible fade show" role="alert">
                             <div class="alert-body">
-                                <span>{{ session('discount_message' . $cart_item->id) }}</span>
+                                <span>{{ session('discount_message' . $lineKey) }}</span>
                                 <button type="button" class="close" data-dismiss="alert" aria-label="Close">
                                     <span aria-hidden="true">×</span>
                                 </button>
@@ -88,7 +92,7 @@
                             <span class="text-danger">*</span>
                         </label>
 
-                        <select wire:model="discount_type.{{ $cart_item->id }}" class="form-control" required {{ $isPurchasePriceLocked ? 'disabled' : '' }}>
+                        <select wire:model="discount_type.{{ $lineKey }}" class="form-control" required {{ $isPurchasePriceLocked ? 'disabled' : '' }}>
                             @if($isPurchaseCart)
                                 <option value="fixed">Fixed Purchase Price</option>
                                 <option value="percentage">Discount Percentage</option>
@@ -115,7 +119,7 @@
                                 <span class="text-danger">*</span>
                             </label>
                             <input
-                                wire:model.defer="item_discount.{{ $cart_item->id }}"
+                                wire:model.defer="item_discount.{{ $lineKey }}"
                                 type="number"
                                 class="form-control"
                                 min="0"
@@ -129,7 +133,7 @@
                                 <span class="text-danger">*</span>
                             </label>
                             <input
-                                wire:model.defer="item_discount.{{ $cart_item->id }}"
+                                wire:model.defer="item_discount.{{ $lineKey }}"
                                 type="number"
                                 class="form-control"
                                 placeholder="{{ $isPurchaseCart ? $currentUnitPrice : max(($currentRowPrice - $currentDiscount), 0) }}"
@@ -141,7 +145,7 @@
                     </div>
 
                     @php
-                        $wid  = $warehouse_id[$cart_item->id] ?? null;
+                        $wid  = $warehouse_id[$lineKey] ?? ($warehouse_id[$cart_item->id] ?? null);
                         $wrec = null;
 
                         if ($wid) {
@@ -157,7 +161,7 @@
                         <div class="form-group">
                             <label>Konsyinasi Cost <span class="text-danger">*</span></label>
                             <input
-                                wire:model.defer="item_cost_konsyinasi.{{ $cart_item->id }}"
+                                wire:model.defer="item_cost_konsyinasi.{{ $lineKey }}"
                                 type="number"
                                 class="form-control"
                                 placeholder="0"

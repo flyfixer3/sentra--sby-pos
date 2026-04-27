@@ -1,10 +1,13 @@
 <input
-    wire:model.defer="quantity.{{ $cart_item->id }}"
-    wire:change="updateQuantity('{{ $cart_item->rowId }}', '{{ $cart_item->id }}')"
+    wire:model.defer="quantity.{{ !empty($rowAwareSaleCart) ? $lineKey : $cart_item->id }}"
+    wire:change="updateQuantity('{{ $cart_item->rowId }}', '{{ $cart_item->id }}'{{ !empty($rowAwareSaleCart) ? ", '" . $lineKey . "'" : '' }})"
     data-cart-sync-row
     data-cart-sync-field="quantity"
     data-cart-row-id="{{ $cart_item->rowId }}"
     data-cart-product-id="{{ $cart_item->id }}"
+    @if(!empty($rowAwareSaleCart))
+        data-cart-line-key="{{ $lineKey }}"
+    @endif
     style="min-width: 40px;max-width: 90px;"
     type="number"
     class="form-control"
@@ -30,14 +33,18 @@
                         return;
                     }
 
-                    if (!rows[productId]) {
-                        rows[productId] = {
+                    var lineKey = input.getAttribute('data-cart-line-key') || '';
+                    var payloadKey = lineKey || productId;
+
+                    if (!rows[payloadKey]) {
+                        rows[payloadKey] = {
                             product_id: productId,
-                            row_id: input.getAttribute('data-cart-row-id')
+                            row_id: input.getAttribute('data-cart-row-id'),
+                            line_key: lineKey
                         };
                     }
 
-                    rows[productId][input.getAttribute('data-cart-sync-field')] = input.value;
+                    rows[payloadKey][input.getAttribute('data-cart-sync-field')] = input.value;
                 });
 
                 return Object.keys(rows).map(function (key) {

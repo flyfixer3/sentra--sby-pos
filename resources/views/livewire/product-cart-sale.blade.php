@@ -53,6 +53,8 @@
                             $alreadyInvoicedQty = (int) ($cart_item->options->already_invoiced_qty ?? 0);
                             $remainingInvoiceableQty = (int) ($cart_item->options->remaining_invoiceable_qty ?? ($cart_item->options->stock ?? 0));
                             $currentStockQty = (int) ($cart_item->options->current_stock_qty ?? 0);
+                            $lineKey = (string) ($cart_item->options->line_key ?? $cart_item->rowId);
+                            $safeLineKey = preg_replace('/[^A-Za-z0-9_-]/', '_', $lineKey);
                             $scopeNote = $scope === 'branch'
                                 ? 'Stock shown is total from ALL warehouses (active branch).'
                                 : ('Stock shown is from warehouse' . ($whName ? (': ' . $whName) : '.') );
@@ -113,7 +115,10 @@
                             </td>
 
                             <td class="align-middle">
-                                @include('livewire.includes.product-cart-quantity')
+                                @include('livewire.includes.product-cart-quantity', [
+                                    'rowAwareSaleCart' => true,
+                                    'lineKey' => $lineKey,
+                                ])
                             </td>
 
                             <td class="align-middle">
