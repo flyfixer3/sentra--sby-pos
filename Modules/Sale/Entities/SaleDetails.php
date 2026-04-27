@@ -5,6 +5,7 @@ namespace Modules\Sale\Entities;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\SoftDeletes;
+use Modules\People\Entities\CustomerVehicle;
 use Modules\Product\Entities\Product;
 use Modules\Warehouse\Entities\Warehouse;
 
@@ -27,6 +28,10 @@ class SaleDetails extends Model
 
     public function sale() {
         return $this->belongsTo(Sale::class, 'sale_id', 'id');
+    }
+
+    public function customerVehicle() {
+        return $this->belongsTo(CustomerVehicle::class, 'customer_vehicle_id');
     }
 
     public function getPriceAttribute($value) {

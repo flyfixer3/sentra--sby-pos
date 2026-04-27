@@ -23,4 +23,9 @@ class Customer extends Model
         });
     }
 
+    public function vehicles()
+    {
+        return $this->hasMany(CustomerVehicle::class, 'customer_id');
+    }
+
 }
