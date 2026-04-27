@@ -372,6 +372,55 @@
     .table-modern td, .table-modern th{
         vertical-align: middle;
     }
+    #stocks-table_wrapper .stock-table-toolbar{
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        justify-content: space-between;
+        gap: .75rem;
+        padding: .85rem 1rem;
+        background: #f8fafc;
+        border-bottom: 1px solid #e2e8f0;
+    }
+    #stocks-table_wrapper .stock-table-toolbar .dataTables_length{
+        margin: 0;
+    }
+    #stocks-table_wrapper .stock-table-toolbar .dataTables_length label{
+        margin-bottom: 0;
+        color: #475569;
+        font-size: 13px;
+        font-weight: 700;
+    }
+    #stocks-table_wrapper .stock-table-toolbar .dataTables_length select{
+        border-radius: 999px;
+        border-color: #cbd5e1;
+        margin: 0 .35rem;
+    }
+    #stocks-table_wrapper .stock-table-toolbar .dt-buttons{
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: flex-end;
+        gap: .5rem;
+    }
+    #stocks-table_wrapper .stock-table-toolbar .dt-buttons .btn{
+        border-radius: 999px;
+        font-weight: 700;
+        padding: .38rem .85rem;
+        box-shadow: none;
+    }
+    #stocks-table_wrapper .stock-table-toolbar .dt-buttons .btn + .btn{
+        margin-left: 0;
+    }
+    @media (max-width: 575.98px){
+        #stocks-table_wrapper .stock-table-toolbar{
+            align-items: stretch;
+        }
+        #stocks-table_wrapper .stock-table-actions,
+        #stocks-table_wrapper .stock-table-toolbar .dt-buttons{
+            width: 100%;
+            justify-content: flex-start;
+        }
+    }
 
     .alert-modern{
         border-radius: 12px;

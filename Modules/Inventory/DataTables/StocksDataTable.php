@@ -3,6 +3,7 @@
 namespace Modules\Inventory\DataTables;
 
 use Illuminate\Support\Facades\DB;
+use Yajra\DataTables\Html\Button;
 use Yajra\DataTables\Services\DataTable;
 use Yajra\DataTables\QueryDataTable;
 
@@ -280,6 +281,17 @@ class StocksDataTable extends DataTable
             ->setTableId('stocks-table')
             ->columns($this->getColumns($isAllBranchMode))
             ->minifiedAjax()
+            ->dom(
+                "<'stock-table-toolbar'<'stock-table-length'l><'stock-table-actions'B>>" .
+                "tr" .
+                "<'row'<'col-md-5'i><'col-md-7 mt-2'p>>"
+            )
+            ->buttons(
+                Button::make('excel')->text('<i class="bi bi-file-earmark-excel-fill"></i> Excel'),
+                Button::make('print')->text('<i class="bi bi-printer-fill"></i> Print'),
+                Button::make('reset')->text('<i class="bi bi-x-circle"></i> Reset'),
+                Button::make('reload')->text('<i class="bi bi-arrow-repeat"></i> Reload')
+            )
             ->parameters([
                 'responsive' => true,
                 'autoWidth' => false,
@@ -330,6 +342,8 @@ class StocksDataTable extends DataTable
             'title' => 'Detail',
             'orderable' => false,
             'searchable' => false,
+            'exportable' => false,
+            'printable' => false,
             'class' => 'text-center',
         ];
 
