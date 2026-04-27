@@ -18,7 +18,7 @@
             $activeBranch = session('active_branch');
 
             $canViewAll = auth()->user()->can('view_all_branches');
-            $canSwitch = auth()->user()->can('switch_branch');
+            $canSwitch = $canViewAll || $userBranches->count() > 1;
         @endphp
 
         <li class="c-header-nav-item dropdown mr-3">

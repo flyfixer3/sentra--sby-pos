@@ -34,7 +34,7 @@ Route::group(['middleware' => 'auth'], function () {
 
     /**
      * Switch Active Branch (session)
-     * - User harus punya permission switch_branch.
+     * - User may switch only to branches allowed by BranchContext.
      * - Option "all" hanya untuk user yang punya permission view_all_branches.
      */
     Route::post('/switch-branch', [SwitchBranchController::class, 'switch'])

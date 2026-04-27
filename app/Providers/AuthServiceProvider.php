@@ -30,7 +30,11 @@ class AuthServiceProvider extends ServiceProvider
 
             return in_array('owner', $roles, true)
                 || in_array('super admin', $roles, true)
-                || in_array('administrator', $roles, true);
+                || in_array('administrator', $roles, true)
+                || (
+                    method_exists($user, 'getAllPermissions')
+                    && $user->getAllPermissions()->contains('name', 'view_all_branches')
+                );
         });
     }
 
