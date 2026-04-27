@@ -66,6 +66,11 @@ class User extends Authenticatable implements HasMedia
         return $this->belongsToMany(\Modules\Branch\Entities\Branch::class, 'branch_user');
     }
 
+    public function displayRoleName(): string
+    {
+        return $this->getRoleNames()->first() ?: 'No Role Assigned';
+    }
+
     /**
      * Cabang yang bisa dilihat user
      * - Kalau user punya permission view_all_branches => boleh lihat semua cabang

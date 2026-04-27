@@ -54,6 +54,11 @@
     @endif
     {{-- ✅ End Dropdown Cabang Aktif --}}
 
+    @php
+        $headerUser = auth()->user();
+        $headerRoleName = $headerUser ? $headerUser->displayRoleName() : 'No Role Assigned';
+    @endphp
+
     @can('create_pos_sales')
     <li class="c-header-nav-item mr-3">
         <a class="btn btn-primary btn-pill {{ request()->routeIs('app.pos.index') ? 'disabled' : '' }}" href="{{ route('app.pos.index') }}">
@@ -71,8 +76,8 @@
                 <img class="c-avatar rounded-circle" src="{{ auth()->user()->getFirstMediaUrl('avatars') }}" alt="Profile Image">
             </div>
             <div class="d-flex flex-column">
-                <span class="font-weight-bold">{{ auth()->user()->name }}</span>
-                <span class="font-italic">Online <i class="bi bi-circle-fill text-success" style="font-size: 11px;"></i></span>
+                <span class="font-weight-bold">{{ $headerUser->name }}</span>
+                <span class="font-italic">{{ $headerRoleName }}</span>
             </div>
         </a>
         <div class="dropdown-menu dropdown-menu-right pt-0">

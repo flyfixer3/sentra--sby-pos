@@ -14,11 +14,15 @@
 @endsection
 
 @section('content')
+    @php
+        $profileUser = auth()->user();
+    @endphp
+
     <div class="container-fluid">
         <div class="row">
             <div class="col-12">
                 @include('utils.alerts')
-                <h3>Hello, <span class="text-primary">{{ auth()->user()->name }}</span></h3>
+                <h3>Hello, <span class="text-primary">{{ $profileUser->name }}</span></h3>
                 <p class="font-italic">Change your profile information & password from here...</p>
             </div>
             <div class="col-lg-6">
@@ -30,23 +34,27 @@
 
                             <div class="form-group">
                                 <label for="image">Profile Image <span class="text-danger">*</span></label>
-                                <img style="width: 100px;height: 100px;" class="d-block mx-auto img-thumbnail img-fluid rounded-circle mb-2" src="{{ auth()->user()->getFirstMediaUrl('avatars') }}" alt="Profile Image">
+                                <img style="width: 100px;height: 100px;" class="d-block mx-auto img-thumbnail img-fluid rounded-circle mb-2" src="{{ $profileUser->getFirstMediaUrl('avatars') }}" alt="Profile Image">
                                 <input id="image" type="file" name="image" data-max-file-size="500KB">
                             </div>
 
                             <div class="form-group">
                                 <label for="name">Name <span class="text-danger">*</span></label>
-                                <input class="form-control" type="text" name="name" required value="{{ auth()->user()->name }}">
+                                <input class="form-control" type="text" name="name" required value="{{ $profileUser->name }}">
                                 @error('name')
                                 <p class="text-danger">{{ $message }}</p>
                                 @enderror
                             </div>
                             <div class="form-group">
                                 <label for="email">Email <span class="text-danger">*</span></label>
-                                <input class="form-control" type="email" name="email" required value="{{ auth()->user()->email }}">
+                                <input class="form-control" type="email" name="email" required value="{{ $profileUser->email }}">
                                 @error('email')
                                 <p class="text-danger">{{ $message }}</p>
                                 @enderror
+                            </div>
+                            <div class="form-group">
+                                <label>Role</label>
+                                <input class="form-control" type="text" value="{{ $profileUser->displayRoleName() }}" readonly>
                             </div>
                             <div class="form-group">
                                 <button type="submit" class="btn btn-primary">Update Profile <i class="bi bi-check"></i></button>
