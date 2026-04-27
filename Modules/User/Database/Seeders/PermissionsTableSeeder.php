@@ -33,11 +33,13 @@ class PermissionsTableSeeder extends Seeder
 
             //Products
             'access_products',
+            'access_product_accessories',
             'create_products',
             'show_products',
             'edit_products',
             'delete_products',
             'import_products',
+            'access_warehouses',
 
             //Product Categories
             'access_product_categories',
@@ -79,12 +81,17 @@ class PermissionsTableSeeder extends Seeder
             'create_customers',
             'show_customers',
             'edit_customers',
+            'update_customers',
             'delete_customers',
 
             //Branches
             'access_branches',
+            'show_branches',
+            'create_branch',
             'create_branches',
+            'edit_branch',
             'edit_branches',
+            'delete_branch',
             'delete_branches',
 
             //Suppliers
@@ -119,6 +126,7 @@ class PermissionsTableSeeder extends Seeder
 
             //Purchases
             'access_purchases',
+            'create_purchase',
             'create_purchases',
             'show_purchases',
             'edit_purchases',
@@ -126,8 +134,21 @@ class PermissionsTableSeeder extends Seeder
 
             // Purchase Deliveries
             'access_purchase_deliveries',
+            'create_purchase_deliveries',
             'show_purchase_deliveries',
             'edit_purchase_deliveries',
+            'delete_purchase_deliveries',
+
+            // Purchase Orders
+            'access_purchase_orders',
+            'access_purchase-orders',
+            'create_purchase_orders',
+            'create_purchase-orders',
+            'show_purchase_orders',
+            'edit_purchase_orders',
+            'delete_purchase_orders',
+            'create_purchase_order_purchases',
+            'send_purchase_order_mails',
 
             //Purchase Payments
             'access_purchase_payments',
@@ -138,6 +159,7 @@ class PermissionsTableSeeder extends Seeder
             'show_purchase_returns',
             'edit_purchase_returns',
             'delete_purchase_returns',
+            'delete_purchase_return',
 
             //Purchase Return Payments
             'access_purchase_return_payments',
@@ -154,8 +176,38 @@ class PermissionsTableSeeder extends Seeder
             //Settings
             'access_settings',
 
-            // ✅ TRANSFER
+            // Sale Orders
+            'access_sale_orders',
+            'create_sale_orders',
+            'show_sale_orders',
+            'edit_sale_orders',
+            'delete_sale_orders',
+            'create_sale_invoices',
+
+            // Sale Deliveries
+            'access_sale_deliveries',
+            'create_sale_deliveries',
+            'show_sale_deliveries',
+            'edit_sale_deliveries',
+            'delete_sale_deliveries',
+
+            // Transfers
+            'access_transfers',
+            'create_transfers',
+            'show_transfers',
+            'delete_transfers',
+            'print_transfers',
             'cancel_transfers',
+
+            // Inventory / Stock
+            'access_inventories',
+            'access_invetories',
+            'access_mutations',
+            'create_mutations',
+            'show_mutations',
+            'edit_mutations',
+            'delete_mutations',
+            'delete_inventory',
 
             'access_racks',
             'create_racks',

@@ -427,9 +427,9 @@
                                                 <div class="col-6">
                                                     <div class="custom-control custom-switch">
                                                         <input type="checkbox" class="custom-control-input"
-                                                               id="delete_customers" name="permissions[]"
-                                                               value="delete_customers" {{ old('delete_customers') ? 'checked' : '' }}>
-                                                        <label class="custom-control-label" for="delete_customers">Delete</label>
+                                                               id="delete_suppliers" name="permissions[]"
+                                                               value="delete_suppliers" {{ old('delete_suppliers') ? 'checked' : '' }}>
+                                                        <label class="custom-control-label" for="delete_suppliers">Delete</label>
                                                     </div>
                                                 </div>
                                             </div>
@@ -518,7 +518,7 @@
                                                     <div class="custom-control custom-switch">
                                                         <input type="checkbox" class="custom-control-input"
                                                                id="show_sales" name="permissions[]"
-                                                               value="show_suppliers" {{ old('show_sales') ? 'checked' : '' }}>
+                                                               value="show_sales" {{ old('show_sales') ? 'checked' : '' }}>
                                                         <label class="custom-control-label" for="show_sales">View</label>
                                                     </div>
                                                 </div>
@@ -828,6 +828,113 @@
                                         </div>
                                     </div>
                                 </div>
+
+                                @php
+                                    $additionalPermissionGroups = [
+                                        'Purchase Deliveries' => [
+                                            'create_purchase' => 'Create Purchase Menu',
+                                            'access_purchase_deliveries' => 'Access',
+                                            'create_purchase_deliveries' => 'Create',
+                                            'show_purchase_deliveries' => 'View',
+                                            'edit_purchase_deliveries' => 'Edit',
+                                            'delete_purchase_deliveries' => 'Delete',
+                                        ],
+                                        'Purchase Orders' => [
+                                            'access_purchase_orders' => 'Access',
+                                            'access_purchase-orders' => 'Access Menu',
+                                            'create_purchase_orders' => 'Create',
+                                            'create_purchase-orders' => 'Create Menu',
+                                            'show_purchase_orders' => 'View',
+                                            'edit_purchase_orders' => 'Edit',
+                                            'delete_purchase_orders' => 'Delete',
+                                            'create_purchase_order_purchases' => 'Create Purchase',
+                                            'send_purchase_order_mails' => 'Send Email',
+                                        ],
+                                        'Sale Orders' => [
+                                            'access_sale_orders' => 'Access',
+                                            'create_sale_orders' => 'Create',
+                                            'show_sale_orders' => 'View',
+                                            'edit_sale_orders' => 'Edit',
+                                            'delete_sale_orders' => 'Delete',
+                                            'create_sale_invoices' => 'Create Invoice',
+                                        ],
+                                        'Sale Deliveries' => [
+                                            'access_sale_deliveries' => 'Access',
+                                            'create_sale_deliveries' => 'Create',
+                                            'show_sale_deliveries' => 'View',
+                                            'edit_sale_deliveries' => 'Edit',
+                                            'delete_sale_deliveries' => 'Delete',
+                                        ],
+                                        'Transfers Stock' => [
+                                            'access_transfers' => 'Access',
+                                            'create_transfers' => 'Create',
+                                            'show_transfers' => 'View',
+                                            'delete_transfers' => 'Delete',
+                                            'print_transfers' => 'Print',
+                                            'cancel_transfers' => 'Cancel',
+                                        ],
+                                        'Inventory / Warehouses / Racks' => [
+                                            'access_inventories' => 'Access Inventory',
+                                            'access_invetories' => 'Access Inventory Menu',
+                                            'access_warehouses' => 'Access Warehouses',
+                                            'access_racks' => 'Access Racks',
+                                            'create_racks' => 'Create Racks',
+                                            'edit_racks' => 'Edit Racks',
+                                            'delete_racks' => 'Delete Racks',
+                                            'import_racks' => 'Import Racks',
+                                            'access_rack_movements' => 'Access Rack Movements',
+                                            'create_rack_movements' => 'Create Rack Movements',
+                                            'show_rack_movements' => 'View Rack Movements',
+                                            'import_opening_stock' => 'Import Opening Stock',
+                                            'delete_inventory' => 'Delete Inventory',
+                                        ],
+                                        'Mutations' => [
+                                            'access_mutations' => 'Access',
+                                            'create_mutations' => 'Create',
+                                            'show_mutations' => 'View',
+                                            'edit_mutations' => 'Edit',
+                                            'delete_mutations' => 'Delete',
+                                        ],
+                                        'Branches' => [
+                                            'access_branches' => 'Access',
+                                            'show_branches' => 'View',
+                                            'create_branch' => 'Create',
+                                            'create_branches' => 'Create Menu',
+                                            'edit_branch' => 'Edit',
+                                            'edit_branches' => 'Edit Menu',
+                                            'delete_branch' => 'Delete',
+                                            'delete_branches' => 'Delete Menu',
+                                        ],
+                                        'Product Master Data' => [
+                                            'access_product_accessories' => 'Access Accessories',
+                                            'import_products' => 'Import Products',
+                                        ],
+                                    ];
+                                @endphp
+
+                                @foreach($additionalPermissionGroups as $groupTitle => $permissions)
+                                    <div class="col-lg-4 col-md-6 mb-3">
+                                        <div class="card h-100 border-0 shadow">
+                                            <div class="card-header">
+                                                {{ $groupTitle }}
+                                            </div>
+                                            <div class="card-body">
+                                                <div class="row">
+                                                    @foreach($permissions as $permission => $label)
+                                                        <div class="col-6">
+                                                            <div class="custom-control custom-switch">
+                                                                <input type="checkbox" class="custom-control-input"
+                                                                       id="{{ $permission }}" name="permissions[]"
+                                                                       value="{{ $permission }}" {{ old($permission) ? 'checked' : '' }}>
+                                                                <label class="custom-control-label" for="{{ $permission }}">{{ $label }}</label>
+                                                            </div>
+                                                        </div>
+                                                    @endforeach
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                @endforeach
 
                                 <!-- Warehouse Operations -->
                                 <div class="col-lg-4 col-md-6 mb-3">
