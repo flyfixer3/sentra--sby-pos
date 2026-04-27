@@ -133,6 +133,9 @@ class ImportLegacyExcelCommand extends Command
 
     public function handle(): int
     {
+        @ini_set('memory_limit', '-1');
+        @set_time_limit(0);
+
         $stage = strtolower((string) $this->option('stage'));
         if (!in_array($stage, ['all', 'products', 'purchases', 'sales', 'reconcile'], true)) {
             $this->error('Invalid --stage value.');
@@ -247,25 +250,22 @@ class ImportLegacyExcelCommand extends Command
 
     private function loadPricelist(string $path): array
     {
-        $sheet = IOFactory::load($path)->getSheetByName('Sheet1');
-        $prices = [];
-        if (!$sheet) {
+        return $this->withSheet($path, 'Sheet1', function (Worksheet $sheet) {
+            $prices = [];
+            $highestRow = $sheet->getHighestDataRow();
+            for ($row = 3; $row <= $highestRow; $row++) {
+                $key = strtoupper(trim((string) $this->cell($sheet, 1, $row)));
+                if ($key === '') {
+                    continue;
+                }
+                $price = $this->asInt($this->cell($sheet, 6, $row));
+                if ($price > 0) {
+                    $prices[$key] = $price;
+                }
+            }
+
             return $prices;
-        }
-
-        $highestRow = $sheet->getHighestDataRow();
-        for ($row = 3; $row <= $highestRow; $row++) {
-            $key = strtoupper(trim((string) $this->cell($sheet, 1, $row)));
-            if ($key === '') {
-                continue;
-            }
-            $price = $this->asInt($this->cell($sheet, 6, $row));
-            if ($price > 0) {
-                $prices[$key] = $price;
-            }
-        }
-
-        return $prices;
+        }, []);
     }
 
     private function scanLatestSalePrices(array $sources): array
@@ -274,29 +274,26 @@ class ImportLegacyExcelCommand extends Command
 
         foreach ($sources as $branchCode => $path) {
             $profile = self::BRANCH_PROFILES[$branchCode];
-            $sheet = IOFactory::load($path)->getSheetByName($profile['sales_sheet']);
-            if (!$sheet) {
-                continue;
-            }
+            $this->withSheet($path, $profile['sales_sheet'], function (Worksheet $sheet) use (&$latest, $profile) {
+                $cols = $profile['sales_cols'];
+                $highestRow = $sheet->getHighestDataRow();
+                for ($row = $profile['sales_start_row']; $row <= $highestRow; $row++) {
+                    $code = strtoupper(trim((string) $this->cell($sheet, $cols['code'], $row)));
+                    if ($code === '' || $code === 'KODE') {
+                        continue;
+                    }
 
-            $cols = $profile['sales_cols'];
-            $highestRow = $sheet->getHighestDataRow();
-            for ($row = $profile['sales_start_row']; $row <= $highestRow; $row++) {
-                $code = strtoupper(trim((string) $this->cell($sheet, $cols['code'], $row)));
-                if ($code === '' || $code === 'KODE') {
-                    continue;
-                }
+                    $price = $this->asInt($this->cell($sheet, $cols['unit_price'], $row));
+                    $date = $this->parseDate($this->cell($sheet, $cols['date'], $row));
+                    if ($price <= 0 || !$date) {
+                        continue;
+                    }
 
-                $price = $this->asInt($this->cell($sheet, $cols['unit_price'], $row));
-                $date = $this->parseDate($this->cell($sheet, $cols['date'], $row));
-                if ($price <= 0 || !$date) {
-                    continue;
+                    if (!isset($latest[$code]) || $date->gt($latest[$code]['date'])) {
+                        $latest[$code] = ['price' => $price, 'date' => $date];
+                    }
                 }
-
-                if (!isset($latest[$code]) || $date->gt($latest[$code]['date'])) {
-                    $latest[$code] = ['price' => $price, 'date' => $date];
-                }
-            }
+            });
         }
 
         return array_map(function ($row) {
@@ -310,28 +307,25 @@ class ImportLegacyExcelCommand extends Command
 
         foreach ($sources as $branchCode => $path) {
             $profile = self::BRANCH_PROFILES[$branchCode];
-            $sheet = IOFactory::load($path)->getSheetByName($profile['purchase_sheet']);
-            if (!$sheet) {
-                continue;
-            }
+            $this->withSheet($path, $profile['purchase_sheet'], function (Worksheet $sheet) use (&$latest, $profile) {
+                $highestRow = $sheet->getHighestDataRow();
+                for ($row = $profile['purchase_start_row']; $row <= $highestRow; $row++) {
+                    $code = strtoupper(trim((string) $this->cell($sheet, $profile['purchase_cols']['code'], $row)));
+                    if ($code === '' || $code === 'KODE') {
+                        continue;
+                    }
 
-            $highestRow = $sheet->getHighestDataRow();
-            for ($row = $profile['purchase_start_row']; $row <= $highestRow; $row++) {
-                $code = strtoupper(trim((string) $this->cell($sheet, $profile['purchase_cols']['code'], $row)));
-                if ($code === '' || $code === 'KODE') {
-                    continue;
-                }
+                    $date = $this->parseDate($this->cell($sheet, $profile['purchase_cols']['date'], $row));
+                    $price = $this->asInt($this->cell($sheet, $profile['purchase_cols']['unit_price'], $row));
+                    if ($price <= 0 || !$date) {
+                        continue;
+                    }
 
-                $date = $this->parseDate($this->cell($sheet, $profile['purchase_cols']['date'], $row));
-                $price = $this->asInt($this->cell($sheet, $profile['purchase_cols']['unit_price'], $row));
-                if ($price <= 0 || !$date) {
-                    continue;
+                    if (!isset($latest[$code]) || $date->gt($latest[$code]['date'])) {
+                        $latest[$code] = ['price' => $price, 'date' => $date];
+                    }
                 }
-
-                if (!isset($latest[$code]) || $date->gt($latest[$code]['date'])) {
-                    $latest[$code] = ['price' => $price, 'date' => $date];
-                }
-            }
+            });
         }
 
         return array_map(function ($row) {
@@ -345,69 +339,66 @@ class ImportLegacyExcelCommand extends Command
 
         foreach ($sources as $branchCode => $path) {
             $profile = self::BRANCH_PROFILES[$branchCode];
-            $sheet = IOFactory::load($path)->getSheetByName($profile['current_stock_sheet']);
-            if (!$sheet) {
-                continue;
-            }
+            $this->withSheet($path, $profile['current_stock_sheet'], function (Worksheet $sheet) use ($profile, $pricelistMap, $latestSalePrices, $latestPurchaseCosts) {
+                $highestRow = $sheet->getHighestDataRow();
+                for ($row = $profile['current_stock_start_row']; $row <= $highestRow; $row++) {
+                    $productCode = strtoupper(trim((string) $this->cell($sheet, 1, $row)));
+                    if ($productCode === '' || in_array($productCode, ['KODE BARANG', 'KODE'], true)) {
+                        continue;
+                    }
 
-            $highestRow = $sheet->getHighestDataRow();
-            for ($row = $profile['current_stock_start_row']; $row <= $highestRow; $row++) {
-                $productCode = strtoupper(trim((string) $this->cell($sheet, 1, $row)));
-                if ($productCode === '' || in_array($productCode, ['KODE BARANG', 'KODE'], true)) {
-                    continue;
+                    $mobileCode = strtoupper(trim((string) $this->cell($sheet, 2, $row)));
+                    $productName = trim((string) $this->cell($sheet, 3, $row));
+                    $partCode = strtoupper(trim((string) $this->cell($sheet, 4, $row)));
+                    $brandCode = strtoupper(trim((string) $this->cell($sheet, 5, $row)));
+                    $accessorySummary = trim((string) $this->cell($sheet, 6, $row));
+                    $alert = $profile['current_stock_alert_col']
+                        ? $this->asInt($this->cell($sheet, $profile['current_stock_alert_col'], $row), -1)
+                        : -1;
+
+                    $parsed = ProductCodeParser::parse($productCode, $partCode, $brandCode, $accessorySummary, $mobileCode);
+                    $reviewReasons = [];
+
+                    $category = $this->resolveCategory($parsed['part_code'], $reviewReasons);
+                    $brand = $this->resolveBrand($parsed['brand_code'], $reviewReasons);
+                    $accessorySummaryCode = $this->ensureAccessorySummary($parsed['accessory_summary']);
+                    $accessoryIds = $this->ensureAccessoryTokens($parsed['accessory_tokens']);
+
+                    $price = $pricelistMap[$parsed['price_key']] ?? ($latestSalePrices[$productCode] ?? 0);
+                    if ($price <= 0) {
+                        $reviewReasons[] = 'PRICELIST_NOT_FOUND';
+                    }
+
+                    $cost = $latestPurchaseCosts[$productCode] ?? 0;
+                    if ($cost <= 0) {
+                        $reviewReasons[] = 'PURCHASE_COST_NOT_FOUND';
+                    }
+
+                    $product = Product::withoutGlobalScopes()->updateOrCreate(
+                        ['product_code' => $productCode],
+                        [
+                            'branch_id' => null,
+                            'brand_id' => $brand ? $brand->id : null,
+                            'category_id' => $category->id,
+                            'accessory_code' => $accessorySummaryCode,
+                            'product_name' => $productName !== '' ? $productName : $productCode,
+                            'product_barcode_symbology' => 'C128',
+                            'product_cost' => $cost,
+                            'product_price' => $price,
+                            'product_unit' => 'PC',
+                            'product_stock_alert' => $alert >= 0 ? $alert : -1,
+                            'product_order_tax' => null,
+                            'product_tax_type' => null,
+                            'product_note' => $this->mergeNotes(null, $reviewReasons),
+                            'needs_review' => !empty($reviewReasons),
+                        ]
+                    );
+
+                    if (!empty($accessoryIds)) {
+                        $product->accessories()->syncWithoutDetaching($accessoryIds);
+                    }
                 }
-
-                $mobileCode = strtoupper(trim((string) $this->cell($sheet, 2, $row)));
-                $productName = trim((string) $this->cell($sheet, 3, $row));
-                $partCode = strtoupper(trim((string) $this->cell($sheet, 4, $row)));
-                $brandCode = strtoupper(trim((string) $this->cell($sheet, 5, $row)));
-                $accessorySummary = trim((string) $this->cell($sheet, 6, $row));
-                $alert = $profile['current_stock_alert_col']
-                    ? $this->asInt($this->cell($sheet, $profile['current_stock_alert_col'], $row), -1)
-                    : -1;
-
-                $parsed = ProductCodeParser::parse($productCode, $partCode, $brandCode, $accessorySummary, $mobileCode);
-                $reviewReasons = [];
-
-                $category = $this->resolveCategory($parsed['part_code'], $reviewReasons);
-                $brand = $this->resolveBrand($parsed['brand_code'], $reviewReasons);
-                $accessorySummaryCode = $this->ensureAccessorySummary($parsed['accessory_summary']);
-                $accessoryIds = $this->ensureAccessoryTokens($parsed['accessory_tokens']);
-
-                $price = $pricelistMap[$parsed['price_key']] ?? ($latestSalePrices[$productCode] ?? 0);
-                if ($price <= 0) {
-                    $reviewReasons[] = 'PRICELIST_NOT_FOUND';
-                }
-
-                $cost = $latestPurchaseCosts[$productCode] ?? 0;
-                if ($cost <= 0) {
-                    $reviewReasons[] = 'PURCHASE_COST_NOT_FOUND';
-                }
-
-                $product = Product::withoutGlobalScopes()->updateOrCreate(
-                    ['product_code' => $productCode],
-                    [
-                        'branch_id' => null,
-                        'brand_id' => $brand ? $brand->id : null,
-                        'category_id' => $category->id,
-                        'accessory_code' => $accessorySummaryCode,
-                        'product_name' => $productName !== '' ? $productName : $productCode,
-                        'product_barcode_symbology' => 'C128',
-                        'product_cost' => $cost,
-                        'product_price' => $price,
-                        'product_unit' => 'PC',
-                        'product_stock_alert' => $alert >= 0 ? $alert : -1,
-                        'product_order_tax' => null,
-                        'product_tax_type' => null,
-                        'product_note' => $this->mergeNotes(null, $reviewReasons),
-                        'needs_review' => !empty($reviewReasons),
-                    ]
-                );
-
-                if (!empty($accessoryIds)) {
-                    $product->accessories()->syncWithoutDetaching($accessoryIds);
-                }
-            }
+            });
         }
     }
 
@@ -422,62 +413,61 @@ class ImportLegacyExcelCommand extends Command
             $warehouse = $this->resolveMainWarehouse($branchCode);
             $rack = $this->resolveDefaultRack($warehouse->id);
 
-            $sheet = IOFactory::load($path)->getSheetByName($profile['purchase_sheet']);
-            if (!$sheet) {
-                continue;
-            }
+            $rowsByInvoice = $this->withSheet($path, $profile['purchase_sheet'], function (Worksheet $sheet) use ($profile) {
+                $rowsByInvoice = [];
+                $carry = ['date' => null, 'invoice' => null, 'supplier' => null];
+                $highestRow = $sheet->getHighestDataRow();
+                for ($row = $profile['purchase_start_row']; $row <= $highestRow; $row++) {
+                    $code = strtoupper(trim((string) $this->cell($sheet, $profile['purchase_cols']['code'], $row)));
+                    if ($code === '' || $code === 'KODE') {
+                        continue;
+                    }
 
-            $rowsByInvoice = [];
-            $carry = ['date' => null, 'invoice' => null, 'supplier' => null];
-            $highestRow = $sheet->getHighestDataRow();
-            for ($row = $profile['purchase_start_row']; $row <= $highestRow; $row++) {
-                $code = strtoupper(trim((string) $this->cell($sheet, $profile['purchase_cols']['code'], $row)));
-                if ($code === '' || $code === 'KODE') {
-                    continue;
+                    $invoice = trim((string) $this->cell($sheet, $profile['purchase_cols']['invoice'], $row));
+                    $supplier = trim((string) $this->cell($sheet, $profile['purchase_cols']['supplier'], $row));
+                    $date = $this->parseDate($this->cell($sheet, $profile['purchase_cols']['date'], $row));
+
+                    if ($invoice !== '') {
+                        $carry['invoice'] = $invoice;
+                    }
+                    if ($supplier !== '') {
+                        $carry['supplier'] = $supplier;
+                    }
+                    if ($date) {
+                        $carry['date'] = $date;
+                    }
+
+                    if (!$carry['date'] || !$carry['invoice'] || !$carry['supplier']) {
+                        continue;
+                    }
+
+                    $qty = $this->resolvePurchaseQty($sheet, $row, $profile['purchase_cols']);
+                    $unitPrice = $this->asInt($this->cell($sheet, $profile['purchase_cols']['unit_price'], $row));
+                    $lineTotal = $this->asInt($this->cell($sheet, $profile['purchase_cols']['total'], $row));
+                    if ($qty <= 0 || $unitPrice <= 0) {
+                        continue;
+                    }
+
+                    $checkText = strtoupper(trim((string) $this->cell($sheet, $profile['purchase_cols']['check'], $row)));
+                    if (!empty($profile['purchase_cols']['check_alt'])) {
+                        $checkText .= ' ' . strtoupper(trim((string) $this->cell($sheet, $profile['purchase_cols']['check_alt'], $row)));
+                    }
+
+                    $rowsByInvoice[$carry['invoice']]['date'] = $carry['date'];
+                    $rowsByInvoice[$carry['invoice']]['invoice'] = $carry['invoice'];
+                    $rowsByInvoice[$carry['invoice']]['supplier'] = $carry['supplier'];
+                    $rowsByInvoice[$carry['invoice']]['lines'][] = [
+                        'product_code' => $code,
+                        'product_name' => trim((string) $this->cell($sheet, $profile['purchase_cols']['name'], $row)),
+                        'qty' => $qty,
+                        'unit_price' => $unitPrice,
+                        'line_total' => $lineTotal > 0 ? $lineTotal : ($qty * $unitPrice),
+                    ];
+                    $rowsByInvoice[$carry['invoice']]['check'][] = $checkText;
                 }
 
-                $invoice = trim((string) $this->cell($sheet, $profile['purchase_cols']['invoice'], $row));
-                $supplier = trim((string) $this->cell($sheet, $profile['purchase_cols']['supplier'], $row));
-                $date = $this->parseDate($this->cell($sheet, $profile['purchase_cols']['date'], $row));
-
-                if ($invoice !== '') {
-                    $carry['invoice'] = $invoice;
-                }
-                if ($supplier !== '') {
-                    $carry['supplier'] = $supplier;
-                }
-                if ($date) {
-                    $carry['date'] = $date;
-                }
-
-                if (!$carry['date'] || !$carry['invoice'] || !$carry['supplier']) {
-                    continue;
-                }
-
-                $qty = $this->resolvePurchaseQty($sheet, $row, $profile['purchase_cols']);
-                $unitPrice = $this->asInt($this->cell($sheet, $profile['purchase_cols']['unit_price'], $row));
-                $lineTotal = $this->asInt($this->cell($sheet, $profile['purchase_cols']['total'], $row));
-                if ($qty <= 0 || $unitPrice <= 0) {
-                    continue;
-                }
-
-                $checkText = strtoupper(trim((string) $this->cell($sheet, $profile['purchase_cols']['check'], $row)));
-                if (!empty($profile['purchase_cols']['check_alt'])) {
-                    $checkText .= ' ' . strtoupper(trim((string) $this->cell($sheet, $profile['purchase_cols']['check_alt'], $row)));
-                }
-
-                $rowsByInvoice[$carry['invoice']]['date'] = $carry['date'];
-                $rowsByInvoice[$carry['invoice']]['invoice'] = $carry['invoice'];
-                $rowsByInvoice[$carry['invoice']]['supplier'] = $carry['supplier'];
-                $rowsByInvoice[$carry['invoice']]['lines'][] = [
-                    'product_code' => $code,
-                    'product_name' => trim((string) $this->cell($sheet, $profile['purchase_cols']['name'], $row)),
-                    'qty' => $qty,
-                    'unit_price' => $unitPrice,
-                    'line_total' => $lineTotal > 0 ? $lineTotal : ($qty * $unitPrice),
-                ];
-                $rowsByInvoice[$carry['invoice']]['check'][] = $checkText;
-            }
+                return $rowsByInvoice;
+            }, []);
 
             foreach ($rowsByInvoice as $invoice => $group) {
                 $exists = Purchase::withoutGlobalScopes()
@@ -591,54 +581,53 @@ class ImportLegacyExcelCommand extends Command
             $warehouse = $this->resolveMainWarehouse($branchCode);
             $rack = $this->resolveDefaultRack($warehouse->id);
 
-            $sheet = IOFactory::load($path)->getSheetByName($profile['sales_sheet']);
-            if (!$sheet) {
-                continue;
-            }
+            $sales = $this->withSheet($path, $profile['sales_sheet'], function (Worksheet $sheet) use ($profile) {
+                $cols = $profile['sales_cols'];
+                $highestRow = $sheet->getHighestDataRow();
+                $sales = [];
+                for ($row = $profile['sales_start_row']; $row <= $highestRow; $row++) {
+                    $invoice = trim((string) $this->cell($sheet, $cols['invoice'], $row));
+                    $code = strtoupper(trim((string) $this->cell($sheet, $cols['code'], $row)));
+                    if ($invoice === '' || $code === '' || $code === 'KODE') {
+                        continue;
+                    }
 
-            $cols = $profile['sales_cols'];
-            $highestRow = $sheet->getHighestDataRow();
-            $sales = [];
-            for ($row = $profile['sales_start_row']; $row <= $highestRow; $row++) {
-                $invoice = trim((string) $this->cell($sheet, $cols['invoice'], $row));
-                $code = strtoupper(trim((string) $this->cell($sheet, $cols['code'], $row)));
-                if ($invoice === '' || $code === '' || $code === 'KODE') {
-                    continue;
+                    $date = $this->parseDate($this->cell($sheet, $cols['date'], $row));
+                    if (!$date) {
+                        continue;
+                    }
+
+                    $qty = $this->asInt($this->cell($sheet, $cols['qty'], $row));
+                    $unitPrice = $this->asInt($this->cell($sheet, $cols['unit_price'], $row));
+                    $discount = $this->asInt($this->cell($sheet, $cols['discount'], $row));
+                    $net = $this->asInt($this->cell($sheet, $cols['net'], $row));
+                    if ($qty <= 0) {
+                        continue;
+                    }
+                    if ($net <= 0 && $unitPrice > 0) {
+                        $net = ($qty * $unitPrice) - $discount;
+                    }
+
+                    $sales[$invoice]['date'] = $date;
+                    $sales[$invoice]['invoice'] = $invoice;
+                    $sales[$invoice]['customer_name'] = trim((string) $this->cell($sheet, $cols['customer'], $row)) ?: 'Walk-in';
+                    $sales[$invoice]['customer_phone'] = $cols['phone'] ? trim((string) $this->cell($sheet, $cols['phone'], $row)) : null;
+                    $sales[$invoice]['customer_email'] = $cols['email'] ? trim((string) $this->cell($sheet, $cols['email'], $row)) : null;
+                    $sales[$invoice]['license_number'] = $cols['plate'] ? trim((string) $this->cell($sheet, $cols['plate'], $row)) : null;
+                    $sales[$invoice]['address'] = $cols['address'] ? trim((string) $this->cell($sheet, $cols['address'], $row)) : null;
+                    $sales[$invoice]['sale_from'] = $cols['sale_from'] ? trim((string) $this->cell($sheet, $cols['sale_from'], $row)) : 'Other';
+                    $sales[$invoice]['lines'][] = [
+                        'product_code' => $code,
+                        'product_name' => trim((string) $this->cell($sheet, $cols['name'], $row)),
+                        'qty' => $qty,
+                        'unit_price' => $unitPrice,
+                        'discount' => max(0, $discount),
+                        'net' => max(0, $net),
+                    ];
                 }
 
-                $date = $this->parseDate($this->cell($sheet, $cols['date'], $row));
-                if (!$date) {
-                    continue;
-                }
-
-                $qty = $this->asInt($this->cell($sheet, $cols['qty'], $row));
-                $unitPrice = $this->asInt($this->cell($sheet, $cols['unit_price'], $row));
-                $discount = $this->asInt($this->cell($sheet, $cols['discount'], $row));
-                $net = $this->asInt($this->cell($sheet, $cols['net'], $row));
-                if ($qty <= 0) {
-                    continue;
-                }
-                if ($net <= 0 && $unitPrice > 0) {
-                    $net = ($qty * $unitPrice) - $discount;
-                }
-
-                $sales[$invoice]['date'] = $date;
-                $sales[$invoice]['invoice'] = $invoice;
-                $sales[$invoice]['customer_name'] = trim((string) $this->cell($sheet, $cols['customer'], $row)) ?: 'Walk-in';
-                $sales[$invoice]['customer_phone'] = $cols['phone'] ? trim((string) $this->cell($sheet, $cols['phone'], $row)) : null;
-                $sales[$invoice]['customer_email'] = $cols['email'] ? trim((string) $this->cell($sheet, $cols['email'], $row)) : null;
-                $sales[$invoice]['license_number'] = $cols['plate'] ? trim((string) $this->cell($sheet, $cols['plate'], $row)) : null;
-                $sales[$invoice]['address'] = $cols['address'] ? trim((string) $this->cell($sheet, $cols['address'], $row)) : null;
-                $sales[$invoice]['sale_from'] = $cols['sale_from'] ? trim((string) $this->cell($sheet, $cols['sale_from'], $row)) : 'Other';
-                $sales[$invoice]['lines'][] = [
-                    'product_code' => $code,
-                    'product_name' => trim((string) $this->cell($sheet, $cols['name'], $row)),
-                    'qty' => $qty,
-                    'unit_price' => $unitPrice,
-                    'discount' => max(0, $discount),
-                    'net' => max(0, $net),
-                ];
-            }
+                return $sales;
+            }, []);
 
             foreach ($sales as $invoice => $group) {
                 $reference = $profile['sales_ref_prefix'] . strtoupper($invoice);
@@ -773,71 +762,68 @@ class ImportLegacyExcelCommand extends Command
             $warehouse = $this->resolveMainWarehouse($branchCode);
             $rack = $this->resolveDefaultRack($warehouse->id);
 
-            $sheet = IOFactory::load($path)->getSheetByName($profile['current_stock_sheet']);
-            if (!$sheet) {
-                continue;
-            }
-
-            $highestRow = $sheet->getHighestDataRow();
-            for ($row = $profile['current_stock_start_row']; $row <= $highestRow; $row++) {
-                $productCode = strtoupper(trim((string) $this->cell($sheet, 1, $row)));
-                if ($productCode === '' || in_array($productCode, ['KODE BARANG', 'KODE'], true)) {
-                    continue;
-                }
-
-                $expected = $this->asInt($this->cell($sheet, 9, $row));
-                $product = Product::withoutGlobalScopes()->where('product_code', $productCode)->first();
-                if (!$product) {
-                    continue;
-                }
-
-                $actual = (int) DB::table('stocks')
-                    ->where('branch_id', $branch->id)
-                    ->where('warehouse_id', $warehouse->id)
-                    ->where('product_id', $product->id)
-                    ->value('qty_total');
-
-                if ($expected < 0) {
-                    $this->markProductReview($product, 'NEGATIVE_CURRENT_STOCK_IN_EXCEL');
-                    $expected = 0;
-                }
-
-                $delta = $expected - $actual;
-                if ($delta === 0) {
-                    continue;
-                }
-
-                $type = $delta > 0 ? 'In' : 'Out';
-                $qty = abs($delta);
-                if ($qty <= 0) {
-                    continue;
-                }
-
-                if ($type === 'Out') {
-                    $available = max(0, $actual);
-                    if ($available < $qty) {
-                        $this->markProductReview($product, 'RECONCILIATION_NEGATIVE_DELTA_CLAMPED');
-                        $qty = $available;
+            $this->withSheet($path, $profile['current_stock_sheet'], function (Worksheet $sheet) use ($profile, $branch, $warehouse, $rack, $branchCode) {
+                $highestRow = $sheet->getHighestDataRow();
+                for ($row = $profile['current_stock_start_row']; $row <= $highestRow; $row++) {
+                    $productCode = strtoupper(trim((string) $this->cell($sheet, 1, $row)));
+                    if ($productCode === '' || in_array($productCode, ['KODE BARANG', 'KODE'], true)) {
+                        continue;
                     }
+
+                    $expected = $this->asInt($this->cell($sheet, 9, $row));
+                    $product = Product::withoutGlobalScopes()->where('product_code', $productCode)->first();
+                    if (!$product) {
+                        continue;
+                    }
+
+                    $actual = (int) DB::table('stocks')
+                        ->where('branch_id', $branch->id)
+                        ->where('warehouse_id', $warehouse->id)
+                        ->where('product_id', $product->id)
+                        ->value('qty_total');
+
+                    if ($expected < 0) {
+                        $this->markProductReview($product, 'NEGATIVE_CURRENT_STOCK_IN_EXCEL');
+                        $expected = 0;
+                    }
+
+                    $delta = $expected - $actual;
+                    if ($delta === 0) {
+                        continue;
+                    }
+
+                    $type = $delta > 0 ? 'In' : 'Out';
+                    $qty = abs($delta);
                     if ($qty <= 0) {
                         continue;
                     }
-                }
 
-                $this->mutationController->applyInOut(
-                    $branch->id,
-                    $warehouse->id,
-                    $product->id,
-                    $type,
-                    $qty,
-                    'RCN-' . $branchCode . '-' . now()->format('Ymd'),
-                    'IMPORT RECONCILIATION',
-                    now()->toDateString(),
-                    $rack->id,
-                    'good',
-                    'summary'
-                );
-            }
+                    if ($type === 'Out') {
+                        $available = max(0, $actual);
+                        if ($available < $qty) {
+                            $this->markProductReview($product, 'RECONCILIATION_NEGATIVE_DELTA_CLAMPED');
+                            $qty = $available;
+                        }
+                        if ($qty <= 0) {
+                            continue;
+                        }
+                    }
+
+                    $this->mutationController->applyInOut(
+                        $branch->id,
+                        $warehouse->id,
+                        $product->id,
+                        $type,
+                        $qty,
+                        'RCN-' . $branchCode . '-' . now()->format('Ymd'),
+                        'IMPORT RECONCILIATION',
+                        now()->toDateString(),
+                        $rack->id,
+                        'good',
+                        'summary'
+                    );
+                }
+            });
         }
     }
 
@@ -1081,7 +1067,46 @@ class ImportLegacyExcelCommand extends Command
 
     private function cell(Worksheet $sheet, int $columnIndex, int $row)
     {
-        return $sheet->getCell(Coordinate::stringFromColumnIndex($columnIndex) . $row)->getCalculatedValue();
+        $cell = $sheet->getCell(Coordinate::stringFromColumnIndex($columnIndex) . $row);
+        if ($cell->isFormula()) {
+            $cached = $cell->getOldCalculatedValue();
+            if ($cached !== null) {
+                return $cached;
+            }
+        }
+
+        return $cell->getCalculatedValue();
+    }
+
+    private function withSheet(string $path, string $sheetName, callable $callback, $default = null)
+    {
+        $reader = IOFactory::createReaderForFile($path);
+        if (method_exists($reader, 'setReadDataOnly')) {
+            $reader->setReadDataOnly(true);
+        }
+        if (method_exists($reader, 'setReadEmptyCells')) {
+            $reader->setReadEmptyCells(false);
+        }
+        if (method_exists($reader, 'setLoadSheetsOnly')) {
+            $reader->setLoadSheetsOnly([$sheetName]);
+        }
+
+        $spreadsheet = $reader->load($path);
+        $sheet = $spreadsheet->getSheetByName($sheetName);
+        if (!$sheet) {
+            $spreadsheet->disconnectWorksheets();
+            unset($spreadsheet);
+
+            return $default;
+        }
+
+        try {
+            return $callback($sheet);
+        } finally {
+            $spreadsheet->disconnectWorksheets();
+            unset($sheet, $spreadsheet);
+            gc_collect_cycles();
+        }
     }
 
     private function asInt($value, int $default = 0): int
