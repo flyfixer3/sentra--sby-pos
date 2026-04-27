@@ -4,6 +4,7 @@ namespace Modules\Purchase\Entities;
 
 use Illuminate\Database\Eloquent\Model;
 use App\Models\BaseModel;
+use App\Support\LegacyImport\ReferenceCodeGenerator;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Modules\PurchaseOrder\Entities\PurchaseOrder;
 use Illuminate\Database\Eloquent\SoftDeletes;
@@ -39,9 +40,19 @@ class Purchase extends BaseModel
         parent::boot();
 
         static::creating(function ($model) {
-            $number = Purchase::max('id') + 1;
-            $model->reference = make_reference_id('PR', $number);
+            $ref = trim((string) ($model->reference ?? ''));
+            if ($ref === '' || strtoupper($ref) === 'AUTO') {
+                $model->reference = ReferenceCodeGenerator::generatePurchaseReference(
+                    optional($model->branch)->name,
+                    $model->date ?? now()
+                );
+            }
         });
+    }
+
+    public function branch()
+    {
+        return $this->belongsTo(\Modules\Branch\Entities\Branch::class);
     }
 
     public function scopeCompleted($query) {

@@ -27,6 +27,17 @@ class Product extends BaseModel implements HasMedia
         return $this->belongsTo(Accessory::class, 'accessory_code', 'accessory_code');
     }
 
+    public function accessories()
+    {
+        return $this->belongsToMany(Accessory::class, 'product_accessory')
+            ->withTimestamps();
+    }
+
+    public function brand()
+    {
+        return $this->belongsTo(Brand::class, 'brand_id');
+    }
+
     public function registerMediaCollections(): void {
         $this->addMediaCollection('images')
             ->useFallbackUrl('/images/fallback_product_image.png');

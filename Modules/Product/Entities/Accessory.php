@@ -14,4 +14,10 @@ class Accessory extends Model
     public function products() {
         return $this->hasMany(Product::class, 'accessory_code', 'accessory_code');
     }
+
+    public function labeledProducts()
+    {
+        return $this->belongsToMany(Product::class, 'product_accessory')
+            ->withTimestamps();
+    }
 }
