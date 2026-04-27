@@ -360,9 +360,11 @@ class ImportLegacyExcelCommand extends Command
                     $reviewReasons = [];
 
                     $category = $this->resolveCategory($parsed['part_code'], $reviewReasons);
-                    $brand = $this->resolveBrand($parsed['brand_code'], $reviewReasons);
+                    $brand = $this->resolveBrand($parsed['brand_code'], $parsed['item_type'], $reviewReasons);
                     $accessorySummaryCode = $this->ensureAccessorySummary($parsed['accessory_summary']);
                     $accessoryIds = $this->ensureAccessoryTokens($parsed['accessory_tokens']);
+
+                    $this->appendItemTypeReviewReasons($parsed['item_type'], $reviewReasons);
 
                     $price = $pricelistMap[$parsed['price_key']] ?? ($latestSalePrices[$productCode] ?? 0);
                     if ($price <= 0) {
@@ -379,13 +381,14 @@ class ImportLegacyExcelCommand extends Command
                         [
                             'branch_id' => null,
                             'brand_id' => $brand ? $brand->id : null,
+                            'item_type' => $parsed['item_type'],
                             'category_id' => $category->id,
                             'accessory_code' => $accessorySummaryCode,
                             'product_name' => $productName !== '' ? $productName : $productCode,
                             'product_barcode_symbology' => 'C128',
                             'product_cost' => $cost,
                             'product_price' => $price,
-                            'product_unit' => 'PC',
+                            'product_unit' => $this->resolveProductUnit($parsed['item_type']),
                             'product_stock_alert' => $alert >= 0 ? $alert : -1,
                             'product_order_tax' => null,
                             'product_tax_type' => null,
@@ -868,9 +871,10 @@ class ImportLegacyExcelCommand extends Command
         $reasons = ['AUTO_CREATED_FROM_TRANSACTION'];
 
         $category = $this->resolveCategory($parsed['part_code'], $reasons);
-        $brand = $this->resolveBrand($parsed['brand_code'], $reasons);
+        $brand = $this->resolveBrand($parsed['brand_code'], $parsed['item_type'], $reasons);
         $summary = $this->ensureAccessorySummary($parsed['accessory_summary']);
         $accessoryIds = $this->ensureAccessoryTokens($parsed['accessory_tokens']);
+        $this->appendItemTypeReviewReasons($parsed['item_type'], $reasons);
 
         $price = $pricelistMap[$parsed['price_key']] ?? ($latestSalePrices[$productCode] ?? 0);
         if ($price <= 0) {
@@ -885,6 +889,7 @@ class ImportLegacyExcelCommand extends Command
         $product = Product::withoutGlobalScopes()->create([
             'branch_id' => null,
             'brand_id' => $brand ? $brand->id : null,
+            'item_type' => $parsed['item_type'],
             'category_id' => $category->id,
             'accessory_code' => $summary,
             'product_name' => $productName !== '' ? $productName : $productCode,
@@ -892,7 +897,7 @@ class ImportLegacyExcelCommand extends Command
             'product_barcode_symbology' => 'C128',
             'product_cost' => $cost,
             'product_price' => $price,
-            'product_unit' => 'PC',
+            'product_unit' => $this->resolveProductUnit($parsed['item_type']),
             'product_stock_alert' => -1,
             'product_order_tax' => null,
             'product_tax_type' => null,
@@ -955,8 +960,12 @@ class ImportLegacyExcelCommand extends Command
         );
     }
 
-    private function resolveBrand(?string $brandCode, array &$reviewReasons): ?Brand
+    private function resolveBrand(?string $brandCode, string $itemType, array &$reviewReasons): ?Brand
     {
+        if ($itemType !== 'glass') {
+            return null;
+        }
+
         $brandCode = strtoupper(trim((string) $brandCode));
         if ($brandCode === '') {
             $reviewReasons[] = 'BRAND_NOT_FOUND';
@@ -967,6 +976,26 @@ class ImportLegacyExcelCommand extends Command
             ['brand_code' => $brandCode],
             ['brand_name' => ProductCodeParser::BRAND_NAMES[$brandCode] ?? $brandCode]
         );
+    }
+
+    private function resolveProductUnit(string $itemType): string
+    {
+        if ($itemType === 'film') {
+            return 'PC';
+        }
+
+        if ($itemType === 'service') {
+            return 'JOB';
+        }
+
+        return 'PC';
+    }
+
+    private function appendItemTypeReviewReasons(string $itemType, array &$reviewReasons): void
+    {
+        if ($itemType === 'film') {
+            $reviewReasons[] = 'FILM_STOCK_REVIEW';
+        }
     }
 
     private function ensureAccessorySummary(?string $summary): string
