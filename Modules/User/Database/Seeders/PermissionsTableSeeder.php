@@ -185,6 +185,10 @@ class PermissionsTableSeeder extends Seeder
             'confirm_sale_deliveries',
         ];
 
+        $masterDataPermissions = [
+            'manage_defect_types',
+        ];
+
         // CRM permissions appear in the role management UI. Create them here too,
         // because the User module seeder is commonly run without the CRM seeder.
         $crmPermissions = [
@@ -224,6 +228,13 @@ class PermissionsTableSeeder extends Seeder
         }
 
         foreach ($warehouseOperationPermissions as $permission) {
+            Permission::firstOrCreate([
+                'name' => $permission,
+                'guard_name' => 'web',
+            ]);
+        }
+
+        foreach ($masterDataPermissions as $permission) {
             Permission::firstOrCreate([
                 'name' => $permission,
                 'guard_name' => 'web',

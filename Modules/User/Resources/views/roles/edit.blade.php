@@ -110,7 +110,7 @@
                                 <div class="col-lg-4 col-md-6 mb-3">
                                     <div class="card h-100 border-0 shadow">
                                         <div class="card-header">
-                                            User Mangement
+                                            User Management
                                         </div>
                                         <div class="card-body">
                                             <div class="row">
@@ -199,6 +199,14 @@
                                                         <label class="custom-control-label" for="print_barcodes">Print Barcodes</label>
                                                     </div>
                                                 </div>
+                                                <div class="col-12">
+                                                    <div class="custom-control custom-switch">
+                                                        <input type="checkbox" class="custom-control-input"
+                                                               id="manage_defect_types" name="permissions[]"
+                                                               value="manage_defect_types" {{ $role->permissions->contains('name', 'manage_defect_types') ? 'checked' : '' }}>
+                                                        <label class="custom-control-label" for="manage_defect_types">Manage Defect Types</label>
+                                                    </div>
+                                                </div>
                                             </div>
                                         </div>
                                     </div>
@@ -261,7 +269,7 @@
                                 <div class="col-lg-4 col-md-6 mb-3">
                                     <div class="card h-100 border-0 shadow">
                                         <div class="card-header">
-                                            Quotaions
+                                            Quotations
                                         </div>
                                         <div class="card-body">
                                             <div class="row">

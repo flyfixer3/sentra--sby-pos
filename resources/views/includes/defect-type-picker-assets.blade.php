@@ -3,10 +3,10 @@
         ?? \Modules\Product\Entities\DefectType::query()->orderBy('name')->pluck('name')->values()->all();
 
     $canManageDefectTypes = $canManageDefectTypes
-        ?? (auth()->check() && auth()->user()->hasAnyRole(['Super Admin']));
+        ?? (auth()->check() && auth()->user()->can('manage_defect_types'));
 
     $canDeleteDefectTypes = $canDeleteDefectTypes
-        ?? (auth()->check() && auth()->user()->hasAnyRole(['Super Admin']));
+        ?? (auth()->check() && auth()->user()->can('manage_defect_types'));
 @endphp
 
 @once
@@ -363,7 +363,7 @@
                     + '      <button type="button" class="btn btn-outline-primary defect-type-add-btn">Add</button>'
                     + '    </div>'
                     + '  </div>'
-                    + '  <div class="defect-type-add-note">Administrator can add a new master defect type here.</div>'
+                    + '  <div class="defect-type-add-note">You can add a new master defect type here.</div>'
                     + '</div>'
                 ) : '';
 

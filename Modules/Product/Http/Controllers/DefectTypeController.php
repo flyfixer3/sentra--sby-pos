@@ -5,6 +5,7 @@ namespace Modules\Product\Http\Controllers;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Gate;
 use Modules\Product\Entities\DefectType;
 use Modules\Product\Entities\ProductDefectItem;
 
@@ -26,7 +27,7 @@ class DefectTypeController extends Controller
     public function store(Request $request)
     {
         abort_unless(Auth::check(), 401);
-        abort_unless(Auth::user()->hasAnyRole(['Administrator', 'Super Admin']), 403);
+        abort_if(Gate::denies('manage_defect_types'), 403);
 
         $request->validate([
             'name' => 'required|string|max:255',
@@ -70,7 +71,7 @@ class DefectTypeController extends Controller
     public function destroy(Request $request)
     {
         abort_unless(Auth::check(), 401);
-        abort_unless(Auth::user()->hasAnyRole(['Administrator', 'Super Admin']), 403);
+        abort_if(Gate::denies('manage_defect_types'), 403);
 
         $request->validate([
             'name' => 'required|string|max:255',
