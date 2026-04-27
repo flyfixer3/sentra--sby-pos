@@ -185,6 +185,30 @@ class PermissionsTableSeeder extends Seeder
             'confirm_sale_deliveries',
         ];
 
+        // CRM permissions appear in the role management UI. Create them here too,
+        // because the User module seeder is commonly run without the CRM seeder.
+        $crmPermissions = [
+            'access_crm',
+            'view_all_branches',
+            'show_crm_reports',
+            'manage_crm_permissions',
+            'create_crm_leads',
+            'show_crm_leads',
+            'edit_crm_leads',
+            'delete_crm_leads',
+            'comment_crm_leads',
+            'convert_crm_leads',
+            'create_crm_service_orders',
+            'show_crm_service_orders',
+            'edit_crm_service_orders',
+            'delete_crm_service_orders',
+            'assign_crm_service_orders',
+            'upload_crm_photos',
+            'delete_crm_photos',
+            'show_crm_warranties',
+            'upsert_crm_warranties',
+        ];
+
         foreach ($permissions as $permission) {
             Permission::firstOrCreate([
                 'name' => $permission,
@@ -200,6 +224,13 @@ class PermissionsTableSeeder extends Seeder
         }
 
         foreach ($warehouseOperationPermissions as $permission) {
+            Permission::firstOrCreate([
+                'name' => $permission,
+                'guard_name' => 'web',
+            ]);
+        }
+
+        foreach ($crmPermissions as $permission) {
             Permission::firstOrCreate([
                 'name' => $permission,
                 'guard_name' => 'web',

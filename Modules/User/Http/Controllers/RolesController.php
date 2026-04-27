@@ -7,6 +7,7 @@ use Illuminate\Contracts\Support\Renderable;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
 use Illuminate\Support\Facades\Gate;
+use Illuminate\Validation\Rule;
 use Spatie\Permission\Models\Role;
 
 class RolesController extends Controller
@@ -30,7 +31,11 @@ class RolesController extends Controller
 
         $request->validate([
             'name' => 'required|string|max:255',
-            'permissions' => 'required|array'
+            'permissions' => 'required|array',
+            'permissions.*' => [
+                'string',
+                Rule::exists('permissions', 'name')->where('guard_name', 'web'),
+            ],
         ]);
 
         $role = Role::create([
@@ -57,7 +62,11 @@ class RolesController extends Controller
 
         $request->validate([
             'name' => 'required|string|max:255',
-            'permissions' => 'required|array'
+            'permissions' => 'required|array',
+            'permissions.*' => [
+                'string',
+                Rule::exists('permissions', 'name')->where('guard_name', 'web'),
+            ],
         ]);
 
         $role->update([
