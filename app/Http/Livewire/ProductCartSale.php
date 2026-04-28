@@ -4,6 +4,7 @@ namespace App\Http\Livewire;
 
 use App\Support\BranchContext;
 use Gloudemans\Shoppingcart\Facades\Cart;
+use Illuminate\Support\Str;
 use Livewire\Component;
 use Modules\People\Entities\CustomerVehicle;
 use Modules\Product\Entities\Warehouse;
@@ -253,6 +254,11 @@ class ProductCartSale extends Component
         return 'product_' . $productId;
     }
 
+    private function makeDuplicateLineKey(int $productId): string
+    {
+        return 'duplicate_' . $productId . '_' . str_replace('-', '', Str::uuid()->toString());
+    }
+
     private function findCartRowByLineKey(string $lineKey)
     {
         return Cart::instance($this->cart_instance)
@@ -402,6 +408,13 @@ class ProductCartSale extends Component
         $pid = (int) ($product['id'] ?? 0);
         $lineKey = $this->makeDefaultLineKey($pid);
 
+        $existingDefaultRow = $this->findCartRowByLineKey($lineKey);
+        if ($existingDefaultRow) {
+            $this->quantity[$lineKey] = ((int) ($this->quantity[$lineKey] ?? $existingDefaultRow->qty ?? 0)) + 1;
+            $this->updateQuantity($existingDefaultRow->rowId, $pid, $lineKey);
+            return;
+        }
+
         $cartItem = $cart->add([
             'id'      => (int) ($product['id'] ?? 0),
             'name'    => (string) ($product['product_name'] ?? '-'),
@@ -455,9 +468,90 @@ class ProductCartSale extends Component
         $this->syncQuantityDefaults();
     }
 
-    public function removeItem($row_id)
+    private function findCartRowByRowIdOrLineKey($rowId = null, ?string $lineKey = null)
     {
-        Cart::instance($this->cart_instance)->remove($row_id);
+        if ($lineKey) {
+            $row = $this->findCartRowByLineKey((string) $lineKey);
+            if ($row) {
+                return $row;
+            }
+        }
+
+        if ($rowId) {
+            try {
+                return Cart::instance($this->cart_instance)->get($rowId);
+            } catch (\Throwable $e) {
+                return null;
+            }
+        }
+
+        return null;
+    }
+
+    public function removeItem($row_id, $line_key = null)
+    {
+        $row = $this->findCartRowByRowIdOrLineKey($row_id, $line_key ? (string) $line_key : null);
+        if ($row) {
+            $lineKey = $this->getLineKey($row);
+            unset(
+                $this->check_quantity[$lineKey],
+                $this->quantity[$lineKey],
+                $this->discount_type[$lineKey],
+                $this->item_discount[$lineKey],
+                $this->item_cost_konsyinasi[$lineKey],
+                $this->installation_type[$lineKey],
+                $this->customer_vehicle_id[$lineKey]
+            );
+
+            Cart::instance($this->cart_instance)->remove($row->rowId);
+            return;
+        }
+
+        session()->flash('message', 'Cart item not found. Please reload and try again.');
+    }
+
+    public function duplicateSaleCartRow($row_id, $line_key = null): void
+    {
+        if (!$this->enable_installation_metadata) {
+            return;
+        }
+
+        $sourceRow = $this->findCartRowByRowIdOrLineKey($row_id, $line_key ? (string) $line_key : null);
+
+        if (!$sourceRow) {
+            session()->flash('message', 'Cart item not found. Please reload and try again.');
+            return;
+        }
+
+        $productId = (int) $sourceRow->id;
+        $newLineKey = $this->makeDuplicateLineKey($productId);
+        $newOptions = $sourceRow->options->toArray();
+        $newOptions['product_discount'] = 0;
+        $newOptions['product_discount_type'] = 'fixed';
+        $newOptions['sub_total'] = (float) $sourceRow->price;
+        $newOptions['line_key'] = $newLineKey;
+        $newOptions['installation_type'] = 'item_only';
+        $newOptions['customer_vehicle_id'] = null;
+
+        $newRow = Cart::instance($this->cart_instance)->add([
+            'id' => $productId,
+            'name' => (string) $sourceRow->name,
+            'qty' => 1,
+            'price' => (float) $sourceRow->price,
+            'weight' => $sourceRow->weight,
+            'options' => $newOptions,
+        ]);
+
+        $newLineKey = $this->getLineKey($newRow);
+        $this->quantity[$newLineKey] = 1;
+        $this->check_quantity[$newLineKey] = (int) ($newRow->options->stock ?? 0);
+        $this->discount_type[$newLineKey] = 'fixed';
+        $this->item_discount[$newLineKey] = (float) ($newRow->price ?? 0);
+        $this->item_cost_konsyinasi[$newLineKey] = (float) ($newRow->options->product_cost ?? 0);
+        $this->installation_type[$newLineKey] = 'item_only';
+        $this->customer_vehicle_id[$newLineKey] = null;
+        $this->global_qty = Cart::instance($this->cart_instance)->count();
+        $this->syncQuantityDefaults();
     }
 
     public function updatedGlobalQuantity()
