@@ -165,8 +165,10 @@ class QuotationController extends Controller
                 $productCode = $this->resolveQuotationProductCode($cart_item);
                 $installationMetadata = $this->resolveQuotationDetailInstallationMetadata($cart_item, (int) $customer->id, (int) $branchId);
                 $discountType = $this->normalizeQuotationProductDiscountType($cart_item->options->product_discount_type ?? 'fixed');
-                $unitPrice = (int) ($cart_item->options->unit_price ?? $cart_item->price ?? 0);
-                $subTotal = (int) ($cart_item->options->sub_total ?? ($unitPrice * (int) $cart_item->qty));
+                $unitPrice = max(0, (int) ($cart_item->options->unit_price ?? $cart_item->price ?? 0));
+                $finalPrice = max(0, (int) ($cart_item->price ?? $unitPrice));
+                $subTotal = max(0, (int) ($cart_item->options->sub_total ?? ($finalPrice * (int) $cart_item->qty)));
+                $productDiscountAmount = max(0, (int) ($cart_item->options->product_discount ?? 0));
 
                 QuotationDetails::create([
                     'quotation_id' => $quotation->id,
@@ -174,10 +176,10 @@ class QuotationController extends Controller
                     'product_name' => $cart_item->name,
                     'product_code' => $productCode,
                     'quantity' => $cart_item->qty,
-                    'price' => (int) $cart_item->price,
+                    'price' => $finalPrice,
                     'unit_price' => $unitPrice,
                     'sub_total' => $subTotal,
-                    'product_discount_amount' => (int) $cart_item->options->product_discount,
+                    'product_discount_amount' => $productDiscountAmount,
                     'product_discount_type' => $discountType,
                     'product_tax_amount' => (int) $cart_item->options->product_tax,
                     'installation_type' => $installationMetadata['installation_type'],
@@ -312,8 +314,10 @@ class QuotationController extends Controller
                 $productCode = $this->resolveQuotationProductCode($cart_item);
                 $installationMetadata = $this->resolveQuotationDetailInstallationMetadata($cart_item, (int) $customer->id, (int) $branchId);
                 $discountType = $this->normalizeQuotationProductDiscountType($cart_item->options->product_discount_type ?? 'fixed');
-                $unitPrice = (int) ($cart_item->options->unit_price ?? $cart_item->price ?? 0);
-                $subTotal = (int) ($cart_item->options->sub_total ?? ($unitPrice * (int) $cart_item->qty));
+                $unitPrice = max(0, (int) ($cart_item->options->unit_price ?? $cart_item->price ?? 0));
+                $finalPrice = max(0, (int) ($cart_item->price ?? $unitPrice));
+                $subTotal = max(0, (int) ($cart_item->options->sub_total ?? ($finalPrice * (int) $cart_item->qty)));
+                $productDiscountAmount = max(0, (int) ($cart_item->options->product_discount ?? 0));
 
                 QuotationDetails::create([
                     'quotation_id'             => $quotation->id,
@@ -321,10 +325,10 @@ class QuotationController extends Controller
                     'product_name'             => $cart_item->name,
                     'product_code'             => $productCode,
                     'quantity'                 => (int) $cart_item->qty,
-                    'price'                    => (int) $cart_item->price,
+                    'price'                    => $finalPrice,
                     'unit_price'               => $unitPrice,
                     'sub_total'                => $subTotal,
-                    'product_discount_amount'  => (int) $cart_item->options->product_discount,
+                    'product_discount_amount'  => $productDiscountAmount,
                     'product_discount_type'    => $discountType,
                     'product_tax_amount'       => (int) $cart_item->options->product_tax,
                     'installation_type'        => $installationMetadata['installation_type'],

@@ -60,9 +60,13 @@ class ProductCart extends Component
                 $this->quantity[$stateKey] = $cart_item->qty;
                 $this->discount_type[$stateKey] = $cart_item->options->product_discount_type;
                 if ($cart_item->options->product_discount_type == 'fixed') {
-                    $this->item_discount[$stateKey] = $cart_item->options->product_discount;
+                    $this->item_discount[$stateKey] = $cart_item->price;
                 } elseif ($cart_item->options->product_discount_type == 'percentage') {
-                    $this->item_discount[$stateKey] = round(100 * ($cart_item->options->product_discount / $cart_item->price));
+                    $priceBase = ((float) ($cart_item->price + ($cart_item->options->product_discount ?? 0)) > 0)
+                        ? (float) ($cart_item->price + ($cart_item->options->product_discount ?? 0))
+                        : 1;
+                    $disc = (float) ($cart_item->options->product_discount ?? 0);
+                    $this->item_discount[$stateKey] = round(100 * ($disc / $priceBase), 2);
                 }
                 $this->initializeQuotationMetadata($cart_item);
             }
@@ -127,18 +131,20 @@ class ProductCart extends Component
     private function normalizeQuotationCartOptions($cartItem, array $overrides = [], ?int $quantity = null): array
     {
         $options = $this->cartOptionsToArray($cartItem->options ?? []);
-        $unitPrice = (float) ($options['unit_price'] ?? $cartItem->price ?? 0);
-
-        if ($unitPrice <= 0) {
-            $unitPrice = (float) ($cartItem->price ?? 0);
+        $finalPrice = (float) ($cartItem->price ?? $options['price'] ?? $options['unit_price'] ?? 0);
+        if ($finalPrice <= 0) {
+            $finalPrice = 0;
         }
 
-        if ($unitPrice <= 0) {
-            $unitPrice = (float) ($options['price'] ?? 0);
+        $masterUnitPrice = (float) ($options['unit_price'] ?? $options['original_unit_price'] ?? $finalPrice);
+        if ($masterUnitPrice <= 0) {
+            $masterUnitPrice = $finalPrice;
         }
 
         $rowQuantity = $quantity ?? (int) ($cartItem->qty ?? ($options['qty'] ?? 1));
         $rowQuantity = $rowQuantity > 0 ? $rowQuantity : 1;
+
+        $discountAmount = $options['product_discount'] ?? max(0, $masterUnitPrice - $finalPrice);
 
         $normalized = array_merge($options, [
             'code' => $options['code'] ?? ($options['product_code'] ?? null),
@@ -152,10 +158,11 @@ class ProductCart extends Component
             'warehouse_id' => $options['warehouse_id'] ?? null,
             'warehouse_name' => $options['warehouse_name'] ?? null,
             'product_tax' => $options['product_tax'] ?? 0,
-            'unit_price' => $unitPrice,
-            'product_discount' => $options['product_discount'] ?? 0,
+            'unit_price' => $masterUnitPrice,
+            'price' => $finalPrice,
+            'product_discount' => max(0, (float) $discountAmount),
             'product_discount_type' => $this->normalizeQuotationProductDiscountType($options['product_discount_type'] ?? null),
-            'sub_total' => $unitPrice * $rowQuantity,
+            'sub_total' => $finalPrice * $rowQuantity,
             'line_key' => $options['line_key'] ?? null,
             'installation_type' => $this->normalizeInstallationType($options['installation_type'] ?? 'item_only'),
             'customer_vehicle_id' => $options['customer_vehicle_id'] ?? null,
@@ -504,6 +511,27 @@ class ProductCart extends Component
     }
 
     public function discountModalRefresh($product_id, $row_id, $lineKey = null) {
+        $cart_item = $this->findCartRow($row_id, $lineKey);
+        if (!$cart_item) {
+            $this->updateQuantity($row_id, $product_id, $lineKey);
+            return;
+        }
+
+        $stateKey = $this->cartStateKey($cart_item, $lineKey);
+
+        if ($this->discount_type[$stateKey] == 'fixed') {
+            $this->item_discount[$stateKey] = (float) ($cart_item->price ?? 0);
+        } elseif ($this->discount_type[$stateKey] == 'percentage') {
+            $basePrice = (float) (($cart_item->price ?? 0) + ($cart_item->options->product_discount ?? 0));
+            if ($basePrice < 0) {
+                $basePrice = 0;
+            }
+
+            $this->item_discount[$stateKey] = $basePrice > 0
+                ? round((float) ($cart_item->options->product_discount ?? 0) / $basePrice * 100, 2)
+                : 0;
+        }
+
         $this->updateQuantity($row_id, $product_id, $lineKey);
     }
 
@@ -517,10 +545,20 @@ class ProductCart extends Component
         $stateKey = $this->cartStateKey($cart_item, $lineKey);
 
         if ($this->discount_type[$stateKey] == 'fixed') {
-            $discount_amount = ($cart_item->price + $cart_item->options->product_discount) - $this->item_discount[$stateKey];
+            $basePrice = (float) (($cart_item->price ?? 0) + ($cart_item->options->product_discount ?? 0));
+            if ($basePrice < 0) {
+                $basePrice = 0;
+            }
+
+            $newRowPrice = (float) ($this->item_discount[$stateKey] ?? 0);
+            if ($newRowPrice < 0) {
+                $newRowPrice = 0;
+            }
+
+            $discount_amount = max(0, $basePrice - $newRowPrice);
             Cart::instance($this->cart_instance)
                 ->update($cart_item->rowId, [
-                    'price' => $this->item_discount[$stateKey]
+                    'price' => $newRowPrice
                 ]);
 
             $updatedItem = Cart::instance($this->cart_instance)->get($cart_item->rowId) ?: $this->findCartRow(null, $lineKey);
@@ -529,12 +567,25 @@ class ProductCart extends Component
             }
 
             $this->updateCartOptions($updatedItem->rowId, $product_id, $updatedItem, $discount_amount, $lineKey);
+            $this->item_discount[$stateKey] = $newRowPrice;
         } elseif ($this->discount_type[$stateKey] == 'percentage') {
-            $discount_amount = ($cart_item->price + $cart_item->options->product_discount) * ($this->item_discount[$stateKey] / 100);
+            $basePrice = (float) (($cart_item->price ?? 0) + ($cart_item->options->product_discount ?? 0));
+            if ($basePrice < 0) {
+                $basePrice = 0;
+            }
+
+            $percentage = (float) ($this->item_discount[$stateKey] ?? 0);
+            if ($percentage < 0 || $percentage > 100) {
+                session()->flash('message', 'Percentage must be between 0 and 100.');
+                return;
+            }
+
+            $discount_amount = round($basePrice * ($percentage / 100), 2);
+            $newRowPrice = max(0, round($basePrice - $discount_amount, 2));
 
             Cart::instance($this->cart_instance)
                 ->update($cart_item->rowId, [
-                    'price' => ($cart_item->price + $cart_item->options->product_discount) - $discount_amount
+                    'price' => $newRowPrice
                 ]);
 
             $updatedItem = Cart::instance($this->cart_instance)->get($cart_item->rowId) ?: $this->findCartRow(null, $lineKey);
@@ -543,6 +594,7 @@ class ProductCart extends Component
             }
 
             $this->updateCartOptions($updatedItem->rowId, $product_id, $updatedItem, $discount_amount, $lineKey);
+            $this->item_discount[$stateKey] = $percentage;
         }
 
         session()->flash('discount_message' . $stateKey, 'Discount added to the product!');
@@ -593,15 +645,16 @@ class ProductCart extends Component
             'product_discount_type' => 'fixed',
             'installation_type' => 'item_only',
             'customer_vehicle_id' => null,
-            'sub_total' => (float) (($source->options->unit_price ?? $source->price) > 0
-                ? ($source->options->unit_price ?? $source->price)
-                : 0),
         ], 1);
 
-        $unitPrice = (float) ($options['unit_price'] ?? $source->price ?? 0);
+        $unitPrice = (float) ($source->price ?? 0);
         if ($unitPrice <= 0) {
-            $unitPrice = (float) ($source->price ?? 0);
+            $unitPrice = (float) ($options['unit_price'] ?? 0);
         }
+        if ($unitPrice < 0) {
+            $unitPrice = 0;
+        }
+
         $options['sub_total'] = $unitPrice;
 
         Cart::instance($this->cart_instance)->add([
@@ -638,7 +691,7 @@ class ProductCart extends Component
 
         if ($this->isQuotationCart()) {
             $options = $this->normalizeQuotationCartOptions($freshItem, [
-                'product_discount' => $discount_amount,
+                'product_discount' => max(0, (float) $discount_amount),
                 'product_discount_type' => $this->normalizeQuotationProductDiscountType($this->discount_type[$stateKey] ?? $freshItem->options->product_discount_type ?? 'fixed'),
                 'line_key' => $freshItem->options->line_key ?? $lineKey,
                 'installation_type' => $installationType,

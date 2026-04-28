@@ -55,7 +55,13 @@
                                     @include('livewire.includes.product-cart-modal')
                                 </td>
 
-                                <td class="align-middle">{{ format_currency($cart_item->options->unit_price) }}</td>
+                                <td class="align-middle">
+                                    @if($isQuotationCart)
+                                        {{ format_currency((float) ($cart_item->price ?? 0)) }}
+                                    @else
+                                        {{ format_currency($cart_item->options->unit_price) }}
+                                    @endif
+                                </td>
 
                                 <td class="align-middle text-center">
                                     <span class="badge badge-info">{{ $cart_item->options->stock . ' ' . $cart_item->options->unit }}</span>
