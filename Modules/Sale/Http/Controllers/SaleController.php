@@ -214,6 +214,50 @@ class SaleController extends Controller
         return ['with_installation', $vehicleId];
     }
 
+    private function assertSaleEditable(Sale $sale, int $branchId, bool $lockRelated = false): Sale
+    {
+        $saleQuery = Sale::withoutGlobalScopes();
+        if ($lockRelated) {
+            $saleQuery->lockForUpdate();
+        }
+
+        $lockedSale = $saleQuery->findOrFail((int) $sale->id);
+
+        if (Schema::hasColumn('sales', 'branch_id') && $branchId > 0) {
+            if ((int) ($lockedSale->branch_id ?? 0) !== (int) $branchId) {
+                abort(403, 'Active branch mismatch for this Sale.');
+            }
+        }
+
+        if (strtolower(trim((string) ($lockedSale->payment_status ?? ''))) !== 'unpaid') {
+            throw new \RuntimeException('This sale cannot be edited because its payment status is not Unpaid.');
+        }
+
+        if ((int) ($lockedSale->paid_amount ?? 0) > 0) {
+            throw new \RuntimeException('This sale cannot be edited because it already has payment amount.');
+        }
+
+        $paymentsQuery = SalePayment::withoutGlobalScopes()->where('sale_id', (int) $lockedSale->id);
+        if ($lockRelated) {
+            $paymentsQuery->lockForUpdate();
+        }
+
+        if ($paymentsQuery->exists()) {
+            throw new \RuntimeException('This sale cannot be edited because it already has payment records.');
+        }
+
+        $deliveriesQuery = SaleDelivery::withoutGlobalScopes()->where('sale_id', (int) $lockedSale->id);
+        if ($lockRelated) {
+            $deliveriesQuery->lockForUpdate();
+        }
+
+        if ($deliveriesQuery->exists()) {
+            throw new \RuntimeException('This sale cannot be edited because it already has related Sale Delivery records.');
+        }
+
+        return $lockedSale;
+    }
+
     private function deliveredQtyFromDeliveryItem(SaleDeliveryItem $item): int
     {
         $confirmedQty = (int) (
@@ -1442,9 +1486,16 @@ class SaleController extends Controller
     public function edit(Sale $sale) {
         abort_if(Gate::denies('edit_sales'), 403);
 
-        $sale_details = $sale->saleDetails;
-
         $branchId = BranchContext::id();
+
+        try {
+            $sale = $this->assertSaleEditable($sale, (int) $branchId);
+        } catch (\Throwable $e) {
+            toast($e->getMessage(), 'error');
+            return redirect()->route('sales.show', $sale->id);
+        }
+
+        $sale_details = $sale->saleDetails;
 
         Cart::instance('sale')->destroy();
         $cart = Cart::instance('sale');
@@ -1490,10 +1541,12 @@ class SaleController extends Controller
     }
 
     public function update(UpdateSaleRequest $request, Sale $sale) {
-        DB::transaction(function () use ($request, $sale) {
-            $branchId = (int) BranchContext::id();
+        try {
+            DB::transaction(function () use ($request, $sale) {
+                $branchId = (int) BranchContext::id();
+                $sale = $this->assertSaleEditable($sale, $branchId, true);
 
-            $customer = Customer::query()
+                $customer = Customer::query()
                 ->where('id', $request->customer_id)
                 ->when($branchId > 0, function ($query) use ($branchId) {
                     $query->where(function ($q) use ($branchId) {
@@ -1607,7 +1660,11 @@ class SaleController extends Controller
             }
 
             Cart::instance('sale')->destroy();
-        });
+            });
+        } catch (\Throwable $e) {
+            toast($e->getMessage(), 'error');
+            return redirect()->route('sales.show', $sale->id);
+        }
 
         toast('Sale Updated!', 'info');
         return redirect()->route('sales.index');

@@ -7,6 +7,7 @@ use App\Models\BaseModel;
 use App\Models\User;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\SoftDeletes;
+use Modules\SaleDelivery\Entities\SaleDelivery;
 
 class Sale extends BaseModel
 {
@@ -21,6 +22,44 @@ class Sale extends BaseModel
 
     public function salePayments() {
         return $this->hasMany(SalePayment::class, 'sale_id', 'id');
+    }
+
+    public function saleDeliveries() {
+        return $this->hasMany(SaleDelivery::class, 'sale_id', 'id');
+    }
+
+    public function editLockReason(): ?string
+    {
+        if (strtolower(trim((string) ($this->payment_status ?? ''))) !== 'unpaid') {
+            return 'This sale cannot be edited because its payment status is not Unpaid.';
+        }
+
+        if ((int) ($this->paid_amount ?? 0) > 0) {
+            return 'This sale cannot be edited because it already has payment amount.';
+        }
+
+        $paymentsCount = array_key_exists('sale_payments_count', $this->attributes)
+            ? (int) $this->attributes['sale_payments_count']
+            : ($this->relationLoaded('salePayments') ? $this->salePayments->count() : (int) $this->salePayments()->count());
+
+        if ($paymentsCount > 0) {
+            return 'This sale cannot be edited because it already has payment records.';
+        }
+
+        $deliveriesCount = array_key_exists('sale_deliveries_count', $this->attributes)
+            ? (int) $this->attributes['sale_deliveries_count']
+            : ($this->relationLoaded('saleDeliveries') ? $this->saleDeliveries->count() : (int) $this->saleDeliveries()->count());
+
+        if ($deliveriesCount > 0) {
+            return 'This sale cannot be edited because it already has related Sale Delivery records.';
+        }
+
+        return null;
+    }
+
+    public function isEditableInvoice(): bool
+    {
+        return $this->editLockReason() === null;
     }
 
     public static function boot()

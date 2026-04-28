@@ -46,9 +46,15 @@
             @endcan
 
             @can('edit_sales')
-                <a href="{{ route('sales.edit', $data->id) }}" class="dropdown-item">
-                    <i class="bi bi-pencil mr-2 text-primary" style="line-height: 1;"></i> Edit
-                </a>
+                @if($data->isEditableInvoice())
+                    <a href="{{ route('sales.edit', $data->id) }}" class="dropdown-item">
+                        <i class="bi bi-pencil mr-2 text-primary" style="line-height: 1;"></i> Edit
+                    </a>
+                @else
+                    <button type="button" class="dropdown-item text-muted" disabled title="{{ $data->editLockReason() }}">
+                        <i class="bi bi-lock mr-2 text-muted" style="line-height: 1;"></i> Edit Locked
+                    </button>
+                @endif
             @endcan
 
             @can('delete_sales')

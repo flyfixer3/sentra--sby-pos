@@ -93,7 +93,8 @@ class SalesDataTable extends DataTable
     {
         $deletedFilter = request('deleted_filter', 'all');
 
-        $query = $model->newQuery();
+        $query = $model->newQuery()
+            ->withCount(['salePayments', 'saleDeliveries']);
 
         if ($deletedFilter === 'all') {
             $query->withTrashed();
