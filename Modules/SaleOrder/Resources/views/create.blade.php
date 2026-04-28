@@ -246,7 +246,7 @@
 
                                 <div class="small text-muted">
                                     Grand Total dihitung dari item (qty × sell price) + tax + fee + shipping.<br>
-                                    Item discount sudah masuk ke Net Price per baris. Header discount mengurangi Grand Total.
+                                    Item discount sudah masuk ke Sell Unit Price per baris. Header discount mengurangi Grand Total.
                                 </div>
                             </div>
                         </div>

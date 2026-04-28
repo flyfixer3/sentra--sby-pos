@@ -10,6 +10,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
 use Modules\People\Entities\Customer;
 use Modules\People\Entities\CustomerVehicle;
+use Modules\Mutation\Entities\Mutation;
 use Modules\Product\Entities\Product;
 use Modules\Product\Entities\Warehouse;
 use Modules\SaleDelivery\Entities\SaleDelivery;
@@ -25,6 +26,32 @@ use Modules\Sale\Entities\SaleDetails;
 
 class QuotationController extends Controller
 {
+    private function quotationBranchStock(int $productId, $branchId): int
+    {
+        if (!is_numeric($branchId) || (int) $branchId <= 0 || $productId <= 0) {
+            return 0;
+        }
+
+        $warehouseIds = Warehouse::query()
+            ->where('branch_id', (int) $branchId)
+            ->pluck('id');
+
+        if ($warehouseIds->isEmpty()) {
+            return 0;
+        }
+
+        $stock = 0;
+        foreach ($warehouseIds as $warehouseId) {
+            $stock += max(0, (int) (Mutation::query()
+                ->where('product_id', $productId)
+                ->where('warehouse_id', (int) $warehouseId)
+                ->latest()
+                ->value('stock_last') ?? 0));
+        }
+
+        return (int) $stock;
+    }
+
     private function normalizeQuotationDetailInstallationType($value): string
     {
         return $value === 'with_installation' ? 'with_installation' : 'item_only';
@@ -232,10 +259,19 @@ class QuotationController extends Controller
 
         $cart = Cart::instance('quotation');
 
+        $products = Product::query()
+            ->whereIn('id', $quotation_details->pluck('product_id')->filter()->unique()->values())
+            ->get()
+            ->keyBy('id');
+
         foreach ($quotation_details as $quotation_detail) {
+            $product = $products->get((int) $quotation_detail->product_id);
+            $currentBranchStock = $this->quotationBranchStock((int) $quotation_detail->product_id, $branchId);
+            $productCode = $quotation_detail->product_code ?: ($product->product_code ?? null);
+
             $cart->add([
                 'id'      => $quotation_detail->product_id,
-                'name'    => $quotation_detail->product_name,
+                'name'    => $quotation_detail->product_name ?: ($product->product_name ?? ('Product #' . $quotation_detail->product_id)),
                 'qty'     => $quotation_detail->quantity,
                 'price'   => $quotation_detail->price,
                 'weight'  => 1,
@@ -244,9 +280,15 @@ class QuotationController extends Controller
                     'product_discount' => $quotation_detail->product_discount_amount,
                     'product_discount_type' => $quotation_detail->product_discount_type,
                     'sub_total'   => $quotation_detail->sub_total,
-                    'code'        => $quotation_detail->product_code,
-                    'product_code' => $quotation_detail->product_code,
-                    'stock'       => Product::findOrFail($quotation_detail->product_id)->product_quantity,
+                    'code'        => $productCode,
+                    'product_code' => $productCode,
+                    'stock'       => $currentBranchStock,
+                    'reserved_stock' => 0,
+                    'sellable_stock' => $currentBranchStock,
+                    'stock_scope' => 'branch',
+                    'warehouse_id' => null,
+                    'warehouse_name' => null,
+                    'unit' => $product->product_unit ?? null,
                     'product_tax' => $quotation_detail->product_tax_amount,
                     'unit_price'  => $quotation_detail->unit_price,
                     'installation_type' => $this->normalizeQuotationDetailInstallationType($quotation_detail->installation_type ?? 'item_only'),

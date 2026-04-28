@@ -21,7 +21,7 @@
                 <tr>
                     <th style="width: 30%;">Product</th>
                     <th style="width: 10%;">Qty</th>
-                    <th style="width: 16%;">Net Price</th>
+                    <th style="width: 16%;">Sell Unit Price</th>
                     <th style="width: 22%;">Item Discount</th>
                     <th style="width: 17%;">Service Type</th>
                     <th style="width: 5%;" class="text-center">#</th>

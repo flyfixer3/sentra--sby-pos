@@ -8,6 +8,7 @@ use Illuminate\Support\Str;
 use Livewire\Component;
 use Modules\People\Entities\CustomerVehicle;
 use Modules\Mutation\Entities\Mutation;
+use Modules\Product\Entities\Warehouse;
 
 class ProductCart extends Component
 {
@@ -265,6 +266,33 @@ class ProductCart extends Component
             : null;
     }
 
+    private function getQuotationBranchStock(int $productId): int
+    {
+        $branchId = BranchContext::id();
+        if (!is_numeric($branchId) || (int) $branchId <= 0 || $productId <= 0) {
+            return 0;
+        }
+
+        $warehouseIds = Warehouse::query()
+            ->where('branch_id', (int) $branchId)
+            ->pluck('id');
+
+        if ($warehouseIds->isEmpty()) {
+            return 0;
+        }
+
+        $stock = 0;
+        foreach ($warehouseIds as $warehouseId) {
+            $stock += max(0, (int) (Mutation::query()
+                ->where('product_id', $productId)
+                ->where('warehouse_id', (int) $warehouseId)
+                ->latest()
+                ->value('stock_last') ?? 0));
+        }
+
+        return (int) $stock;
+    }
+
     private function syncQuotationMetadataToCart($rowId, $lineKey = null): void
     {
         if (!$this->isQuotationCart()) {
@@ -301,12 +329,14 @@ class ProductCart extends Component
             return $cartItem->id == $product['id'];
         });
 
-        $total_stock = Mutation::with('warehouse')->where('product_id', $product['id'])
-        ->latest()
-        ->get()
-        ->unique('warehouse_id')
-        ->sortByDesc('stock_last')
-        ->sum('stock_last');
+        $total_stock = $this->isQuotationCart()
+            ? $this->getQuotationBranchStock((int) $product['id'])
+            : Mutation::with('warehouse')->where('product_id', $product['id'])
+                ->latest()
+                ->get()
+                ->unique('warehouse_id')
+                ->sortByDesc('stock_last')
+                ->sum('stock_last');
 
         if ($exists->isNotEmpty()) {
             session()->flash('message', 'Product exists in the cart!');
@@ -323,6 +353,11 @@ class ProductCart extends Component
             'code'                  => $product['product_code'],
             'product_code'          => $product['product_code'],
             'stock'                 => $total_stock,
+            'reserved_stock'        => $this->isQuotationCart() ? 0 : null,
+            'sellable_stock'        => $this->isQuotationCart() ? $total_stock : null,
+            'stock_scope'           => $this->isQuotationCart() ? 'branch' : null,
+            'warehouse_id'          => null,
+            'warehouse_name'        => null,
             'unit'                  => $product['product_unit'],
             'product_tax'           => $this->calculate($product)['product_tax'],
             'unit_price'            => $this->calculate($product)['unit_price']
