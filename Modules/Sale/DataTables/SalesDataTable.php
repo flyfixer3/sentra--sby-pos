@@ -84,9 +84,16 @@ class SalesDataTable extends DataTable
             ->addColumn('payment_status', function ($data) {
                 return view('sale::partials.payment-status', compact('data'));
             })
+            ->addColumn('delivery_status', function ($row) {
+                return '<span class="badge ' . e($row->derived_delivery_status_class) . '">' . e($row->derived_delivery_status_label) . '</span>';
+            })
+            ->addColumn('source', function ($row) {
+                return e($row->derived_source_label);
+            })
             ->addColumn('action', function ($data) {
                 return view('sale::partials.actions', compact('data'));
-            });
+            })
+            ->rawColumns(['delivery_status']);
     }
 
     public function query(Sale $model)
@@ -94,6 +101,7 @@ class SalesDataTable extends DataTable
         $deletedFilter = request('deleted_filter', 'all');
 
         $query = $model->newQuery()
+            ->with(['saleDeliveries.saleOrder'])
             ->withCount(['salePayments', 'saleDeliveries']);
 
         if ($deletedFilter === 'all') {
@@ -153,6 +161,18 @@ class SalesDataTable extends DataTable
 
             Column::computed('payment_status')
                 ->className('text-center align-middle'),
+
+            Column::computed('delivery_status')
+                ->title('Delivery Status')
+                ->className('text-center align-middle')
+                ->orderable(false)
+                ->searchable(false),
+
+            Column::computed('source')
+                ->title('Source')
+                ->className('text-center align-middle')
+                ->orderable(false)
+                ->searchable(false),
 
             Column::computed('created_datetime')
                 ->title('Created At')

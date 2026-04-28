@@ -62,6 +62,98 @@ class Sale extends BaseModel
         return $this->editLockReason() === null;
     }
 
+    private function activeSaleDeliveries()
+    {
+        return $this->relationLoaded('saleDeliveries')
+            ? $this->saleDeliveries
+            : $this->saleDeliveries()->with('saleOrder')->get();
+    }
+
+    private function normalizeDeliveryStatus(?string $status): string
+    {
+        $status = strtolower(trim((string) ($status ?: 'pending')));
+
+        if ($status === 'canceled') {
+            return 'cancelled';
+        }
+
+        return $status !== '' ? $status : 'pending';
+    }
+
+    private function formatStatusLabel(string $status): string
+    {
+        return ucwords(str_replace('_', ' ', $status));
+    }
+
+    public function getDerivedDeliveryStatusLabelAttribute(): string
+    {
+        $deliveries = $this->activeSaleDeliveries();
+
+        if ($deliveries->isEmpty()) {
+            return 'No Delivery';
+        }
+
+        $statuses = $deliveries
+            ->map(fn ($delivery) => $this->normalizeDeliveryStatus($delivery->status ?? 'pending'))
+            ->unique()
+            ->values();
+
+        if ($statuses->count() > 1) {
+            return 'Mixed';
+        }
+
+        return $this->formatStatusLabel((string) $statuses->first());
+    }
+
+    public function getDerivedDeliveryStatusClassAttribute(): string
+    {
+        $status = strtolower((string) $this->derived_delivery_status_label);
+
+        if ($status === 'pending') {
+            return 'badge-warning';
+        }
+
+        if (in_array($status, ['confirmed', 'completed', 'delivered'], true)) {
+            return 'badge-success';
+        }
+
+        if (in_array($status, ['cancelled', 'canceled'], true)) {
+            return 'badge-danger';
+        }
+
+        if ($status === 'mixed') {
+            return 'badge-info';
+        }
+
+        return 'badge-secondary';
+    }
+
+    public function getDerivedSourceLabelAttribute(): string
+    {
+        $deliveries = $this->activeSaleDeliveries();
+
+        if ($deliveries->isEmpty()) {
+            return 'No Delivery';
+        }
+
+        $sources = $deliveries->map(function ($delivery) {
+            $saleOrderId = (int) ($delivery->sale_order_id ?? 0);
+
+            if ($saleOrderId > 0) {
+                $reference = $delivery->saleOrder->reference ?? null;
+                return $reference ?: ('SO-' . $saleOrderId);
+            }
+
+            return 'Walk-in';
+        })->unique()->values();
+
+        if ($sources->count() > 1) {
+            return 'Mixed';
+        }
+
+        return (string) $sources->first();
+    }
+
     public static function boot()
     {
         parent::boot();

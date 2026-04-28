@@ -214,6 +214,20 @@ class SaleController extends Controller
         return ['with_installation', $vehicleId];
     }
 
+    private function effectiveSaleBranchId(Sale $sale): ?int
+    {
+        $activeBranchId = BranchContext::id();
+        $saleBranchId = (int) ($sale->branch_id ?? 0);
+
+        if ($activeBranchId && $saleBranchId > 0) {
+            abort_if($saleBranchId !== (int) $activeBranchId, 403, 'Active branch mismatch for this Sale.');
+
+            return (int) $activeBranchId;
+        }
+
+        return $saleBranchId > 0 ? $saleBranchId : null;
+    }
+
     private function assertSaleEditable(Sale $sale, int $branchId, bool $lockRelated = false): Sale
     {
         $saleQuery = Sale::withoutGlobalScopes();
@@ -1351,25 +1365,17 @@ class SaleController extends Controller
     {
         abort_if(Gate::denies('show_sales'), 403);
 
-        $activeBranchId = BranchContext::id();
-        $saleBranchId = (int) ($sale->branch_id ?? 0);
-
-        if ($activeBranchId && $saleBranchId > 0) {
-            abort_if($saleBranchId !== (int) $activeBranchId, 403);
-        }
-
-        $branchId = $saleBranchId > 0 ? $saleBranchId : $activeBranchId;
+        $branchId = $this->effectiveSaleBranchId($sale);
 
         $sale->load(['creator', 'updater', 'saleDetails', 'branch']);
         $branch = $sale->branch ?: ($branchId ? Branch::withoutGlobalScopes()->find((int) $branchId) : null);
 
         $customer = Customer::query()
             ->where('id', $sale->customer_id)
-            ->where(function ($q) use ($branchId) {
-                $q->whereNull('branch_id');
-                if ($branchId) {
-                    $q->orWhere('branch_id', (int) $branchId);
-                }
+            ->when($branchId, function ($query) use ($branchId) {
+                $query->where(function ($q) use ($branchId) {
+                    $q->whereNull('branch_id')->orWhere('branch_id', (int) $branchId);
+                });
             })
             ->firstOrFail();
 
@@ -1429,20 +1435,22 @@ class SaleController extends Controller
     {
         abort_if(Gate::denies('show_sales'), 403);
 
-        $branchId = BranchContext::id();
+        $branchId = $this->effectiveSaleBranchId($sale);
 
         $sale->load(['creator', 'updater', 'saleDetails.customerVehicle']);
 
         $customer = Customer::query()
             ->where('id', $sale->customer_id)
-            ->where(function ($q) use ($branchId) {
-                $q->whereNull('branch_id')->orWhere('branch_id', $branchId);
+            ->when($branchId, function ($query) use ($branchId) {
+                $query->where(function ($q) use ($branchId) {
+                    $q->whereNull('branch_id')->orWhere('branch_id', (int) $branchId);
+                });
             })
             ->firstOrFail();
 
         $saleDeliveries = SaleDelivery::query()
-            ->where('branch_id', $branchId)
             ->where('sale_id', (int) $sale->id)
+            ->when($branchId, fn ($q) => $q->where('branch_id', (int) $branchId))
             ->orderByDesc('id')
             ->get();
 
@@ -1458,7 +1466,7 @@ class SaleController extends Controller
 
             if ($saleOrderId > 0) {
                 $saleOrder = \Modules\SaleOrder\Entities\SaleOrder::query()
-                    ->where('branch_id', $branchId)
+                    ->when($branchId, fn ($q) => $q->where('branch_id', (int) $branchId))
                     ->where('id', $saleOrderId)
                     ->first();
 
