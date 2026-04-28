@@ -66,11 +66,11 @@
     $items = old('items', $prefillItems ?? []);
     if (!is_array($items) || count($items) === 0) $items = [];
 
-    $oldTax = old('tax_percentage', 0);
-    $oldDiscountType = old('discount_type', 'percentage');
-    $oldHeaderDiscountValue = old('header_discount_value', old('discount_percentage', 0));
-    $oldShipping = old('shipping_amount', 0);
-    $oldFee = old('fee_amount', 0);
+    $oldTax = old('tax_percentage', $prefillTaxPercentage ?? 0);
+    $oldDiscountType = old('discount_type', $prefillDiscountType ?? 'percentage');
+    $oldHeaderDiscountValue = old('header_discount_value', $prefillHeaderDiscountValue ?? old('discount_percentage', 0));
+    $oldShipping = old('shipping_amount', $prefillShippingAmount ?? 0);
+    $oldFee = old('fee_amount', $prefillFeeAmount ?? 0);
 
     // ✅ deposit default 0 (NOT empty)
     $oldDepositPct = old('deposit_percentage', 0);
@@ -428,14 +428,14 @@
     function soComputeSubtotalSell(rows) {
         return rows.reduce((sum, r) => sum + (r.qty * r.price), 0);
     }
-    function soComputeHeaderDiscount(subtotalSell, taxAmt, fee, shipping) {
+    function soComputeHeaderDiscount(subtotalSell) {
         const type = document.getElementById('so_discount_type')?.value === 'fixed' ? 'fixed' : 'percentage';
         const valueEl = document.getElementById('so_header_discount_value');
         const pctEl = document.getElementById('so_discount_percentage');
         const rawValue = soParseFloat(valueEl?.value);
 
         if (type === 'fixed') {
-            const base = Math.max(0, subtotalSell + taxAmt + fee + shipping);
+            const base = Math.max(0, subtotalSell);
             const amount = Math.min(Math.max(0, Math.round(rawValue)), base);
             if (pctEl) pctEl.value = subtotalSell > 0 ? soToFixed2((amount / subtotalSell) * 100) : '0';
             return amount;
@@ -523,10 +523,11 @@
         const fee      = Math.max(0, soParseInt(document.getElementById('so_fee_amount')?.value));
         const shipping = Math.max(0, soParseInt(document.getElementById('so_shipping_amount')?.value));
 
-        const taxAmt = Math.round(subtotalSell * (taxPct / 100));
-        const discAmt = soComputeHeaderDiscount(subtotalSell, taxAmt, fee, shipping);
+        const discAmt = soComputeHeaderDiscount(subtotalSell);
+        const taxable = Math.max(0, subtotalSell - discAmt);
+        const taxAmt = Math.round(taxable * (taxPct / 100));
 
-        const grand = Math.max(0, Math.round(subtotalSell + taxAmt + fee + shipping - discAmt));
+        const grand = Math.max(0, Math.round(taxable + taxAmt + fee + shipping));
 
         document.getElementById('so_subtotal_text').innerText = soFormatRupiah(subtotalSell);
         document.getElementById('so_tax_text').innerText = soFormatRupiah(taxAmt);

@@ -196,7 +196,7 @@ class SaleOrderController extends Controller
         return ['with_installation', $vehicleId];
     }
 
-    private function resolveHeaderDiscount(Request $request, int $itemsSubtotal, int $taxAmount, int $shipping, int $fee): array
+    private function resolveHeaderDiscount(Request $request, int $itemsSubtotal): array
     {
         $discountType = (string) ($request->discount_type ?? 'percentage') === 'fixed' ? 'fixed' : 'percentage';
         $rawValue = $request->header_discount_value ?? $request->discount_percentage ?? 0;
@@ -210,13 +210,13 @@ class SaleOrderController extends Controller
             throw new \RuntimeException('Discount percentage cannot exceed 100%.');
         }
 
-        $baseBeforeDiscount = max(0, $itemsSubtotal + $taxAmount + $shipping + $fee);
+        $baseBeforeDiscount = max(0, $itemsSubtotal);
 
         if ($discountType === 'fixed') {
             $discountAmount = (int) round($discountValue);
 
             if ($discountAmount > $baseBeforeDiscount) {
-                throw new \RuntimeException('Discount amount cannot be greater than total before discount.');
+                throw new \RuntimeException('Discount amount cannot be greater than items subtotal.');
             }
 
             $discountPercentage = $itemsSubtotal > 0
@@ -227,16 +227,9 @@ class SaleOrderController extends Controller
             $discountAmount = (int) round($itemsSubtotal * ($discountPercentage / 100));
         }
 
-        $grandTotal = (int) round($itemsSubtotal + $taxAmount + $shipping + $fee - $discountAmount);
-
-        if ($grandTotal < 0) {
-            throw new \RuntimeException('Grand Total cannot be negative.');
-        }
-
         return [
             'percentage' => (float) $discountPercentage,
             'amount' => (int) $discountAmount,
-            'grand_total' => (int) $grandTotal,
         ];
     }
 
@@ -285,6 +278,11 @@ class SaleOrderController extends Controller
             $prefillNote = null;
             $prefillItems = [];
             $prefillRefText = null;
+            $prefillTaxPercentage = 0;
+            $prefillDiscountType = 'percentage';
+            $prefillHeaderDiscountValue = 0;
+            $prefillShippingAmount = 0;
+            $prefillFeeAmount = 0;
 
             if ($source === 'quotation') {
                 $quotationId = (int) $request->get('quotation_id', 0);
@@ -300,20 +298,30 @@ class SaleOrderController extends Controller
                 $prefillDate = (string) $quotation->getRawOriginal('date');
                 $prefillNote = 'Created from Quotation #' . ($quotation->reference ?? $quotation->id);
                 $prefillRefText = 'Quotation: ' . ($quotation->reference ?? $quotation->id);
+                $prefillTaxPercentage = (float) ($quotation->tax_percentage ?? 0);
+                $prefillDiscountType = 'percentage';
+                $prefillHeaderDiscountValue = (float) ($quotation->discount_percentage ?? 0);
+                $prefillShippingAmount = (int) ($quotation->shipping_amount ?? 0);
+                $prefillFeeAmount = 0;
 
                 foreach ($quotation->quotationDetails as $d) {
-                    $unitPrice = (int) ($d->price ?? 0);
+                    $unitPrice = $d->unit_price !== null ? (int) $d->unit_price : (int) ($d->price ?? 0);
+                    $netPrice = (int) ($d->price ?? $unitPrice);
                     $qty = (int) ($d->quantity ?? 0);
+                    $itemDiscount = (int) ($d->product_discount_amount ?? max(0, $unitPrice - $netPrice));
+                    $discountType = (string) ($d->product_discount_type ?? 'fixed') === 'percentage'
+                        ? 'percentage'
+                        : 'fixed';
 
                     $prefillItems[] = [
                         'product_id' => (int) $d->product_id,
                         'quantity'   => $qty,
-                        'price'      => $unitPrice,
+                        'price'      => $netPrice,
                         'original_price' => $unitPrice,
                         'unit_price' => $unitPrice,
-                        'product_discount_amount' => 0,
-                        'product_discount_type' => 'fixed',
-                        'sub_total' => (int) ($qty * $unitPrice),
+                        'product_discount_amount' => $itemDiscount,
+                        'product_discount_type' => $discountType,
+                        'sub_total' => (int) ($d->sub_total ?? ($qty * $netPrice)),
                         'installation_type' => $this->normalizeSaleOrderItemInstallationType($d->installation_type ?? 'item_only'),
                         'customer_vehicle_id' => $this->normalizeSaleOrderItemInstallationType($d->installation_type ?? 'item_only') === 'with_installation'
                             ? $d->customer_vehicle_id
@@ -457,7 +465,12 @@ class SaleOrderController extends Controller
                 'prefillDate',
                 'prefillNote',
                 'prefillItems',
-                'prefillRefText'
+                'prefillRefText',
+                'prefillTaxPercentage',
+                'prefillDiscountType',
+                'prefillHeaderDiscountValue',
+                'prefillShippingAmount',
+                'prefillFeeAmount'
             ));
         } catch (\Throwable $e) {
             return $this->failBack($e->getMessage(), 422);
@@ -610,11 +623,13 @@ class SaleOrderController extends Controller
                 $shipping = (int) $request->shipping_amount;
                 $fee = (int) $request->fee_amount;
 
-                $taxAmount = (int) round($sellSubtotal * ($taxPct / 100));
-                $headerDiscount = $this->resolveHeaderDiscount($request, $sellSubtotal, $taxAmount, $shipping, $fee);
+                $headerDiscount = $this->resolveHeaderDiscount($request, $sellSubtotal);
                 $discountPct = (float) $headerDiscount['percentage'];
                 $discountAmount = (int) $headerDiscount['amount'];
-                $grandTotal = (int) $headerDiscount['grand_total'];
+
+                $taxableAmount = max(0, $sellSubtotal - $discountAmount);
+                $taxAmount = (int) round($taxableAmount * ($taxPct / 100));
+                $grandTotal = (int) round($taxableAmount + $taxAmount + $shipping + $fee);
 
                 // ==========================
                 // Deposit planned (max)
@@ -1167,11 +1182,13 @@ class SaleOrderController extends Controller
                 $shipping = (int) $request->shipping_amount;
                 $fee = (int) $request->fee_amount;
 
-                $taxAmount = (int) round($sellSubtotal * ($taxPct / 100));
-                $headerDiscount = $this->resolveHeaderDiscount($request, $sellSubtotal, $taxAmount, $shipping, $fee);
+                $headerDiscount = $this->resolveHeaderDiscount($request, $sellSubtotal);
                 $discountPct = (float) $headerDiscount['percentage'];
                 $discountAmount = (int) $headerDiscount['amount'];
-                $grandTotal = (int) $headerDiscount['grand_total'];
+
+                $taxableAmount = max(0, $sellSubtotal - $discountAmount);
+                $taxAmount = (int) round($taxableAmount * ($taxPct / 100));
+                $grandTotal = (int) round($taxableAmount + $taxAmount + $shipping + $fee);
 
                 if ((int) ($saleOrder->deposit_amount ?? 0) > $grandTotal) {
                     throw new \RuntimeException('Existing Deposit amount cannot be greater than Grand Total.');
