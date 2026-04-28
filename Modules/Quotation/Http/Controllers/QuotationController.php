@@ -30,6 +30,13 @@ class QuotationController extends Controller
         return $value === 'with_installation' ? 'with_installation' : 'item_only';
     }
 
+    private function normalizeQuotationProductDiscountType($value): string
+    {
+        $discountType = strtolower(trim((string) $value));
+
+        return in_array($discountType, ['fixed', 'percentage'], true) ? $discountType : 'fixed';
+    }
+
     private function resolveQuotationDetailInstallationMetadata($cartItem, int $customerId, int $branchId): array
     {
         $installationType = $this->normalizeQuotationDetailInstallationType($cartItem->options->installation_type ?? 'item_only');
@@ -157,6 +164,9 @@ class QuotationController extends Controller
             foreach (Cart::instance('quotation')->content() as $cart_item) {
                 $productCode = $this->resolveQuotationProductCode($cart_item);
                 $installationMetadata = $this->resolveQuotationDetailInstallationMetadata($cart_item, (int) $customer->id, (int) $branchId);
+                $discountType = $this->normalizeQuotationProductDiscountType($cart_item->options->product_discount_type ?? 'fixed');
+                $unitPrice = (int) ($cart_item->options->unit_price ?? $cart_item->price ?? 0);
+                $subTotal = (int) ($cart_item->options->sub_total ?? ($unitPrice * (int) $cart_item->qty));
 
                 QuotationDetails::create([
                     'quotation_id' => $quotation->id,
@@ -165,10 +175,10 @@ class QuotationController extends Controller
                     'product_code' => $productCode,
                     'quantity' => $cart_item->qty,
                     'price' => (int) $cart_item->price,
-                    'unit_price' => (int) $cart_item->options->unit_price,
-                    'sub_total' => (int) $cart_item->options->sub_total,
+                    'unit_price' => $unitPrice,
+                    'sub_total' => $subTotal,
                     'product_discount_amount' => (int) $cart_item->options->product_discount,
-                    'product_discount_type' => $cart_item->options->product_discount_type,
+                    'product_discount_type' => $discountType,
                     'product_tax_amount' => (int) $cart_item->options->product_tax,
                     'installation_type' => $installationMetadata['installation_type'],
                     'customer_vehicle_id' => $installationMetadata['customer_vehicle_id'],
@@ -301,6 +311,9 @@ class QuotationController extends Controller
             foreach (Cart::instance('quotation')->content() as $cart_item) {
                 $productCode = $this->resolveQuotationProductCode($cart_item);
                 $installationMetadata = $this->resolveQuotationDetailInstallationMetadata($cart_item, (int) $customer->id, (int) $branchId);
+                $discountType = $this->normalizeQuotationProductDiscountType($cart_item->options->product_discount_type ?? 'fixed');
+                $unitPrice = (int) ($cart_item->options->unit_price ?? $cart_item->price ?? 0);
+                $subTotal = (int) ($cart_item->options->sub_total ?? ($unitPrice * (int) $cart_item->qty));
 
                 QuotationDetails::create([
                     'quotation_id'             => $quotation->id,
@@ -309,10 +322,10 @@ class QuotationController extends Controller
                     'product_code'             => $productCode,
                     'quantity'                 => (int) $cart_item->qty,
                     'price'                    => (int) $cart_item->price,
-                    'unit_price'               => (int) $cart_item->options->unit_price,
-                    'sub_total'                => (int) $cart_item->options->sub_total,
+                    'unit_price'               => $unitPrice,
+                    'sub_total'                => $subTotal,
                     'product_discount_amount'  => (int) $cart_item->options->product_discount,
-                    'product_discount_type'    => $cart_item->options->product_discount_type,
+                    'product_discount_type'    => $discountType,
                     'product_tax_amount'       => (int) $cart_item->options->product_tax,
                     'installation_type'        => $installationMetadata['installation_type'],
                     'customer_vehicle_id'      => $installationMetadata['customer_vehicle_id'],

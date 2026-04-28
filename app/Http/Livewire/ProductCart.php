@@ -5,7 +5,6 @@ namespace App\Http\Livewire;
 use App\Support\BranchContext;
 use Gloudemans\Shoppingcart\Facades\Cart;
 use Illuminate\Support\Str;
-use Illuminate\Support\Facades\Request;
 use Livewire\Component;
 use Modules\People\Entities\CustomerVehicle;
 use Modules\Mutation\Entities\Mutation;
@@ -98,6 +97,80 @@ class ProductCart extends Component
     private function normalizeInstallationType($value): string
     {
         return $value === 'with_installation' ? 'with_installation' : 'item_only';
+    }
+    private function normalizeQuotationProductDiscountType($value): string
+    {
+        $discountType = strtolower(trim((string) $value));
+
+        return in_array($discountType, ['fixed', 'percentage'], true) ? $discountType : 'fixed';
+    }
+
+    private function cartOptionsToArray($options): array
+    {
+        if (is_array($options)) {
+            return $options;
+        }
+
+        if (is_object($options) && method_exists($options, 'toArray')) {
+            return $options->toArray();
+        }
+
+        if (is_object($options)) {
+            $decoded = json_decode(json_encode($options), true);
+
+            return is_array($decoded) ? $decoded : [];
+        }
+
+        return [];
+    }
+
+    private function normalizeQuotationCartOptions($cartItem, array $overrides = [], ?int $quantity = null): array
+    {
+        $options = $this->cartOptionsToArray($cartItem->options ?? []);
+        $unitPrice = (float) ($options['unit_price'] ?? $cartItem->price ?? 0);
+
+        if ($unitPrice <= 0) {
+            $unitPrice = (float) ($cartItem->price ?? 0);
+        }
+
+        if ($unitPrice <= 0) {
+            $unitPrice = (float) ($options['price'] ?? 0);
+        }
+
+        $rowQuantity = $quantity ?? (int) ($cartItem->qty ?? ($options['qty'] ?? 1));
+        $rowQuantity = $rowQuantity > 0 ? $rowQuantity : 1;
+
+        $normalized = array_merge($options, [
+            'code' => $options['code'] ?? ($options['product_code'] ?? null),
+            'product_code' => $options['product_code'] ?? ($options['code'] ?? null),
+            'unit' => $options['unit'] ?? null,
+            'stock' => $options['stock'] ?? 0,
+            'reserved_stock' => $options['reserved_stock'] ?? null,
+            'sellable_stock' => $options['sellable_stock'] ?? null,
+            'stock_scope' => $options['stock_scope'] ?? null,
+            'product_cost' => $options['product_cost'] ?? null,
+            'warehouse_id' => $options['warehouse_id'] ?? null,
+            'warehouse_name' => $options['warehouse_name'] ?? null,
+            'product_tax' => $options['product_tax'] ?? 0,
+            'unit_price' => $unitPrice,
+            'product_discount' => $options['product_discount'] ?? 0,
+            'product_discount_type' => $this->normalizeQuotationProductDiscountType($options['product_discount_type'] ?? null),
+            'sub_total' => $unitPrice * $rowQuantity,
+            'line_key' => $options['line_key'] ?? null,
+            'installation_type' => $this->normalizeInstallationType($options['installation_type'] ?? 'item_only'),
+            'customer_vehicle_id' => $options['customer_vehicle_id'] ?? null,
+        ]);
+
+        foreach ($overrides as $key => $value) {
+            $normalized[$key] = $value;
+        }
+
+        $normalized['code'] = $normalized['code'] ?? ($normalized['product_code'] ?? null);
+        $normalized['product_code'] = $normalized['product_code'] ?? ($normalized['code'] ?? null);
+        $normalized['product_discount_type'] = $this->normalizeQuotationProductDiscountType($normalized['product_discount_type'] ?? null);
+        $normalized['installation_type'] = $this->normalizeInstallationType($normalized['installation_type'] ?? 'item_only');
+
+        return $normalized;
     }
 
     private function makeQuotationLineKey($productId): string
@@ -205,10 +278,11 @@ class ProductCart extends Component
         $this->installation_type[$lineKey] = $type;
         $this->customer_vehicle_id[$lineKey] = $vehicleId;
 
-        $options = (array) $cartItem->options;
-        $options['line_key'] = $lineKey;
-        $options['installation_type'] = $type;
-        $options['customer_vehicle_id'] = $vehicleId;
+        $options = $this->normalizeQuotationCartOptions($cartItem, [
+            'line_key' => $lineKey,
+            'installation_type' => $type,
+            'customer_vehicle_id' => $vehicleId,
+        ], (int) ($cartItem->qty ?? 1));
 
         Cart::instance($this->cart_instance)->update($cartItem->rowId, ['options' => $options]);
     }
@@ -311,8 +385,6 @@ class ProductCart extends Component
             }
         }
 
-        $options = (array) $cart_item->options;
-
         Cart::instance($this->cart_instance)->update($cart_item->rowId, $this->quantity[$stateKey] ?? 1);
 
         $cart_item = Cart::instance($this->cart_instance)->get($cart_item->rowId) ?: $this->findCartRow(null, $lineKey);
@@ -321,8 +393,15 @@ class ProductCart extends Component
         }
 
         $this->global_qty = Cart::instance($this->cart_instance)->count();
-        Cart::instance($this->cart_instance)->update($cart_item->rowId, [
-            'options' => [
+
+        $options = $this->cartOptionsToArray($cart_item->options);
+
+        if ($this->isQuotationCart()) {
+            $options = $this->normalizeQuotationCartOptions($cart_item, [
+                'line_key' => $cart_item->options->line_key ?? $lineKey,
+            ], (int) $cart_item->qty);
+        } else {
+            $options = array_merge($options, [
                 'sub_total'             => $cart_item->price * $cart_item->qty,
                 'code'                  => $options['code'] ?? null,
                 'product_code'          => $options['product_code'] ?? $options['code'] ?? null,
@@ -332,10 +411,11 @@ class ProductCart extends Component
                 'unit_price'            => $options['unit_price'] ?? $cart_item->price,
                 'product_discount'      => $options['product_discount'] ?? 0,
                 'product_discount_type' => $options['product_discount_type'] ?? 'fixed',
-                'line_key'              => $options['line_key'] ?? null,
-                'installation_type'     => $options['installation_type'] ?? 'item_only',
-                'customer_vehicle_id'   => $options['customer_vehicle_id'] ?? null,
-            ]
+            ]);
+        }
+
+        Cart::instance($this->cart_instance)->update($cart_item->rowId, [
+            'options' => $options,
         ]);
 
         $this->syncQuotationMetadataToCart($cart_item->rowId, $lineKey);
@@ -507,19 +587,28 @@ class ProductCart extends Component
         }
 
         $newLineKey = $this->makeQuotationLineKey($source->id);
-        $options = (array) $source->options;
-        $options['line_key'] = $newLineKey;
-        $options['product_discount'] = 0;
-        $options['product_discount_type'] = 'fixed';
-        $options['installation_type'] = 'item_only';
-        $options['customer_vehicle_id'] = null;
-        $options['sub_total'] = (float) ($options['unit_price'] ?? $source->price);
+        $options = $this->normalizeQuotationCartOptions($source, [
+            'line_key' => $newLineKey,
+            'product_discount' => 0,
+            'product_discount_type' => 'fixed',
+            'installation_type' => 'item_only',
+            'customer_vehicle_id' => null,
+            'sub_total' => (float) (($source->options->unit_price ?? $source->price) > 0
+                ? ($source->options->unit_price ?? $source->price)
+                : 0),
+        ], 1);
+
+        $unitPrice = (float) ($options['unit_price'] ?? $source->price ?? 0);
+        if ($unitPrice <= 0) {
+            $unitPrice = (float) ($source->price ?? 0);
+        }
+        $options['sub_total'] = $unitPrice;
 
         Cart::instance($this->cart_instance)->add([
             'id' => $source->id,
             'name' => $source->name,
             'qty' => 1,
-            'price' => (float) ($options['unit_price'] ?? $source->price),
+            'price' => $unitPrice,
             'weight' => $source->weight,
             'options' => $options,
         ]);
@@ -545,19 +634,33 @@ class ProductCart extends Component
             ? ((int) ($this->customer_vehicle_id[$stateKey] ?? $freshItem->options->customer_vehicle_id ?? 0) ?: null)
             : null;
 
-        Cart::instance($this->cart_instance)->update($freshItem->rowId, ['options' => [
-            'sub_total'             => $freshItem->price * $freshItem->qty,
-            'code'                  => $freshItem->options->code,
-            'product_code'          => $freshItem->options->product_code ?? $freshItem->options->code,
-            'stock'                 => $freshItem->options->stock,
-            'unit'                  => $freshItem->options->unit,
-            'product_tax'           => $freshItem->options->product_tax,
-            'unit_price'            => $freshItem->options->unit_price,
-            'product_discount'      => $discount_amount,
-            'product_discount_type' => $this->discount_type[$stateKey],
-            'line_key'              => $freshItem->options->line_key ?? null,
-            'installation_type'     => $installationType,
-            'customer_vehicle_id'   => $vehicleId,
-        ]]);
+        $options = $this->cartOptionsToArray($freshItem->options);
+
+        if ($this->isQuotationCart()) {
+            $options = $this->normalizeQuotationCartOptions($freshItem, [
+                'product_discount' => $discount_amount,
+                'product_discount_type' => $this->normalizeQuotationProductDiscountType($this->discount_type[$stateKey] ?? $freshItem->options->product_discount_type ?? 'fixed'),
+                'line_key' => $freshItem->options->line_key ?? $lineKey,
+                'installation_type' => $installationType,
+                'customer_vehicle_id' => $vehicleId,
+            ], (int) $freshItem->qty);
+        } else {
+            $options = array_merge($options, [
+                'sub_total'             => $freshItem->price * $freshItem->qty,
+                'code'                  => $freshItem->options->code,
+                'product_code'          => $freshItem->options->product_code ?? $freshItem->options->code,
+                'stock'                 => $freshItem->options->stock,
+                'unit'                  => $freshItem->options->unit,
+                'product_tax'           => $freshItem->options->product_tax,
+                'unit_price'            => $freshItem->options->unit_price,
+                'product_discount'      => $discount_amount,
+                'product_discount_type' => $this->discount_type[$stateKey],
+                'line_key'              => $freshItem->options->line_key ?? null,
+                'installation_type'     => $installationType,
+                'customer_vehicle_id'   => $vehicleId,
+            ]);
+        }
+
+        Cart::instance($this->cart_instance)->update($freshItem->rowId, ['options' => $options]);
     }
 }
