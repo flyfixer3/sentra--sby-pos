@@ -424,15 +424,23 @@
                                                         <input type="checkbox" class="custom-control-input"
                                                                id="edit_customers" name="permissions[]"
                                                                value="edit_customers" {{ $role->hasPermissionTo('edit_customers') ? 'checked' : '' }}>
-                                                        <label class="custom-control-label" for="edit_customers">Edit</label>
+                                                        <label class="custom-control-label" for="edit_customers" title="Allow user to open the customer edit page.">Edit Form</label>
                                                     </div>
                                                 </div>
                                                 <div class="col-6">
                                                     <div class="custom-control custom-switch">
                                                         <input type="checkbox" class="custom-control-input"
-                                                               id="delete_suppliers" name="permissions[]"
-                                                               value="delete_suppliers" {{ $role->hasPermissionTo('delete_suppliers') ? 'checked' : '' }}>
-                                                        <label class="custom-control-label" for="delete_suppliers">Delete</label>
+                                                               id="update_customers" name="permissions[]"
+                                                               value="update_customers" {{ $role->hasPermissionTo('update_customers') ? 'checked' : '' }}>
+                                                        <label class="custom-control-label" for="update_customers" title="Allow user to save customer changes.">Save Changes</label>
+                                                    </div>
+                                                </div>
+                                                <div class="col-6">
+                                                    <div class="custom-control custom-switch">
+                                                        <input type="checkbox" class="custom-control-input"
+                                                               id="delete_customers" name="permissions[]"
+                                                               value="delete_customers" {{ $role->hasPermissionTo('delete_customers') ? 'checked' : '' }}>
+                                                        <label class="custom-control-label" for="delete_customers">Delete</label>
                                                     </div>
                                                 </div>
                                             </div>
@@ -730,6 +738,14 @@
                                                                id="delete_purchase_returns" name="permissions[]"
                                                                value="delete_purchase_returns" {{ $role->hasPermissionTo('delete_purchase_returns') ? 'checked' : '' }}>
                                                         <label class="custom-control-label" for="delete_purchase_returns">Delete</label>
+                                                    </div>
+                                                </div>
+                                                <div class="col-6">
+                                                    <div class="custom-control custom-switch">
+                                                        <input type="checkbox" class="custom-control-input"
+                                                               id="delete_purchase_return" name="permissions[]"
+                                                               value="delete_purchase_return" {{ $role->hasPermissionTo('delete_purchase_return') ? 'checked' : '' }}>
+                                                        <label class="custom-control-label" for="delete_purchase_return">Delete (Legacy)</label>
                                                     </div>
                                                 </div>
                                                 <div class="col-6">
