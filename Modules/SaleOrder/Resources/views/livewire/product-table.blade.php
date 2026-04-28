@@ -6,7 +6,7 @@
     <div class="table-responsive mt-2 position-relative">
         <div
             wire:loading.flex
-            wire:target="items.*.quantity,items.*.price,items.*.discount_value,items.*.product_discount_type"
+            wire:target="items.*.quantity,items.*.price,items.*.discount_value,items.*.product_discount_type,items.*.installation_type,items.*.customer_vehicle_id,duplicateRow,removeRow"
             class="position-absolute justify-content-center align-items-center"
             style="top:0;right:0;left:0;bottom:0;background-color: rgba(255,255,255,0.5);z-index: 99;"
         >
@@ -19,10 +19,11 @@
         <table class="table table-bordered align-middle">
             <thead>
                 <tr>
-                    <th style="width: 40%;">Product</th>
-                    <th style="width: 12%;">Qty</th>
-                    <th style="width: 18%;">Net Price</th>
-                    <th style="width: 25%;">Item Discount</th>
+                    <th style="width: 30%;">Product</th>
+                    <th style="width: 10%;">Qty</th>
+                    <th style="width: 16%;">Net Price</th>
+                    <th style="width: 22%;">Item Discount</th>
+                    <th style="width: 17%;">Service Type</th>
                     <th style="width: 5%;" class="text-center">#</th>
                 </tr>
             </thead>
@@ -37,14 +38,16 @@
                     $orig = (int)($row['original_price'] ?? 0);
                     $unit = max($orig, $price);
                     $discountType = (string)($row['product_discount_type'] ?? 'fixed') === 'percentage' ? 'percentage' : 'fixed';
-                    $discountValue = $row['discount_value'] ?? ($discountType === 'percentage' ? 0 : $itemDiscount);
                     $itemDiscount = max(0, $unit - $price);
+                    $discountValue = $row['discount_value'] ?? ($discountType === 'percentage' ? 0 : $itemDiscount);
                     $subTotal = max(0, $qty) * max(0, $price);
+                    $installationType = (string)($row['installation_type'] ?? 'item_only') === 'with_installation' ? 'with_installation' : 'item_only';
+                    $customerVehicleId = (int)($row['customer_vehicle_id'] ?? 0);
                 @endphp
 
                 <tr
                     wire:loading.class.delay.shortest="opacity-50"
-                    wire:target="items.{{ $i }}.quantity,items.{{ $i }}.price,items.{{ $i }}.discount_value,items.{{ $i }}.product_discount_type"
+                    wire:target="items.{{ $i }}.quantity,items.{{ $i }}.price,items.{{ $i }}.discount_value,items.{{ $i }}.product_discount_type,items.{{ $i }}.installation_type,items.{{ $i }}.customer_vehicle_id"
                 >
                     <td>
                         @if($pid > 0)
@@ -142,7 +145,56 @@
                         @endif
                     </td>
 
+                    <td>
+                        <select
+                            class="form-control"
+                            wire:model.lazy="items.{{ $i }}.installation_type"
+                            name="items[{{ $i }}][installation_type]"
+                            @if($pid <= 0) disabled @endif
+                        >
+                            <option value="item_only" {{ $installationType === 'item_only' ? 'selected' : '' }}>Item Only</option>
+                            <option value="with_installation" {{ $installationType === 'with_installation' ? 'selected' : '' }}>With Installation</option>
+                        </select>
+
+                        @if($installationType === 'with_installation')
+                            <div class="small font-weight-bold mt-2">Vehicle</div>
+
+                            @if(empty($customerId))
+                                <small class="text-warning d-block mt-1">Please select customer first.</small>
+                                <input type="hidden" name="items[{{ $i }}][customer_vehicle_id]" value="">
+                            @elseif(empty($customerVehicles))
+                                <small class="text-warning d-block mt-1">No vehicle registered for this customer.</small>
+                                <input type="hidden" name="items[{{ $i }}][customer_vehicle_id]" value="">
+                            @else
+                                <select
+                                    class="form-control mt-1"
+                                    wire:model.lazy="items.{{ $i }}.customer_vehicle_id"
+                                    name="items[{{ $i }}][customer_vehicle_id]"
+                                    @if($pid <= 0) disabled @endif
+                                >
+                                    <option value="">Select vehicle</option>
+                                    @foreach($customerVehicles as $vehicle)
+                                        <option value="{{ $vehicle['id'] }}" {{ $customerVehicleId === (int) $vehicle['id'] ? 'selected' : '' }}>
+                                            {{ $vehicle['label'] }}
+                                        </option>
+                                    @endforeach
+                                </select>
+                                <small class="text-muted d-block mt-1">Vehicle is required for installation items.</small>
+                            @endif
+                        @else
+                            <input type="hidden" name="items[{{ $i }}][customer_vehicle_id]" value="">
+                        @endif
+                    </td>
+
                     <td class="text-center">
+                        <button type="button"
+                                class="btn btn-sm btn-outline-primary mb-1"
+                                wire:click="duplicateRow({{ $i }})"
+                                title="Add another row for this product"
+                                @if($pid <= 0) disabled @endif>
+                            <i class="bi bi-plus"></i>
+                        </button>
+
                         <button type="button"
                                 class="btn btn-sm btn-danger"
                                 wire:click="removeRow({{ $i }})"

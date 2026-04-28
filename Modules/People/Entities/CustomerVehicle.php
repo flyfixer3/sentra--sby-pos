@@ -6,6 +6,7 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Modules\Sale\Entities\SaleDetails;
+use Modules\SaleOrder\Entities\SaleOrderItem;
 
 class CustomerVehicle extends Model
 {
@@ -23,5 +24,10 @@ class CustomerVehicle extends Model
     public function saleDetails()
     {
         return $this->hasMany(SaleDetails::class, 'customer_vehicle_id');
+    }
+
+    public function saleOrderItems()
+    {
+        return $this->hasMany(SaleOrderItem::class, 'customer_vehicle_id');
     }
 }

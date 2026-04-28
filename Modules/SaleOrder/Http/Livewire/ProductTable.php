@@ -2,7 +2,9 @@
 
 namespace Modules\SaleOrder\Http\Livewire;
 
+use App\Support\BranchContext;
 use Livewire\Component;
+use Modules\People\Entities\CustomerVehicle;
 use Modules\Product\Entities\Product;
 
 class ProductTable extends Component
@@ -21,15 +23,21 @@ class ProductTable extends Component
      * ]
      */
     public array $items = [];
+    public ?int $customerId = null;
+    public array $customerVehicles = [];
 
     protected $listeners = [
         'productSelected' => 'onProductSelected',
         'selectProduct'   => 'onProductSelected',
         'selectedProduct' => 'onProductSelected',
+        'saleOrderCustomerChanged' => 'onCustomerChanged',
     ];
 
-    public function mount($prefillItems = [])
+    public function mount($prefillItems = [], $customerId = null)
     {
+        $this->customerId = (int) $customerId > 0 ? (int) $customerId : null;
+        $this->loadCustomerVehicles();
+
         $rows = is_array($prefillItems) ? $prefillItems : [];
 
         foreach ($rows as $r) {
@@ -54,6 +62,10 @@ class ProductTable extends Component
                 'original_price'         => $originalPrice,
                 'product_discount_type'  => $discountType,
                 'discount_value'         => $discountValue,
+                'installation_type'      => $this->normalizeInstallationType($r['installation_type'] ?? 'item_only'),
+                'customer_vehicle_id'    => $this->normalizeInstallationType($r['installation_type'] ?? 'item_only') === 'with_installation'
+                    ? ((int) ($r['customer_vehicle_id'] ?? 0) ?: null)
+                    : null,
             ];
         }
 
@@ -121,9 +133,11 @@ class ProductTable extends Component
             'quantity'               => 1,
             'price'                  => 0,
             'original_price'         => 0,
-            'product_discount_type'  => 'fixed',
-            'discount_value'         => 0,
-        ];
+                'product_discount_type'  => 'fixed',
+                'discount_value'         => 0,
+                'installation_type'      => 'item_only',
+                'customer_vehicle_id'    => null,
+            ];
     }
 
     public function onProductSelected($product): void
@@ -159,6 +173,8 @@ class ProductTable extends Component
                 $this->items[$idx]['quantity']       = 1;
                 $this->items[$idx]['product_discount_type'] = 'fixed';
                 $this->items[$idx]['discount_value'] = 0;
+                $this->items[$idx]['installation_type'] = 'item_only';
+                $this->items[$idx]['customer_vehicle_id'] = null;
                 return;
             }
         }
@@ -172,6 +188,35 @@ class ProductTable extends Component
             'price'                  => $masterPrice,
             'product_discount_type'  => 'fixed',
             'discount_value'         => 0,
+            'installation_type'      => 'item_only',
+            'customer_vehicle_id'    => null,
+        ];
+    }
+
+    public function duplicateRow(int $index): void
+    {
+        if (!array_key_exists($index, $this->items)) {
+            return;
+        }
+
+        $row = $this->items[$index];
+        if ((int) ($row['product_id'] ?? 0) <= 0) {
+            return;
+        }
+
+        $unitPrice = max(0, (int) ($row['original_price'] ?? $row['price'] ?? 0));
+
+        $this->items[] = [
+            'product_id'             => (int) $row['product_id'],
+            'product_name'           => $row['product_name'] ?? null,
+            'product_code'           => $row['product_code'] ?? null,
+            'quantity'               => 1,
+            'price'                  => $unitPrice,
+            'original_price'         => $unitPrice,
+            'product_discount_type'  => 'fixed',
+            'discount_value'         => 0,
+            'installation_type'      => 'item_only',
+            'customer_vehicle_id'    => null,
         ];
     }
 
@@ -187,6 +232,8 @@ class ProductTable extends Component
                 'original_price' => 0,
                 'product_discount_type' => 'fixed',
                 'discount_value' => 0,
+                'installation_type' => 'item_only',
+                'customer_vehicle_id' => null,
             ]];
             return;
         }
@@ -208,6 +255,13 @@ class ProductTable extends Component
         $this->normalizeRow($index, $field);
     }
 
+    public function onCustomerChanged($customerId): void
+    {
+        $this->customerId = (int) $customerId > 0 ? (int) $customerId : null;
+        $this->loadCustomerVehicles();
+        $this->clearInvalidVehicles();
+    }
+
     public function syncAllRowsBeforeSubmit(): void
     {
         foreach (array_keys($this->items) as $index) {
@@ -225,6 +279,16 @@ class ProductTable extends Component
 
         $this->items[$index]['quantity'] = max(1, (int)($this->items[$index]['quantity'] ?? 1));
         $this->items[$index]['product_discount_type'] = $type;
+        $this->items[$index]['installation_type'] = $this->normalizeInstallationType($this->items[$index]['installation_type'] ?? 'item_only');
+
+        if (($this->items[$index]['installation_type'] ?? 'item_only') !== 'with_installation') {
+            $this->items[$index]['customer_vehicle_id'] = null;
+        } else {
+            $vehicleId = (int) ($this->items[$index]['customer_vehicle_id'] ?? 0);
+            $this->items[$index]['customer_vehicle_id'] = in_array($vehicleId, $this->getVehicleIds(), true)
+                ? $vehicleId
+                : null;
+        }
 
         if ($unitPrice <= 0) {
             $this->items[$index]['discount_value'] = 0;
@@ -304,6 +368,74 @@ class ProductTable extends Component
     private function normalizeDiscountType($type): string
     {
         return (string) $type === 'percentage' ? 'percentage' : 'fixed';
+    }
+
+    private function normalizeInstallationType($type): string
+    {
+        return (string) $type === 'with_installation' ? 'with_installation' : 'item_only';
+    }
+
+    private function loadCustomerVehicles(): void
+    {
+        if (!$this->customerId) {
+            $this->customerVehicles = [];
+            return;
+        }
+
+        $branchId = BranchContext::id();
+
+        $this->customerVehicles = CustomerVehicle::query()
+            ->where('customer_id', (int) $this->customerId)
+            ->when($branchId, function ($query) use ($branchId) {
+                $query->where(function ($q) use ($branchId) {
+                    $q->whereNull('branch_id')->orWhere('branch_id', (int) $branchId);
+                });
+            })
+            ->orderBy('car_plate')
+            ->get(['id', 'car_plate', 'vehicle_name'])
+            ->map(function ($vehicle) {
+                $label = trim((string) $vehicle->car_plate);
+                $vehicleName = trim((string) ($vehicle->vehicle_name ?? ''));
+
+                if ($vehicleName !== '') {
+                    $label .= ' / ' . $vehicleName;
+                }
+
+                return [
+                    'id' => (int) $vehicle->id,
+                    'label' => $label !== '' ? $label : ('Vehicle #' . (int) $vehicle->id),
+                ];
+            })
+            ->values()
+            ->toArray();
+    }
+
+    private function getVehicleIds(): array
+    {
+        return collect($this->customerVehicles)
+            ->pluck('id')
+            ->map(fn ($id) => (int) $id)
+            ->all();
+    }
+
+    private function clearInvalidVehicles(): void
+    {
+        $validVehicleIds = $this->getVehicleIds();
+
+        foreach ($this->items as $index => $row) {
+            $type = $this->normalizeInstallationType($row['installation_type'] ?? 'item_only');
+            $this->items[$index]['installation_type'] = $type;
+
+            if ($type !== 'with_installation') {
+                $this->items[$index]['customer_vehicle_id'] = null;
+                continue;
+            }
+
+            $vehicleId = (int) ($row['customer_vehicle_id'] ?? 0);
+            if ($vehicleId <= 0 || !in_array($vehicleId, $validVehicleIds, true)) {
+                $this->items[$index]['customer_vehicle_id'] = null;
+            }
+        }
     }
 
     public function render()

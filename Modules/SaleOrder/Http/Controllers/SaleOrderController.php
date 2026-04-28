@@ -10,6 +10,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
 use Modules\Crm\Entities\Lead;
 use Modules\People\Entities\Customer;
+use Modules\People\Entities\CustomerVehicle;
 use Modules\Branch\Entities\Branch;
 use Modules\Product\Entities\Product;
 use Modules\Product\Entities\Warehouse;
@@ -45,6 +46,7 @@ class SaleOrderController extends Controller
         $saleOrder->loadMissing([
             'customer',
             'items.product',
+            'items.customerVehicle',
         ]);
 
         $branch = !empty($saleOrder->branch_id)
@@ -124,6 +126,11 @@ class SaleOrderController extends Controller
             }
 
             $subTotal = (int) ($qty * $netPrice);
+            [$installationType, $customerVehicleId] = $this->resolveSaleOrderItemInstallationMetadata(
+                $row,
+                (int) request()->input('customer_id', 0),
+                (int) (BranchContext::id() ?? 0)
+            );
 
             $items[] = [
                 'product_id' => $pid,
@@ -133,6 +140,8 @@ class SaleOrderController extends Controller
                 'product_discount_amount' => $itemDiscountAmount,
                 'product_discount_type' => $discountType,
                 'sub_total' => $subTotal,
+                'installation_type' => $installationType,
+                'customer_vehicle_id' => $customerVehicleId,
             ];
 
             if (!isset($qtyByProduct[$pid])) {
@@ -150,6 +159,41 @@ class SaleOrderController extends Controller
             'sell_subtotal' => (int) $sellSubtotal,
             'master_subtotal' => (int) $masterSubtotal,
         ];
+    }
+
+    private function normalizeSaleOrderItemInstallationType($value): string
+    {
+        return (string) $value === 'with_installation' ? 'with_installation' : 'item_only';
+    }
+
+    private function resolveSaleOrderItemInstallationMetadata(array $row, int $customerId, int $branchId): array
+    {
+        $installationType = $this->normalizeSaleOrderItemInstallationType($row['installation_type'] ?? 'item_only');
+
+        if ($installationType !== 'with_installation') {
+            return ['item_only', null];
+        }
+
+        $vehicleId = (int) ($row['customer_vehicle_id'] ?? 0);
+        if ($customerId <= 0 || $vehicleId <= 0) {
+            throw new \RuntimeException('Vehicle is required for Sale Order items with installation.');
+        }
+
+        $vehicleExists = CustomerVehicle::query()
+            ->where('id', $vehicleId)
+            ->where('customer_id', $customerId)
+            ->when($branchId > 0, function ($query) use ($branchId) {
+                $query->where(function ($q) use ($branchId) {
+                    $q->whereNull('branch_id')->orWhere('branch_id', $branchId);
+                });
+            })
+            ->exists();
+
+        if (!$vehicleExists) {
+            throw new \RuntimeException('Selected vehicle does not belong to the selected Sale Order customer.');
+        }
+
+        return ['with_installation', $vehicleId];
     }
 
     private function resolveHeaderDiscount(Request $request, int $itemsSubtotal, int $taxAmount, int $shipping, int $fee): array
@@ -270,6 +314,8 @@ class SaleOrderController extends Controller
                         'product_discount_amount' => 0,
                         'product_discount_type' => 'fixed',
                         'sub_total' => (int) ($qty * $unitPrice),
+                        'installation_type' => 'item_only',
+                        'customer_vehicle_id' => null,
 
                         // ✅ nanti di-inject dari master product
                         'product_name' => null,
@@ -308,6 +354,10 @@ class SaleOrderController extends Controller
                         'product_discount_amount' => $itemDiscount,
                         'product_discount_type' => (string) ($d->product_discount_type ?? 'fixed'),
                         'sub_total' => (int) ($d->sub_total ?? ($qty * $netPrice)),
+                        'installation_type' => $this->normalizeSaleOrderItemInstallationType($d->installation_type ?? 'item_only'),
+                        'customer_vehicle_id' => $this->normalizeSaleOrderItemInstallationType($d->installation_type ?? 'item_only') === 'with_installation'
+                            ? $d->customer_vehicle_id
+                            : null,
 
                         // ✅ nanti di-inject dari master product
                         'product_name' => null,
@@ -362,6 +412,8 @@ class SaleOrderController extends Controller
                         'sub_total' => $unitPrice * $quantity,
                         'product_name' => is_array($item) ? $item['product_name'] : $item->product_name,
                         'product_code' => is_array($item) ? $item['product_code'] : $item->product_code,
+                        'installation_type' => 'item_only',
+                        'customer_vehicle_id' => null,
                     ];
                 }
             }
@@ -459,6 +511,8 @@ class SaleOrderController extends Controller
                 'items.*.product_discount_amount' => 'nullable|integer|min:0',
                 'items.*.product_discount_type' => 'nullable|in:fixed,percentage',
                 'items.*.sub_total' => 'nullable|integer|min:0',
+                'items.*.installation_type' => 'nullable|in:item_only,with_installation',
+                'items.*.customer_vehicle_id' => 'nullable|integer',
             ];
 
             if ($source === 'quotation') $rules['quotation_id'] = 'required|integer';
@@ -651,6 +705,8 @@ class SaleOrderController extends Controller
                         'product_discount_amount' => (int) $row['product_discount_amount'],
                         'product_discount_type' => (string) ($row['product_discount_type'] ?? 'fixed'),
                         'sub_total' => (int) $row['sub_total'],
+                        'installation_type' => (string) ($row['installation_type'] ?? 'item_only'),
+                        'customer_vehicle_id' => $row['customer_vehicle_id'] ?? null,
                     ]);
                 }
 
@@ -758,6 +814,7 @@ class SaleOrderController extends Controller
             'customer',
             'warehouse',
             'items.product',
+            'items.customerVehicle',
             'creator',
             'updater',
             'deliveries' => function ($q) {
@@ -958,7 +1015,7 @@ class SaleOrderController extends Controller
                 throw new \RuntimeException('Only pending Sale Order can be edited.');
             }
 
-            $saleOrder->load(['items']);
+            $saleOrder->load(['items.customerVehicle']);
 
             $customers = Customer::query()
                 ->where(function ($q) use ($branchId) {
@@ -988,6 +1045,10 @@ class SaleOrderController extends Controller
                     'product_discount_amount' => (int) ($it->product_discount_amount ?? max(0, $unitPrice - $netPrice)),
                     'product_discount_type' => (string) ($it->product_discount_type ?? 'fixed'),
                     'sub_total' => (int) ($it->sub_total ?? ($qty * $netPrice)),
+                    'installation_type' => $this->normalizeSaleOrderItemInstallationType($it->installation_type ?? 'item_only'),
+                    'customer_vehicle_id' => $this->normalizeSaleOrderItemInstallationType($it->installation_type ?? 'item_only') === 'with_installation'
+                        ? $it->customer_vehicle_id
+                        : null,
                 ];
             })->values()->toArray();
 
@@ -1046,6 +1107,8 @@ class SaleOrderController extends Controller
                 'items.*.product_discount_amount' => 'nullable|integer|min:0',
                 'items.*.product_discount_type' => 'nullable|in:fixed,percentage',
                 'items.*.sub_total' => 'nullable|integer|min:0',
+                'items.*.installation_type' => 'nullable|in:item_only,with_installation',
+                'items.*.customer_vehicle_id' => 'nullable|integer',
             ]);
 
             DB::transaction(function () use ($request, $saleOrder, $branchId) {
@@ -1156,6 +1219,8 @@ class SaleOrderController extends Controller
                         'product_discount_amount' => (int) $row['product_discount_amount'],
                         'product_discount_type' => (string) ($row['product_discount_type'] ?? 'fixed'),
                         'sub_total' => (int) $row['sub_total'],
+                        'installation_type' => (string) ($row['installation_type'] ?? 'item_only'),
+                        'customer_vehicle_id' => $row['customer_vehicle_id'] ?? null,
                     ]);
                 }
 

@@ -457,16 +457,22 @@ class SaleController extends Controller
                     }
                 }
 
-                // ✅ build map SO item by product (source harga & discount)
-                $soItemByProduct = [];
+                // Build SO item groups by product. Duplicate same-product rows may carry
+                // different installation metadata, so do not collapse to one row.
+                $soItemsByProduct = [];
                 if (!empty($lockedSaleOrder) && (int)$lockedSaleOrder->id > 0) {
                     $soItems = \Modules\SaleOrder\Entities\SaleOrderItem::query()
                         ->where('sale_order_id', (int)$lockedSaleOrder->id)
+                        ->orderBy('id')
                         ->get();
 
                     foreach ($soItems as $row) {
                         $pid = (int) ($row->product_id ?? 0);
-                        if ($pid > 0) $soItemByProduct[$pid] = $row;
+                        if ($pid <= 0) continue;
+                        if (!isset($soItemsByProduct[$pid])) {
+                            $soItemsByProduct[$pid] = [];
+                        }
+                        $soItemsByProduct[$pid][] = $row;
                     }
                 }
 
@@ -509,103 +515,128 @@ class SaleController extends Controller
                     if ($remainingInvoiceableQty <= 0) continue;
 
                     $p = \Modules\Product\Entities\Product::find($productId);
-                    $soRow = $soItemByProduct[$productId] ?? null;
-
-                    // ✅ PENTING:
-                    // Sell Unit Price = NET (ambil dari SO price kalau ada)
-                    $unitPrice  = (float) (
-                        $soRow?->unit_price
-                        ?? $it->unit_price
-                        ?? ($p->product_price ?? 0)
-                    );
-
-                    $priceShown = (float) (
-                        $soRow?->price
-                        ?? $it->price
-                        ?? $unitPrice
-                    );
-
-                    // discount info (buat kolom item), TAPI JANGAN DIPAKAI NGURANGIN SUMMARY LAGI
-                    $discAmt  = (float) (
-                        $soRow?->product_discount_amount
-                        ?? $it->product_discount_amount
-                        ?? 0
-                    );
-                    $discType = strtolower((string) (
-                        $soRow?->product_discount_type
-                        ?? $it->product_discount_type
-                        ?? 'fixed'
-                    ));
-
-                    // fallback implicit diff (kalau net < unit)
-                    if ($discAmt <= 0 && $unitPrice > 0 && $unitPrice > $priceShown) {
-                        $discAmt  = (float) ($unitPrice - $priceShown);
-                        $discType = 'fixed';
+                    $soRows = $soItemsByProduct[$productId] ?? [];
+                    if (empty($soRows)) {
+                        $soRows = [(object) [
+                            'id' => 0,
+                            'product_id' => $productId,
+                            'quantity' => $remainingInvoiceableQty,
+                            'unit_price' => $it->unit_price ?? ($p->product_price ?? 0),
+                            'price' => $it->price ?? ($it->unit_price ?? ($p->product_price ?? 0)),
+                            'product_discount_amount' => $it->product_discount_amount ?? 0,
+                            'product_discount_type' => $it->product_discount_type ?? 'fixed',
+                            'installation_type' => 'item_only',
+                            'customer_vehicle_id' => null,
+                        ]];
                     }
 
-                    // INFO total discount (buat info saja)
-                    if ($discAmt > 0) {
-                        if ($discType === 'fixed') {
-                            $deliveryDiscountInfoTotal += ($discAmt * $remainingInvoiceableQty);
-                        } else {
-                            $deliveryDiscountInfoTotal += (($unitPrice * $remainingInvoiceableQty) * ($discAmt / 100));
+                    $qtyToSkip = max(0, (int) $alreadyInvoicedQty);
+                    $qtyToAllocate = max(0, (int) $remainingInvoiceableQty);
+
+                    foreach ($soRows as $soRow) {
+                        if ($qtyToAllocate <= 0) break;
+
+                        $soQty = max(0, (int) ($soRow->quantity ?? 0));
+                        if ($soQty <= 0) continue;
+
+                        if ($qtyToSkip >= $soQty) {
+                            $qtyToSkip -= $soQty;
+                            continue;
                         }
+
+                        $availableFromRow = $soQty - $qtyToSkip;
+                        $qtyToSkip = 0;
+                        $rowInvoiceQty = min($qtyToAllocate, $availableFromRow);
+                        if ($rowInvoiceQty <= 0) continue;
+
+                        $unitPrice = (float) (
+                            $soRow->unit_price
+                            ?? $it->unit_price
+                            ?? ($p->product_price ?? 0)
+                        );
+
+                        $priceShown = (float) (
+                            $soRow->price
+                            ?? $it->price
+                            ?? $unitPrice
+                        );
+
+                        $discAmt = (float) (
+                            $soRow->product_discount_amount
+                            ?? $it->product_discount_amount
+                            ?? 0
+                        );
+                        $discType = strtolower((string) (
+                            $soRow->product_discount_type
+                            ?? $it->product_discount_type
+                            ?? 'fixed'
+                        ));
+
+                        if ($discAmt <= 0 && $unitPrice > 0 && $unitPrice > $priceShown) {
+                            $discAmt = (float) ($unitPrice - $priceShown);
+                            $discType = 'fixed';
+                        }
+
+                        if ($discAmt > 0) {
+                            $deliveryDiscountInfoTotal += ($discType === 'fixed')
+                                ? ($discAmt * $rowInvoiceQty)
+                                : (($unitPrice * $rowInvoiceQty) * ($discAmt / 100));
+                        }
+
+                        $productTax = (float) ($it->product_tax_amount ?? 0);
+                        $branchStockSnapshot = $getBranchStockSnapshot($productId);
+                        $subTotal = (float) ($priceShown * $rowInvoiceQty);
+                        $invoiceItemsSubtotal += (int) round($subTotal);
+
+                        $installationType = (string) ($soRow->installation_type ?? 'item_only') === 'with_installation'
+                            ? 'with_installation'
+                            : 'item_only';
+                        $customerVehicleId = $installationType === 'with_installation'
+                            ? ((int) ($soRow->customer_vehicle_id ?? 0) ?: null)
+                            : null;
+                        $soItemId = (int) ($soRow->id ?? 0);
+
+                        $cart->add([
+                            'id'      => $productId,
+                            'name'    => (string) ($it->product_name ?? ($p->product_name ?? '-')),
+                            'qty'     => $rowInvoiceQty,
+                            'price'   => $priceShown,
+                            'weight'  => 1,
+                            'options' => [
+                                'sub_total'             => $subTotal,
+                                'code'                  => (string) ($it->product_code ?? ($p->product_code ?? 'UNKNOWN')),
+                                'unit'                  => (string) ($it->product_unit ?? ($p->product_unit ?? '')),
+                                'stock'                 => (int) ($branchStockSnapshot['sellable'] ?? 0),
+                                'reserved_stock'        => (int) ($branchStockSnapshot['reserved'] ?? 0),
+                                'sellable_stock'        => (int) ($branchStockSnapshot['sellable'] ?? 0),
+                                'stock_scope'           => 'branch',
+                                'warehouse_id'          => $deliveryWarehouseId,
+                                'warehouse_name'        => $deliveryWarehouseName,
+                                'invoice_source'        => 'sale_delivery',
+                                'delivered_qty'         => (int) $deliveredQty,
+                                'already_invoiced_qty'  => (int) $alreadyInvoicedQty,
+                                'remaining_invoiceable_qty' => (int) $remainingInvoiceableQty,
+                                'current_stock_qty'     => (int) ($branchStockSnapshot['sellable'] ?? 0),
+                                'product_tax'           => $productTax,
+                                'unit_price'            => $unitPrice,
+                                'product_discount'      => $discAmt,
+                                'product_discount_type' => $discType,
+                                'line_key'              => $soItemId > 0
+                                    ? ('sale_order_item_' . $soItemId . '_delivery_item_' . (int) $it->id)
+                                    : ('sale_delivery_item_' . (int) $it->id),
+                                'installation_type'     => $installationType,
+                                'customer_vehicle_id'   => $customerVehicleId,
+                                'product_cost'          => (float) (
+                                    $it->product_cost
+                                    ?? (($branchId > 0 && $productId > 0)
+                                        ? $hppService->getCurrentHpp((int) $branchId, (int) $productId)
+                                        : ($p->product_cost ?? 0))
+                                ),
+                            ],
+                        ]);
+
+                        $qtyToAllocate -= $rowInvoiceQty;
                     }
-
-                    $productTax = (float) ($it->product_tax_amount ?? 0);
-
-                    $branchStockSnapshot = $getBranchStockSnapshot($productId);
-                    $stock = (int) ($branchStockSnapshot['sellable'] ?? 0);
-                    $stockScope = 'branch';
-
-                    // subtotal pakai NET price (priceShown)
-                    $subTotal = (float) ($priceShown * $remainingInvoiceableQty);
-                    $invoiceItemsSubtotal += (int) round($subTotal);
-
-                    $cart->add([
-                        'id'      => $productId,
-                        'name'    => (string) ($it->product_name ?? ($p->product_name ?? '-')),
-                        'qty'     => $remainingInvoiceableQty,
-                        'price'   => $priceShown,
-                        'weight'  => 1,
-                        'options' => [
-                            'sub_total'             => $subTotal,
-                            'code'                  => (string) ($it->product_code ?? ($p->product_code ?? 'UNKNOWN')),
-                            'unit'                  => (string) ($it->product_unit ?? ($p->product_unit ?? '')),
-                            'stock'                 => (int) $stock,
-                            'reserved_stock'        => (int) ($branchStockSnapshot['reserved'] ?? 0),
-                            'sellable_stock'        => (int) ($branchStockSnapshot['sellable'] ?? 0),
-                            'stock_scope'           => $stockScope,
-
-                            'warehouse_id'          => $deliveryWarehouseId,
-                            'warehouse_name'        => $deliveryWarehouseName,
-
-                            'invoice_source'        => 'sale_delivery',
-                            'delivered_qty'         => (int) $deliveredQty,
-                            'already_invoiced_qty'  => (int) $alreadyInvoicedQty,
-                            'remaining_invoiceable_qty' => (int) $remainingInvoiceableQty,
-                            'current_stock_qty'     => (int) ($branchStockSnapshot['sellable'] ?? 0),
-
-                            'product_tax'           => $productTax,
-                            'unit_price'            => $unitPrice,
-
-                            // ✅ discount ditampilkan di kolom item
-                            'product_discount'      => $discAmt,
-                            'product_discount_type' => $discType,
-                            'line_key'              => 'sale_delivery_item_' . (int) $it->id,
-                            'installation_type'     => 'item_only',
-                            'customer_vehicle_id'   => null,
-
-                            'product_cost'          => (float) (
-                                $it->product_cost
-                                ?? (($branchId > 0 && $productId > 0)
-                                    ? $hppService->getCurrentHpp((int) $branchId, (int) $productId)
-                                    // Legacy compatibility fallback only when no
-                                    // branch-specific HPP context is available.
-                                    : ($p->product_cost ?? 0))
-                            ),
-                        ],
-                    ]);
                 }
             }
         }

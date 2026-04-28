@@ -99,7 +99,7 @@
 
                             <div class="col-md-9 mb-3">
                                 <label class="form-label">Customer</label>
-                                <select name="customer_id" class="form-control" required>
+                                <select name="customer_id" id="so_customer_id" class="form-control" required>
                                     <option value="">-- Choose --</option>
                                     @foreach($customers as $c)
                                         <option value="{{ $c->id }}"
@@ -122,7 +122,10 @@
                         <hr>
 
                         <div class="mt-2" data-so-product-table-host>
-                            <livewire:sale-order.product-table :prefillItems="$items" />
+                            <livewire:sale-order.product-table
+                                :prefillItems="$items"
+                                :customerId="(int) old('customer_id', $saleOrder->customer_id)"
+                            />
                         </div>
 
                         <hr>
@@ -427,6 +430,16 @@
         });
 
         soRecalc();
+
+        function notifySaleOrderCustomerChanged() {
+            if (window.Livewire && typeof window.Livewire.emit === 'function') {
+                window.Livewire.emit('saleOrderCustomerChanged', document.getElementById('so_customer_id')?.value || '');
+            }
+        }
+
+        document.getElementById('so_customer_id')?.addEventListener('change', notifySaleOrderCustomerChanged);
+        document.addEventListener('livewire:load', notifySaleOrderCustomerChanged);
+        notifySaleOrderCustomerChanged();
 
         if (window.Livewire && typeof window.Livewire.hook === 'function') {
             window.Livewire.hook('message.processed', () => {

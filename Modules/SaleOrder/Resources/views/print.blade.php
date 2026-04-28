@@ -321,11 +321,23 @@
             $netPrice = (int) ($item->price ?? $unitPrice);
             $itemDiscount = (int) ($item->product_discount_amount ?? max(0, $unitPrice - $netPrice));
             $lineSubtotal = (int) ($item->sub_total ?? ((int) ($item->quantity ?? 0) * $netPrice));
+            $installationType = (string) ($item->installation_type ?? 'item_only') === 'with_installation' ? 'with_installation' : 'item_only';
+            $vehicle = $item->customerVehicle ?? null;
+            $vehicleLabel = '-';
+            if ($vehicle) {
+                $vehicleLabel = trim((string) $vehicle->car_plate);
+                if (!empty($vehicle->vehicle_name)) {
+                    $vehicleLabel .= ' / ' . $vehicle->vehicle_name;
+                }
+            }
         @endphp
         <tr>
             <td class="col-product">
                 <div class="product-name">{{ $item->product_name ?? '-' }}</div>
                 <span class="product-code">{{ $item->product_code ?? '-' }}</span>
+                @if($installationType === 'with_installation')
+                    <div style="font-size:10px;color:#6b7280;margin-top:4px;">Vehicle: {{ $vehicleLabel }}</div>
+                @endif
             </td>
             <td class="col-money text-right">{{ format_currency($netPrice) }}</td>
             <td class="col-qty text-right">{{ (int) ($item->quantity ?? 0) }}</td>
