@@ -29,7 +29,8 @@ class ServiceOrdersController extends Controller
             return false;
         }
 
-        return $user->hasRole('Technician') && Gate::denies('assign_crm_service_orders');
+        return ($user->hasRole('Technician') || $user->hasRole('Technician Leader'))
+            && Gate::denies('edit_crm_service_orders');
     }
 
     public function index(Request $request)

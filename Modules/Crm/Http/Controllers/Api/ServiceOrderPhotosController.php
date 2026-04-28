@@ -27,7 +27,8 @@ class ServiceOrderPhotosController extends Controller
             return false;
         }
 
-        return $user->hasRole('Technician') && Gate::denies('assign_crm_service_orders');
+        return ($user->hasRole('Technician') || $user->hasRole('Technician Leader'))
+            && Gate::denies('edit_crm_service_orders');
     }
 
     protected function abortIfTechnicianNotAssigned(ServiceOrder $serviceOrder): void
@@ -65,8 +66,8 @@ class ServiceOrderPhotosController extends Controller
         $data = $request->validate([
             'phase' => ['required', 'in:before,after,other'],
             'caption' => ['nullable', 'string', 'max:255'],
-            'file' => ['required_without:photo', 'file', 'max:10240'], // ~10MB
-            'photo' => ['required_without:file', 'file', 'max:10240'], // frontend compatibility
+            'file' => ['required_without:photo', 'file', 'max:20480'], // ~20MB
+            'photo' => ['required_without:file', 'file', 'max:20480'], // frontend compatibility
             'lat' => ['nullable', 'numeric'],
             'lng' => ['nullable', 'numeric'],
         ]);

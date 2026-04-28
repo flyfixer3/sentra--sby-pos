@@ -40,6 +40,7 @@ class CrmPermissionSeeder extends Seeder
         $manager = Role::firstOrCreate(['name' => 'Manager', 'guard_name' => 'web']);
         $sales = Role::firstOrCreate(['name' => 'Sales', 'guard_name' => 'web']);
         $technician = Role::firstOrCreate(['name' => 'Technician', 'guard_name' => 'web']);
+        $technicianLeader = Role::firstOrCreate(['name' => 'Technician Leader', 'guard_name' => 'web']);
 
         // Grant: Admin and Administrator get all CRM perms
         $superAdmin->givePermissionTo($permissions);
@@ -49,7 +50,7 @@ class CrmPermissionSeeder extends Seeder
         // Reports access for Admin + Manager
         if (!$manager->hasPermissionTo('show_crm_reports')) { $manager->givePermissionTo('show_crm_reports'); }
 
-        foreach ([$manager, $sales, $technician] as $role) {
+        foreach ([$manager, $sales, $technician, $technicianLeader] as $role) {
             if (!$role->hasPermissionTo('access_crm')) { $role->givePermissionTo('access_crm'); }
         }
 
@@ -64,6 +65,12 @@ class CrmPermissionSeeder extends Seeder
         // Controllers keep technician access limited to service orders assigned to the logged-in user.
         foreach (['show_crm_service_orders', 'upload_crm_photos', 'show_crm_warranties', 'upsert_crm_warranties'] as $p) {
             if (!$technician->hasPermissionTo($p)) { $technician->givePermissionTo($p); }
+        }
+
+        // Technician Leader: same as technician + can assign technicians to service orders.
+        // This permission is what grants access to the "Kelola PK" tab in the mobile app.
+        foreach (['show_crm_service_orders', 'assign_crm_service_orders', 'upload_crm_photos', 'show_crm_warranties', 'upsert_crm_warranties'] as $p) {
+            if (!$technicianLeader->hasPermissionTo($p)) { $technicianLeader->givePermissionTo($p); }
         }
 
         app(PermissionRegistrar::class)->forgetCachedPermissions();

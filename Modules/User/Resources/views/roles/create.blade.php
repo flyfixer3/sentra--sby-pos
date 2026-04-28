@@ -981,13 +981,33 @@
                                             <small class="ml-2" style="opacity:0.8;">Permission khusus website CRM, tidak mempengaruhi modul POS lain.</small>
                                         </div>
                                         <div class="card-body">
+
+                                            {{-- App Teknisi quick-reference --}}
+                                            <div class="alert mb-3 py-2 px-3" style="background:#fef9ec;border:1px solid #f59e0b;border-radius:8px;">
+                                                <p class="mb-1 font-weight-bold" style="color:#b45309;font-size:0.82rem;">📱 PANDUAN CEPAT — App Teknisi</p>
+                                                <div class="row" style="font-size:0.8rem;color:#78350f;">
+                                                    <div class="col-md-5 mb-1">
+                                                        <strong>Teknisi (regular):</strong><br>
+                                                        Masuk CRM · Lihat PK · Upload Foto · Lihat Garansi · Ubah Garansi
+                                                    </div>
+                                                    <div class="col-md-7 mb-1">
+                                                        <strong>Ketua Teknisi (Technician Leader):</strong><br>
+                                                        Semua di atas + <span class="badge badge-warning text-dark">Assign Teknisi</span>
+                                                    </div>
+                                                </div>
+                                                <p class="mb-0 mt-1" style="font-size:0.75rem;color:#92400e;">
+                                                    Permission berlabel <span class="badge badge-sm" style="background:#f59e0b;color:#fff;font-size:0.7rem;">App</span> digunakan oleh App Teknisi di mobile.
+                                                    Permission lainnya hanya untuk website CRM (browser).
+                                                </p>
+                                            </div>
+
                                             <div class="row">
                                                 {{-- Akses Umum --}}
                                                 <div class="col-12 mb-2"><small class="text-muted font-weight-bold text-uppercase">Akses Umum</small></div>
                                                 <div class="col-lg-3 col-md-4 col-6">
                                                     <div class="custom-control custom-switch">
                                                         <input type="checkbox" class="custom-control-input" id="access_crm" name="permissions[]" value="access_crm" {{ old('access_crm') ? 'checked' : '' }}>
-                                                        <label class="custom-control-label" for="access_crm">Masuk CRM</label>
+                                                        <label class="custom-control-label" for="access_crm">Masuk CRM <span class="badge badge-sm" style="background:#f59e0b;color:#fff;font-size:0.65rem;vertical-align:middle;">App</span></label>
                                                     </div>
                                                 </div>
                                                 <div class="col-lg-3 col-md-4 col-6">
@@ -1048,8 +1068,8 @@
                                                     </div>
                                                 </div>
 
-                                                {{-- Perintah Kerja --}}
-                                                <div class="col-12 mt-3 mb-2"><small class="text-muted font-weight-bold text-uppercase">Perintah Kerja (PK)</small></div>
+                                                {{-- Perintah Kerja — CRM Web --}}
+                                                <div class="col-12 mt-3 mb-1"><small class="text-muted font-weight-bold text-uppercase">Perintah Kerja / PK — CRM Web</small></div>
                                                 <div class="col-lg-2 col-md-4 col-6">
                                                     <div class="custom-control custom-switch">
                                                         <input type="checkbox" class="custom-control-input" id="create_crm_service_orders" name="permissions[]" value="create_crm_service_orders" {{ old('create_crm_service_orders') ? 'checked' : '' }}>
@@ -1059,7 +1079,7 @@
                                                 <div class="col-lg-2 col-md-4 col-6">
                                                     <div class="custom-control custom-switch">
                                                         <input type="checkbox" class="custom-control-input" id="show_crm_service_orders" name="permissions[]" value="show_crm_service_orders" {{ old('show_crm_service_orders') ? 'checked' : '' }}>
-                                                        <label class="custom-control-label" for="show_crm_service_orders">Lihat PK</label>
+                                                        <label class="custom-control-label" for="show_crm_service_orders">Lihat PK <span class="badge badge-sm" style="background:#f59e0b;color:#fff;font-size:0.65rem;vertical-align:middle;">App</span></label>
                                                     </div>
                                                 </div>
                                                 <div class="col-lg-2 col-md-4 col-6">
@@ -1077,16 +1097,19 @@
                                                 <div class="col-lg-2 col-md-4 col-6">
                                                     <div class="custom-control custom-switch">
                                                         <input type="checkbox" class="custom-control-input" id="assign_crm_service_orders" name="permissions[]" value="assign_crm_service_orders" {{ old('assign_crm_service_orders') ? 'checked' : '' }}>
-                                                        <label class="custom-control-label" for="assign_crm_service_orders">Assign Teknisi</label>
+                                                        <label class="custom-control-label" for="assign_crm_service_orders">Assign Teknisi <span class="badge badge-sm" style="background:#f59e0b;color:#fff;font-size:0.65rem;vertical-align:middle;">App Ketua</span></label>
                                                     </div>
                                                 </div>
 
-                                                {{-- Foto & Garansi --}}
-                                                <div class="col-12 mt-3 mb-2"><small class="text-muted font-weight-bold text-uppercase">Foto & Garansi</small></div>
+                                                {{-- Foto & Garansi — digunakan App Teknisi --}}
+                                                <div class="col-12 mt-3 mb-1">
+                                                    <small class="text-muted font-weight-bold text-uppercase">Foto & Garansi</small>
+                                                    <small class="ml-2" style="color:#b45309;">— Permission ini juga digunakan oleh App Teknisi di mobile</small>
+                                                </div>
                                                 <div class="col-lg-3 col-md-4 col-6">
                                                     <div class="custom-control custom-switch">
                                                         <input type="checkbox" class="custom-control-input" id="upload_crm_photos" name="permissions[]" value="upload_crm_photos" {{ old('upload_crm_photos') ? 'checked' : '' }}>
-                                                        <label class="custom-control-label" for="upload_crm_photos">Upload Foto</label>
+                                                        <label class="custom-control-label" for="upload_crm_photos">Upload Foto <span class="badge badge-sm" style="background:#f59e0b;color:#fff;font-size:0.65rem;vertical-align:middle;">App</span></label>
                                                     </div>
                                                 </div>
                                                 <div class="col-lg-3 col-md-4 col-6">
@@ -1098,13 +1121,13 @@
                                                 <div class="col-lg-3 col-md-4 col-6">
                                                     <div class="custom-control custom-switch">
                                                         <input type="checkbox" class="custom-control-input" id="show_crm_warranties" name="permissions[]" value="show_crm_warranties" {{ old('show_crm_warranties') ? 'checked' : '' }}>
-                                                        <label class="custom-control-label" for="show_crm_warranties">Lihat Garansi</label>
+                                                        <label class="custom-control-label" for="show_crm_warranties">Lihat Garansi <span class="badge badge-sm" style="background:#f59e0b;color:#fff;font-size:0.65rem;vertical-align:middle;">App</span></label>
                                                     </div>
                                                 </div>
                                                 <div class="col-lg-3 col-md-4 col-6">
                                                     <div class="custom-control custom-switch">
                                                         <input type="checkbox" class="custom-control-input" id="upsert_crm_warranties" name="permissions[]" value="upsert_crm_warranties" {{ old('upsert_crm_warranties') ? 'checked' : '' }}>
-                                                        <label class="custom-control-label" for="upsert_crm_warranties">Ubah Garansi</label>
+                                                        <label class="custom-control-label" for="upsert_crm_warranties">Ubah Garansi <span class="badge badge-sm" style="background:#f59e0b;color:#fff;font-size:0.65rem;vertical-align:middle;">App</span></label>
                                                     </div>
                                                 </div>
                                             </div>

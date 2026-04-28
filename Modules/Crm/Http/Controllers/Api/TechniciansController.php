@@ -169,8 +169,8 @@ class TechniciansController extends Controller
         // Return technicians available for the active branch
         $branchId = $this->requireBranch();
 
-        // Try role name in English and Indonesian just in case
-        $roleNames = ['Technician', 'Teknisi'];
+        // Include both regular technicians and technician leaders
+        $roleNames = ['Technician', 'Teknisi', 'Technician Leader'];
 
         $rows = \DB::table('users')
             ->join('model_has_roles', function($j){ $j->on('model_has_roles.model_id','=','users.id'); })
