@@ -531,8 +531,20 @@ class QuotationController extends Controller
 
             toast('Direct Invoice created. Sale Delivery generated (pending) for manual confirm.', 'success');
 
-            // kamu mau arahkan ke invoice dulu (lebih masuk akal)
-            return redirect()->route('sales.show', $saleId);
+            $redirect = !empty($saleDeliveryId)
+                ? redirect()->route('sales.index')
+                : redirect()->route('sales.show', $saleId);
+
+            if (!empty($saleDeliveryId)) {
+                $redirect->with('auto_delivery_notice', [
+                    'title' => 'Sale Created',
+                    'message' => 'A Sale Delivery has been automatically created. Please confirm the Sale Delivery to complete the delivery process.',
+                    'primary_label' => 'Go to Sale Delivery',
+                    'url' => route('sale-deliveries.confirm.form', (int) $saleDeliveryId),
+                ]);
+            }
+
+            return $redirect;
 
         } catch (\Throwable $e) {
             toast($e->getMessage(), 'error');
