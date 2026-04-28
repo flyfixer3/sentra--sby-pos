@@ -30,6 +30,9 @@
                 <thead class="thead-dark">
                 <tr>
                     <th class="align-middle">Product</th>
+                    @if(!empty($enable_installation_metadata))
+                        <th class="align-middle">Service Type</th>
+                    @endif
                     <th class="align-middle">Sell Unit Price</th>
                     <th class="align-middle">Stock</th>
                     <th class="align-middle">Quantity</th>
@@ -68,6 +71,49 @@
                                 </span>
                                 @include('livewire.includes.product-cart-modal-sale')
                             </td>
+
+                            @if(!empty($enable_installation_metadata))
+                                @php
+                                    $rowInstallationType = $installation_type[$lineKey] ?? 'item_only';
+                                @endphp
+                                <td class="align-middle" style="min-width: 210px;">
+                                    <select
+                                        class="form-control form-control-sm"
+                                        wire:model="installation_type.{{ $lineKey }}"
+                                        data-cart-sync-row
+                                        data-cart-sync-field="installation_type"
+                                        data-cart-row-id="{{ $cart_item->rowId }}"
+                                        data-cart-product-id="{{ $cart_item->id }}"
+                                        data-cart-line-key="{{ $lineKey }}"
+                                    >
+                                        <option value="item_only">Item Only</option>
+                                        <option value="with_installation">With Installation</option>
+                                    </select>
+
+                                    @if($rowInstallationType === 'with_installation')
+                                        @if(empty($customer_id))
+                                            <small class="text-warning d-block mt-1">Please select customer first.</small>
+                                        @elseif(empty($customer_vehicles))
+                                            <small class="text-warning d-block mt-1">No vehicle registered for this customer.</small>
+                                        @else
+                                            <select
+                                                class="form-control form-control-sm mt-1"
+                                                wire:model="customer_vehicle_id.{{ $lineKey }}"
+                                                data-cart-sync-row
+                                                data-cart-sync-field="customer_vehicle_id"
+                                                data-cart-row-id="{{ $cart_item->rowId }}"
+                                                data-cart-product-id="{{ $cart_item->id }}"
+                                                data-cart-line-key="{{ $lineKey }}"
+                                            >
+                                                <option value="">Select vehicle</option>
+                                                @foreach($customer_vehicles as $vehicle)
+                                                    <option value="{{ $vehicle['id'] }}">{{ $vehicle['label'] }}</option>
+                                                @endforeach
+                                            </select>
+                                        @endif
+                                    @endif
+                                </td>
+                            @endif
 
                             <td class="align-middle">
                                 {{ format_currency((float)($cart_item->price ?? 0)) }}
@@ -142,7 +188,7 @@
                     @endforeach
                 @else
                     <tr>
-                        <td colspan="8" class="text-center">
+                        <td colspan="{{ !empty($enable_installation_metadata) ? 9 : 8 }}" class="text-center">
                             <span class="text-danger">
                                 Please search &amp; select products!
                             </span>

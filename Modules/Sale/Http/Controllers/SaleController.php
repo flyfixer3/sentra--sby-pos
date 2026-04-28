@@ -8,7 +8,9 @@ use Illuminate\Routing\Controller;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Validation\ValidationException;
 use Modules\People\Entities\Customer;
+use Modules\People\Entities\CustomerVehicle;
 use Modules\People\Entities\Supplier;
 use Modules\Branch\Entities\Branch;
 use Modules\Product\Entities\Warehouse;
@@ -171,6 +173,45 @@ class SaleController extends Controller
             'amount' => (int) $discountAmount,
             'grand_total' => (int) $grandTotal,
         ];
+    }
+
+    private function normalizeSaleDetailInstallationType($value): string
+    {
+        return (string) $value === 'with_installation' ? 'with_installation' : 'item_only';
+    }
+
+    private function resolveSaleDetailInstallationMetadata($cartItem, int $customerId, int $branchId): array
+    {
+        $installationType = $this->normalizeSaleDetailInstallationType($cartItem->options->installation_type ?? 'item_only');
+
+        if ($installationType !== 'with_installation') {
+            return ['item_only', null];
+        }
+
+        $vehicleId = (int) ($cartItem->options->customer_vehicle_id ?? 0);
+        if ($customerId <= 0 || $vehicleId <= 0) {
+            throw ValidationException::withMessages([
+                'customer_vehicle_id' => 'Vehicle is required for items with installation.',
+            ]);
+        }
+
+        $vehicleExists = CustomerVehicle::query()
+            ->where('id', $vehicleId)
+            ->where('customer_id', $customerId)
+            ->when($branchId > 0, function ($query) use ($branchId) {
+                $query->where(function ($q) use ($branchId) {
+                    $q->whereNull('branch_id')->orWhere('branch_id', $branchId);
+                });
+            })
+            ->exists();
+
+        if (!$vehicleExists) {
+            throw ValidationException::withMessages([
+                'customer_vehicle_id' => 'Selected vehicle does not belong to the selected customer.',
+            ]);
+        }
+
+        return ['with_installation', $vehicleId];
     }
 
     private function deliveredQtyFromDeliveryItem(SaleDeliveryItem $item): int
@@ -493,6 +534,9 @@ class SaleController extends Controller
                             // ✅ discount ditampilkan di kolom item
                             'product_discount'      => $discAmt,
                             'product_discount_type' => $discType,
+                            'line_key'              => 'sale_delivery_item_' . (int) $it->id,
+                            'installation_type'     => 'item_only',
+                            'customer_vehicle_id'   => null,
 
                             'product_cost'          => (float) (
                                 $it->product_cost
@@ -933,6 +977,12 @@ class SaleController extends Controller
                     // ✅ FIX BUG: total_cost harus qty * hppUnit
                     $total_cost += ($hppUnitInt * $qty);
 
+                    [$installationType, $customerVehicleId] = $this->resolveSaleDetailInstallationMetadata(
+                        $cart_item,
+                        (int) $customer->id,
+                        (int) $branchId
+                    );
+
                     $saleDetailData = [
                         'sale_id' => (int) $sale->id,
                         'product_id' => $productId,
@@ -955,6 +1005,8 @@ class SaleController extends Controller
                         'product_discount_amount' => (float) ($cart_item->options->product_discount ?? 0),
                         'product_discount_type' => (string) ($cart_item->options->product_discount_type ?? 'fixed'),
                         'product_tax_amount' => (float) ($cart_item->options->product_tax ?? 0),
+                        'installation_type' => $installationType,
+                        'customer_vehicle_id' => $customerVehicleId,
                     ];
 
                     if (Schema::hasColumn('sale_details', 'branch_id')) {
@@ -1335,7 +1387,7 @@ class SaleController extends Controller
 
         $branchId = BranchContext::id();
 
-        $sale->load(['creator', 'updater', 'saleDetails']);
+        $sale->load(['creator', 'updater', 'saleDetails.customerVehicle']);
 
         $customer = Customer::query()
             ->where('id', $sale->customer_id)
@@ -1413,7 +1465,10 @@ class SaleController extends Controller
                     'warehouse_id'=> null,
                     'product_cost'=> $sale_detail->product_cost,
                     'product_tax' => $sale_detail->product_tax_amount,
-                    'unit_price'  => $sale_detail->unit_price
+                    'unit_price'  => $sale_detail->unit_price,
+                    'line_key'    => 'sale_detail_' . (int) $sale_detail->id,
+                    'installation_type' => $this->normalizeSaleDetailInstallationType($sale_detail->installation_type ?? 'item_only'),
+                    'customer_vehicle_id' => $sale_detail->customer_vehicle_id,
                 ]
             ]);
         }
@@ -1436,6 +1491,16 @@ class SaleController extends Controller
 
     public function update(UpdateSaleRequest $request, Sale $sale) {
         DB::transaction(function () use ($request, $sale) {
+            $branchId = (int) BranchContext::id();
+
+            $customer = Customer::query()
+                ->where('id', $request->customer_id)
+                ->when($branchId > 0, function ($query) use ($branchId) {
+                    $query->where(function ($q) use ($branchId) {
+                        $q->whereNull('branch_id')->orWhere('branch_id', $branchId);
+                    });
+                })
+                ->firstOrFail();
 
             $itemsSubtotal = 0;
             $totalQty = 0;
@@ -1486,8 +1551,8 @@ class SaleController extends Controller
             $saleUpdateData = [
                 'date' => $request->date,
                 'reference' => $request->reference,
-                'customer_id' => $request->customer_id,
-                'customer_name' => Customer::findOrFail($request->customer_id)->customer_name,
+                'customer_id' => $customer->id,
+                'customer_name' => $customer->customer_name,
                 'tax_percentage' => (float) $taxPct,
                 'discount_percentage' => (float) $discountPercentage,
                 'shipping_amount' => (int) $shipping,
@@ -1510,7 +1575,13 @@ class SaleController extends Controller
             $sale->update($saleUpdateData);
 
             foreach (Cart::instance('sale')->content() as $cart_item) {
-                SaleDetails::create([
+                [$installationType, $customerVehicleId] = $this->resolveSaleDetailInstallationMetadata(
+                    $cart_item,
+                    (int) $customer->id,
+                    (int) $branchId
+                );
+
+                $saleDetailData = [
                     'sale_id' => $sale->id,
                     'product_id' => (int) $cart_item->id,
                     'product_name' => (string) $cart_item->name,
@@ -1524,7 +1595,15 @@ class SaleController extends Controller
                     'product_discount_amount' => (int) ($cart_item->options->product_discount ?? 0),
                     'product_discount_type' => (string) ($cart_item->options->product_discount_type ?? 'fixed'),
                     'product_tax_amount' => (int) ($cart_item->options->product_tax ?? 0),
-                ]);
+                    'installation_type' => $installationType,
+                    'customer_vehicle_id' => $customerVehicleId,
+                ];
+
+                if (Schema::hasColumn('sale_details', 'branch_id')) {
+                    $saleDetailData['branch_id'] = $branchId;
+                }
+
+                SaleDetails::create($saleDetailData);
             }
 
             Cart::instance('sale')->destroy();

@@ -192,6 +192,8 @@
                         <livewire:product-cart-sale
                             :cartInstance="'sale'"
                             :data="$lockedFinancial"
+                            :customerId="(int) old('customer_id', $prefillCustomerId)"
+                            :enableInstallationMetadata="true"
                             :warehouses="$warehouses"
                         />
 
@@ -355,6 +357,13 @@
         }
     }
 
+    function notifySaleCustomerChanged() {
+        var customerId = $('#customer_id').val() || $('input[name="customer_id"]').val() || '';
+        if (window.Livewire && typeof window.Livewire.emit === 'function') {
+            window.Livewire.emit('saleCustomerChanged', customerId);
+        }
+    }
+
     $(document).ready(function () {
         $('#paid_amount').maskMoney({
             prefix:'{{ settings()->currency->symbol }}',
@@ -368,10 +377,14 @@
         setLockedFinancialInputsIfAny();
         document.addEventListener('livewire:load', function () {
             setLockedFinancialInputsIfAny();
+            notifySaleCustomerChanged();
         });
 
         // fallback: if Livewire rerenders
         document.addEventListener('DOMContentLoaded', function(){ setLockedFinancialInputsIfAny(); });
+
+        $('#customer_id').on('change', notifySaleCustomerChanged);
+        notifySaleCustomerChanged();
 
         $('#getTotalAmount').click(function () {
             // total_amount is produced by the Livewire component

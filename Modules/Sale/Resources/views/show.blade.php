@@ -147,6 +147,8 @@
                                     @endif
 
                                     <th class="align-middle">Qty</th>
+                                    <th class="align-middle">Service Type</th>
+                                    <th class="align-middle">Vehicle</th>
 
                                     @if($canViewHpp)
                                         <th class="align-middle">Profit Total</th>
@@ -169,6 +171,18 @@
 
                                         if ($canViewHpp) {
                                             $totalProfit += $profitTotal;
+                                        }
+
+                                        $installationType = (string) ($item->installation_type ?? 'item_only');
+                                        $isInstalled = $installationType === 'with_installation';
+                                        $vehicle = $item->customerVehicle;
+                                        $vehicleLabel = '-';
+
+                                        if ($vehicle) {
+                                            $vehicleLabel = trim((string) $vehicle->car_plate);
+                                            if (!empty($vehicle->vehicle_name)) {
+                                                $vehicleLabel .= ' / ' . $vehicle->vehicle_name;
+                                            }
                                         }
                                     @endphp
 
@@ -196,6 +210,14 @@
 
                                         <td class="align-middle">
                                             {{ $qty }}
+                                        </td>
+
+                                        <td class="align-middle">
+                                            {{ $isInstalled ? 'With Installation' : 'Item Only' }}
+                                        </td>
+
+                                        <td class="align-middle">
+                                            {{ $isInstalled ? $vehicleLabel : '-' }}
                                         </td>
 
                                         @if($canViewHpp)

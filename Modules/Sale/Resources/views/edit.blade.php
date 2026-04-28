@@ -100,7 +100,13 @@
                                 </div>
                             </div>
 
-                            <livewire:product-cart-sale :cartInstance="'sale'" :data="$sale" :warehouses="$warehouses"/>
+                            <livewire:product-cart-sale
+                                :cartInstance="'sale'"
+                                :data="$sale"
+                                :customerId="(int) $sale->customer_id"
+                                :enableInstallationMetadata="true"
+                                :warehouses="$warehouses"
+                            />
 
                             <div class="form-row">
                                 <div class="col-lg-4">
@@ -154,6 +160,12 @@
     <script src="{{ asset('js/jquery-mask-money.js') }}"></script>
     <script>
         $(document).ready(function () {
+            function notifySaleCustomerChanged() {
+                if (window.Livewire && typeof window.Livewire.emit === 'function') {
+                    window.Livewire.emit('saleCustomerChanged', $('#customer_id').val() || '');
+                }
+            }
+
             $('#paid_amount').maskMoney({
                 prefix:'{{ settings()->currency->symbol }}',
                 thousands:'{{ settings()->currency->thousand_separator }}',
@@ -163,6 +175,10 @@
             });
 
             $('#paid_amount').maskMoney('mask');
+
+            document.addEventListener('livewire:load', notifySaleCustomerChanged);
+            $('#customer_id').on('change', notifySaleCustomerChanged);
+            notifySaleCustomerChanged();
 
             $('#sale-form').submit(function () {
                 var paid_amount = $('#paid_amount').maskMoney('destroy')[0];

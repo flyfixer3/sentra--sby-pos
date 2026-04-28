@@ -5,13 +5,14 @@ namespace App\Http\Livewire;
 use App\Support\BranchContext;
 use Gloudemans\Shoppingcart\Facades\Cart;
 use Livewire\Component;
+use Modules\People\Entities\CustomerVehicle;
 use Modules\Product\Entities\Warehouse;
 use Modules\Mutation\Entities\Mutation;
 use Modules\Product\Services\HppService;
 
 class ProductCartSale extends Component
 {
-    public $listeners = ['productSelected', 'discountModalRefresh'];
+    public $listeners = ['productSelected', 'discountModalRefresh', 'saleCustomerChanged' => 'setCustomerId'];
 
     public $cart_instance;
     public $global_discount;
@@ -32,6 +33,11 @@ class ProductCartSale extends Component
     public $discount_type;
     public $item_discount;
     public $item_cost_konsyinasi;
+    public $installation_type;
+    public $customer_vehicle_id;
+    public $customer_id;
+    public $customer_vehicles = [];
+    public $enable_installation_metadata = false;
 
     public $so_dp_total = 0;
     public $so_dp_allocated = 0;
@@ -39,9 +45,11 @@ class ProductCartSale extends Component
 
     public $data;
 
-    public function mount($cartInstance, $data = null)
+    public function mount($cartInstance, $data = null, $customerId = null, $enableInstallationMetadata = false)
     {
         $this->cart_instance = $cartInstance;
+        $this->customer_id = (int) ($customerId ?? data_get($data, 'customer_id', 0));
+        $this->enable_installation_metadata = (bool) $enableInstallationMetadata;
 
         // default init (biar aman di semua scenario)
         $this->global_discount = 0;
@@ -57,6 +65,9 @@ class ProductCartSale extends Component
         $this->discount_type = [];
         $this->item_discount = [];
         $this->item_cost_konsyinasi = [];
+        $this->installation_type = [];
+        $this->customer_vehicle_id = [];
+        $this->loadCustomerVehicles();
 
         if (!empty($data)) {
             $this->data = $data;
@@ -93,6 +104,10 @@ class ProductCartSale extends Component
 
                 $this->discount_type[$lineKey] = (string) ($cart_item->options->product_discount_type ?? 'fixed');
                 $this->item_cost_konsyinasi[$lineKey] = (float) ($cart_item->options->product_cost ?? 0);
+                $this->installation_type[$lineKey] = $this->normalizeInstallationType($cart_item->options->installation_type ?? 'item_only');
+                $this->customer_vehicle_id[$lineKey] = $this->installation_type[$lineKey] === 'with_installation'
+                    ? (int) ($cart_item->options->customer_vehicle_id ?? 0) ?: null
+                    : null;
 
                 if (($cart_item->options->product_discount_type ?? 'fixed') === 'fixed') {
                     $this->item_discount[$lineKey] = (float) ($cart_item->price ?? 0);
@@ -111,6 +126,7 @@ class ProductCartSale extends Component
 
         // ✅ FIX qty state biar ga blank / ke-override
         $this->syncQuantityDefaults();
+        $this->clearInvalidVehicleSelections();
 
         // ✅ DP info (kalau create invoice from delivery)
         $this->loadSaleOrderDepositInfo();
@@ -246,6 +262,126 @@ class ProductCartSale extends Component
             });
     }
 
+    public function setCustomerId($customerId): void
+    {
+        $this->customer_id = (int) $customerId;
+        $this->loadCustomerVehicles();
+        $this->clearInvalidVehicleSelections();
+        $this->syncInstallationMetadataToCart();
+    }
+
+    public function updatedInstallationType($value, $name): void
+    {
+        $lineKey = (string) $name;
+        $this->installation_type[$lineKey] = $this->normalizeInstallationType($value);
+
+        if ($this->installation_type[$lineKey] !== 'with_installation') {
+            $this->customer_vehicle_id[$lineKey] = null;
+        }
+
+        $this->syncInstallationMetadataToCart($lineKey);
+    }
+
+    public function updatedCustomerVehicleId($value, $name): void
+    {
+        $lineKey = (string) $name;
+        $vehicleId = (int) $value;
+        $this->customer_vehicle_id[$lineKey] = in_array($vehicleId, $this->getVehicleIds(), true) ? $vehicleId : null;
+        $this->syncInstallationMetadataToCart($lineKey);
+    }
+
+    private function normalizeInstallationType($value): string
+    {
+        return (string) $value === 'with_installation' ? 'with_installation' : 'item_only';
+    }
+
+    private function loadCustomerVehicles(): void
+    {
+        if ((int) $this->customer_id <= 0) {
+            $this->customer_vehicles = [];
+            return;
+        }
+
+        $branchId = BranchContext::id();
+
+        $this->customer_vehicles = CustomerVehicle::query()
+            ->where('customer_id', (int) $this->customer_id)
+            ->when($branchId && $branchId !== 'all', function ($query) use ($branchId) {
+                $query->where(function ($q) use ($branchId) {
+                    $q->whereNull('branch_id')->orWhere('branch_id', (int) $branchId);
+                });
+            })
+            ->orderBy('car_plate')
+            ->get()
+            ->map(function ($vehicle) {
+                $label = trim((string) $vehicle->car_plate);
+                $vehicleName = trim((string) ($vehicle->vehicle_name ?? ''));
+
+                if ($vehicleName !== '') {
+                    $label .= ' / ' . $vehicleName;
+                }
+
+                return [
+                    'id' => (int) $vehicle->id,
+                    'label' => $label,
+                ];
+            })
+            ->values()
+            ->toArray();
+    }
+
+    private function getVehicleIds(): array
+    {
+        return collect($this->customer_vehicles)
+            ->pluck('id')
+            ->map(fn ($id) => (int) $id)
+            ->toArray();
+    }
+
+    private function clearInvalidVehicleSelections(): void
+    {
+        $validVehicleIds = $this->getVehicleIds();
+
+        foreach ((array) $this->installation_type as $lineKey => $type) {
+            $lineKey = (string) $lineKey;
+            $type = $this->normalizeInstallationType($type);
+            $this->installation_type[$lineKey] = $type;
+
+            if ($type !== 'with_installation') {
+                $this->customer_vehicle_id[$lineKey] = null;
+                continue;
+            }
+
+            $vehicleId = (int) ($this->customer_vehicle_id[$lineKey] ?? 0);
+            if ($vehicleId <= 0 || !in_array($vehicleId, $validVehicleIds, true)) {
+                $this->customer_vehicle_id[$lineKey] = null;
+            }
+        }
+    }
+
+    private function syncInstallationMetadataToCart(?string $onlyLineKey = null): void
+    {
+        foreach (Cart::instance($this->cart_instance)->content() as $row) {
+            $lineKey = $this->getLineKey($row);
+            if ($onlyLineKey !== null && $lineKey !== $onlyLineKey) {
+                continue;
+            }
+
+            $type = $this->normalizeInstallationType($this->installation_type[$lineKey] ?? $row->options->installation_type ?? 'item_only');
+            $vehicleId = $type === 'with_installation'
+                ? ((int) ($this->customer_vehicle_id[$lineKey] ?? $row->options->customer_vehicle_id ?? 0) ?: null)
+                : null;
+
+            Cart::instance($this->cart_instance)->update($row->rowId, [
+                'options' => array_merge($row->options->toArray(), [
+                    'installation_type' => $type,
+                    'customer_vehicle_id' => $vehicleId,
+                    'line_key' => $lineKey,
+                ]),
+            ]);
+        }
+    }
+
     public function productSelected($result)
     {
         $cart = Cart::instance($this->cart_instance);
@@ -299,6 +435,8 @@ class ProductCartSale extends Component
                 'product_cost'          => (int) ($calc['product_cost'] ?? 0),
                 'unit_price'            => (int) ($calc['unit_price'] ?? 0),
                 'line_key'              => $lineKey,
+                'installation_type'     => 'item_only',
+                'customer_vehicle_id'   => null,
             ]
         ]);
 
@@ -310,6 +448,8 @@ class ProductCartSale extends Component
         $this->discount_type[$lineKey] = 'fixed';
         $this->item_discount[$lineKey] = null;
         $this->item_cost_konsyinasi[$lineKey] = 0;
+        $this->installation_type[$lineKey] = 'item_only';
+        $this->customer_vehicle_id[$lineKey] = null;
 
         // ✅ safety biar state gak blank setelah rerender
         $this->syncQuantityDefaults();
@@ -419,6 +559,10 @@ class ProductCartSale extends Component
         $unitPrice = $cart_item->options->unit_price;
         $productDiscount = $cart_item->options->product_discount;
         $productDiscountType = $cart_item->options->product_discount_type;
+        $installationType = $this->normalizeInstallationType($this->installation_type[$lineKey] ?? $cart_item->options->installation_type ?? 'item_only');
+        $customerVehicleId = $installationType === 'with_installation'
+            ? ((int) ($this->customer_vehicle_id[$lineKey] ?? $cart_item->options->customer_vehicle_id ?? 0) ?: null)
+            : null;
         $invoiceSource = $cart_item->options->invoice_source ?? null;
         $deliveredQty = (int) ($cart_item->options->delivered_qty ?? 0);
         $alreadyInvoicedQty = (int) ($cart_item->options->already_invoiced_qty ?? 0);
@@ -482,6 +626,8 @@ class ProductCartSale extends Component
                 'product_discount'      => $productDiscount,
                 'product_discount_type' => $productDiscountType,
                 'line_key'              => $lineKey,
+                'installation_type'     => $installationType,
+                'customer_vehicle_id'   => $customerVehicleId,
             ]
         ]);
 
@@ -516,10 +662,24 @@ class ProductCartSale extends Component
             $quantity = (int) ($row['quantity'] ?? 0);
             $lineKey = $lineKey !== '' ? $lineKey : $this->getLineKey($cartRow);
             $this->quantity[$lineKey] = $quantity > 0 ? $quantity : 1;
+
+            if (array_key_exists('installation_type', $row)) {
+                $this->installation_type[$lineKey] = $this->normalizeInstallationType($row['installation_type'] ?? 'item_only');
+            }
+
+            if (($this->installation_type[$lineKey] ?? 'item_only') === 'with_installation') {
+                $vehicleId = (int) ($row['customer_vehicle_id'] ?? 0);
+                $this->customer_vehicle_id[$lineKey] = $vehicleId > 0 ? $vehicleId : null;
+            } else {
+                $this->customer_vehicle_id[$lineKey] = null;
+            }
+
             $this->updateQuantity($cartRow->rowId, $productId, $lineKey);
         }
 
         $this->syncQuantityDefaults();
+        $this->clearInvalidVehicleSelections();
+        $this->syncInstallationMetadataToCart();
     }
 
     public function updatedDiscountType($value, $name)
@@ -644,6 +804,10 @@ class ProductCartSale extends Component
         }
 
         $subTotal = (float) (($cart_item->price ?? 0) * ($cart_item->qty ?? 0));
+        $installationType = $this->normalizeInstallationType($this->installation_type[$lineKey] ?? $cart_item->options->installation_type ?? 'item_only');
+        $customerVehicleId = $installationType === 'with_installation'
+            ? ((int) ($this->customer_vehicle_id[$lineKey] ?? $cart_item->options->customer_vehicle_id ?? 0) ?: null)
+            : null;
 
         Cart::instance($this->cart_instance)->update($row_id, ['options' => [
             'sub_total'             => $subTotal,
@@ -666,6 +830,8 @@ class ProductCartSale extends Component
             'product_discount'      => (float) $discount_amount,
             'product_discount_type' => $this->discount_type[$lineKey] ?? 'fixed',
             'line_key'              => $lineKey,
+            'installation_type'     => $installationType,
+            'customer_vehicle_id'   => $customerVehicleId,
         ]]);
 
         $this->check_quantity[$lineKey] = (int) $stock;
@@ -750,6 +916,18 @@ class ProductCartSale extends Component
 
             if (!isset($this->item_cost_konsyinasi[$lineKey])) {
                 $this->item_cost_konsyinasi[$lineKey] = (float) ($row->options->product_cost ?? 0);
+            }
+
+            if (!isset($this->installation_type[$lineKey]) || !$this->installation_type[$lineKey]) {
+                $this->installation_type[$lineKey] = $this->normalizeInstallationType($row->options->installation_type ?? 'item_only');
+            }
+
+            if (($this->installation_type[$lineKey] ?? 'item_only') === 'with_installation') {
+                if (!isset($this->customer_vehicle_id[$lineKey])) {
+                    $this->customer_vehicle_id[$lineKey] = (int) ($row->options->customer_vehicle_id ?? 0) ?: null;
+                }
+            } else {
+                $this->customer_vehicle_id[$lineKey] = null;
             }
         }
     }
