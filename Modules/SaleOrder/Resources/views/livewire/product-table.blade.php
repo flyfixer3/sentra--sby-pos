@@ -36,7 +36,7 @@
                     $qty = (int)($row['quantity'] ?? 1);
                     $price = (int)($row['price'] ?? 0);
                     $orig = (int)($row['original_price'] ?? 0);
-                    $unit = max($orig, $price);
+                    $unit = $orig > 0 ? $orig : $price;
                     $discountType = (string)($row['product_discount_type'] ?? 'fixed') === 'percentage' ? 'percentage' : 'fixed';
                     $itemDiscount = max(0, $unit - $price);
                     $discountValue = $row['discount_value'] ?? ($discountType === 'percentage' ? 0 : $itemDiscount);

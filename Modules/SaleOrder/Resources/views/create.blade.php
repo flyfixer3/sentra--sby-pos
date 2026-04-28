@@ -425,6 +425,49 @@
         return rows;
     }
 
+    function soFinalizeRowInputsBeforeSubmit(form) {
+        if (!form) return;
+
+        form.querySelectorAll('input[name^="items"][name$="[product_id]"]').forEach((pidInput) => {
+            const name = pidInput.getAttribute('name') || '';
+            const idxMatch = name.match(/items\[(\d+)\]\[product_id\]/);
+            if (!idxMatch) return;
+
+            const idx = idxMatch[1];
+            const getField = (field) => form.querySelector(`[name="items[${idx}][${field}]"]`);
+
+            const qtyInput = getField('quantity');
+            const priceInput = getField('price');
+            const originalInput = getField('original_price');
+            const unitInput = getField('unit_price');
+            const discountInput = getField('product_discount_amount');
+            const discountValueInput = getField('discount_value');
+            const discountTypeInput = getField('product_discount_type');
+            const subTotalInput = getField('sub_total');
+
+            const qty = Math.max(1, soParseInt(qtyInput?.value));
+            const price = Math.max(0, soParseInt(priceInput?.value));
+            const original = Math.max(0, soParseInt(originalInput?.value || unitInput?.value || price));
+            const unit = original > 0 ? original : price;
+            const discountAmount = Math.max(0, unit - price);
+            const subTotal = qty * price;
+
+            if (qtyInput) qtyInput.value = String(qty);
+            if (priceInput) priceInput.value = String(price);
+            if (originalInput) originalInput.value = String(unit);
+            if (unitInput) unitInput.value = String(unit);
+            if (discountInput) discountInput.value = String(discountAmount);
+            if (subTotalInput) subTotalInput.value = String(subTotal);
+
+            if (discountValueInput) {
+                const discountType = discountTypeInput?.value === 'percentage' ? 'percentage' : 'fixed';
+                discountValueInput.value = discountType === 'percentage' && unit > 0
+                    ? soToFixed2((discountAmount / unit) * 100)
+                    : String(discountAmount);
+            }
+        });
+    }
+
     function soComputeSubtotalSell(rows) {
         return rows.reduce((sum, r) => sum + (r.qty * r.price), 0);
     }
@@ -672,6 +715,8 @@
 
     function soPrepareBeforeSubmit(form) {
         if (!form) return true;
+        soFinalizeRowInputsBeforeSubmit(form);
+        soRecalc();
         if (form.dataset.soReadyToSubmit === '1') return true;
         if (form.dataset.soSyncing === '1') return false;
 
@@ -680,22 +725,7 @@
             return true;
         }
 
-        form.dataset.soSyncing = '1';
-        soSetSubmitState(form, true);
-        soFlushCartFieldChanges(form);
-
-        window.setTimeout(() => {
-            const component = window.Livewire.find(componentId);
-            if (!component) {
-                form.dataset.soSyncing = '0';
-                soSetSubmitState(form, false);
-                return;
-            }
-
-            component.call('syncAllRowsBeforeSubmit');
-        }, 0);
-
-        return false;
+        return true;
     }
 
     document.addEventListener('DOMContentLoaded', function () {

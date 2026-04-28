@@ -90,16 +90,19 @@ class SaleOrderController extends Controller
 
             $requestedUnitPrice = array_key_exists('original_price', $row) && $row['original_price'] !== null
                 ? max(0, (int) $row['original_price'])
-                : $masterUnitPrice;
+                : max(0, (int) ($row['unit_price'] ?? $masterUnitPrice));
 
-            $netPrice = array_key_exists('price', $row) && $row['price'] !== null
-                ? max(0, (int) $row['price'])
-                : $requestedUnitPrice;
-
-            $unitPrice = max($requestedUnitPrice, $netPrice, $masterUnitPrice);
+            $unitPrice = $requestedUnitPrice > 0 ? $requestedUnitPrice : $masterUnitPrice;
             $discountType = (string) ($row['product_discount_type'] ?? 'fixed') === 'percentage'
                 ? 'percentage'
                 : 'fixed';
+
+            if (array_key_exists('price', $row) && $row['price'] !== null && $row['price'] !== '') {
+                $netPrice = max(0, (int) $row['price']);
+            } else {
+                $submittedDiscount = max(0, (int) ($row['product_discount_amount'] ?? $row['discount_value'] ?? 0));
+                $netPrice = max(0, $unitPrice - min($submittedDiscount, $unitPrice));
+            }
 
             if ($discountType === 'percentage') {
                 $discountValue = array_key_exists('discount_value', $row)
@@ -109,22 +112,9 @@ class SaleOrderController extends Controller
                 if ($discountValue < 0 || $discountValue > 100) {
                     throw new \RuntimeException('Item discount percentage cannot exceed 100%.');
                 }
-
-                $itemDiscountAmount = (int) round($unitPrice * ($discountValue / 100));
-                $netPrice = max(0, $unitPrice - $itemDiscountAmount);
-            } else {
-                $nominalDiscount = array_key_exists('discount_value', $row) && $row['discount_value'] !== null
-                    ? max(0, (int) $row['discount_value'])
-                    : max(0, $unitPrice - $netPrice);
-
-                if ($nominalDiscount > $unitPrice) {
-                    throw new \RuntimeException('Item discount amount cannot be greater than unit price.');
-                }
-
-                $itemDiscountAmount = $nominalDiscount;
-                $netPrice = max(0, $unitPrice - $itemDiscountAmount);
             }
 
+            $itemDiscountAmount = max(0, $unitPrice - $netPrice);
             $subTotal = (int) ($qty * $netPrice);
             [$installationType, $customerVehicleId] = $this->resolveSaleOrderItemInstallationMetadata(
                 $row,

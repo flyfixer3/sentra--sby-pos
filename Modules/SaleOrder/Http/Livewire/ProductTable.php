@@ -204,17 +204,19 @@ class ProductTable extends Component
             return;
         }
 
-        $unitPrice = max(0, (int) ($row['original_price'] ?? $row['price'] ?? 0));
+        $unitPrice = max(0, (int) ($row['original_price'] ?? 0));
+        $finalPrice = max(0, (int) ($row['price'] ?? $unitPrice));
+        $discountAmount = max(0, $unitPrice - $finalPrice);
 
         $this->items[] = [
             'product_id'             => (int) $row['product_id'],
             'product_name'           => $row['product_name'] ?? null,
             'product_code'           => $row['product_code'] ?? null,
             'quantity'               => 1,
-            'price'                  => $unitPrice,
+            'price'                  => $finalPrice,
             'original_price'         => $unitPrice,
             'product_discount_type'  => 'fixed',
-            'discount_value'         => 0,
+            'discount_value'         => $discountAmount,
             'installation_type'      => 'item_only',
             'customer_vehicle_id'    => null,
         ];
@@ -296,9 +298,10 @@ class ProductTable extends Component
             return;
         }
 
-        // Kalau user ubah langsung Net Price, sinkronkan discount_value sesuai mode aktif
+        // Kalau user ubah langsung Net Price, sinkronkan discount_value sesuai mode aktif.
+        // Higher-than-master final prices are allowed and simply mean zero item discount.
         if ($field === 'price') {
-            $price = max(0, min($unitPrice, $price));
+            $price = max(0, $price);
             $this->items[$index]['price'] = $price;
 
             if ($type === 'percentage') {
@@ -317,12 +320,13 @@ class ProductTable extends Component
         if ($field === 'product_discount_type') {
             if ($type === 'percentage') {
                 // Dari fixed/net price -> ubah jadi discount %
-                $currentNetPrice = max(0, min($unitPrice, $price));
+                $currentNetPrice = max(0, $price);
                 $discountAmount = max(0, $unitPrice - $currentNetPrice);
 
                 $this->items[$index]['discount_value'] = $unitPrice > 0
                     ? round(($discountAmount / $unitPrice) * 100, 2)
                     : 0;
+                return;
             } else {
                 // Dari percentage -> ubah jadi nominal discount (Rp)
                 $currentPercentage = (float)($this->items[$index]['discount_value'] ?? 0);
@@ -330,6 +334,8 @@ class ProductTable extends Component
                 $discountAmount = (int) round($unitPrice * ($currentPercentage / 100));
 
                 $this->items[$index]['discount_value'] = max(0, $discountAmount);
+                $this->items[$index]['price'] = max(0, $unitPrice - $discountAmount);
+                return;
             }
         }
 
@@ -337,6 +343,12 @@ class ProductTable extends Component
             // IMPORTANT:
             // jika pilih %, yang diinput adalah persen DISCOUNT
             // contoh: harga akhir 70% => discount = 30%
+            if ($price > $unitPrice) {
+                $this->items[$index]['discount_value'] = 0;
+                $this->items[$index]['price'] = $price;
+                return;
+            }
+
             $percentage = (float)($this->items[$index]['discount_value'] ?? 0);
             $percentage = max(0, min(100, $percentage));
 
@@ -345,6 +357,13 @@ class ProductTable extends Component
 
             $this->items[$index]['discount_value'] = $percentage;
             $this->items[$index]['price'] = $netPrice;
+            return;
+        }
+
+        if ($field !== 'discount_value') {
+            $price = max(0, $price);
+            $this->items[$index]['price'] = $price;
+            $this->items[$index]['discount_value'] = max(0, $unitPrice - $price);
             return;
         }
 
