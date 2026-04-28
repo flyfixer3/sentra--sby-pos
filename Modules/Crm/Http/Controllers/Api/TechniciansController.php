@@ -7,6 +7,7 @@ use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
+use Modules\Crm\Entities\CrmNotification;
 use Modules\Crm\Entities\ServiceOrder;
 use Modules\Crm\Entities\ServiceOrderTechnician;
 
@@ -45,13 +46,19 @@ class TechniciansController extends Controller
     {
         abort_if(Gate::denies('assign_crm_service_orders'), 403);
         $branchId = $this->requireBranch();
-        $so = ServiceOrder::findOrFail($id);
+        $so = ServiceOrder::with('lead')->findOrFail($id);
 
         $data = $request->validate([
             'user_ids' => ['required', 'array', 'min:1'],
             'user_ids.*' => ['required', 'integer', 'exists:users,id'],
             'roles' => ['nullable', 'array'],
         ]);
+
+        // Track which user IDs were already assigned (to notify only newcomers)
+        $existingIds = ServiceOrderTechnician::where('service_order_id', $so->id)
+            ->pluck('user_id')
+            ->map(fn($v) => (int) $v)
+            ->toArray();
 
         DB::transaction(function () use ($data, $branchId, $so) {
             foreach ($data['user_ids'] as $uid) {
@@ -70,6 +77,29 @@ class TechniciansController extends Controller
                 );
             }
         });
+
+        // Notify newly assigned technicians (not the leader themselves)
+        $lead = $so->lead;
+        $newIds = array_diff(array_map('intval', $data['user_ids']), $existingIds);
+        $spkLabel = $so->spk_number ?? "PK #{$so->id}";
+        $customerLabel = $lead?->contact_name ?? '';
+
+        foreach ($newIds as $uid) {
+            if ((int) $uid === (int) auth()->id()) continue;
+            CrmNotification::create([
+                'branch_id' => (int) $so->branch_id,
+                'user_id'   => (int) $uid,
+                'lead_id'   => $so->lead_id ? (int) $so->lead_id : null,
+                'type'      => 'service_order_assigned',
+                'title'     => 'Perintah Kerja baru ditugaskan',
+                'message'   => trim("{$spkLabel}" . ($customerLabel ? " · {$customerLabel}" : '')),
+                'data'      => [
+                    'service_order_id' => (int) $so->id,
+                    'lead_id'          => $so->lead_id ? (int) $so->lead_id : null,
+                    'spk_number'       => $so->spk_number,
+                ],
+            ]);
+        }
 
         return response()->json(['message' => 'Technicians assigned']);
     }
