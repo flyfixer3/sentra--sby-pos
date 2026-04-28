@@ -75,6 +75,11 @@ class QuotationController extends Controller
         return in_array($status, ['pending', 'completed'], true) ? $status : 'pending';
     }
 
+    private function isPendingQuotation($quotation): bool
+    {
+        return $this->normalizeQuotationStatus($quotation->status ?? 'pending') === 'pending';
+    }
+
     private function resolveQuotationDetailInstallationMetadata($cartItem, int $customerId, int $branchId): array
     {
         $installationType = $this->normalizeQuotationDetailInstallationType($cartItem->options->installation_type ?? 'item_only');
@@ -251,6 +256,11 @@ class QuotationController extends Controller
     public function edit(Quotation $quotation) {
         abort_if(Gate::denies('edit_quotations'), 403);
 
+        if (!$this->isPendingQuotation($quotation)) {
+            toast('Only pending quotations can be edited.', 'error');
+            return redirect()->route('quotations.show', $quotation->id);
+        }
+
         $quotation_details = $quotation->quotationDetails;
 
         $branchId = BranchContext::id();
@@ -319,9 +329,24 @@ class QuotationController extends Controller
     {
         abort_if(Gate::denies('edit_quotations'), 403);
 
+        if (!$this->isPendingQuotation($quotation)) {
+            toast('Only pending quotations can be edited.', 'error');
+            return redirect()->route('quotations.show', $quotation->id);
+        }
+
         $branchId = BranchContext::id(); // wajib ada (karena route write sudah pakai branch.selected)
 
         DB::transaction(function () use ($request, $quotation, $branchId) {
+            $quotation = Quotation::query()
+                ->lockForUpdate()
+                ->with('quotationDetails')
+                ->findOrFail((int) $quotation->id);
+
+            if (!$this->isPendingQuotation($quotation)) {
+                throw ValidationException::withMessages([
+                    'status' => 'Only pending quotations can be edited.',
+                ]);
+            }
 
             // ✅ validasi customer harus global atau branch aktif
             $customer = Customer::query()
@@ -402,6 +427,11 @@ class QuotationController extends Controller
 
         try {
             $quotation = Quotation::query()->findOrFail($id);
+
+            if (!$this->isPendingQuotation($quotation)) {
+                toast('Only pending quotations can be deleted.', 'error');
+                return redirect()->back();
+            }
 
             // Block kalau masih punya turunan aktif (SO/SD yang belum soft delete)
             if (QuotationStatusService::hasActiveDescendant((int) $quotation->id)) {
