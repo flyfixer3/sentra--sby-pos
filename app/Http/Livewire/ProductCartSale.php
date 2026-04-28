@@ -6,6 +6,7 @@ use App\Support\BranchContext;
 use Gloudemans\Shoppingcart\Facades\Cart;
 use Illuminate\Support\Str;
 use Livewire\Component;
+use Modules\People\Entities\Customer;
 use Modules\People\Entities\CustomerVehicle;
 use Modules\Product\Entities\Warehouse;
 use Modules\Mutation\Entities\Mutation;
@@ -309,12 +310,23 @@ class ProductCartSale extends Component
         }
 
         $branchId = BranchContext::id();
+        $customerBranchId = Customer::query()
+            ->where('id', (int) $this->customer_id)
+            ->value('branch_id');
+        $customerBranchId = !is_null($customerBranchId) ? (int) $customerBranchId : null;
 
         $this->customer_vehicles = CustomerVehicle::query()
             ->where('customer_id', (int) $this->customer_id)
-            ->when($branchId && $branchId !== 'all', function ($query) use ($branchId) {
+            ->when(!is_null($customerBranchId), function ($query) use ($customerBranchId) {
+                $query->where(function ($q) use ($customerBranchId) {
+                    $q->whereNull('branch_id')
+                        ->orWhere('branch_id', (int) $customerBranchId);
+                });
+            })
+            ->when(is_null($customerBranchId) && !is_null($branchId), function ($query) use ($branchId) {
                 $query->where(function ($q) use ($branchId) {
-                    $q->whereNull('branch_id')->orWhere('branch_id', (int) $branchId);
+                    $q->whereNull('branch_id')
+                        ->orWhere('branch_id', (int) $branchId);
                 });
             })
             ->orderBy('car_plate')

@@ -28,7 +28,17 @@ class CustomersDataTable extends DataTable
     }
 
     public function query(Customer $model) {
-        return $model->newQuery();
+        $query = $model->newQuery();
+
+        $active = session('active_branch');
+        if (is_numeric($active)) {
+            $query->where(function ($q) use ($active) {
+                $q->whereNull('branch_id')
+                    ->orWhere('branch_id', (int) $active);
+            });
+        }
+
+        return $query;
     }
 
     public function html() {
