@@ -106,6 +106,7 @@ class ProductCart extends Component
                 'product_discount_type' => 'fixed',
                 'sub_total'             => $this->calculate($product)['sub_total'],
                 'code'                  => $product['product_code'],
+                'product_code'          => $product['product_code'],
                 'stock'                 => $total_stock,
                 'unit'                  => $product['product_unit'],
                 'product_tax'           => $this->calculate($product)['product_tax'],
@@ -163,6 +164,7 @@ class ProductCart extends Component
             'options' => [
                 'sub_total'             => $cart_item->price * $cart_item->qty,
                 'code'                  => $options['code'] ?? null,
+                'product_code'          => $options['product_code'] ?? $options['code'] ?? null,
                 'stock'                 => $options['stock'] ?? 0,
                 'unit'                  => $options['unit'] ?? null,
                 'product_tax'           => $options['product_tax'] ?? 0,
@@ -276,6 +278,7 @@ class ProductCart extends Component
         Cart::instance($this->cart_instance)->update($row_id, ['options' => [
             'sub_total'             => $freshItem->price * $freshItem->qty,
             'code'                  => $freshItem->options->code,
+            'product_code'          => $freshItem->options->product_code ?? $freshItem->options->code,
             'stock'                 => $freshItem->options->stock,
             'unit'                  => $freshItem->options->unit,
             'product_tax'           => $freshItem->options->product_tax,

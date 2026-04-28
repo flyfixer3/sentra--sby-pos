@@ -970,7 +970,6 @@ class SaleController extends Controller
 
                 $saleData = [
                     'date' => $request->date,
-                    'license_number' => (string) ($request->car_number_plate ?? ''),
                     'sale_from' => $request->sale_from,
                     'customer_id' => $customer->id,
                     'customer_name' => $customer->customer_name,
@@ -1367,7 +1366,7 @@ class SaleController extends Controller
 
         $branchId = $this->effectiveSaleBranchId($sale);
 
-        $sale->load(['creator', 'updater', 'saleDetails', 'branch']);
+        $sale->load(['creator', 'updater', 'saleDetails.customerVehicle', 'branch']);
         $branch = $sale->branch ?: ($branchId ? Branch::withoutGlobalScopes()->find((int) $branchId) : null);
 
         $customer = Customer::query()

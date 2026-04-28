@@ -283,11 +283,27 @@
     </thead>
     <tbody>
     @foreach($sale->saleDetails as $item)
+        @php
+            $installationType = (string) ($item->installation_type ?? 'item_only');
+            $isInstalled = $installationType === 'with_installation';
+            $vehicle = $item->customerVehicle ?? null;
+            $vehicleLabel = '-';
+
+            if ($vehicle) {
+                $vehicleLabel = trim((string) $vehicle->car_plate);
+                if (!empty($vehicle->vehicle_name)) {
+                    $vehicleLabel .= ' / ' . $vehicle->vehicle_name;
+                }
+            }
+        @endphp
         <tr>
             <td>
                 <div class="fw-semibold">{{ $item->product_name }}</div>
                 @if(!empty($item->product_code))
                     <span class="code-pill">{{ $item->product_code }}</span>
+                @endif
+                @if($isInstalled)
+                    <div class="muted" style="margin-top:4px;">Vehicle: {{ $vehicleLabel }}</div>
                 @endif
             </td>
             <td>{{ format_currency($item->unit_price) }}</td>

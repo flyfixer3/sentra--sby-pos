@@ -23,6 +23,28 @@ use Modules\Sale\Entities\SaleDetails;
 
 class QuotationController extends Controller
 {
+    private function resolveQuotationProductCode($cartItem): string
+    {
+        $productCode = trim((string) ($cartItem->options->product_code ?? ''));
+
+        if ($productCode === '') {
+            $productCode = trim((string) ($cartItem->options->code ?? ''));
+        }
+
+        if ($productCode === '') {
+            $productCode = trim((string) (Product::query()
+                ->where('id', (int) $cartItem->id)
+                ->value('product_code') ?? ''));
+        }
+
+        if ($productCode === '') {
+            throw \Illuminate\Validation\ValidationException::withMessages([
+                'product_code' => 'Product code is missing for product: ' . (string) ($cartItem->name ?? 'Unknown Product') . '. Please re-add the product.',
+            ]);
+        }
+
+        return $productCode;
+    }
 
     public function index(QuotationsDataTable $dataTable) {
         abort_if(Gate::denies('access_quotations'), 403);
@@ -87,11 +109,13 @@ class QuotationController extends Controller
             ]);
 
             foreach (Cart::instance('quotation')->content() as $cart_item) {
+                $productCode = $this->resolveQuotationProductCode($cart_item);
+
                 QuotationDetails::create([
                     'quotation_id' => $quotation->id,
                     'product_id' => $cart_item->id,
                     'product_name' => $cart_item->name,
-                    'product_code' => $cart_item->options->code,
+                    'product_code' => $productCode,
                     'quantity' => $cart_item->qty,
                     'price' => (int) $cart_item->price,
                     'unit_price' => (int) $cart_item->options->unit_price,
@@ -148,6 +172,7 @@ class QuotationController extends Controller
                     'product_discount_type' => $quotation_detail->product_discount_type,
                     'sub_total'   => $quotation_detail->sub_total,
                     'code'        => $quotation_detail->product_code,
+                    'product_code' => $quotation_detail->product_code,
                     'stock'       => Product::findOrFail($quotation_detail->product_id)->product_quantity,
                     'product_tax' => $quotation_detail->product_tax_amount,
                     'unit_price'  => $quotation_detail->unit_price
@@ -220,11 +245,13 @@ class QuotationController extends Controller
 
             // insert details baru dari cart
             foreach (Cart::instance('quotation')->content() as $cart_item) {
+                $productCode = $this->resolveQuotationProductCode($cart_item);
+
                 QuotationDetails::create([
                     'quotation_id'             => $quotation->id,
                     'product_id'               => $cart_item->id,
                     'product_name'             => $cart_item->name,
-                    'product_code'             => $cart_item->options->code,
+                    'product_code'             => $productCode,
                     'quantity'                 => (int) $cart_item->qty,
                     'price'                    => (int) $cart_item->price,
                     'unit_price'               => (int) $cart_item->options->unit_price,

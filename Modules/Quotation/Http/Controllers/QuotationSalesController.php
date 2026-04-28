@@ -64,6 +64,7 @@ class QuotationSalesController extends Controller
                     'product_discount_type' => $quotation_detail->product_discount_type,
                     'sub_total'   => $quotation_detail->sub_total,
                     'code'        => $quotation_detail->product_code,
+                    'product_code' => $quotation_detail->product_code,
                     'unit'        => $product->product_unit,
                     'stock'       =>$product->product_quantity,
                     'warehouse_id'=> 99,
