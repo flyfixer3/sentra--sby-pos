@@ -38,8 +38,10 @@ Route::group(['middleware' => 'auth'], function () {
     Route::get('quotations/{quotation}', 'QuotationController@show')->name('quotations.show');
 
     Route::get('/quotations/pdf/{id}', function ($id) {
-        $quotation = Quotation::with(['quotationDetails.customerVehicle'])->findOrFail($id);
-        $customer = Customer::findOrFail($quotation->customer_id);
+        $quotation = Quotation::withoutGlobalScopes()
+            ->with(['quotationDetails.customerVehicle'])
+            ->findOrFail($id);
+        $customer = Customer::withoutGlobalScopes()->findOrFail($quotation->customer_id);
         $branch = !empty($quotation->branch_id)
             ? Branch::withoutGlobalScopes()->find((int) $quotation->branch_id)
             : null;

@@ -8,6 +8,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Support\Carbon;
+use Modules\Branch\Entities\Branch;
 use Modules\People\Entities\Customer;
 
 class Quotation extends BaseModel
@@ -22,6 +23,10 @@ class Quotation extends BaseModel
 
     public function customer() {
         return $this->belongsTo(Customer::class, 'customer_id', 'id');
+    }
+
+    public function branch() {
+        return $this->belongsTo(Branch::class, 'branch_id', 'id');
     }
 
     public static function boot() {

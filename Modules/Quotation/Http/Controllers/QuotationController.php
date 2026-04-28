@@ -10,6 +10,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
 use Modules\People\Entities\Customer;
 use Modules\People\Entities\CustomerVehicle;
+use Modules\Branch\Entities\Branch;
 use Modules\Mutation\Entities\Mutation;
 use Modules\Product\Entities\Product;
 use Modules\Product\Entities\Warehouse;
@@ -237,19 +238,31 @@ class QuotationController extends Controller
         return redirect()->route('quotations.index');
     }
 
-    public function show(Quotation $quotation) {
+    public function show($quotation) {
         abort_if(Gate::denies('show_quotations'), 403);
 
-        $quotation->loadMissing(['creator', 'updater', 'quotationDetails.customerVehicle']);
+        $quotation = Quotation::withoutGlobalScopes()
+            ->with(['creator', 'updater', 'branch', 'quotationDetails.customerVehicle'])
+            ->findOrFail((int) $quotation);
 
-        $branchId = BranchContext::id();
+        $quotation->loadMissing(['creator', 'updater', 'branch', 'quotationDetails.customerVehicle']);
 
-        $customer = Customer::query()
-        ->where('id', $quotation->customer_id)
-        ->where(fn($q)=>$q->whereNull('branch_id')->orWhere('branch_id',$branchId))
-        ->firstOrFail();
+        $branchId = $quotation->branch_id ?: BranchContext::id();
 
-        return view('quotation::show', compact('quotation', 'customer'));
+        $customer = Customer::withoutGlobalScopes()
+            ->where('id', $quotation->customer_id)
+            ->when(is_numeric($branchId), function ($query) use ($branchId) {
+                $query->where(function ($q) use ($branchId) {
+                    $q->whereNull('branch_id')->orWhere('branch_id', (int) $branchId);
+                });
+            })
+            ->firstOrFail();
+
+        $branch = !empty($quotation->branch_id)
+            ? Branch::withoutGlobalScopes()->find((int) $quotation->branch_id)
+            : null;
+
+        return view('quotation::show', compact('quotation', 'customer', 'branch'));
     }
 
 

@@ -12,7 +12,13 @@
 
 @section('content')
 @php
-    $branchId = \App\Support\BranchContext::id();
+    $settings = settings();
+    $documentBranch = $branch ?? $quotation->branch ?? null;
+    $branchId = $quotation->branch_id ?? \App\Support\BranchContext::id();
+    $companyName = $documentBranch->name ?? $settings->company_name ?? 'Company';
+    $companyAddress = $documentBranch->address ?? $settings->company_address ?? '-';
+    $companyEmail = $documentBranch->email ?? $settings->company_email ?? '-';
+    $companyPhone = $documentBranch->phone ?? $settings->company_phone ?? '-';
     $createdByName = optional($quotation->creator)->name ?? optional($quotation->creator)->username ?? '-';
     $updatedByName = optional($quotation->updater)->name ?? optional($quotation->updater)->username ?? '-';
 
@@ -140,11 +146,11 @@
                         <span class="badge bg-light text-dark border"><i class="bi bi-building me-1"></i> Info</span>
                     </div>
                     <hr class="my-2">
-                    <div class="fw-bold">{{ settings()->company_name }}</div>
-                    <div class="text-muted small">{{ settings()->company_address }}</div>
+                    <div class="fw-bold">{{ $companyName }}</div>
+                    <div class="text-muted small">{{ $companyAddress }}</div>
                     <div class="small mt-2">
-                        <div>Email: <strong>{{ settings()->company_email }}</strong></div>
-                        <div>Phone: <strong>{{ settings()->company_phone }}</strong></div>
+                        <div>Email: <strong>{{ $companyEmail }}</strong></div>
+                        <div>Phone: <strong>{{ $companyPhone }}</strong></div>
                     </div>
                 </div>
             </div>
