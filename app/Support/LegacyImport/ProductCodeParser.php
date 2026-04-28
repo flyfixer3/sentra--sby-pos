@@ -73,9 +73,7 @@ class ProductCodeParser
     private const FILM_KEYWORDS = [
         'FILM',
         'VKOOL',
-        'VK',
         'SOLAR GARD',
-        'SGP',
     ];
 
     private const MATERIAL_KEYWORDS = [
@@ -106,7 +104,6 @@ class ProductCodeParser
         'CLIP',
         'CAP ',
         'BASE',
-        'MB',
     ];
 
     public static function parse(
@@ -114,12 +111,14 @@ class ProductCodeParser
         ?string $part = null,
         ?string $brand = null,
         ?string $accessorySummary = null,
-        ?string $mobileCode = null
+        ?string $mobileCode = null,
+        ?string $productName = null
     ): array {
         $productCode = strtoupper(trim($productCode));
         $part = strtoupper(trim((string) $part));
         $brand = strtoupper(trim((string) $brand));
         $mobileCode = strtoupper(trim((string) $mobileCode));
+        $productName = strtoupper(trim((string) $productName));
 
         if ($part === '' && Str::contains($productCode, '-')) {
             [$part] = explode('-', $productCode, 2);
@@ -135,7 +134,7 @@ class ProductCodeParser
             }
         }
 
-        $itemType = self::detectItemType($productCode, $part, $mobileCode, $accessorySummary);
+        $itemType = self::detectItemType($productCode, $part, $mobileCode, $accessorySummary, $productName);
         if ($itemType !== 'glass') {
             $brand = '';
         }
@@ -163,34 +162,39 @@ class ProductCodeParser
         string $productCode,
         string $partCode,
         string $mobileCode,
-        ?string $accessorySummary
+        ?string $accessorySummary,
+        string $productName
     ): string {
         $haystacks = array_filter([
             strtoupper(trim($productCode)),
             strtoupper(trim($partCode)),
             strtoupper(trim($mobileCode)),
-            strtoupper(trim((string) $accessorySummary)),
+            strtoupper(trim($productName)),
         ]);
         $combined = implode(' ', $haystacks);
+        $isGlassPrefix = in_array($partCode, self::GLASS_PART_CODES, true);
 
-        if (self::containsAny($combined, self::SERVICE_KEYWORDS)) {
+        if (!$isGlassPrefix && self::containsAny($combined, self::SERVICE_KEYWORDS)) {
             return 'service';
         }
 
-        if (self::containsAny($combined, self::FILM_KEYWORDS)) {
+        if (
+            Str::startsWith($productCode, 'FILM')
+            || self::containsAny($productName, self::FILM_KEYWORDS)
+        ) {
             return 'film';
         }
 
-        if (self::containsAny($combined, self::MATERIAL_KEYWORDS)) {
+        if (!$isGlassPrefix && self::containsAny($combined, self::MATERIAL_KEYWORDS)) {
             return 'material';
+        }
+
+        if ($isGlassPrefix) {
+            return 'glass';
         }
 
         if (self::containsAny($combined, self::ACCESSORY_ITEM_KEYWORDS)) {
             return 'accessory';
-        }
-
-        if (in_array($partCode, self::GLASS_PART_CODES, true)) {
-            return 'glass';
         }
 
         if (Str::contains($productCode, '-')) {

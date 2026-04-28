@@ -356,7 +356,7 @@ class ImportLegacyExcelCommand extends Command
                         ? $this->asInt($this->cell($sheet, $profile['current_stock_alert_col'], $row), -1)
                         : -1;
 
-                    $parsed = ProductCodeParser::parse($productCode, $partCode, $brandCode, $accessorySummary, $mobileCode);
+                    $parsed = ProductCodeParser::parse($productCode, $partCode, $brandCode, $accessorySummary, $mobileCode, $productName);
                     $reviewReasons = [];
 
                     $category = $this->resolveCategory($parsed['part_code'], $reviewReasons);
@@ -543,32 +543,34 @@ class ImportLegacyExcelCommand extends Command
                         'warehouse_id' => $warehouse->id,
                     ]);
 
-                    $this->mutationController->applyInOut(
-                        $branch->id,
-                        $warehouse->id,
-                        $product->id,
-                        'In',
-                        $line['qty'],
-                        $purchase->reference,
-                        'LEGACY IMPORT PURCHASE',
-                        $purchase->date,
-                        $rack->id,
-                        'good',
-                        'summary'
-                    );
+                    if ($this->shouldTrackInventory($product)) {
+                        $this->mutationController->applyInOut(
+                            $branch->id,
+                            $warehouse->id,
+                            $product->id,
+                            'In',
+                            $line['qty'],
+                            $purchase->reference,
+                            'LEGACY IMPORT PURCHASE',
+                            $purchase->date,
+                            $rack->id,
+                            'good',
+                            'summary'
+                        );
 
-                    $this->hppService->applyIncoming(
-                        $branch->id,
-                        $product->id,
-                        $line['qty'],
-                        $line['unit_price'],
-                        0,
-                        0,
-                        0,
-                        $purchase->date,
-                        'legacy_purchase_import',
-                        $purchase->id
-                    );
+                        $this->hppService->applyIncoming(
+                            $branch->id,
+                            $product->id,
+                            $line['qty'],
+                            $line['unit_price'],
+                            0,
+                            0,
+                            0,
+                            $purchase->date,
+                            'legacy_purchase_import',
+                            $purchase->id
+                        );
+                    }
                 }
             }
         }
@@ -712,9 +714,14 @@ class ImportLegacyExcelCommand extends Command
                         $latestPurchaseCosts
                     );
 
-                    $this->ensureSufficientStockForLegacySale($branch->id, $warehouse->id, $rack->id, $product, $line['qty'], $sale->date);
+                    $tracksInventory = $this->shouldTrackInventory($product);
+                    if ($tracksInventory) {
+                        $this->ensureSufficientStockForLegacySale($branch->id, $warehouse->id, $rack->id, $product, $line['qty'], $sale->date);
+                    }
 
-                    $hpp = (int) round(max(0.0, $this->hppService->getHppAsOf($branch->id, $product->id, $sale->date)), 0);
+                    $hpp = $tracksInventory
+                        ? (int) round(max(0.0, $this->hppService->getHppAsOf($branch->id, $product->id, $sale->date)), 0)
+                        : 0;
                     $detail = [
                         'sale_id' => $sale->id,
                         'product_id' => $product->id,
@@ -737,19 +744,21 @@ class ImportLegacyExcelCommand extends Command
                     }
                     SaleDetails::create($detail);
 
-                    $this->mutationController->applyInOut(
-                        $branch->id,
-                        $warehouse->id,
-                        $product->id,
-                        'Out',
-                        $line['qty'],
-                        $sale->reference,
-                        'LEGACY IMPORT SALE',
-                        $sale->date,
-                        $rack->id,
-                        'good',
-                        'summary'
-                    );
+                    if ($tracksInventory) {
+                        $this->mutationController->applyInOut(
+                            $branch->id,
+                            $warehouse->id,
+                            $product->id,
+                            'Out',
+                            $line['qty'],
+                            $sale->reference,
+                            'LEGACY IMPORT SALE',
+                            $sale->date,
+                            $rack->id,
+                            'good',
+                            'summary'
+                        );
+                    }
                 }
             }
         }
@@ -776,6 +785,9 @@ class ImportLegacyExcelCommand extends Command
                     $expected = $this->asInt($this->cell($sheet, 9, $row));
                     $product = Product::withoutGlobalScopes()->where('product_code', $productCode)->first();
                     if (!$product) {
+                        continue;
+                    }
+                    if (!$this->shouldTrackInventory($product)) {
                         continue;
                     }
 
@@ -867,7 +879,7 @@ class ImportLegacyExcelCommand extends Command
             return $existing;
         }
 
-        $parsed = ProductCodeParser::parse($productCode);
+        $parsed = ProductCodeParser::parse($productCode, null, null, null, null, $productName);
         $reasons = ['AUTO_CREATED_FROM_TRANSACTION'];
 
         $category = $this->resolveCategory($parsed['part_code'], $reasons);
@@ -946,6 +958,11 @@ class ImportLegacyExcelCommand extends Command
         );
     }
 
+    private function shouldTrackInventory(Product $product): bool
+    {
+        return !in_array((string) $product->item_type, ['service', 'film'], true);
+    }
+
     private function resolveCategory(?string $partCode, array &$reviewReasons): Category
     {
         $partCode = strtoupper(trim((string) $partCode));
@@ -969,6 +986,11 @@ class ImportLegacyExcelCommand extends Command
         $brandCode = strtoupper(trim((string) $brandCode));
         if ($brandCode === '') {
             $reviewReasons[] = 'BRAND_NOT_FOUND';
+            return null;
+        }
+
+        if (!array_key_exists($brandCode, ProductCodeParser::BRAND_NAMES)) {
+            $reviewReasons[] = 'UNKNOWN_GLASS_BRAND';
             return null;
         }
 
@@ -1083,7 +1105,9 @@ class ImportLegacyExcelCommand extends Command
     private function mergeNotes(?string $existing, array $reasons): string
     {
         $existing = trim((string) $existing);
-        $parts = $existing !== '' ? [$existing] : [];
+        $parts = $existing !== ''
+            ? preg_split('/\s*\|\s*/', $existing, -1, PREG_SPLIT_NO_EMPTY)
+            : [];
         foreach ($reasons as $reason) {
             $reason = trim((string) $reason);
             if ($reason !== '' && !in_array($reason, $parts, true)) {
