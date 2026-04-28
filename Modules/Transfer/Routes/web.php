@@ -17,17 +17,21 @@ Route::middleware(['auth'])
         Route::get('/datatable/outgoing', [TransfersIndexController::class, 'outgoingData'])->name('datatable.outgoing');
         Route::get('/datatable/incoming', [TransfersIndexController::class, 'incomingData'])->name('datatable.incoming');
 
-        Route::get('/create', [TransferController::class, 'create'])->name('create');
-        Route::post('/', [TransferController::class, 'store'])->name('store');
+        Route::get('/create', [TransferController::class, 'create'])
+            ->middleware('branch.selected')
+            ->name('create');
+        Route::post('/', [TransferController::class, 'store'])
+            ->middleware('branch.selected')
+            ->name('store');
 
         Route::get('/{transfer}/show', [TransferController::class, 'show'])->name('show');
 
         Route::get('/{transfer}/confirm', [TransferController::class, 'showConfirmationForm'])
             ->name('confirm')
-            ->middleware('can:confirm_transfers');
+            ->middleware(['branch.selected', 'can:confirm_transfers']);
         Route::put('/{transfer}/confirm', [TransferController::class, 'storeConfirmation'])
             ->name('confirm.store')
-            ->middleware('can:confirm_transfers');
+            ->middleware(['branch.selected', 'can:confirm_transfers']);
 
         /**
          * ✅ NEW: prepare print via AJAX
@@ -49,11 +53,13 @@ Route::middleware(['auth'])
             ->middleware('branch.selected')
             ->name('print.pdf');
 
-        Route::delete('/{id}', [TransferController::class, 'destroy'])->name('destroy');
+        Route::delete('/{id}', [TransferController::class, 'destroy'])
+            ->middleware('branch.selected')
+            ->name('destroy');
 
         Route::post('/{transfer}/cancel', [TransferController::class, 'cancel'])
             ->name('cancel')
-            ->middleware('can:cancel_transfers');
+            ->middleware(['branch.selected', 'can:cancel_transfers']);
 
         // ✅ Quality Report (index)
         Route::get('/quality-report', [TransferQualityReportController::class, 'index'])
@@ -62,6 +68,6 @@ Route::middleware(['auth'])
         // ✅ Resolve issue dari Quality Report (PUT)
         Route::put('/quality-report/issues/{id}/resolve', [TransferQualityReportController::class, 'resolve'])
             ->name('quality-report.issues.resolve')
-            ->middleware('can:confirm_transfers');
+            ->middleware(['branch.selected', 'can:confirm_transfers']);
 
     });
