@@ -17,11 +17,21 @@
     $updatedByName = optional($quotation->updater)->name ?? optional($quotation->updater)->username ?? '-';
 
     $st = strtolower(trim((string) ($quotation->status ?? 'pending')));
+    if ($st === 'sent') {
+        $st = 'completed';
+    }
     $badgeClass = match($st) {
         'pending' => 'bg-warning text-dark',
         'completed' => 'bg-success',
         'cancelled' => 'bg-danger',
         default => 'bg-secondary',
+    };
+
+    $statusLabel = match($st) {
+        'pending' => 'Pending',
+        'completed' => 'Completed',
+        'cancelled' => 'Cancelled',
+        default => strtoupper($st),
     };
 
     $dateText = $quotation->date
@@ -55,7 +65,7 @@
                 <div>
                     <div class="d-flex align-items-center gap-2 flex-wrap">
                         <h4 class="mb-0">{{ $quotation->reference }}</h4>
-                        <span class="badge {{ $badgeClass }}">{{ strtoupper($st) }}</span>
+                        <span class="badge {{ $badgeClass }}">{{ $statusLabel }}</span>
                     </div>
 
                     <div class="text-muted small mt-1">
@@ -169,7 +179,7 @@
                     <div class="small">
                         <div>Reference: <strong>{{ $quotation->reference }}</strong></div>
                         <div>Date: <strong>{{ $dateText }}</strong></div>
-                        <div>Status: <strong>{{ $quotation->status ?? '-' }}</strong></div>
+                        <div>Status: <strong>{{ $statusLabel }}</strong></div>
                         <div>Payment Status: <strong>{{ $quotation->payment_status ?? '-' }}</strong></div>
                     </div>
                 </div>

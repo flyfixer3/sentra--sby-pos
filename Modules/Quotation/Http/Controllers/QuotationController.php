@@ -37,6 +37,17 @@ class QuotationController extends Controller
         return in_array($discountType, ['fixed', 'percentage'], true) ? $discountType : 'fixed';
     }
 
+    private function normalizeQuotationStatus($value): string
+    {
+        $status = strtolower(trim((string) $value));
+
+        if ($status === 'sent') {
+            $status = 'completed';
+        }
+
+        return in_array($status, ['pending', 'completed'], true) ? $status : 'pending';
+    }
+
     private function resolveQuotationDetailInstallationMetadata($cartItem, int $customerId, int $branchId): array
     {
         $installationType = $this->normalizeQuotationDetailInstallationType($cartItem->options->installation_type ?? 'item_only');
@@ -144,7 +155,7 @@ class QuotationController extends Controller
                 })
                 ->firstOrFail();
 
-            $status = strtolower(trim((string) ($request->status ?? 'pending')));
+            $status = $this->normalizeQuotationStatus($request->status ?? 'pending');
 
             $quotation = Quotation::create([
                 'branch_id'           => $branchId,
@@ -284,7 +295,7 @@ class QuotationController extends Controller
                 $quotation_detail->delete();
             }
 
-            $status = strtolower(trim((string) ($request->status ?? 'pending')));
+            $status = $this->normalizeQuotationStatus($request->status ?? 'pending');
 
             // ✅ update header quotation (branch-aware + legacy safe)
             $updateData = [

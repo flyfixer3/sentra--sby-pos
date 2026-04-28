@@ -16,6 +16,16 @@
     $companyAddress = $printBranch->address ?? $settings->company_address ?? '-';
     $companyEmail = $printBranch->email ?? $settings->company_email ?? '-';
     $companyPhone = $printBranch->phone ?? $settings->company_phone ?? '-';
+    $statusValue = strtolower(trim((string) ($quotation->status ?? 'pending')));
+    if ($statusValue === 'sent') {
+        $statusValue = 'completed';
+    }
+    $statusLabel = match ($statusValue) {
+        'pending' => 'Pending',
+        'completed' => 'Completed',
+        'cancelled' => 'Cancelled',
+        default => strtoupper($statusValue),
+    };
 @endphp
 <div class="container-fluid">
     <div class="row">
@@ -50,7 +60,7 @@
                             <div>Invoice: <strong>INV/{{ $quotation->reference }}</strong></div>
                             <div>Date: {{ \Carbon\Carbon::parse($quotation->date)->format('d M, Y') }}</div>
                             <div>
-                                Status: <strong>{{ $quotation->status }}</strong>
+                                Status: <strong>{{ $statusLabel }}</strong>
                             </div>
                             <div>
                                 Payment Status: <strong>{{ $quotation->payment_status }}</strong>
