@@ -170,7 +170,7 @@ class HppService
                 'old_avg_cost'       => round($oldAvg, 2),
                 'new_avg_cost'       => $newAvg,
             ]);
-        });
+        }, 5);
     }
 
     /**

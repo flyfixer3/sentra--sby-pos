@@ -59,7 +59,18 @@ class ProductDataTable extends DataTable
 
     public function query(Product $model)
     {
-        return $model->newQuery()->with('category', 'accessory');
+        $query = $model->newQueryWithoutScopes()->with('category', 'accessory');
+        $activeBranch = session('active_branch');
+
+        if ($activeBranch !== 'all' && is_numeric($activeBranch)) {
+            $branchId = (int) $activeBranch;
+            $query->where(function ($q) use ($branchId) {
+                $q->whereNull('products.branch_id')
+                    ->orWhere('products.branch_id', $branchId);
+            });
+        }
+
+        return $query;
     }
 
     public function html()

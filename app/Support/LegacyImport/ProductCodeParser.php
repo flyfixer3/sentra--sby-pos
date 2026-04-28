@@ -119,6 +119,15 @@ class ProductCodeParser
         $brand = strtoupper(trim((string) $brand));
         $mobileCode = strtoupper(trim((string) $mobileCode));
         $productName = strtoupper(trim((string) $productName));
+        $codePrefix = null;
+
+        if (Str::contains($productCode, '-')) {
+            $codePrefix = strtoupper(trim((string) Str::before($productCode, '-')));
+        }
+
+        if ($codePrefix !== null && in_array($codePrefix, self::GLASS_PART_CODES, true)) {
+            $part = $codePrefix;
+        }
 
         if ($part === '' && Str::contains($productCode, '-')) {
             [$part] = explode('-', $productCode, 2);

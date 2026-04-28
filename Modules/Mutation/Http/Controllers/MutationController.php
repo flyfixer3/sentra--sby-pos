@@ -384,7 +384,7 @@ class MutationController extends Controller
                 $bucket,
                 $logMode
             );
-        });
+        }, 5);
     }
 
     private function syncStocksFromRackAggregate(int $branchId, int $warehouseId, int $productId): void
@@ -506,7 +506,7 @@ class MutationController extends Controller
                 $bucket,
                 $logMode
             );
-        });
+        }, 5);
 
         return (int) ($mutation->id ?? 0);
     }

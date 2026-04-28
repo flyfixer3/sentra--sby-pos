@@ -51,6 +51,7 @@ class ImportLegacyExcelCommand extends Command
             'sales_start_row' => 4,
             'current_stock_sheet' => 'Current Stock',
             'current_stock_start_row' => 3,
+            'current_stock_qty_col' => 9,
             'current_stock_alert_col' => 12,
             'sales_cols' => [
                 'date' => 1, 'invoice' => 2, 'code' => 3, 'name' => 4, 'qty' => 5,
@@ -73,6 +74,7 @@ class ImportLegacyExcelCommand extends Command
             'sales_start_row' => 4,
             'current_stock_sheet' => 'Current Stock',
             'current_stock_start_row' => 3,
+            'current_stock_qty_col' => 12,
             'current_stock_alert_col' => null,
             'sales_cols' => [
                 'date' => 1, 'invoice' => 2, 'code' => 3, 'name' => 4, 'qty' => 5,
@@ -96,6 +98,7 @@ class ImportLegacyExcelCommand extends Command
             'sales_start_row' => 4,
             'current_stock_sheet' => 'Current Stock',
             'current_stock_start_row' => 2,
+            'current_stock_qty_col' => 10,
             'current_stock_alert_col' => 13,
             'sales_cols' => [
                 'date' => 1, 'invoice' => 2, 'code' => 3, 'name' => 4, 'qty' => 5,
@@ -184,7 +187,7 @@ class ImportLegacyExcelCommand extends Command
             $this->reconcileStocks($sources);
         }
 
-        $this->syncProductLegacyCost();
+        $this->syncProductLegacyCost($latestPurchaseCosts);
 
         $this->info('Legacy Excel import finished.');
         return self::SUCCESS;
@@ -443,12 +446,19 @@ class ImportLegacyExcelCommand extends Command
                     if (!$carry['date'] || !$carry['invoice'] || !$carry['supplier']) {
                         continue;
                     }
+                    if ($this->isVoidMarker($carry['invoice'], $carry['supplier'], $code)) {
+                        continue;
+                    }
 
                     $qty = $this->resolvePurchaseQty($sheet, $row, $profile['purchase_cols']);
                     $unitPrice = $this->asInt($this->cell($sheet, $profile['purchase_cols']['unit_price'], $row));
                     $lineTotal = $this->asInt($this->cell($sheet, $profile['purchase_cols']['total'], $row));
-                    if ($qty <= 0 || $unitPrice <= 0) {
+                    if ($qty <= 0) {
                         continue;
+                    }
+
+                    if ($unitPrice <= 0 && $lineTotal > 0) {
+                        $unitPrice = (int) floor($lineTotal / max(1, $qty));
                     }
 
                     $checkText = strtoupper(trim((string) $this->cell($sheet, $profile['purchase_cols']['check'], $row)));
@@ -459,13 +469,16 @@ class ImportLegacyExcelCommand extends Command
                     $rowsByInvoice[$carry['invoice']]['date'] = $carry['date'];
                     $rowsByInvoice[$carry['invoice']]['invoice'] = $carry['invoice'];
                     $rowsByInvoice[$carry['invoice']]['supplier'] = $carry['supplier'];
-                    $rowsByInvoice[$carry['invoice']]['lines'][] = [
+                    $line = [
                         'product_code' => $code,
                         'product_name' => trim((string) $this->cell($sheet, $profile['purchase_cols']['name'], $row)),
                         'qty' => $qty,
                         'unit_price' => $unitPrice,
                         'line_total' => $lineTotal > 0 ? $lineTotal : ($qty * $unitPrice),
                     ];
+                    $line['is_internal_transfer'] = $this->isInternalTransferCandidate($line['qty'], $line['unit_price'], $line['line_total']);
+
+                    $rowsByInvoice[$carry['invoice']]['lines'][] = $line;
                     $rowsByInvoice[$carry['invoice']]['check'][] = $checkText;
                 }
 
@@ -482,24 +495,58 @@ class ImportLegacyExcelCommand extends Command
                     continue;
                 }
 
+                $commercialLines = array_values(array_filter($group['lines'], function (array $line) {
+                    return !$line['is_internal_transfer'];
+                }));
+                $transferLines = array_values(array_filter($group['lines'], function (array $line) {
+                    return $line['is_internal_transfer'];
+                }));
+
+                foreach ($transferLines as $line) {
+                    $product = $this->findOrCreateProductFromTransaction(
+                        $line['product_code'],
+                        $line['product_name'],
+                        $pricelistMap,
+                        $latestSalePrices,
+                        $latestPurchaseCosts
+                    );
+
+                    $this->recordLegacyInternalMutation(
+                        $branch->id,
+                        $warehouse->id,
+                        $rack->id,
+                        $product,
+                        'In',
+                        $line['qty'],
+                        $invoice,
+                        $group['date']->toDateString(),
+                        'X'
+                    );
+                }
+
+                if (empty($commercialLines)) {
+                    continue;
+                }
+
                 $supplier = Supplier::withoutGlobalScopes()->firstOrCreate(
                     ['supplier_name' => $group['supplier'], 'branch_id' => $branch->id],
                     ['supplier_email' => null, 'supplier_phone' => null, 'city' => null, 'country' => null, 'address' => null]
                 );
 
-                $totalAmount = array_sum(array_column($group['lines'], 'line_total'));
-                $totalQty = array_sum(array_column($group['lines'], 'qty'));
+                $totalAmount = array_sum(array_column($commercialLines, 'line_total'));
+                $totalQty = array_sum(array_column($commercialLines, 'qty'));
                 $isRecent = $group['date']->copy()->startOfDay()->gte($cutoff);
                 $isCheckedOk = collect($group['check'])->contains(function ($text) {
                     return strpos((string) $text, 'OK') !== false;
                 });
                 $isPaid = !$isRecent || $isCheckedOk;
+                $dueDays = $this->resolveSupplierDueDays($group['supplier']);
 
                 $purchase = Purchase::create([
                     'reference' => 'AUTO',
                     'reference_supplier' => $invoice,
                     'date' => $group['date']->toDateString(),
-                    'due_date' => 0,
+                    'due_date' => $dueDays,
                     'supplier_id' => $supplier->id,
                     'supplier_name' => $supplier->supplier_name,
                     'tax_percentage' => 0,
@@ -519,7 +566,7 @@ class ImportLegacyExcelCommand extends Command
                     'total_quantity' => $totalQty,
                 ]);
 
-                foreach ($group['lines'] as $line) {
+                foreach ($commercialLines as $line) {
                     $product = $this->findOrCreateProductFromTransaction(
                         $line['product_code'],
                         $line['product_name'],
@@ -558,16 +605,12 @@ class ImportLegacyExcelCommand extends Command
                             'summary'
                         );
 
-                        $this->hppService->applyIncoming(
+                        $this->applyLegacyBranchHpp(
                             $branch->id,
                             $product->id,
                             $line['qty'],
                             $line['unit_price'],
-                            0,
-                            0,
-                            0,
                             $purchase->date,
-                            'legacy_purchase_import',
                             $purchase->id
                         );
                     }
@@ -596,6 +639,9 @@ class ImportLegacyExcelCommand extends Command
                     if ($invoice === '' || $code === '' || $code === 'KODE') {
                         continue;
                     }
+                    if ($this->isVoidMarker($invoice, $code, $this->cell($sheet, $cols['name'], $row))) {
+                        continue;
+                    }
 
                     $date = $this->parseDate($this->cell($sheet, $cols['date'], $row));
                     if (!$date) {
@@ -613,6 +659,16 @@ class ImportLegacyExcelCommand extends Command
                         $net = ($qty * $unitPrice) - $discount;
                     }
 
+                    $line = [
+                        'product_code' => $code,
+                        'product_name' => trim((string) $this->cell($sheet, $cols['name'], $row)),
+                        'qty' => $qty,
+                        'unit_price' => $unitPrice,
+                        'discount' => max(0, $discount),
+                        'net' => max(0, $net),
+                    ];
+                    $line['is_internal_transfer'] = $this->isInternalTransferCandidate($line['qty'], $line['unit_price'], $line['net']);
+
                     $sales[$invoice]['date'] = $date;
                     $sales[$invoice]['invoice'] = $invoice;
                     $sales[$invoice]['customer_name'] = trim((string) $this->cell($sheet, $cols['customer'], $row)) ?: 'Walk-in';
@@ -621,14 +677,7 @@ class ImportLegacyExcelCommand extends Command
                     $sales[$invoice]['license_number'] = $cols['plate'] ? trim((string) $this->cell($sheet, $cols['plate'], $row)) : null;
                     $sales[$invoice]['address'] = $cols['address'] ? trim((string) $this->cell($sheet, $cols['address'], $row)) : null;
                     $sales[$invoice]['sale_from'] = $cols['sale_from'] ? trim((string) $this->cell($sheet, $cols['sale_from'], $row)) : 'Other';
-                    $sales[$invoice]['lines'][] = [
-                        'product_code' => $code,
-                        'product_name' => trim((string) $this->cell($sheet, $cols['name'], $row)),
-                        'qty' => $qty,
-                        'unit_price' => $unitPrice,
-                        'discount' => max(0, $discount),
-                        'net' => max(0, $net),
-                    ];
+                    $sales[$invoice]['lines'][] = $line;
                 }
 
                 return $sales;
@@ -643,6 +692,39 @@ class ImportLegacyExcelCommand extends Command
                     continue;
                 }
 
+                $commercialLines = array_values(array_filter($group['lines'], function (array $line) {
+                    return !$line['is_internal_transfer'];
+                }));
+                $transferLines = array_values(array_filter($group['lines'], function (array $line) {
+                    return $line['is_internal_transfer'];
+                }));
+
+                foreach ($transferLines as $line) {
+                    $product = $this->findOrCreateProductFromTransaction(
+                        $line['product_code'],
+                        $line['product_name'],
+                        $pricelistMap,
+                        $latestSalePrices,
+                        $latestPurchaseCosts
+                    );
+
+                    $this->recordLegacyInternalMutation(
+                        $branch->id,
+                        $warehouse->id,
+                        $rack->id,
+                        $product,
+                        'Out',
+                        $line['qty'],
+                        $invoice,
+                        $group['date']->toDateString(),
+                        'PENJUALAN'
+                    );
+                }
+
+                if (empty($commercialLines)) {
+                    continue;
+                }
+
                 $customer = Customer::withoutGlobalScopes()->firstOrCreate(
                     ['customer_name' => $group['customer_name'], 'branch_id' => $branch->id],
                     [
@@ -654,8 +736,8 @@ class ImportLegacyExcelCommand extends Command
                     ]
                 );
 
-                $totalAmount = array_sum(array_column($group['lines'], 'net'));
-                $totalQty = array_sum(array_column($group['lines'], 'qty'));
+                $totalAmount = array_sum(array_column($commercialLines, 'net'));
+                $totalQty = array_sum(array_column($commercialLines, 'qty'));
 
                 $saleData = [
                     'reference' => $reference,
@@ -705,7 +787,7 @@ class ImportLegacyExcelCommand extends Command
 
                 $sale = Sale::create($saleData);
 
-                foreach ($group['lines'] as $line) {
+                foreach ($commercialLines as $line) {
                     $product = $this->findOrCreateProductFromTransaction(
                         $line['product_code'],
                         $line['product_name'],
@@ -720,7 +802,7 @@ class ImportLegacyExcelCommand extends Command
                     }
 
                     $hpp = $tracksInventory
-                        ? (int) round(max(0.0, $this->hppService->getHppAsOf($branch->id, $product->id, $sale->date)), 0)
+                        ? $this->resolveLegacySaleCost($product, (int) $branch->id, (string) $sale->date, $latestPurchaseCosts)
                         : 0;
                     $detail = [
                         'sale_id' => $sale->id,
@@ -745,18 +827,15 @@ class ImportLegacyExcelCommand extends Command
                     SaleDetails::create($detail);
 
                     if ($tracksInventory) {
-                        $this->mutationController->applyInOut(
+                        $this->applyLegacyOutgoingMutation(
                             $branch->id,
                             $warehouse->id,
-                            $product->id,
-                            'Out',
+                            $rack->id,
+                            $product,
                             $line['qty'],
                             $sale->reference,
                             'LEGACY IMPORT SALE',
-                            $sale->date,
-                            $rack->id,
-                            'good',
-                            'summary'
+                            $sale->date
                         );
                     }
                 }
@@ -782,7 +861,7 @@ class ImportLegacyExcelCommand extends Command
                         continue;
                     }
 
-                    $expected = $this->asInt($this->cell($sheet, 9, $row));
+                    $expected = $this->asInt($this->cell($sheet, $profile['current_stock_qty_col'], $row));
                     $product = Product::withoutGlobalScopes()->where('product_code', $productCode)->first();
                     if (!$product) {
                         continue;
@@ -842,25 +921,15 @@ class ImportLegacyExcelCommand extends Command
         }
     }
 
-    private function syncProductLegacyCost(): void
+    private function syncProductLegacyCost(array $latestPurchaseCosts): void
     {
-        $this->info('Syncing products.product_cost from latest HPP...');
+        $this->info('Syncing products.product_cost from latest legacy purchase cost...');
 
-        $branches = Branch::withoutGlobalScopes()->get();
-        $products = Product::withoutGlobalScopes()->get();
-
-        foreach ($products as $product) {
-            $hppCandidates = [];
-            foreach ($branches as $branch) {
-                $hpp = $this->hppService->getCurrentHpp((int) $branch->id, (int) $product->id);
-                if ($hpp > 0) {
-                    $hppCandidates[] = (int) round($hpp, 0);
-                }
-            }
-
-            if (!empty($hppCandidates)) {
+        foreach (Product::withoutGlobalScopes()->get() as $product) {
+            $globalCost = (int) ($latestPurchaseCosts[$product->product_code] ?? 0);
+            if ($globalCost > 0) {
                 $product->update([
-                    'product_cost' => end($hppCandidates),
+                    'product_cost' => $globalCost,
                 ]);
             }
         }
@@ -958,9 +1027,161 @@ class ImportLegacyExcelCommand extends Command
         );
     }
 
+    private function applyLegacyOutgoingMutation(
+        int $branchId,
+        int $warehouseId,
+        int $rackId,
+        Product $product,
+        int $qty,
+        string $reference,
+        string $note,
+        string $date
+    ): void {
+        $this->ensureSufficientStockForLegacySale($branchId, $warehouseId, $rackId, $product, $qty, $date);
+
+        try {
+            $this->mutationController->applyInOut(
+                $branchId,
+                $warehouseId,
+                $product->id,
+                'Out',
+                $qty,
+                $reference,
+                $note,
+                $date,
+                $rackId,
+                'good',
+                'summary'
+            );
+        } catch (\RuntimeException $e) {
+            if (stripos($e->getMessage(), 'Stock minus') === false) {
+                throw $e;
+            }
+
+            $this->ensureSufficientStockForLegacySale($branchId, $warehouseId, $rackId, $product, $qty, $date);
+            $this->mutationController->applyInOut(
+                $branchId,
+                $warehouseId,
+                $product->id,
+                'Out',
+                $qty,
+                $reference,
+                $note,
+                $date,
+                $rackId,
+                'good',
+                'summary'
+            );
+        }
+    }
+
+    private function recordLegacyInternalMutation(
+        int $branchId,
+        int $warehouseId,
+        int $rackId,
+        Product $product,
+        string $type,
+        int $qty,
+        string $legacyInvoice,
+        string $date,
+        string $sourceSheet
+    ): void {
+        if ($qty <= 0 || !$this->shouldTrackInventory($product)) {
+            return;
+        }
+
+        $reference = sprintf(
+            'INT-%s-%s-%s',
+            strtoupper($sourceSheet) === 'X' ? 'IN' : 'OUT',
+            $branchId,
+            strtoupper(trim($legacyInvoice))
+        );
+        $note = sprintf('LEGACY INTERNAL TRANSFER FROM %s', strtoupper($sourceSheet));
+
+        if ($type === 'Out') {
+            $this->applyLegacyOutgoingMutation(
+                $branchId,
+                $warehouseId,
+                $rackId,
+                $product,
+                $qty,
+                $reference,
+                $note,
+                $date
+            );
+            return;
+        }
+
+        if ($this->legacyMutationExists($branchId, $warehouseId, $product->id, $reference, $date, $type, $note)) {
+            return;
+        }
+
+        $this->mutationController->applyInOut(
+            $branchId,
+            $warehouseId,
+            $product->id,
+            $type,
+            $qty,
+            $reference,
+            $note,
+            $date,
+            $rackId,
+            'good',
+            'summary'
+        );
+    }
+
     private function shouldTrackInventory(Product $product): bool
     {
         return !in_array((string) $product->item_type, ['service', 'film'], true);
+    }
+
+    private function resolveLegacySaleCost(Product $product, int $branchId, string $date, array $latestPurchaseCosts): int
+    {
+        $globalCost = (int) ($latestPurchaseCosts[$product->product_code] ?? 0);
+        if ($globalCost > 0) {
+            return $globalCost;
+        }
+
+        $productCost = (int) round((float) ($product->product_cost ?? 0), 0);
+        if ($productCost > 0) {
+            return $productCost;
+        }
+
+        $branchHpp = (int) round(max(0.0, $this->hppService->getHppAsOf($branchId, $product->id, $date)), 0);
+        if ($branchHpp > 0) {
+            return $branchHpp;
+        }
+
+        $this->markProductReview($product, 'COST_NOT_FOUND');
+
+        return 0;
+    }
+
+    private function applyLegacyBranchHpp(
+        int $branchId,
+        int $productId,
+        int $qty,
+        int $unitPrice,
+        string $date,
+        int $purchaseId
+    ): void {
+        if ($qty <= 0 || $unitPrice <= 0) {
+            return;
+        }
+
+        $this->hppService->applyIncoming(
+            $branchId,
+            $productId,
+            $qty,
+            $unitPrice,
+            0,
+            0,
+            0,
+            $date,
+            'legacy_purchase_import',
+            $purchaseId
+        );
     }
 
     private function resolveCategory(?string $partCode, array &$reviewReasons): Category
@@ -1093,6 +1314,58 @@ class ImportLegacyExcelCommand extends Command
         return 0;
     }
 
+    private function isInternalTransferCandidate(int $qty, int $unitPrice, int $lineTotal): bool
+    {
+        return $qty > 0 && $unitPrice <= 0 && $lineTotal <= 0;
+    }
+
+    private function resolveSupplierDueDays(string $supplierName): int
+    {
+        $name = strtoupper(trim($supplierName));
+
+        if (in_array($name, ['BGI', 'RJG', 'PAN', 'HNR'], true)) {
+            return 60;
+        }
+
+        if (in_array($name, ['MJD', 'PJM', 'SG', 'VK', 'PJB'], true)) {
+            return 30;
+        }
+
+        return 0;
+    }
+
+    private function legacyMutationExists(
+        int $branchId,
+        int $warehouseId,
+        int $productId,
+        string $reference,
+        string $date,
+        string $type,
+        string $note
+    ): bool {
+        return DB::table('mutations')
+            ->where('branch_id', $branchId)
+            ->where('warehouse_id', $warehouseId)
+            ->where('product_id', $productId)
+            ->where('reference', $reference)
+            ->whereDate('date', $date)
+            ->where('mutation_type', ucfirst(strtolower($type)))
+            ->where('note', $note)
+            ->exists();
+    }
+
+    private function isVoidMarker(...$values): bool
+    {
+        foreach ($values as $value) {
+            $text = strtoupper(trim((string) $value));
+            if ($text !== '' && strpos($text, 'VOID') !== false) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     private function markProductReview(Product $product, string $reason): void
     {
         $note = $this->mergeNotes($product->product_note, [$reason]);
@@ -1187,12 +1460,31 @@ class ImportLegacyExcelCommand extends Command
 
         try {
             if (is_numeric($value)) {
-                return Carbon::instance(ExcelDate::excelToDateTimeObject((float) $value))->startOfDay();
+                return $this->normalizeLegacyDate(
+                    Carbon::instance(ExcelDate::excelToDateTimeObject((float) $value))->startOfDay()
+                );
             }
 
-            return Carbon::parse((string) $value)->startOfDay();
+            $text = trim((string) $value);
+            foreach (['d-m-Y', 'd/m/Y', 'd-m-y', 'd/m/y'] as $format) {
+                $parsed = Carbon::createFromFormat($format, $text);
+                if ($parsed !== false) {
+                    return $this->normalizeLegacyDate($parsed->startOfDay());
+                }
+            }
+
+            return $this->normalizeLegacyDate(Carbon::parse($text)->startOfDay());
         } catch (\Throwable $e) {
             return null;
         }
+    }
+
+    private function normalizeLegacyDate(Carbon $date): Carbon
+    {
+        if ((int) $date->year === 2029) {
+            return $date->copy()->year(2024);
+        }
+
+        return $date;
     }
 }
