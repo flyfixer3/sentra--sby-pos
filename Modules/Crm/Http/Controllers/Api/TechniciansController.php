@@ -110,6 +110,22 @@ class TechniciansController extends Controller
         return response()->json(['message' => 'Accept not implemented in Phase-1 minimal scope'], 501);
     }
 
+    public function depart(Request $request, int $id)
+    {
+        $this->requireBranch();
+        $so = ServiceOrder::findOrFail($id);
+
+        $row = $this->actingTechnicianRow($so, $request);
+        if (!$row) abort(422, 'You are not assigned to this service order.');
+
+        // Idempotent: only record departure once
+        if (!$so->departed_at) {
+            $so->update(['departed_at' => now()]);
+        }
+
+        return response()->json(['message' => 'Departed', 'departed_at' => $so->departed_at]);
+    }
+
     public function start(Request $request, int $id)
     {
         $this->requireBranch();
