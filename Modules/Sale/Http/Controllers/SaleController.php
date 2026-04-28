@@ -912,7 +912,7 @@ class SaleController extends Controller
 
                 $saleData = [
                     'date' => $request->date,
-                    'license_number' => $request->car_number_plate,
+                    'license_number' => (string) ($request->car_number_plate ?? ''),
                     'sale_from' => $request->sale_from,
                     'customer_id' => $customer->id,
                     'customer_name' => $customer->customer_name,

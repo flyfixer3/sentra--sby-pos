@@ -48,30 +48,11 @@
                                             <select class="form-control" name="customer_id" id="customer_id" required>
                                                 @foreach($customers as $customer)
                                                     <option {{ (int)$sale->customer_id === (int)$customer->id ? 'selected' : '' }} value="{{ $customer->id }}">
-                                                        {{ $customer->customer_name }}
+                                                        {{ $customer->customer_name }}  |  {{ $customer->customer_phone }}
                                                     </option>
                                                 @endforeach
                                             </select>
                                         </div>
-                                    </div>
-                                </div>
-
-                                <div class="col-lg-2">
-                                    <div class="form-group">
-                                        <label for="car_number_plate">Car Plate<span class="text-danger">*</span></label>
-
-                                        {{-- DI FIX:
-                                             sebelumnya required tapi kosong -> edit jadi ribet.
-                                             sekarang auto isi dari kolom sale->license_number (sesuai store: 'license_number')
-                                        --}}
-                                        <input
-                                            type="text"
-                                            class="form-control"
-                                            name="car_number_plate"
-                                            id="car_number_plate"
-                                            required
-                                            value="{{ $sale->license_number ?? '' }}"
-                                        >
                                     </div>
                                 </div>
 

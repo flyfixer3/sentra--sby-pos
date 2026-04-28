@@ -77,6 +77,7 @@
                                     $rowInstallationType = $installation_type[$lineKey] ?? 'item_only';
                                 @endphp
                                 <td class="align-middle" style="min-width: 210px;">
+                                    <small class="text-muted d-block mb-1">Service Type</small>
                                     <select
                                         class="form-control form-control-sm"
                                         wire:model="installation_type.{{ $lineKey }}"
@@ -96,6 +97,7 @@
                                         @elseif(empty($customer_vehicles))
                                             <small class="text-warning d-block mt-1">No vehicle registered for this customer.</small>
                                         @else
+                                            <small class="text-muted d-block mt-2">Vehicle</small>
                                             <select
                                                 class="form-control form-control-sm mt-1"
                                                 wire:model="customer_vehicle_id.{{ $lineKey }}"

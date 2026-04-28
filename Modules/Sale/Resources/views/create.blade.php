@@ -133,13 +133,6 @@
                                 </div>
                             </div>
 
-                            <div class="col-lg-2">
-                                <div class="form-group">
-                                    <label for="reference">Car Plate<span class="text-danger">*</span></label>
-                                    <input type="text" class="form-control" name="car_number_plate" id="car_number_plate" required>
-                                </div>
-                            </div>
-
                             <div class="col-lg-4">
                                 <div class="from-group">
                                     <div class="form-group">
@@ -152,7 +145,7 @@
                                                     $selected = (int) old('customer_id', $prefillCustomerId) === (int)$customer->id;
                                                 @endphp
                                                 <option value="{{ $customer->id }}" @if($selected) selected @endif>
-                                                    {{ $customer->customer_name }}
+                                                    {{ $customer->customer_name }}  |  {{ $customer->customer_phone }}
                                                 </option>
                                             @endforeach
                                         </select>
