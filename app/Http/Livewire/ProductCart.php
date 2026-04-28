@@ -2,15 +2,18 @@
 
 namespace App\Http\Livewire;
 
+use App\Support\BranchContext;
 use Gloudemans\Shoppingcart\Facades\Cart;
+use Illuminate\Support\Str;
 use Illuminate\Support\Facades\Request;
 use Livewire\Component;
+use Modules\People\Entities\CustomerVehicle;
 use Modules\Mutation\Entities\Mutation;
 
 class ProductCart extends Component
 {
 
-    public $listeners = ['productSelected', 'discountModalRefresh'];
+    public $listeners = ['productSelected', 'discountModalRefresh', 'quotationCustomerChanged' => 'onQuotationCustomerChanged'];
 
     public $cart_instance;
     public $global_discount;
@@ -23,9 +26,17 @@ class ProductCart extends Component
     public $discount_type;
     public $item_discount;
     public $data;
+    public $installation_type;
+    public $customer_vehicle_id;
+    public $customer_vehicles;
+    public $customer_id;
 
-    public function mount($cartInstance, $data = null) {
+    public function mount($cartInstance, $data = null, $customerId = null) {
         $this->cart_instance = $cartInstance;
+        $this->installation_type = [];
+        $this->customer_vehicle_id = [];
+        $this->customer_vehicles = collect();
+        $this->customer_id = $customerId ?: ($data->customer_id ?? null);
 
         if ($data) {
             $this->data = $data;
@@ -45,14 +56,16 @@ class ProductCart extends Component
             $cart_items = Cart::instance($this->cart_instance)->content();
 
             foreach ($cart_items as $cart_item) {
-                $this->check_quantity[$cart_item->id] = [$cart_item->options->stock];
-                $this->quantity[$cart_item->id] = $cart_item->qty;
-                $this->discount_type[$cart_item->id] = $cart_item->options->product_discount_type;
+                $stateKey = $this->cartStateKey($cart_item);
+                $this->check_quantity[$stateKey] = [$cart_item->options->stock];
+                $this->quantity[$stateKey] = $cart_item->qty;
+                $this->discount_type[$stateKey] = $cart_item->options->product_discount_type;
                 if ($cart_item->options->product_discount_type == 'fixed') {
-                    $this->item_discount[$cart_item->id] = $cart_item->options->product_discount;
+                    $this->item_discount[$stateKey] = $cart_item->options->product_discount;
                 } elseif ($cart_item->options->product_discount_type == 'percentage') {
-                    $this->item_discount[$cart_item->id] = round(100 * ($cart_item->options->product_discount / $cart_item->price));
+                    $this->item_discount[$stateKey] = round(100 * ($cart_item->options->product_discount / $cart_item->price));
                 }
+                $this->initializeQuotationMetadata($cart_item);
             }
         } else {
             $this->global_discount = 0;
@@ -65,6 +78,8 @@ class ProductCart extends Component
             $this->discount_type = [];
             $this->item_discount = [];
         }
+
+        $this->loadQuotationCustomerVehicles();
     }
 
     public function render() {
@@ -73,6 +88,129 @@ class ProductCart extends Component
         return view('livewire.product-cart', [
             'cart_items' => $cart_items
         ]);
+    }
+
+    private function isQuotationCart(): bool
+    {
+        return $this->cart_instance === 'quotation';
+    }
+
+    private function normalizeInstallationType($value): string
+    {
+        return $value === 'with_installation' ? 'with_installation' : 'item_only';
+    }
+
+    private function makeQuotationLineKey($productId): string
+    {
+        return 'quotation_' . (int) $productId . '_' . str_replace('-', '', (string) Str::uuid());
+    }
+
+    private function cartStateKey($cartItem, $lineKey = null): string
+    {
+        if ($this->isQuotationCart()) {
+            return (string) ($lineKey ?: ($cartItem->options->line_key ?? $cartItem->rowId));
+        }
+
+        return (string) $cartItem->id;
+    }
+
+    private function findCartRow($rowId = null, $lineKey = null)
+    {
+        $content = Cart::instance($this->cart_instance)->content();
+
+        if ($lineKey) {
+            $row = $content->first(function ($item) use ($lineKey) {
+                return (string) ($item->options->line_key ?? '') === (string) $lineKey;
+            });
+
+            if ($row) {
+                return $row;
+            }
+        }
+
+        if ($rowId) {
+            return $content->first(function ($item) use ($rowId) {
+                return (string) $item->rowId === (string) $rowId;
+            });
+        }
+
+        return null;
+    }
+
+    private function loadQuotationCustomerVehicles(): void
+    {
+        if (!$this->isQuotationCart()) {
+            return;
+        }
+
+        $customerId = (int) ($this->customer_id ?? 0);
+        if ($customerId <= 0) {
+            $this->customer_vehicles = collect();
+            return;
+        }
+
+        $branchId = BranchContext::id();
+
+        $this->customer_vehicles = CustomerVehicle::query()
+            ->where('customer_id', $customerId)
+            ->when(is_numeric($branchId), function ($query) use ($branchId) {
+                $query->where(function ($q) use ($branchId) {
+                    $q->whereNull('branch_id')
+                        ->orWhere('branch_id', (int) $branchId);
+                });
+            })
+            ->orderBy('car_plate')
+            ->get();
+    }
+
+    private function quotationVehicleIds(): array
+    {
+        return $this->customer_vehicles
+            ? $this->customer_vehicles->pluck('id')->map(fn ($id) => (int) $id)->all()
+            : [];
+    }
+
+    private function initializeQuotationMetadata($cartItem): void
+    {
+        if (!$this->isQuotationCart()) {
+            return;
+        }
+
+        $lineKey = $this->cartStateKey($cartItem);
+        $type = $this->normalizeInstallationType($cartItem->options->installation_type ?? 'item_only');
+
+        $this->installation_type[$lineKey] = $type;
+        $this->customer_vehicle_id[$lineKey] = $type === 'with_installation'
+            ? ((int) ($cartItem->options->customer_vehicle_id ?? 0) ?: null)
+            : null;
+    }
+
+    private function syncQuotationMetadataToCart($rowId, $lineKey = null): void
+    {
+        if (!$this->isQuotationCart()) {
+            return;
+        }
+
+        $cartItem = $this->findCartRow($rowId, $lineKey);
+        if (!$cartItem) {
+            return;
+        }
+
+        $lineKey = $this->cartStateKey($cartItem, $lineKey);
+        $type = $this->normalizeInstallationType($this->installation_type[$lineKey] ?? $cartItem->options->installation_type ?? 'item_only');
+        $vehicleId = $type === 'with_installation'
+            ? ((int) ($this->customer_vehicle_id[$lineKey] ?? $cartItem->options->customer_vehicle_id ?? 0) ?: null)
+            : null;
+
+        $this->installation_type[$lineKey] = $type;
+        $this->customer_vehicle_id[$lineKey] = $vehicleId;
+
+        $options = (array) $cartItem->options;
+        $options['line_key'] = $lineKey;
+        $options['installation_type'] = $type;
+        $options['customer_vehicle_id'] = $vehicleId;
+
+        Cart::instance($this->cart_instance)->update($cartItem->rowId, ['options' => $options]);
     }
 
     public function productSelected($product) {
@@ -95,35 +233,56 @@ class ProductCart extends Component
             return;
         }
 
+        $lineKey = $this->isQuotationCart() ? $this->makeQuotationLineKey($product['id']) : null;
+
+        $options = [
+            'product_discount'      => 0.00,
+            'product_discount_type' => 'fixed',
+            'sub_total'             => $this->calculate($product)['sub_total'],
+            'code'                  => $product['product_code'],
+            'product_code'          => $product['product_code'],
+            'stock'                 => $total_stock,
+            'unit'                  => $product['product_unit'],
+            'product_tax'           => $this->calculate($product)['product_tax'],
+            'unit_price'            => $this->calculate($product)['unit_price']
+        ];
+
+        if ($this->isQuotationCart()) {
+            $options['line_key'] = $lineKey;
+            $options['installation_type'] = 'item_only';
+            $options['customer_vehicle_id'] = null;
+        }
+
         $cart->add([
             'id'      => $product['id'],
             'name'    => $product['product_name'],
             'qty'     => 1,
             'price'   => $this->calculate($product)['price'],
             'weight'  => 1,
-            'options' => [
-                'product_discount'      => 0.00,
-                'product_discount_type' => 'fixed',
-                'sub_total'             => $this->calculate($product)['sub_total'],
-                'code'                  => $product['product_code'],
-                'product_code'          => $product['product_code'],
-                'stock'                 => $total_stock,
-                'unit'                  => $product['product_unit'],
-                'product_tax'           => $this->calculate($product)['product_tax'],
-                'unit_price'            => $this->calculate($product)['unit_price']
-            ]
+            'options' => $options
         ]);
         $this->global_qty = $cart->count();
-        $this->check_quantity[$product['id']] = $total_stock;
-        $this->quantity[$product['id']] = 1;
-        $this->discount_type[$product['id']] = 'fixed';
-        $this->item_discount[$product['id']] = 0;
+        $stateKey = $this->isQuotationCart() ? $lineKey : (string) $product['id'];
+        $this->check_quantity[$stateKey] = $total_stock;
+        $this->quantity[$stateKey] = 1;
+        $this->discount_type[$stateKey] = 'fixed';
+        $this->item_discount[$stateKey] = 0;
+        if ($this->isQuotationCart()) {
+            $this->installation_type[$stateKey] = 'item_only';
+            $this->customer_vehicle_id[$stateKey] = null;
+        }
 
         // $this->updatedGlobalQuantity();
     }
 
-    public function removeItem($row_id) {
-        Cart::instance($this->cart_instance)->remove($row_id);
+    public function removeItem($row_id, $lineKey = null) {
+        $cartItem = $this->findCartRow($row_id, $lineKey);
+        if (!$cartItem) {
+            session()->flash('message', 'Cart row not found. Please refresh the page.');
+            return;
+        }
+
+        Cart::instance($this->cart_instance)->remove($cartItem->rowId);
     }
 
     public function updatedGlobalQuantity() {
@@ -137,30 +296,32 @@ class ProductCart extends Component
         Cart::instance($this->cart_instance)->setGlobalDiscount((integer)$this->global_discount);
     }
 
-    public function updateQuantity($row_id, $product_id) {
+    public function updateQuantity($row_id, $product_id, $lineKey = null) {
+        $cart_item = $this->findCartRow($row_id, $lineKey);
+        if (!$cart_item) {
+            return;
+        }
+
+        $stateKey = $this->cartStateKey($cart_item, $lineKey);
+
         if  ($this->cart_instance == 'sale' || $this->cart_instance == 'purchase_return') {
-            if ($this->check_quantity[$product_id] < $this->quantity[$product_id]) {
+            if (($this->check_quantity[$stateKey] ?? 0) < ($this->quantity[$stateKey] ?? 0)) {
                 session()->flash('message', 'The requested quantity is not available in stock.');
                 return;
             }
         }
 
-        $cart_item = Cart::instance($this->cart_instance)->get($row_id);
-        if (!$cart_item) {
-            return;
-        }
-
         $options = (array) $cart_item->options;
 
-        Cart::instance($this->cart_instance)->update($row_id, $this->quantity[$product_id]);
+        Cart::instance($this->cart_instance)->update($cart_item->rowId, $this->quantity[$stateKey] ?? 1);
 
-        $cart_item = Cart::instance($this->cart_instance)->get($row_id);
+        $cart_item = Cart::instance($this->cart_instance)->get($cart_item->rowId) ?: $this->findCartRow(null, $lineKey);
         if (!$cart_item) {
             return;
         }
 
         $this->global_qty = Cart::instance($this->cart_instance)->count();
-        Cart::instance($this->cart_instance)->update($row_id, [
+        Cart::instance($this->cart_instance)->update($cart_item->rowId, [
             'options' => [
                 'sub_total'             => $cart_item->price * $cart_item->qty,
                 'code'                  => $options['code'] ?? null,
@@ -171,8 +332,13 @@ class ProductCart extends Component
                 'unit_price'            => $options['unit_price'] ?? $cart_item->price,
                 'product_discount'      => $options['product_discount'] ?? 0,
                 'product_discount_type' => $options['product_discount_type'] ?? 'fixed',
+                'line_key'              => $options['line_key'] ?? null,
+                'installation_type'     => $options['installation_type'] ?? 'item_only',
+                'customer_vehicle_id'   => $options['customer_vehicle_id'] ?? null,
             ]
         ]);
+
+        $this->syncQuotationMetadataToCart($cart_item->rowId, $lineKey);
     }
 
     public function finalizeCartBeforeSubmit($rows = [])
@@ -183,20 +349,33 @@ class ProductCart extends Component
                 continue;
             }
 
-            $cartRow = Cart::instance($this->cart_instance)
-                ->content()
-                ->first(function ($item) use ($row, $productId) {
-                    return (string) $item->rowId === (string) ($row['row_id'] ?? '')
-                        || (int) $item->id === $productId;
-                });
+            $lineKey = (string) ($row['line_key'] ?? '');
+            $cartRow = $this->findCartRow($row['row_id'] ?? null, $lineKey ?: null);
+
+            if (!$cartRow && !$this->isQuotationCart()) {
+                $cartRow = Cart::instance($this->cart_instance)
+                    ->content()
+                    ->first(function ($item) use ($productId) {
+                        return (int) $item->id === $productId;
+                    });
+            }
 
             if (!$cartRow) {
                 continue;
             }
 
             $quantity = (int) ($row['quantity'] ?? 0);
-            $this->quantity[$productId] = $quantity > 0 ? $quantity : 1;
-            $this->updateQuantity($cartRow->rowId, $productId);
+            $stateKey = $this->cartStateKey($cartRow, $lineKey ?: null);
+            $this->quantity[$stateKey] = $quantity > 0 ? $quantity : 1;
+
+            if ($this->isQuotationCart()) {
+                $this->installation_type[$stateKey] = $this->normalizeInstallationType($row['installation_type'] ?? 'item_only');
+                $this->customer_vehicle_id[$stateKey] = $this->installation_type[$stateKey] === 'with_installation'
+                    ? ((int) ($row['customer_vehicle_id'] ?? 0) ?: null)
+                    : null;
+            }
+
+            $this->updateQuantity($cartRow->rowId, $productId, $lineKey ?: null);
         }
     }
 
@@ -204,43 +383,89 @@ class ProductCart extends Component
         $this->item_discount[$name] = 0;
     }
 
-    public function discountModalRefresh($product_id, $row_id) {
-        $this->updateQuantity($row_id, $product_id);
+    public function updatedInstallationType($value, $name) {
+        if (!$this->isQuotationCart()) {
+            return;
+        }
+
+        $this->installation_type[$name] = $this->normalizeInstallationType($value);
+        if ($this->installation_type[$name] !== 'with_installation') {
+            $this->customer_vehicle_id[$name] = null;
+        }
+
+        $this->syncQuotationMetadataToCart(null, $name);
     }
 
-    public function setProductDiscount($row_id, $product_id) {
-        $cart_item = Cart::instance($this->cart_instance)->get($row_id);
+    public function updatedCustomerVehicleId($value, $name) {
+        if (!$this->isQuotationCart()) {
+            return;
+        }
 
-        if ($this->discount_type[$product_id] == 'fixed') {
-            $discount_amount = ($cart_item->price + $cart_item->options->product_discount) - $this->item_discount[$product_id];
+        $vehicleId = (int) $value;
+        $this->customer_vehicle_id[$name] = in_array($vehicleId, $this->quotationVehicleIds(), true) ? $vehicleId : null;
+        $this->syncQuotationMetadataToCart(null, $name);
+    }
+
+    public function onQuotationCustomerChanged($customerId) {
+        if (!$this->isQuotationCart()) {
+            return;
+        }
+
+        $this->customer_id = (int) $customerId ?: null;
+        $this->loadQuotationCustomerVehicles();
+        $allowedVehicleIds = $this->quotationVehicleIds();
+
+        foreach ((array) $this->customer_vehicle_id as $lineKey => $vehicleId) {
+            if ($vehicleId && !in_array((int) $vehicleId, $allowedVehicleIds, true)) {
+                $this->customer_vehicle_id[$lineKey] = null;
+                $this->syncQuotationMetadataToCart(null, $lineKey);
+            }
+        }
+    }
+
+    public function discountModalRefresh($product_id, $row_id, $lineKey = null) {
+        $this->updateQuantity($row_id, $product_id, $lineKey);
+    }
+
+    public function setProductDiscount($row_id, $product_id, $lineKey = null) {
+        $cart_item = $this->findCartRow($row_id, $lineKey);
+        if (!$cart_item) {
+            session()->flash('message', 'Cart row not found. Please refresh the page.');
+            return;
+        }
+
+        $stateKey = $this->cartStateKey($cart_item, $lineKey);
+
+        if ($this->discount_type[$stateKey] == 'fixed') {
+            $discount_amount = ($cart_item->price + $cart_item->options->product_discount) - $this->item_discount[$stateKey];
             Cart::instance($this->cart_instance)
-                ->update($row_id, [
-                    'price' => $this->item_discount[$product_id]
+                ->update($cart_item->rowId, [
+                    'price' => $this->item_discount[$stateKey]
                 ]);
 
-            $updatedItem = Cart::instance($this->cart_instance)->get($row_id);
+            $updatedItem = Cart::instance($this->cart_instance)->get($cart_item->rowId) ?: $this->findCartRow(null, $lineKey);
             if (!$updatedItem) {
                 return;
             }
 
-            $this->updateCartOptions($row_id, $product_id, $updatedItem, $discount_amount);
-        } elseif ($this->discount_type[$product_id] == 'percentage') {
-            $discount_amount = ($cart_item->price + $cart_item->options->product_discount) * ($this->item_discount[$product_id] / 100);
+            $this->updateCartOptions($updatedItem->rowId, $product_id, $updatedItem, $discount_amount, $lineKey);
+        } elseif ($this->discount_type[$stateKey] == 'percentage') {
+            $discount_amount = ($cart_item->price + $cart_item->options->product_discount) * ($this->item_discount[$stateKey] / 100);
 
             Cart::instance($this->cart_instance)
-                ->update($row_id, [
+                ->update($cart_item->rowId, [
                     'price' => ($cart_item->price + $cart_item->options->product_discount) - $discount_amount
                 ]);
 
-            $updatedItem = Cart::instance($this->cart_instance)->get($row_id);
+            $updatedItem = Cart::instance($this->cart_instance)->get($cart_item->rowId) ?: $this->findCartRow(null, $lineKey);
             if (!$updatedItem) {
                 return;
             }
 
-            $this->updateCartOptions($row_id, $product_id, $updatedItem, $discount_amount);
+            $this->updateCartOptions($updatedItem->rowId, $product_id, $updatedItem, $discount_amount, $lineKey);
         }
 
-        session()->flash('discount_message' . $product_id, 'Discount added to the product!');
+        session()->flash('discount_message' . $stateKey, 'Discount added to the product!');
     }
 
     public function calculate($product) {
@@ -269,13 +494,58 @@ class ProductCart extends Component
         return ['price' => $price, 'unit_price' => $unit_price, 'product_tax' => $product_tax, 'sub_total' => $sub_total];
     }
 
-    public function updateCartOptions($row_id, $product_id, $cart_item, $discount_amount) {
-        $freshItem = Cart::instance($this->cart_instance)->get($row_id);
+    public function duplicateQuotationRow($row_id, $lineKey = null)
+    {
+        if (!$this->isQuotationCart()) {
+            return;
+        }
+
+        $source = $this->findCartRow($row_id, $lineKey);
+        if (!$source) {
+            session()->flash('message', 'Cart row not found. Please refresh the page.');
+            return;
+        }
+
+        $newLineKey = $this->makeQuotationLineKey($source->id);
+        $options = (array) $source->options;
+        $options['line_key'] = $newLineKey;
+        $options['product_discount'] = 0;
+        $options['product_discount_type'] = 'fixed';
+        $options['installation_type'] = 'item_only';
+        $options['customer_vehicle_id'] = null;
+        $options['sub_total'] = (float) ($options['unit_price'] ?? $source->price);
+
+        Cart::instance($this->cart_instance)->add([
+            'id' => $source->id,
+            'name' => $source->name,
+            'qty' => 1,
+            'price' => (float) ($options['unit_price'] ?? $source->price),
+            'weight' => $source->weight,
+            'options' => $options,
+        ]);
+
+        $this->quantity[$newLineKey] = 1;
+        $this->check_quantity[$newLineKey] = $options['stock'] ?? 0;
+        $this->discount_type[$newLineKey] = 'fixed';
+        $this->item_discount[$newLineKey] = 0;
+        $this->installation_type[$newLineKey] = 'item_only';
+        $this->customer_vehicle_id[$newLineKey] = null;
+        $this->global_qty = Cart::instance($this->cart_instance)->count();
+    }
+
+    public function updateCartOptions($row_id, $product_id, $cart_item, $discount_amount, $lineKey = null) {
+        $freshItem = $this->findCartRow($row_id, $lineKey);
         if (!$freshItem) {
             return;
         }
 
-        Cart::instance($this->cart_instance)->update($row_id, ['options' => [
+        $stateKey = $this->cartStateKey($freshItem, $lineKey);
+        $installationType = $this->normalizeInstallationType($this->installation_type[$stateKey] ?? $freshItem->options->installation_type ?? 'item_only');
+        $vehicleId = $installationType === 'with_installation'
+            ? ((int) ($this->customer_vehicle_id[$stateKey] ?? $freshItem->options->customer_vehicle_id ?? 0) ?: null)
+            : null;
+
+        Cart::instance($this->cart_instance)->update($freshItem->rowId, ['options' => [
             'sub_total'             => $freshItem->price * $freshItem->qty,
             'code'                  => $freshItem->options->code,
             'product_code'          => $freshItem->options->product_code ?? $freshItem->options->code,
@@ -284,7 +554,10 @@ class ProductCart extends Component
             'product_tax'           => $freshItem->options->product_tax,
             'unit_price'            => $freshItem->options->unit_price,
             'product_discount'      => $discount_amount,
-            'product_discount_type' => $this->discount_type[$product_id],
+            'product_discount_type' => $this->discount_type[$stateKey],
+            'line_key'              => $freshItem->options->line_key ?? null,
+            'installation_type'     => $installationType,
+            'customer_vehicle_id'   => $vehicleId,
         ]]);
     }
 }

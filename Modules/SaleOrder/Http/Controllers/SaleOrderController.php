@@ -314,8 +314,10 @@ class SaleOrderController extends Controller
                         'product_discount_amount' => 0,
                         'product_discount_type' => 'fixed',
                         'sub_total' => (int) ($qty * $unitPrice),
-                        'installation_type' => 'item_only',
-                        'customer_vehicle_id' => null,
+                        'installation_type' => $this->normalizeSaleOrderItemInstallationType($d->installation_type ?? 'item_only'),
+                        'customer_vehicle_id' => $this->normalizeSaleOrderItemInstallationType($d->installation_type ?? 'item_only') === 'with_installation'
+                            ? $d->customer_vehicle_id
+                            : null,
 
                         // ✅ nanti di-inject dari master product
                         'product_name' => null,

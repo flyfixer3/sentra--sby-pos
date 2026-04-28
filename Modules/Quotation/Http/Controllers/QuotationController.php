@@ -5,9 +5,11 @@ namespace Modules\Quotation\Http\Controllers;
 use App\Support\BranchContext;
 use Gloudemans\Shoppingcart\Facades\Cart;
 use Illuminate\Routing\Controller;
+use Illuminate\Validation\ValidationException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
 use Modules\People\Entities\Customer;
+use Modules\People\Entities\CustomerVehicle;
 use Modules\Product\Entities\Product;
 use Modules\Product\Entities\Warehouse;
 use Modules\SaleDelivery\Entities\SaleDelivery;
@@ -23,6 +25,50 @@ use Modules\Sale\Entities\SaleDetails;
 
 class QuotationController extends Controller
 {
+    private function normalizeQuotationDetailInstallationType($value): string
+    {
+        return $value === 'with_installation' ? 'with_installation' : 'item_only';
+    }
+
+    private function resolveQuotationDetailInstallationMetadata($cartItem, int $customerId, int $branchId): array
+    {
+        $installationType = $this->normalizeQuotationDetailInstallationType($cartItem->options->installation_type ?? 'item_only');
+
+        if ($installationType !== 'with_installation') {
+            return [
+                'installation_type' => 'item_only',
+                'customer_vehicle_id' => null,
+            ];
+        }
+
+        $vehicleId = (int) ($cartItem->options->customer_vehicle_id ?? 0);
+        if ($vehicleId <= 0) {
+            throw ValidationException::withMessages([
+                'customer_vehicle_id' => 'Vehicle is required for quotation items with installation.',
+            ]);
+        }
+
+        $vehicle = CustomerVehicle::query()
+            ->where('id', $vehicleId)
+            ->where('customer_id', $customerId)
+            ->where(function ($query) use ($branchId) {
+                $query->whereNull('branch_id')
+                    ->orWhere('branch_id', $branchId);
+            })
+            ->first();
+
+        if (!$vehicle) {
+            throw ValidationException::withMessages([
+                'customer_vehicle_id' => 'Selected vehicle does not belong to the selected customer.',
+            ]);
+        }
+
+        return [
+            'installation_type' => 'with_installation',
+            'customer_vehicle_id' => (int) $vehicle->id,
+        ];
+    }
+
     private function resolveQuotationProductCode($cartItem): string
     {
         $productCode = trim((string) ($cartItem->options->product_code ?? ''));
@@ -38,7 +84,7 @@ class QuotationController extends Controller
         }
 
         if ($productCode === '') {
-            throw \Illuminate\Validation\ValidationException::withMessages([
+            throw ValidationException::withMessages([
                 'product_code' => 'Product code is missing for product: ' . (string) ($cartItem->name ?? 'Unknown Product') . '. Please re-add the product.',
             ]);
         }
@@ -110,6 +156,7 @@ class QuotationController extends Controller
 
             foreach (Cart::instance('quotation')->content() as $cart_item) {
                 $productCode = $this->resolveQuotationProductCode($cart_item);
+                $installationMetadata = $this->resolveQuotationDetailInstallationMetadata($cart_item, (int) $customer->id, (int) $branchId);
 
                 QuotationDetails::create([
                     'quotation_id' => $quotation->id,
@@ -123,6 +170,8 @@ class QuotationController extends Controller
                     'product_discount_amount' => (int) $cart_item->options->product_discount,
                     'product_discount_type' => $cart_item->options->product_discount_type,
                     'product_tax_amount' => (int) $cart_item->options->product_tax,
+                    'installation_type' => $installationMetadata['installation_type'],
+                    'customer_vehicle_id' => $installationMetadata['customer_vehicle_id'],
                 ]);
             }
 
@@ -136,7 +185,7 @@ class QuotationController extends Controller
     public function show(Quotation $quotation) {
         abort_if(Gate::denies('show_quotations'), 403);
 
-        $quotation->loadMissing(['creator', 'updater']);
+        $quotation->loadMissing(['creator', 'updater', 'quotationDetails.customerVehicle']);
 
         $branchId = BranchContext::id();
 
@@ -168,6 +217,7 @@ class QuotationController extends Controller
                 'price'   => $quotation_detail->price,
                 'weight'  => 1,
                 'options' => [
+                    'line_key' => 'quotation_detail_' . $quotation_detail->id,
                     'product_discount' => $quotation_detail->product_discount_amount,
                     'product_discount_type' => $quotation_detail->product_discount_type,
                     'sub_total'   => $quotation_detail->sub_total,
@@ -175,7 +225,11 @@ class QuotationController extends Controller
                     'product_code' => $quotation_detail->product_code,
                     'stock'       => Product::findOrFail($quotation_detail->product_id)->product_quantity,
                     'product_tax' => $quotation_detail->product_tax_amount,
-                    'unit_price'  => $quotation_detail->unit_price
+                    'unit_price'  => $quotation_detail->unit_price,
+                    'installation_type' => $this->normalizeQuotationDetailInstallationType($quotation_detail->installation_type ?? 'item_only'),
+                    'customer_vehicle_id' => $this->normalizeQuotationDetailInstallationType($quotation_detail->installation_type ?? 'item_only') === 'with_installation'
+                        ? $quotation_detail->customer_vehicle_id
+                        : null,
                 ]
             ]);
         }
@@ -246,6 +300,7 @@ class QuotationController extends Controller
             // insert details baru dari cart
             foreach (Cart::instance('quotation')->content() as $cart_item) {
                 $productCode = $this->resolveQuotationProductCode($cart_item);
+                $installationMetadata = $this->resolveQuotationDetailInstallationMetadata($cart_item, (int) $customer->id, (int) $branchId);
 
                 QuotationDetails::create([
                     'quotation_id'             => $quotation->id,
@@ -257,8 +312,10 @@ class QuotationController extends Controller
                     'unit_price'               => (int) $cart_item->options->unit_price,
                     'sub_total'                => (int) $cart_item->options->sub_total,
                     'product_discount_amount'  => (int) $cart_item->options->product_discount,
-                    'product_discount_type'    => (int) $cart_item->options->product_discount_type,
+                    'product_discount_type'    => $cart_item->options->product_discount_type,
                     'product_tax_amount'       => (int) $cart_item->options->product_tax,
+                    'installation_type'        => $installationMetadata['installation_type'],
+                    'customer_vehicle_id'      => $installationMetadata['customer_vehicle_id'],
                 ]);
             }
 
@@ -389,6 +446,7 @@ class QuotationController extends Controller
                 // 2) ✅ Copy items ke sale_details
                 // ==========================================
                 foreach ($quotation->quotationDetails as $d) {
+                    $installationType = $this->normalizeQuotationDetailInstallationType($d->installation_type ?? 'item_only');
 
                     $detailData = [
                         'sale_id'                 => $saleId,
@@ -401,6 +459,10 @@ class QuotationController extends Controller
                         'sub_total'               => (int) ($d->sub_total ?? 0),
                         'product_tax_amount'      => (int) ($d->product_tax_amount ?? 0),
                         'product_discount_amount' => (int) ($d->product_discount_amount ?? 0),
+                        'installation_type'        => $installationType,
+                        'customer_vehicle_id'      => $installationType === 'with_installation'
+                            ? ((int) ($d->customer_vehicle_id ?? 0) ?: null)
+                            : null,
                     ];
 
                     // kalau sale_details butuh warehouse_id (di SaleController kamu selalu isi)

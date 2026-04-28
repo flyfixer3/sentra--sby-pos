@@ -21,11 +21,17 @@
             </div>
             <table class="table table-bordered">
                 <thead class="thead-dark">
+                @php
+                    $isQuotationCart = ($cart_instance ?? '') === 'quotation';
+                @endphp
                 <tr>
                     <th class="align-middle">Product</th>
                     <th class="align-middle">Sell Unit Price</th>
                     <th class="align-middle">Stock</th>
                     <th class="align-middle">Quantity</th>
+                    @if($isQuotationCart)
+                        <th class="align-middle">Service Type</th>
+                    @endif
                     <th class="align-middle">Discount</th>
                     <th class="align-middle">Tax</th>
                     <th class="align-middle">Sub Total</th>
@@ -35,6 +41,11 @@
                 <tbody>
                     @if($cart_items->isNotEmpty())
                         @foreach($cart_items as $cart_item)
+                            @php
+                                $lineKey = (string) ($cart_item->options->line_key ?? $cart_item->rowId);
+                                $rowAwareSaleCart = $isQuotationCart;
+                                $rowInstallationType = $installation_type[$lineKey] ?? ($cart_item->options->installation_type ?? 'item_only');
+                            @endphp
                             <tr>
                                 <td class="align-middle">
                                     {{ $cart_item->name }} <br>
@@ -54,6 +65,52 @@
                                     @include('livewire.includes.product-cart-quantity')
                                 </td>
 
+                                @if($isQuotationCart)
+                                    <td class="align-middle" style="min-width: 220px;">
+                                        <select
+                                            wire:model="installation_type.{{ $lineKey }}"
+                                            class="form-control form-control-sm"
+                                            data-cart-sync-row
+                                            data-cart-sync-field="installation_type"
+                                            data-cart-row-id="{{ $cart_item->rowId }}"
+                                            data-cart-product-id="{{ $cart_item->id }}"
+                                            data-cart-line-key="{{ $lineKey }}"
+                                        >
+                                            <option value="item_only">Item Only</option>
+                                            <option value="with_installation">With Installation</option>
+                                        </select>
+
+                                        @if($rowInstallationType === 'with_installation')
+                                            <div class="mt-2">
+                                                <label class="small mb-1">Vehicle</label>
+                                                @if(empty($customer_id))
+                                                    <small class="text-warning d-block">Please select customer first.</small>
+                                                @elseif($customer_vehicles->isEmpty())
+                                                    <small class="text-warning d-block">No vehicle registered for this customer.</small>
+                                                @else
+                                                    <select
+                                                        wire:model="customer_vehicle_id.{{ $lineKey }}"
+                                                        class="form-control form-control-sm"
+                                                        data-cart-sync-row
+                                                        data-cart-sync-field="customer_vehicle_id"
+                                                        data-cart-row-id="{{ $cart_item->rowId }}"
+                                                        data-cart-product-id="{{ $cart_item->id }}"
+                                                        data-cart-line-key="{{ $lineKey }}"
+                                                    >
+                                                        <option value="">Select vehicle</option>
+                                                        @foreach($customer_vehicles as $vehicle)
+                                                            <option value="{{ $vehicle->id }}">
+                                                                {{ $vehicle->car_plate }}{{ $vehicle->vehicle_name ? ' / ' . $vehicle->vehicle_name : '' }}
+                                                            </option>
+                                                        @endforeach
+                                                    </select>
+                                                    <small class="text-muted d-block mt-1">Vehicle is required for installation items.</small>
+                                                @endif
+                                            </div>
+                                        @endif
+                                    </td>
+                                @endif
+
                                 <td class="align-middle">
                                     {{ format_currency($cart_item->options->product_discount) }}
                                 </td>
@@ -67,15 +124,25 @@
                                 </td>
 
                                 <td class="align-middle text-center">
-                                    <a href="#" wire:click.prevent="removeItem('{{ $cart_item->rowId }}')">
-                                        <i class="bi bi-x-circle font-2xl text-danger"></i>
-                                    </a>
+                                    @if($isQuotationCart)
+                                        <a href="#" class="mr-2" title="Add another row for this product" wire:click.prevent="duplicateQuotationRow('{{ $cart_item->rowId }}', '{{ $lineKey }}')">
+                                            <i class="bi bi-plus-circle font-2xl text-success"></i>
+                                        </a>
+
+                                        <a href="#" wire:click.prevent="removeItem('{{ $cart_item->rowId }}', '{{ $lineKey }}')">
+                                            <i class="bi bi-x-circle font-2xl text-danger"></i>
+                                        </a>
+                                    @else
+                                        <a href="#" wire:click.prevent="removeItem('{{ $cart_item->rowId }}')">
+                                            <i class="bi bi-x-circle font-2xl text-danger"></i>
+                                        </a>
+                                    @endif
                                 </td>
                             </tr>
                         @endforeach
                     @else
                         <tr>
-                            <td colspan="8" class="text-center">
+                            <td colspan="{{ $isQuotationCart ? 9 : 8 }}" class="text-center">
                         <span class="text-danger">
                             Please search & select products!
                         </span>

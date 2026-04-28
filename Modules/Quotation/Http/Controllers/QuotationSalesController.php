@@ -13,6 +13,10 @@ use Modules\Quotation\Http\Requests\StoreQuotationSaleRequest;
 
 class QuotationSalesController extends Controller
 {
+    private function normalizeInstallationType($value): string
+    {
+        return $value === 'with_installation' ? 'with_installation' : 'item_only';
+    }
 
     public function __invoke(Quotation $quotation) {
         abort_if(Gate::denies('create_quotation_sales'), 403);
@@ -48,6 +52,7 @@ class QuotationSalesController extends Controller
         foreach ($quotation_details as $quotation_detail) {
             $product = Product::findOrFail($quotation_detail->product_id);
             $productCost = (float) $product->product_cost;
+            $installationType = $this->normalizeInstallationType($quotation_detail->installation_type ?? 'item_only');
 
             if ($branchId > 0) {
                 $productCost = (float) $hppService->getCurrentHpp($branchId, (int) $quotation_detail->product_id);
@@ -60,6 +65,7 @@ class QuotationSalesController extends Controller
                 'price'   => $quotation_detail->price,
                 'weight'  => 1,
                 'options' => [
+                    'line_key' => 'quotation_detail_' . $quotation_detail->id,
                     'product_discount' => $quotation_detail->product_discount_amount,
                     'product_discount_type' => $quotation_detail->product_discount_type,
                     'sub_total'   => $quotation_detail->sub_total,
@@ -70,7 +76,11 @@ class QuotationSalesController extends Controller
                     'warehouse_id'=> 99,
                     'product_cost' => $productCost,
                     'product_tax' => $quotation_detail->product_tax_amount,
-                    'unit_price'  => $quotation_detail->unit_price
+                    'unit_price'  => $quotation_detail->unit_price,
+                    'installation_type' => $installationType,
+                    'customer_vehicle_id' => $installationType === 'with_installation'
+                        ? $quotation_detail->customer_vehicle_id
+                        : null,
                 ]
             ]);
         }

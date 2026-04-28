@@ -73,12 +73,28 @@
                             </thead>
                             <tbody>
                             @foreach($quotation->quotationDetails as $item)
+                                @php
+                                    $installationType = (string) ($item->installation_type ?? 'item_only');
+                                    $vehicle = $item->customerVehicle;
+                                @endphp
                                 <tr>
                                     <td class="align-middle">
                                         {{ $item->product_name }} <br>
                                         <span class="badge badge-success">
                                                 {{ $item->product_code }}
                                             </span>
+                                        @if($installationType === 'with_installation')
+                                            <br>
+                                            <small>
+                                                Service: With Installation<br>
+                                                Vehicle:
+                                                @if($vehicle)
+                                                    {{ $vehicle->car_plate }}{{ $vehicle->vehicle_name ? ' / ' . $vehicle->vehicle_name : '' }}
+                                                @else
+                                                    Vehicle not found
+                                                @endif
+                                            </small>
+                                        @endif
                                     </td>
                                     <td class="align-middle">{{ format_currency($item->unit_price) }}</td>
 

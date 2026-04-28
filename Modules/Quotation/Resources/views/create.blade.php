@@ -58,7 +58,7 @@
                                 </div>
                             </div>
 
-                            <livewire:product-cart :cartInstance="'quotation'"/>
+                            <livewire:product-cart :cartInstance="'quotation'" :customerId="(int) old('customer_id', 0)"/>
 
                             <div class="form-row">
                                 <div class="col-lg-4">
@@ -91,5 +91,19 @@
 @endsection
 
 @push('page_scripts')
+    <script>
+        document.addEventListener('livewire:load', function () {
+            var customerSelect = document.getElementById('customer_id');
+            if (!customerSelect || !window.Livewire) {
+                return;
+            }
 
+            function syncQuotationCustomer() {
+                window.Livewire.emit('quotationCustomerChanged', customerSelect.value || null);
+            }
+
+            customerSelect.addEventListener('change', syncQuotationCustomer);
+            syncQuotationCustomer();
+        });
+    </script>
 @endpush
