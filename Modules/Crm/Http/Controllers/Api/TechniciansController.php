@@ -166,22 +166,43 @@ class TechniciansController extends Controller
 
     public function available(Request $request)
     {
-        // Return technicians available for the active branch
-        $branchId = $this->requireBranch();
-
-        // Include both regular technicians and technician leaders
         $roleNames = ['Technician', 'Teknisi', 'Technician Leader'];
 
-        $rows = \DB::table('users')
-            ->join('model_has_roles', function($j){ $j->on('model_has_roles.model_id','=','users.id'); })
-            ->join('roles', function($j){ $j->on('roles.id','=','model_has_roles.role_id'); })
-            ->join('branch_user', function($j){ $j->on('branch_user.user_id','=','users.id'); })
-            ->select('users.id','users.name','users.email','branch_user.branch_id')
-            ->whereIn('roles.name', $roleNames)
-            ->where('branch_user.branch_id', $branchId)
-            ->groupBy('users.id','users.name','users.email','branch_user.branch_id')
-            ->orderBy('users.name')
-            ->get();
+        // Leaders can request all branches at once (for the assign-technician screen)
+        $wantsAll = $request->boolean('all_branches') && Gate::allows('assign_crm_service_orders');
+
+        if ($wantsAll) {
+            // Each user's primary branch = the branch_user row with the lowest branch_id.
+            // Using a subquery avoids duplicate rows for users who belong to multiple branches.
+            $primaryBranchSub = \DB::table('branch_user')
+                ->select('user_id', \DB::raw('MIN(branch_id) as branch_id'))
+                ->groupBy('user_id');
+
+            $rows = \DB::table('users')
+                ->join('model_has_roles', fn($j) => $j->on('model_has_roles.model_id', '=', 'users.id'))
+                ->join('roles', fn($j) => $j->on('roles.id', '=', 'model_has_roles.role_id'))
+                ->joinSub($primaryBranchSub, 'pb', fn($j) => $j->on('pb.user_id', '=', 'users.id'))
+                ->join('branches', fn($j) => $j->on('branches.id', '=', 'pb.branch_id'))
+                ->select('users.id', 'users.name', 'users.email', 'pb.branch_id', 'branches.name as branch_name')
+                ->whereIn('roles.name', $roleNames)
+                ->groupBy('users.id', 'users.name', 'users.email', 'pb.branch_id', 'branches.name')
+                ->orderBy('users.name')
+                ->get();
+        } else {
+            $branchId = $this->requireBranch();
+
+            $rows = \DB::table('users')
+                ->join('model_has_roles', fn($j) => $j->on('model_has_roles.model_id', '=', 'users.id'))
+                ->join('roles', fn($j) => $j->on('roles.id', '=', 'model_has_roles.role_id'))
+                ->join('branch_user', fn($j) => $j->on('branch_user.user_id', '=', 'users.id'))
+                ->join('branches', fn($j) => $j->on('branches.id', '=', 'branch_user.branch_id'))
+                ->select('users.id', 'users.name', 'users.email', 'branch_user.branch_id', 'branches.name as branch_name')
+                ->whereIn('roles.name', $roleNames)
+                ->where('branch_user.branch_id', $branchId)
+                ->groupBy('users.id', 'users.name', 'users.email', 'branch_user.branch_id', 'branches.name')
+                ->orderBy('users.name')
+                ->get();
+        }
 
         return response()->json(['data' => $rows]);
     }
