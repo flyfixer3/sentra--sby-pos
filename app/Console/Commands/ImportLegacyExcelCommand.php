@@ -633,9 +633,17 @@ class ImportLegacyExcelCommand extends Command
                 $cols = $profile['sales_cols'];
                 $highestRow = $sheet->getHighestDataRow();
                 $sales = [];
+                $carryDate = null;
+                $carryInvoice = null;
                 for ($row = $profile['sales_start_row']; $row <= $highestRow; $row++) {
-                    $invoice = trim((string) $this->cell($sheet, $cols['invoice'], $row));
+                    $invoice = strtoupper(trim((string) $this->cell($sheet, $cols['invoice'], $row)));
                     $code = strtoupper(trim((string) $this->cell($sheet, $cols['code'], $row)));
+                    if ($invoice !== '') {
+                        $carryInvoice = $invoice;
+                    } elseif ($carryInvoice) {
+                        $invoice = $carryInvoice;
+                    }
+
                     if ($invoice === '' || $code === '' || $code === 'KODE') {
                         continue;
                     }
@@ -644,6 +652,12 @@ class ImportLegacyExcelCommand extends Command
                     }
 
                     $date = $this->parseDate($this->cell($sheet, $cols['date'], $row));
+                    if ($date) {
+                        $carryDate = $date;
+                    } elseif ($carryDate) {
+                        $date = $carryDate->copy();
+                    }
+
                     if (!$date) {
                         continue;
                     }
@@ -669,14 +683,50 @@ class ImportLegacyExcelCommand extends Command
                     ];
                     $line['is_internal_transfer'] = $this->isInternalTransferCandidate($line['qty'], $line['unit_price'], $line['net']);
 
-                    $sales[$invoice]['date'] = $date;
-                    $sales[$invoice]['invoice'] = $invoice;
-                    $sales[$invoice]['customer_name'] = trim((string) $this->cell($sheet, $cols['customer'], $row)) ?: 'Walk-in';
-                    $sales[$invoice]['customer_phone'] = $cols['phone'] ? trim((string) $this->cell($sheet, $cols['phone'], $row)) : null;
-                    $sales[$invoice]['customer_email'] = $cols['email'] ? trim((string) $this->cell($sheet, $cols['email'], $row)) : null;
-                    $sales[$invoice]['license_number'] = $cols['plate'] ? trim((string) $this->cell($sheet, $cols['plate'], $row)) : null;
-                    $sales[$invoice]['address'] = $cols['address'] ? trim((string) $this->cell($sheet, $cols['address'], $row)) : null;
-                    $sales[$invoice]['sale_from'] = $cols['sale_from'] ? trim((string) $this->cell($sheet, $cols['sale_from'], $row)) : 'Other';
+                    if (!isset($sales[$invoice])) {
+                        $sales[$invoice] = [
+                            'date' => $date,
+                            'invoice' => $invoice,
+                            'customer_name' => 'Walk-in',
+                            'customer_phone' => null,
+                            'customer_email' => null,
+                            'license_number' => null,
+                            'address' => null,
+                            'sale_from' => 'Other',
+                            'lines' => [],
+                        ];
+                    }
+
+                    if (!isset($sales[$invoice]['date']) || !$sales[$invoice]['date']) {
+                        $sales[$invoice]['date'] = $date;
+                    }
+
+                    $customerName = trim((string) $this->cell($sheet, $cols['customer'], $row));
+                    $customerPhone = $cols['phone'] ? trim((string) $this->cell($sheet, $cols['phone'], $row)) : null;
+                    $customerEmail = $cols['email'] ? trim((string) $this->cell($sheet, $cols['email'], $row)) : null;
+                    $licenseNumber = $cols['plate'] ? trim((string) $this->cell($sheet, $cols['plate'], $row)) : null;
+                    $address = $cols['address'] ? trim((string) $this->cell($sheet, $cols['address'], $row)) : null;
+                    $saleFrom = $cols['sale_from'] ? trim((string) $this->cell($sheet, $cols['sale_from'], $row)) : null;
+
+                    if ($customerName !== '') {
+                        $sales[$invoice]['customer_name'] = $customerName;
+                    }
+                    if ($customerPhone !== null && $customerPhone !== '') {
+                        $sales[$invoice]['customer_phone'] = $customerPhone;
+                    }
+                    if ($customerEmail !== null && $customerEmail !== '') {
+                        $sales[$invoice]['customer_email'] = $customerEmail;
+                    }
+                    if ($licenseNumber !== null && $licenseNumber !== '') {
+                        $sales[$invoice]['license_number'] = $licenseNumber;
+                    }
+                    if ($address !== null && $address !== '') {
+                        $sales[$invoice]['address'] = $address;
+                    }
+                    if ($saleFrom !== null && $saleFrom !== '') {
+                        $sales[$invoice]['sale_from'] = $saleFrom;
+                    }
+
                     $sales[$invoice]['lines'][] = $line;
                 }
 
