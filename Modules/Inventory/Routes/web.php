@@ -37,6 +37,8 @@ Route::middleware(['auth'])
             ->name('stock-opnames.manual-item.store');
         Route::post('/stock-opnames/{stockOpname}/items/{item}/resolve', [StockOpnameController::class, 'resolveItem'])
             ->name('stock-opnames.items.resolve');
+        Route::post('/stock-opnames/{stockOpname}/items/{item}/update-physical', [StockOpnameController::class, 'updatePhysicalItem'])
+            ->name('stock-opnames.items.update-physical');
         Route::post('/stock-opnames/{stockOpname}/items/{item}/reset-resolve', [StockOpnameController::class, 'resetResolve'])
             ->name('stock-opnames.items.reset-resolve');
         Route::post('/stock-opnames/{stockOpname}/mark-missing-zero', [StockOpnameController::class, 'markMissingAsZero'])

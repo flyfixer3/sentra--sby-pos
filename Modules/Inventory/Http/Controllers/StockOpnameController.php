@@ -400,6 +400,34 @@ class StockOpnameController extends Controller
         return redirect()->route('inventory.stock-opnames.show', $stockOpname);
     }
 
+    public function updatePhysicalItem(Request $request, StockOpname $stockOpname, StockOpnameItem $item)
+    {
+        abort_if(Gate::denies('access_inventories'), 403);
+        abort_if($stockOpname->status !== 'draft', 422);
+        abort_if((int) $item->stock_opname_id !== (int) $stockOpname->id, 404);
+
+        $request->validate([
+            'physical_qty' => ['required', 'integer', 'min:0'],
+        ]);
+
+        $physicalQty = (int) $request->physical_qty;
+
+        $item->update([
+            'physical_qty' => $physicalQty,
+            'diff_qty' => $physicalQty - (int) $item->system_qty,
+            'review_status' => 'pending',
+            'resolution_type' => null,
+            'resolution_reference' => null,
+            'resolution_note' => null,
+            'resolved_at' => null,
+            'resolved_by' => null,
+            'counted_at' => now(),
+        ]);
+
+        toast('Qty fisik item berhasil diperbarui.', 'success');
+        return redirect()->route('inventory.stock-opnames.show', $stockOpname, request()->only('search', 'status', 'page'));
+    }
+
     public function resetResolve(StockOpname $stockOpname, StockOpnameItem $item)
     {
         abort_if(Gate::denies('access_inventories'), 403);

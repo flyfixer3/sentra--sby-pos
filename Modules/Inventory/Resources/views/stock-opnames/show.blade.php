@@ -219,7 +219,19 @@
                                             @endif
                                         </td>
                                         <td class="text-right">{{ number_format((int) $item->system_qty) }}</td>
-                                        <td class="text-right">{{ is_null($item->physical_qty) ? '-' : number_format((int) $item->physical_qty) }}</td>
+                                        <td class="text-right">
+                                            @if($stockOpname->status === 'draft' && !is_null($item->physical_qty))
+                                                <form action="{{ route('inventory.stock-opnames.items.update-physical', [$stockOpname, $item]) }}" method="POST" class="d-flex align-items-center justify-content-end" style="gap:6px;">
+                                                    @csrf
+                                                    <input type="hidden" name="search" value="{{ $search }}">
+                                                    <input type="hidden" name="status" value="{{ $status }}">
+                                                    <input type="number" name="physical_qty" min="0" value="{{ (int) $item->physical_qty }}" class="form-control form-control-sm text-right" style="width:84px;">
+                                                    <button type="submit" class="btn btn-sm btn-outline-primary rounded-pill px-2">Simpan</button>
+                                                </form>
+                                            @else
+                                                {{ is_null($item->physical_qty) ? '-' : number_format((int) $item->physical_qty) }}
+                                            @endif
+                                        </td>
                                         <td class="text-right {{ !is_null($item->diff_qty) && (int) $item->diff_qty !== 0 ? 'font-weight-bold' : '' }}">
                                             {{ is_null($item->diff_qty) ? '-' : number_format((int) $item->diff_qty) }}
                                         </td>
