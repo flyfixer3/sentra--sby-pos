@@ -66,11 +66,11 @@
     $items = old('items', $prefillItems ?? []);
     if (!is_array($items) || count($items) === 0) $items = [];
 
-    $oldTax = old('tax_percentage', 0);
-    $oldDiscountType = old('discount_type', 'percentage');
-    $oldHeaderDiscountValue = old('header_discount_value', old('discount_percentage', 0));
-    $oldShipping = old('shipping_amount', 0);
-    $oldFee = old('fee_amount', 0);
+    $oldTax = old('tax_percentage', $prefillTaxPercentage ?? 0);
+    $oldDiscountType = old('discount_type', $prefillDiscountType ?? 'percentage');
+    $oldHeaderDiscountValue = old('header_discount_value', $prefillHeaderDiscountValue ?? old('discount_percentage', 0));
+    $oldShipping = old('shipping_amount', $prefillShippingAmount ?? 0);
+    $oldFee = old('fee_amount', $prefillFeeAmount ?? 0);
 
     // ✅ deposit default 0 (NOT empty)
     $oldDepositPct = old('deposit_percentage', 0);
@@ -133,7 +133,7 @@
 
                             <div class="col-md-9 mb-3">
                                 <label class="form-label">Customer</label>
-                                <select name="customer_id" class="form-control" required>
+                                <select name="customer_id" id="so_customer_id" class="form-control" required>
                                     <option value="">-- Choose --</option>
                                     @foreach($customers as $c)
                                         <option value="{{ $c->id }}"
@@ -156,7 +156,10 @@
                         <hr>
 
                         <div class="mt-2" data-so-product-table-host>
-                            <livewire:sale-order.product-table :prefillItems="$items" />
+                            <livewire:sale-order.product-table
+                                :prefillItems="$items"
+                                :customerId="(int) old('customer_id', $prefillCustomerId)"
+                            />
                         </div>
 
                         <hr>
@@ -243,7 +246,7 @@
 
                                 <div class="small text-muted">
                                     Grand Total dihitung dari item (qty × sell price) + tax + fee + shipping.<br>
-                                    Item discount sudah masuk ke Net Price per baris. Header discount mengurangi Grand Total.
+                                    Item discount sudah masuk ke Sell Unit Price per baris. Header discount mengurangi Grand Total.
                                 </div>
                             </div>
                         </div>
@@ -422,17 +425,60 @@
         return rows;
     }
 
+    function soFinalizeRowInputsBeforeSubmit(form) {
+        if (!form) return;
+
+        form.querySelectorAll('input[name^="items"][name$="[product_id]"]').forEach((pidInput) => {
+            const name = pidInput.getAttribute('name') || '';
+            const idxMatch = name.match(/items\[(\d+)\]\[product_id\]/);
+            if (!idxMatch) return;
+
+            const idx = idxMatch[1];
+            const getField = (field) => form.querySelector(`[name="items[${idx}][${field}]"]`);
+
+            const qtyInput = getField('quantity');
+            const priceInput = getField('price');
+            const originalInput = getField('original_price');
+            const unitInput = getField('unit_price');
+            const discountInput = getField('product_discount_amount');
+            const discountValueInput = getField('discount_value');
+            const discountTypeInput = getField('product_discount_type');
+            const subTotalInput = getField('sub_total');
+
+            const qty = Math.max(1, soParseInt(qtyInput?.value));
+            const price = Math.max(0, soParseInt(priceInput?.value));
+            const original = Math.max(0, soParseInt(originalInput?.value || unitInput?.value || price));
+            const unit = original > 0 ? original : price;
+            const discountAmount = Math.max(0, unit - price);
+            const subTotal = qty * price;
+
+            if (qtyInput) qtyInput.value = String(qty);
+            if (priceInput) priceInput.value = String(price);
+            if (originalInput) originalInput.value = String(unit);
+            if (unitInput) unitInput.value = String(unit);
+            if (discountInput) discountInput.value = String(discountAmount);
+            if (subTotalInput) subTotalInput.value = String(subTotal);
+
+            if (discountValueInput) {
+                const discountType = discountTypeInput?.value === 'percentage' ? 'percentage' : 'fixed';
+                discountValueInput.value = discountType === 'percentage' && unit > 0
+                    ? soToFixed2((discountAmount / unit) * 100)
+                    : String(discountAmount);
+            }
+        });
+    }
+
     function soComputeSubtotalSell(rows) {
         return rows.reduce((sum, r) => sum + (r.qty * r.price), 0);
     }
-    function soComputeHeaderDiscount(subtotalSell, taxAmt, fee, shipping) {
+    function soComputeHeaderDiscount(subtotalSell) {
         const type = document.getElementById('so_discount_type')?.value === 'fixed' ? 'fixed' : 'percentage';
         const valueEl = document.getElementById('so_header_discount_value');
         const pctEl = document.getElementById('so_discount_percentage');
         const rawValue = soParseFloat(valueEl?.value);
 
         if (type === 'fixed') {
-            const base = Math.max(0, subtotalSell + taxAmt + fee + shipping);
+            const base = Math.max(0, subtotalSell);
             const amount = Math.min(Math.max(0, Math.round(rawValue)), base);
             if (pctEl) pctEl.value = subtotalSell > 0 ? soToFixed2((amount / subtotalSell) * 100) : '0';
             return amount;
@@ -520,10 +566,11 @@
         const fee      = Math.max(0, soParseInt(document.getElementById('so_fee_amount')?.value));
         const shipping = Math.max(0, soParseInt(document.getElementById('so_shipping_amount')?.value));
 
-        const taxAmt = Math.round(subtotalSell * (taxPct / 100));
-        const discAmt = soComputeHeaderDiscount(subtotalSell, taxAmt, fee, shipping);
+        const discAmt = soComputeHeaderDiscount(subtotalSell);
+        const taxable = Math.max(0, subtotalSell - discAmt);
+        const taxAmt = Math.round(taxable * (taxPct / 100));
 
-        const grand = Math.max(0, Math.round(subtotalSell + taxAmt + fee + shipping - discAmt));
+        const grand = Math.max(0, Math.round(taxable + taxAmt + fee + shipping));
 
         document.getElementById('so_subtotal_text').innerText = soFormatRupiah(subtotalSell);
         document.getElementById('so_tax_text').innerText = soFormatRupiah(taxAmt);
@@ -668,6 +715,8 @@
 
     function soPrepareBeforeSubmit(form) {
         if (!form) return true;
+        soFinalizeRowInputsBeforeSubmit(form);
+        soRecalc();
         if (form.dataset.soReadyToSubmit === '1') return true;
         if (form.dataset.soSyncing === '1') return false;
 
@@ -676,22 +725,7 @@
             return true;
         }
 
-        form.dataset.soSyncing = '1';
-        soSetSubmitState(form, true);
-        soFlushCartFieldChanges(form);
-
-        window.setTimeout(() => {
-            const component = window.Livewire.find(componentId);
-            if (!component) {
-                form.dataset.soSyncing = '0';
-                soSetSubmitState(form, false);
-                return;
-            }
-
-            component.call('syncAllRowsBeforeSubmit');
-        }, 0);
-
-        return false;
+        return true;
     }
 
     document.addEventListener('DOMContentLoaded', function () {
@@ -701,6 +735,16 @@
         soBindDpReceivedInputs();
         soInitDpMode();
         soRecalc();
+
+        function notifySaleOrderCustomerChanged() {
+            if (window.Livewire && typeof window.Livewire.emit === 'function') {
+                window.Livewire.emit('saleOrderCustomerChanged', document.getElementById('so_customer_id')?.value || '');
+            }
+        }
+
+        document.getElementById('so_customer_id')?.addEventListener('change', notifySaleOrderCustomerChanged);
+        document.addEventListener('livewire:load', notifySaleOrderCustomerChanged);
+        notifySaleOrderCustomerChanged();
 
         // ✅ Livewire re-render safe hook
         if (window.Livewire && typeof window.Livewire.hook === 'function') {

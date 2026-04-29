@@ -17,7 +17,7 @@ class SendQuotationEmailController extends Controller
             Mail::to($quotation->customer->customer_email)->send(new QuotationMail($quotation));
 
             $quotation->update([
-                'status' => 'Sent'
+                'status' => 'completed'
             ]);
 
             toast('Sent On "' . $quotation->customer->customer_email . '"!', 'success');

@@ -304,6 +304,7 @@
                         <tr>
                             <th>Product</th>
                             <th class="text-end" style="width:120px;">Ordered</th>
+                            <th style="width:180px;">Service Type</th>
                             <th class="text-end" style="width:120px;">Delivered</th>
                             <th class="text-end" style="width:120px;">Planned Rem.</th>
                             <th style="width:280px;">Progress</th>
@@ -333,6 +334,15 @@
 
                             $pName = $it->product?->product_name ?? ('Product ID '.$pid);
                             $pCode = $it->product?->product_code ?? null;
+                            $installationType = (string) ($it->installation_type ?? 'item_only') === 'with_installation' ? 'with_installation' : 'item_only';
+                            $vehicle = $it->customerVehicle ?? null;
+                            $vehicleLabel = '-';
+                            if ($vehicle) {
+                                $vehicleLabel = trim((string) $vehicle->car_plate);
+                                if (!empty($vehicle->vehicle_name)) {
+                                    $vehicleLabel .= ' / ' . $vehicle->vehicle_name;
+                                }
+                            }
                         @endphp
                         <tr>
                             <td>
@@ -353,6 +363,15 @@
 
                             <td class="text-end">
                                 <span class="badge bg-secondary">{{ number_format($ordered) }}</span>
+                            </td>
+
+                            <td>
+                                <span class="badge {{ $installationType === 'with_installation' ? 'bg-secondary text-dark' : 'bg-light text-dark border' }}">
+                                    {{ $installationType === 'with_installation' ? 'With Installation' : 'Item Only' }}
+                                </span>
+                                <div class="text-muted small mt-1">
+                                    Vehicle: <strong>{{ $installationType === 'with_installation' ? $vehicleLabel : '-' }}</strong>
+                                </div>
                             </td>
 
                             <td class="text-end">

@@ -43,6 +43,14 @@
                                     <th>Address</th>
                                     <td>{{ $customer->address }}</td>
                                 </tr>
+                                <tr>
+                                    <th>Created At</th>
+                                    <td>{{ $customer->created_at ? \Carbon\Carbon::parse($customer->created_at)->format('d-m-Y H:i') : '-' }}</td>
+                                </tr>
+                                <tr>
+                                    <th>Last Updated At</th>
+                                    <td>{{ $customer->updated_at ? \Carbon\Carbon::parse($customer->updated_at)->format('d-m-Y H:i') : '-' }}</td>
+                                </tr>
                             </table>
                         </div>
                     </div>

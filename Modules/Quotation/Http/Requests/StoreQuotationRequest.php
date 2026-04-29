@@ -21,9 +21,22 @@ class StoreQuotationRequest extends FormRequest
             'discount_percentage' => 'required|integer|min:0|max:100',
             'shipping_amount' => 'required|numeric',
             'total_amount' => 'required|numeric',
-            'status' => 'required|string|max:255',
+            'status' => 'required|string|in:pending,completed',
             'note' => 'nullable|string|max:1000'
         ];
+    }
+
+    protected function prepareForValidation(): void
+    {
+        $status = strtolower(trim((string) $this->input('status', '')));
+
+        if ($status === 'sent') {
+            $status = 'completed';
+        }
+
+        if ($status !== '') {
+            $this->merge(['status' => $status]);
+        }
     }
 
     /**

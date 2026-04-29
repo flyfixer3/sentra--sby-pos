@@ -16,6 +16,10 @@ Route::group(['middleware' => 'auth'], function () {
     //Expense Category
     Route::resource('expense-categories', 'ExpenseCategoriesController')->except('show', 'create');
     //Expense
-    Route::resource('expenses', 'ExpenseController')->except('show');
+    Route::get('expenses', 'ExpenseController@index')->name('expenses.index');
+
+    Route::resource('expenses', 'ExpenseController')
+        ->except(['index', 'show'])
+        ->middleware('branch.selected');
 
 });

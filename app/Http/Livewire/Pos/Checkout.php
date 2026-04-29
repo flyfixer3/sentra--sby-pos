@@ -155,32 +155,44 @@ class Checkout extends Component
     }
 
     public function discountModalRefresh($product_id, $row_id) {
+        $cart_item = Cart::instance($this->cart_instance)->get($row_id);
+        if (!$cart_item) {
+            return;
+        }
+
+        $discountType = $this->discount_type[$product_id] ?? ($cart_item->options->product_discount_type ?? 'fixed');
+        $this->discount_type[$product_id] = $discountType === 'percentage' ? 'percentage' : 'fixed';
+
+        if ($this->discount_type[$product_id] === 'fixed') {
+            $this->item_discount[$product_id] = max(0, (float) ($cart_item->price ?? 0));
+        } else {
+            $basePrice = max(0, (float) (($cart_item->price ?? 0) + ($cart_item->options->product_discount ?? 0)));
+            $discountAmount = max(0, (float) ($cart_item->options->product_discount ?? 0));
+            $this->item_discount[$product_id] = $basePrice > 0
+                ? round(($discountAmount / $basePrice) * 100, 2)
+                : 0;
+        }
+
         $this->updateQuantity($row_id, $product_id);
     }
 
     public function setProductDiscount($row_id, $product_id) {
         $cart_item = Cart::instance($this->cart_instance)->get($row_id);
+        if (!$cart_item) {
+            return;
+        }
 
-        if ($this->discount_type[$product_id] == 'fixed') {
-            Cart::instance($this->cart_instance)
-                ->update($row_id, [
-                    'price' => ($cart_item->price + $cart_item->options->product_discount) - $this->item_discount[$product_id]
-                ]);
+        $discountType = $this->discount_type[$product_id] ?? ($cart_item->options->product_discount_type ?? 'fixed');
+        $discountType = $discountType === 'percentage' ? 'percentage' : 'fixed';
+        $basePrice = max(0, (float) (($cart_item->price ?? 0) + ($cart_item->options->product_discount ?? 0)));
 
-            $discount_amount = $this->item_discount[$product_id];
-
-            $updatedItem = Cart::instance($this->cart_instance)->get($row_id);
-            if (!$updatedItem) {
-                return;
-            }
-
-            $this->updateCartOptions($row_id, $product_id, $updatedItem, $discount_amount);
-        } elseif ($this->discount_type[$product_id] == 'percentage') {
-            $discount_amount = ($cart_item->price + $cart_item->options->product_discount) * ($this->item_discount[$product_id] / 1);
+        if ($discountType == 'fixed') {
+            $newRowPrice = max(0, (float) ($this->item_discount[$product_id] ?? 0));
+            $discount_amount = max(0, $basePrice - $newRowPrice);
 
             Cart::instance($this->cart_instance)
                 ->update($row_id, [
-                    'price' => ($cart_item->price + $cart_item->options->product_discount) - $discount_amount
+                    'price' => $newRowPrice
                 ]);
 
             $updatedItem = Cart::instance($this->cart_instance)->get($row_id);
@@ -189,6 +201,24 @@ class Checkout extends Component
             }
 
             $this->updateCartOptions($row_id, $product_id, $updatedItem, $discount_amount);
+            $this->item_discount[$product_id] = $newRowPrice;
+        } elseif ($discountType == 'percentage') {
+            $percentage = max(0, min(100, (float) ($this->item_discount[$product_id] ?? 0)));
+            $discount_amount = round($basePrice * ($percentage / 100), 2);
+            $newRowPrice = max(0, round($basePrice - $discount_amount, 2));
+
+            Cart::instance($this->cart_instance)
+                ->update($row_id, [
+                    'price' => $newRowPrice
+                ]);
+
+            $updatedItem = Cart::instance($this->cart_instance)->get($row_id);
+            if (!$updatedItem) {
+                return;
+            }
+
+            $this->updateCartOptions($row_id, $product_id, $updatedItem, $discount_amount);
+            $this->item_discount[$product_id] = $percentage;
         }
 
         session()->flash('discount_message' . $product_id, 'Discount added to the product!');
@@ -233,8 +263,8 @@ class Checkout extends Component
             'unit'                 => $freshItem->options->unit,
             'product_tax'           => $freshItem->options->product_tax,
             'unit_price'            => $freshItem->options->unit_price,
-            'product_discount'      => $discount_amount,
-            'product_discount_type' => $this->discount_type[$product_id],
+            'product_discount'      => max(0, (float) $discount_amount),
+            'product_discount_type' => ($this->discount_type[$product_id] ?? 'fixed') === 'percentage' ? 'percentage' : 'fixed',
         ]]);
     }
 }

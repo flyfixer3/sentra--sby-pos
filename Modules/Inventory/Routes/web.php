@@ -46,21 +46,24 @@ Route::middleware(['auth'])
 
         // ✅ DELETE endpoint (jual defect/damaged)
         Route::delete('/stocks/defect/{id}', [StockQualityController::class, 'deleteDefect'])
+            ->middleware('branch.selected')
             ->name('stocks.defect.delete');
 
         Route::delete('/stocks/damaged/{id}', [StockQualityController::class, 'deleteDamaged'])
+            ->middleware('branch.selected')
             ->name('stocks.damaged.delete');
 
         Route::get('/racks/generate-code/{warehouseId}', [RackController::class, 'generateCode'])
+            ->middleware('branch.selected')
             ->name('racks.generate-code');
 
         Route::get('/racks', [RackController::class, 'index'])->name('racks.index');
-        Route::get('/racks/create', [RackController::class, 'create'])->name('racks.create');
-        Route::post('/racks', [RackController::class, 'store'])->name('racks.store');
-        Route::get('/racks/{rack}', [RackController::class, 'show'])->name('racks.show');
-        Route::get('/racks/{rack}/edit', [RackController::class, 'edit'])->name('racks.edit');
-        Route::put('/racks/{rack}', [RackController::class, 'update'])->name('racks.update');
-        Route::delete('/racks/{rack}', [RackController::class, 'destroy'])->name('racks.destroy');
+        Route::get('/racks/create', [RackController::class, 'create'])
+            ->middleware('branch.selected')
+            ->name('racks.create');
+        Route::post('/racks', [RackController::class, 'store'])
+            ->middleware('branch.selected')
+            ->name('racks.store');
 
         // =========================================================
         // ✅ NEW: Racks Import
@@ -69,9 +72,26 @@ Route::middleware(['auth'])
         //   GET  /inventory/racks/import/template
         //   POST /inventory/racks/import
         // =========================================================
-        Route::get('/racks/import', [RackImportController::class, 'index'])->name('racks.import.index');
-        Route::get('/racks/import/template', [RackImportController::class, 'downloadTemplate'])->name('racks.import.template');
-        Route::post('/racks/import', [RackImportController::class, 'import'])->name('racks.import.store');
+        Route::get('/racks/import', [RackImportController::class, 'index'])
+            ->middleware('branch.selected')
+            ->name('racks.import.index');
+        Route::get('/racks/import/template', [RackImportController::class, 'downloadTemplate'])
+            ->middleware('branch.selected')
+            ->name('racks.import.template');
+        Route::post('/racks/import', [RackImportController::class, 'import'])
+            ->middleware('branch.selected')
+            ->name('racks.import.store');
+
+        Route::get('/racks/{rack}', [RackController::class, 'show'])->name('racks.show');
+        Route::get('/racks/{rack}/edit', [RackController::class, 'edit'])
+            ->middleware('branch.selected')
+            ->name('racks.edit');
+        Route::put('/racks/{rack}', [RackController::class, 'update'])
+            ->middleware('branch.selected')
+            ->name('racks.update');
+        Route::delete('/racks/{rack}', [RackController::class, 'destroy'])
+            ->middleware('branch.selected')
+            ->name('racks.destroy');
 
         // =========================================================
         // ✅ NEW: Opening Stock Import (via Mutation)
@@ -80,9 +100,15 @@ Route::middleware(['auth'])
         //   GET  /inventory/stocks/import-opening/template
         //   POST /inventory/stocks/import-opening
         // =========================================================
-        Route::get('/stocks/import-opening', [OpeningStockImportController::class, 'index'])->name('stocks.import-opening.index');
-        Route::get('/stocks/import-opening/template', [OpeningStockImportController::class, 'downloadTemplate'])->name('stocks.import-opening.template');
-        Route::post('/stocks/import-opening', [OpeningStockImportController::class, 'import'])->name('stocks.import-opening.store');
+        Route::get('/stocks/import-opening', [OpeningStockImportController::class, 'index'])
+            ->middleware('branch.selected')
+            ->name('stocks.import-opening.index');
+        Route::get('/stocks/import-opening/template', [OpeningStockImportController::class, 'downloadTemplate'])
+            ->middleware('branch.selected')
+            ->name('stocks.import-opening.template');
+        Route::post('/stocks/import-opening', [OpeningStockImportController::class, 'import'])
+            ->middleware('branch.selected')
+            ->name('stocks.import-opening.store');
 
         // =========================================================
         // Rack Movements (Move stock between racks within same branch)
@@ -91,15 +117,18 @@ Route::middleware(['auth'])
             ->name('rack-movements.index');
 
         Route::get('/rack-movements/create', [RackMovementController::class, 'create'])
+            ->middleware('branch.selected')
             ->name('rack-movements.create');
 
         Route::post('/rack-movements', [RackMovementController::class, 'store'])
+            ->middleware('branch.selected')
             ->name('rack-movements.store');
-
-        Route::get('/rack-movements/{rackMovement}', [RackMovementController::class, 'show'])
-            ->name('rack-movements.show');
 
         // AJAX: racks by warehouse
         Route::get('/rack-movements/racks/by-warehouse', [RackMovementController::class, 'racksByWarehouse'])
+            ->middleware('branch.selected')
             ->name('rack-movements.racks.by-warehouse');
+
+        Route::get('/rack-movements/{rackMovement}', [RackMovementController::class, 'show'])
+            ->name('rack-movements.show');
     });

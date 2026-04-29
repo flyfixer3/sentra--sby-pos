@@ -1,5 +1,8 @@
 @php
     $st = strtolower(trim((string) ($data->status ?? 'pending')));
+    if ($st === 'sent') {
+        $st = 'completed';
+    }
 
     $class = match ($st) {
         'pending'   => 'badge bg-warning text-dark',

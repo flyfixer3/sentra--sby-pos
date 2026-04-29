@@ -8,7 +8,9 @@ use Illuminate\Routing\Controller;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Validation\ValidationException;
 use Modules\People\Entities\Customer;
+use Modules\People\Entities\CustomerVehicle;
 use Modules\People\Entities\Supplier;
 use Modules\Branch\Entities\Branch;
 use Modules\Product\Entities\Warehouse;
@@ -171,6 +173,103 @@ class SaleController extends Controller
             'amount' => (int) $discountAmount,
             'grand_total' => (int) $grandTotal,
         ];
+    }
+
+    private function normalizeSaleDetailInstallationType($value): string
+    {
+        return (string) $value === 'with_installation' ? 'with_installation' : 'item_only';
+    }
+
+    private function resolveSaleDetailInstallationMetadata($cartItem, int $customerId, int $branchId): array
+    {
+        $installationType = $this->normalizeSaleDetailInstallationType($cartItem->options->installation_type ?? 'item_only');
+
+        if ($installationType !== 'with_installation') {
+            return ['item_only', null];
+        }
+
+        $vehicleId = (int) ($cartItem->options->customer_vehicle_id ?? 0);
+        if ($customerId <= 0 || $vehicleId <= 0) {
+            throw ValidationException::withMessages([
+                'customer_vehicle_id' => 'Vehicle is required for items with installation.',
+            ]);
+        }
+
+        $vehicleExists = CustomerVehicle::query()
+            ->where('id', $vehicleId)
+            ->where('customer_id', $customerId)
+            ->when($branchId > 0, function ($query) use ($branchId) {
+                $query->where(function ($q) use ($branchId) {
+                    $q->whereNull('branch_id')->orWhere('branch_id', $branchId);
+                });
+            })
+            ->exists();
+
+        if (!$vehicleExists) {
+            throw ValidationException::withMessages([
+                'customer_vehicle_id' => 'Selected vehicle does not belong to the selected customer.',
+            ]);
+        }
+
+        return ['with_installation', $vehicleId];
+    }
+
+    private function effectiveSaleBranchId(Sale $sale): ?int
+    {
+        $activeBranchId = BranchContext::id();
+        $saleBranchId = (int) ($sale->branch_id ?? 0);
+
+        if ($activeBranchId && $saleBranchId > 0) {
+            abort_if($saleBranchId !== (int) $activeBranchId, 403, 'Active branch mismatch for this Sale.');
+
+            return (int) $activeBranchId;
+        }
+
+        return $saleBranchId > 0 ? $saleBranchId : null;
+    }
+
+    private function assertSaleEditable(Sale $sale, int $branchId, bool $lockRelated = false): Sale
+    {
+        $saleQuery = Sale::withoutGlobalScopes();
+        if ($lockRelated) {
+            $saleQuery->lockForUpdate();
+        }
+
+        $lockedSale = $saleQuery->findOrFail((int) $sale->id);
+
+        if (Schema::hasColumn('sales', 'branch_id') && $branchId > 0) {
+            if ((int) ($lockedSale->branch_id ?? 0) !== (int) $branchId) {
+                abort(403, 'Active branch mismatch for this Sale.');
+            }
+        }
+
+        if (strtolower(trim((string) ($lockedSale->payment_status ?? ''))) !== 'unpaid') {
+            throw new \RuntimeException('This sale cannot be edited because its payment status is not Unpaid.');
+        }
+
+        if ((int) ($lockedSale->paid_amount ?? 0) > 0) {
+            throw new \RuntimeException('This sale cannot be edited because it already has payment amount.');
+        }
+
+        $paymentsQuery = SalePayment::withoutGlobalScopes()->where('sale_id', (int) $lockedSale->id);
+        if ($lockRelated) {
+            $paymentsQuery->lockForUpdate();
+        }
+
+        if ($paymentsQuery->exists()) {
+            throw new \RuntimeException('This sale cannot be edited because it already has payment records.');
+        }
+
+        $deliveriesQuery = SaleDelivery::withoutGlobalScopes()->where('sale_id', (int) $lockedSale->id);
+        if ($lockRelated) {
+            $deliveriesQuery->lockForUpdate();
+        }
+
+        if ($deliveriesQuery->exists()) {
+            throw new \RuntimeException('This sale cannot be edited because it already has related Sale Delivery records.');
+        }
+
+        return $lockedSale;
     }
 
     private function deliveredQtyFromDeliveryItem(SaleDeliveryItem $item): int
@@ -358,16 +457,22 @@ class SaleController extends Controller
                     }
                 }
 
-                // ✅ build map SO item by product (source harga & discount)
-                $soItemByProduct = [];
+                // Build SO item groups by product. Duplicate same-product rows may carry
+                // different installation metadata, so do not collapse to one row.
+                $soItemsByProduct = [];
                 if (!empty($lockedSaleOrder) && (int)$lockedSaleOrder->id > 0) {
                     $soItems = \Modules\SaleOrder\Entities\SaleOrderItem::query()
                         ->where('sale_order_id', (int)$lockedSaleOrder->id)
+                        ->orderBy('id')
                         ->get();
 
                     foreach ($soItems as $row) {
                         $pid = (int) ($row->product_id ?? 0);
-                        if ($pid > 0) $soItemByProduct[$pid] = $row;
+                        if ($pid <= 0) continue;
+                        if (!isset($soItemsByProduct[$pid])) {
+                            $soItemsByProduct[$pid] = [];
+                        }
+                        $soItemsByProduct[$pid][] = $row;
                     }
                 }
 
@@ -410,100 +515,128 @@ class SaleController extends Controller
                     if ($remainingInvoiceableQty <= 0) continue;
 
                     $p = \Modules\Product\Entities\Product::find($productId);
-                    $soRow = $soItemByProduct[$productId] ?? null;
-
-                    // ✅ PENTING:
-                    // Sell Unit Price = NET (ambil dari SO price kalau ada)
-                    $unitPrice  = (float) (
-                        $soRow?->unit_price
-                        ?? $it->unit_price
-                        ?? ($p->product_price ?? 0)
-                    );
-
-                    $priceShown = (float) (
-                        $soRow?->price
-                        ?? $it->price
-                        ?? $unitPrice
-                    );
-
-                    // discount info (buat kolom item), TAPI JANGAN DIPAKAI NGURANGIN SUMMARY LAGI
-                    $discAmt  = (float) (
-                        $soRow?->product_discount_amount
-                        ?? $it->product_discount_amount
-                        ?? 0
-                    );
-                    $discType = strtolower((string) (
-                        $soRow?->product_discount_type
-                        ?? $it->product_discount_type
-                        ?? 'fixed'
-                    ));
-
-                    // fallback implicit diff (kalau net < unit)
-                    if ($discAmt <= 0 && $unitPrice > 0 && $unitPrice > $priceShown) {
-                        $discAmt  = (float) ($unitPrice - $priceShown);
-                        $discType = 'fixed';
+                    $soRows = $soItemsByProduct[$productId] ?? [];
+                    if (empty($soRows)) {
+                        $soRows = [(object) [
+                            'id' => 0,
+                            'product_id' => $productId,
+                            'quantity' => $remainingInvoiceableQty,
+                            'unit_price' => $it->unit_price ?? ($p->product_price ?? 0),
+                            'price' => $it->price ?? ($it->unit_price ?? ($p->product_price ?? 0)),
+                            'product_discount_amount' => $it->product_discount_amount ?? 0,
+                            'product_discount_type' => $it->product_discount_type ?? 'fixed',
+                            'installation_type' => 'item_only',
+                            'customer_vehicle_id' => null,
+                        ]];
                     }
 
-                    // INFO total discount (buat info saja)
-                    if ($discAmt > 0) {
-                        if ($discType === 'fixed') {
-                            $deliveryDiscountInfoTotal += ($discAmt * $remainingInvoiceableQty);
-                        } else {
-                            $deliveryDiscountInfoTotal += (($unitPrice * $remainingInvoiceableQty) * ($discAmt / 100));
+                    $qtyToSkip = max(0, (int) $alreadyInvoicedQty);
+                    $qtyToAllocate = max(0, (int) $remainingInvoiceableQty);
+
+                    foreach ($soRows as $soRow) {
+                        if ($qtyToAllocate <= 0) break;
+
+                        $soQty = max(0, (int) ($soRow->quantity ?? 0));
+                        if ($soQty <= 0) continue;
+
+                        if ($qtyToSkip >= $soQty) {
+                            $qtyToSkip -= $soQty;
+                            continue;
                         }
+
+                        $availableFromRow = $soQty - $qtyToSkip;
+                        $qtyToSkip = 0;
+                        $rowInvoiceQty = min($qtyToAllocate, $availableFromRow);
+                        if ($rowInvoiceQty <= 0) continue;
+
+                        $unitPrice = (float) (
+                            $soRow->unit_price
+                            ?? $it->unit_price
+                            ?? ($p->product_price ?? 0)
+                        );
+
+                        $priceShown = (float) (
+                            $soRow->price
+                            ?? $it->price
+                            ?? $unitPrice
+                        );
+
+                        $discAmt = (float) (
+                            $soRow->product_discount_amount
+                            ?? $it->product_discount_amount
+                            ?? 0
+                        );
+                        $discType = strtolower((string) (
+                            $soRow->product_discount_type
+                            ?? $it->product_discount_type
+                            ?? 'fixed'
+                        ));
+
+                        if ($discAmt <= 0 && $unitPrice > 0 && $unitPrice > $priceShown) {
+                            $discAmt = (float) ($unitPrice - $priceShown);
+                            $discType = 'fixed';
+                        }
+
+                        if ($discAmt > 0) {
+                            $deliveryDiscountInfoTotal += ($discType === 'fixed')
+                                ? ($discAmt * $rowInvoiceQty)
+                                : (($unitPrice * $rowInvoiceQty) * ($discAmt / 100));
+                        }
+
+                        $productTax = (float) ($it->product_tax_amount ?? 0);
+                        $branchStockSnapshot = $getBranchStockSnapshot($productId);
+                        $subTotal = (float) ($priceShown * $rowInvoiceQty);
+                        $invoiceItemsSubtotal += (int) round($subTotal);
+
+                        $installationType = (string) ($soRow->installation_type ?? 'item_only') === 'with_installation'
+                            ? 'with_installation'
+                            : 'item_only';
+                        $customerVehicleId = $installationType === 'with_installation'
+                            ? ((int) ($soRow->customer_vehicle_id ?? 0) ?: null)
+                            : null;
+                        $soItemId = (int) ($soRow->id ?? 0);
+
+                        $cart->add([
+                            'id'      => $productId,
+                            'name'    => (string) ($it->product_name ?? ($p->product_name ?? '-')),
+                            'qty'     => $rowInvoiceQty,
+                            'price'   => $priceShown,
+                            'weight'  => 1,
+                            'options' => [
+                                'sub_total'             => $subTotal,
+                                'code'                  => (string) ($it->product_code ?? ($p->product_code ?? 'UNKNOWN')),
+                                'unit'                  => (string) ($it->product_unit ?? ($p->product_unit ?? '')),
+                                'stock'                 => (int) ($branchStockSnapshot['sellable'] ?? 0),
+                                'reserved_stock'        => (int) ($branchStockSnapshot['reserved'] ?? 0),
+                                'sellable_stock'        => (int) ($branchStockSnapshot['sellable'] ?? 0),
+                                'stock_scope'           => 'branch',
+                                'warehouse_id'          => $deliveryWarehouseId,
+                                'warehouse_name'        => $deliveryWarehouseName,
+                                'invoice_source'        => 'sale_delivery',
+                                'delivered_qty'         => (int) $deliveredQty,
+                                'already_invoiced_qty'  => (int) $alreadyInvoicedQty,
+                                'remaining_invoiceable_qty' => (int) $remainingInvoiceableQty,
+                                'current_stock_qty'     => (int) ($branchStockSnapshot['sellable'] ?? 0),
+                                'product_tax'           => $productTax,
+                                'unit_price'            => $unitPrice,
+                                'product_discount'      => $discAmt,
+                                'product_discount_type' => $discType,
+                                'line_key'              => $soItemId > 0
+                                    ? ('sale_order_item_' . $soItemId . '_delivery_item_' . (int) $it->id)
+                                    : ('sale_delivery_item_' . (int) $it->id),
+                                'installation_type'     => $installationType,
+                                'customer_vehicle_id'   => $customerVehicleId,
+                                'product_cost'          => (float) (
+                                    $it->product_cost
+                                    ?? (($branchId > 0 && $productId > 0)
+                                        ? $hppService->getCurrentHpp((int) $branchId, (int) $productId)
+                                        : ($p->product_cost ?? 0))
+                                ),
+                            ],
+                        ]);
+
+                        $qtyToAllocate -= $rowInvoiceQty;
                     }
-
-                    $productTax = (float) ($it->product_tax_amount ?? 0);
-
-                    $branchStockSnapshot = $getBranchStockSnapshot($productId);
-                    $stock = (int) ($branchStockSnapshot['sellable'] ?? 0);
-                    $stockScope = 'branch';
-
-                    // subtotal pakai NET price (priceShown)
-                    $subTotal = (float) ($priceShown * $remainingInvoiceableQty);
-                    $invoiceItemsSubtotal += (int) round($subTotal);
-
-                    $cart->add([
-                        'id'      => $productId,
-                        'name'    => (string) ($it->product_name ?? ($p->product_name ?? '-')),
-                        'qty'     => $remainingInvoiceableQty,
-                        'price'   => $priceShown,
-                        'weight'  => 1,
-                        'options' => [
-                            'sub_total'             => $subTotal,
-                            'code'                  => (string) ($it->product_code ?? ($p->product_code ?? 'UNKNOWN')),
-                            'unit'                  => (string) ($it->product_unit ?? ($p->product_unit ?? '')),
-                            'stock'                 => (int) $stock,
-                            'reserved_stock'        => (int) ($branchStockSnapshot['reserved'] ?? 0),
-                            'sellable_stock'        => (int) ($branchStockSnapshot['sellable'] ?? 0),
-                            'stock_scope'           => $stockScope,
-
-                            'warehouse_id'          => $deliveryWarehouseId,
-                            'warehouse_name'        => $deliveryWarehouseName,
-
-                            'invoice_source'        => 'sale_delivery',
-                            'delivered_qty'         => (int) $deliveredQty,
-                            'already_invoiced_qty'  => (int) $alreadyInvoicedQty,
-                            'remaining_invoiceable_qty' => (int) $remainingInvoiceableQty,
-                            'current_stock_qty'     => (int) ($branchStockSnapshot['sellable'] ?? 0),
-
-                            'product_tax'           => $productTax,
-                            'unit_price'            => $unitPrice,
-
-                            // ✅ discount ditampilkan di kolom item
-                            'product_discount'      => $discAmt,
-                            'product_discount_type' => $discType,
-
-                            'product_cost'          => (float) (
-                                $it->product_cost
-                                ?? (($branchId > 0 && $productId > 0)
-                                    ? $hppService->getCurrentHpp((int) $branchId, (int) $productId)
-                                    // Legacy compatibility fallback only when no
-                                    // branch-specific HPP context is available.
-                                    : ($p->product_cost ?? 0))
-                            ),
-                        ],
-                    ]);
                 }
             }
         }
@@ -868,7 +1001,6 @@ class SaleController extends Controller
 
                 $saleData = [
                     'date' => $request->date,
-                    'license_number' => $request->car_number_plate,
                     'sale_from' => $request->sale_from,
                     'customer_id' => $customer->id,
                     'customer_name' => $customer->customer_name,
@@ -933,6 +1065,12 @@ class SaleController extends Controller
                     // ✅ FIX BUG: total_cost harus qty * hppUnit
                     $total_cost += ($hppUnitInt * $qty);
 
+                    [$installationType, $customerVehicleId] = $this->resolveSaleDetailInstallationMetadata(
+                        $cart_item,
+                        (int) $customer->id,
+                        (int) $branchId
+                    );
+
                     $saleDetailData = [
                         'sale_id' => (int) $sale->id,
                         'product_id' => $productId,
@@ -955,6 +1093,8 @@ class SaleController extends Controller
                         'product_discount_amount' => (float) ($cart_item->options->product_discount ?? 0),
                         'product_discount_type' => (string) ($cart_item->options->product_discount_type ?? 'fixed'),
                         'product_tax_amount' => (float) ($cart_item->options->product_tax ?? 0),
+                        'installation_type' => $installationType,
+                        'customer_vehicle_id' => $customerVehicleId,
                     ];
 
                     if (Schema::hasColumn('sale_details', 'branch_id')) {
@@ -1255,25 +1395,17 @@ class SaleController extends Controller
     {
         abort_if(Gate::denies('show_sales'), 403);
 
-        $activeBranchId = BranchContext::id();
-        $saleBranchId = (int) ($sale->branch_id ?? 0);
+        $branchId = $this->effectiveSaleBranchId($sale);
 
-        if ($activeBranchId && $saleBranchId > 0) {
-            abort_if($saleBranchId !== (int) $activeBranchId, 403);
-        }
-
-        $branchId = $saleBranchId > 0 ? $saleBranchId : $activeBranchId;
-
-        $sale->load(['creator', 'updater', 'saleDetails', 'branch']);
+        $sale->load(['creator', 'updater', 'saleDetails.customerVehicle', 'branch']);
         $branch = $sale->branch ?: ($branchId ? Branch::withoutGlobalScopes()->find((int) $branchId) : null);
 
         $customer = Customer::query()
             ->where('id', $sale->customer_id)
-            ->where(function ($q) use ($branchId) {
-                $q->whereNull('branch_id');
-                if ($branchId) {
-                    $q->orWhere('branch_id', (int) $branchId);
-                }
+            ->when($branchId, function ($query) use ($branchId) {
+                $query->where(function ($q) use ($branchId) {
+                    $q->whereNull('branch_id')->orWhere('branch_id', (int) $branchId);
+                });
             })
             ->firstOrFail();
 
@@ -1333,20 +1465,22 @@ class SaleController extends Controller
     {
         abort_if(Gate::denies('show_sales'), 403);
 
-        $branchId = BranchContext::id();
+        $branchId = $this->effectiveSaleBranchId($sale);
 
-        $sale->load(['creator', 'updater', 'saleDetails']);
+        $sale->load(['creator', 'updater', 'saleDetails.customerVehicle']);
 
         $customer = Customer::query()
             ->where('id', $sale->customer_id)
-            ->where(function ($q) use ($branchId) {
-                $q->whereNull('branch_id')->orWhere('branch_id', $branchId);
+            ->when($branchId, function ($query) use ($branchId) {
+                $query->where(function ($q) use ($branchId) {
+                    $q->whereNull('branch_id')->orWhere('branch_id', (int) $branchId);
+                });
             })
             ->firstOrFail();
 
         $saleDeliveries = SaleDelivery::query()
-            ->where('branch_id', $branchId)
             ->where('sale_id', (int) $sale->id)
+            ->when($branchId, fn ($q) => $q->where('branch_id', (int) $branchId))
             ->orderByDesc('id')
             ->get();
 
@@ -1362,7 +1496,7 @@ class SaleController extends Controller
 
             if ($saleOrderId > 0) {
                 $saleOrder = \Modules\SaleOrder\Entities\SaleOrder::query()
-                    ->where('branch_id', $branchId)
+                    ->when($branchId, fn ($q) => $q->where('branch_id', (int) $branchId))
                     ->where('id', $saleOrderId)
                     ->first();
 
@@ -1390,9 +1524,16 @@ class SaleController extends Controller
     public function edit(Sale $sale) {
         abort_if(Gate::denies('edit_sales'), 403);
 
-        $sale_details = $sale->saleDetails;
-
         $branchId = BranchContext::id();
+
+        try {
+            $sale = $this->assertSaleEditable($sale, (int) $branchId);
+        } catch (\Throwable $e) {
+            toast($e->getMessage(), 'error');
+            return redirect()->route('sales.show', $sale->id);
+        }
+
+        $sale_details = $sale->saleDetails;
 
         Cart::instance('sale')->destroy();
         $cart = Cart::instance('sale');
@@ -1413,7 +1554,10 @@ class SaleController extends Controller
                     'warehouse_id'=> null,
                     'product_cost'=> $sale_detail->product_cost,
                     'product_tax' => $sale_detail->product_tax_amount,
-                    'unit_price'  => $sale_detail->unit_price
+                    'unit_price'  => $sale_detail->unit_price,
+                    'line_key'    => 'sale_detail_' . (int) $sale_detail->id,
+                    'installation_type' => $this->normalizeSaleDetailInstallationType($sale_detail->installation_type ?? 'item_only'),
+                    'customer_vehicle_id' => $sale_detail->customer_vehicle_id,
                 ]
             ]);
         }
@@ -1435,7 +1579,19 @@ class SaleController extends Controller
     }
 
     public function update(UpdateSaleRequest $request, Sale $sale) {
-        DB::transaction(function () use ($request, $sale) {
+        try {
+            DB::transaction(function () use ($request, $sale) {
+                $branchId = (int) BranchContext::id();
+                $sale = $this->assertSaleEditable($sale, $branchId, true);
+
+                $customer = Customer::query()
+                ->where('id', $request->customer_id)
+                ->when($branchId > 0, function ($query) use ($branchId) {
+                    $query->where(function ($q) use ($branchId) {
+                        $q->whereNull('branch_id')->orWhere('branch_id', $branchId);
+                    });
+                })
+                ->firstOrFail();
 
             $itemsSubtotal = 0;
             $totalQty = 0;
@@ -1486,8 +1642,8 @@ class SaleController extends Controller
             $saleUpdateData = [
                 'date' => $request->date,
                 'reference' => $request->reference,
-                'customer_id' => $request->customer_id,
-                'customer_name' => Customer::findOrFail($request->customer_id)->customer_name,
+                'customer_id' => $customer->id,
+                'customer_name' => $customer->customer_name,
                 'tax_percentage' => (float) $taxPct,
                 'discount_percentage' => (float) $discountPercentage,
                 'shipping_amount' => (int) $shipping,
@@ -1510,7 +1666,13 @@ class SaleController extends Controller
             $sale->update($saleUpdateData);
 
             foreach (Cart::instance('sale')->content() as $cart_item) {
-                SaleDetails::create([
+                [$installationType, $customerVehicleId] = $this->resolveSaleDetailInstallationMetadata(
+                    $cart_item,
+                    (int) $customer->id,
+                    (int) $branchId
+                );
+
+                $saleDetailData = [
                     'sale_id' => $sale->id,
                     'product_id' => (int) $cart_item->id,
                     'product_name' => (string) $cart_item->name,
@@ -1524,11 +1686,23 @@ class SaleController extends Controller
                     'product_discount_amount' => (int) ($cart_item->options->product_discount ?? 0),
                     'product_discount_type' => (string) ($cart_item->options->product_discount_type ?? 'fixed'),
                     'product_tax_amount' => (int) ($cart_item->options->product_tax ?? 0),
-                ]);
+                    'installation_type' => $installationType,
+                    'customer_vehicle_id' => $customerVehicleId,
+                ];
+
+                if (Schema::hasColumn('sale_details', 'branch_id')) {
+                    $saleDetailData['branch_id'] = $branchId;
+                }
+
+                SaleDetails::create($saleDetailData);
             }
 
             Cart::instance('sale')->destroy();
-        });
+            });
+        } catch (\Throwable $e) {
+            toast($e->getMessage(), 'error');
+            return redirect()->route('sales.show', $sale->id);
+        }
 
         toast('Sale Updated!', 'info');
         return redirect()->route('sales.index');

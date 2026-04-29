@@ -48,30 +48,11 @@
                                             <select class="form-control" name="customer_id" id="customer_id" required>
                                                 @foreach($customers as $customer)
                                                     <option {{ (int)$sale->customer_id === (int)$customer->id ? 'selected' : '' }} value="{{ $customer->id }}">
-                                                        {{ $customer->customer_name }}
+                                                        {{ $customer->customer_name }}  |  {{ $customer->customer_phone }}
                                                     </option>
                                                 @endforeach
                                             </select>
                                         </div>
-                                    </div>
-                                </div>
-
-                                <div class="col-lg-2">
-                                    <div class="form-group">
-                                        <label for="car_number_plate">Car Plate<span class="text-danger">*</span></label>
-
-                                        {{-- DI FIX:
-                                             sebelumnya required tapi kosong -> edit jadi ribet.
-                                             sekarang auto isi dari kolom sale->license_number (sesuai store: 'license_number')
-                                        --}}
-                                        <input
-                                            type="text"
-                                            class="form-control"
-                                            name="car_number_plate"
-                                            id="car_number_plate"
-                                            required
-                                            value="{{ $sale->license_number ?? '' }}"
-                                        >
                                     </div>
                                 </div>
 
@@ -100,7 +81,13 @@
                                 </div>
                             </div>
 
-                            <livewire:product-cart-sale :cartInstance="'sale'" :data="$sale" :warehouses="$warehouses"/>
+                            <livewire:product-cart-sale
+                                :cartInstance="'sale'"
+                                :data="$sale"
+                                :customerId="(int) $sale->customer_id"
+                                :enableInstallationMetadata="true"
+                                :warehouses="$warehouses"
+                            />
 
                             <div class="form-row">
                                 <div class="col-lg-4">
@@ -154,6 +141,12 @@
     <script src="{{ asset('js/jquery-mask-money.js') }}"></script>
     <script>
         $(document).ready(function () {
+            function notifySaleCustomerChanged() {
+                if (window.Livewire && typeof window.Livewire.emit === 'function') {
+                    window.Livewire.emit('saleCustomerChanged', $('#customer_id').val() || '');
+                }
+            }
+
             $('#paid_amount').maskMoney({
                 prefix:'{{ settings()->currency->symbol }}',
                 thousands:'{{ settings()->currency->thousand_separator }}',
@@ -163,6 +156,10 @@
             });
 
             $('#paid_amount').maskMoney('mask');
+
+            document.addEventListener('livewire:load', notifySaleCustomerChanged);
+            $('#customer_id').on('change', notifySaleCustomerChanged);
+            notifySaleCustomerChanged();
 
             $('#sale-form').submit(function () {
                 var paid_amount = $('#paid_amount').maskMoney('destroy')[0];

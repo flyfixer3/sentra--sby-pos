@@ -11,6 +11,69 @@
             </div>
         @endif
 
+        <style>
+            .sentra-cart-action-wrapper {
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                gap: 8px;
+                flex-wrap: nowrap;
+                white-space: nowrap;
+            }
+
+            .sentra-cart-action-btn {
+                width: 30px !important;
+                height: 30px !important;
+                min-width: 30px !important;
+                padding: 0 !important;
+                border-radius: 50% !important;
+                display: inline-flex !important;
+                align-items: center !important;
+                justify-content: center !important;
+                font-size: 15px !important;
+                line-height: 1 !important;
+                border-width: 1px !important;
+                border-style: solid !important;
+                box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08) !important;
+                transition: all 0.15s ease-in-out !important;
+            }
+
+            .sentra-cart-action-btn:focus {
+                outline: none !important;
+                box-shadow: 0 0 0 0.15rem rgba(50, 31, 219, 0.18) !important;
+            }
+
+            .sentra-cart-action-add {
+                background-color: #f3f1ff !important;
+                border-color: #321fdb !important;
+                color: #321fdb !important;
+            }
+
+            .sentra-cart-action-add:hover {
+                background-color: #321fdb !important;
+                border-color: #321fdb !important;
+                color: #ffffff !important;
+            }
+
+            .sentra-cart-action-remove {
+                background-color: #fff1f1 !important;
+                border-color: #e55353 !important;
+                color: #e55353 !important;
+            }
+
+            .sentra-cart-action-remove:hover {
+                background-color: #e55353 !important;
+                border-color: #e55353 !important;
+                color: #ffffff !important;
+            }
+
+            .sentra-cart-action-btn i {
+                font-size: 15px !important;
+                line-height: 1 !important;
+                font-weight: 700 !important;
+            }
+        </style>
+
         <div class="table-responsive position-relative">
             <div
                 wire:loading.flex
@@ -30,6 +93,9 @@
                 <thead class="thead-dark">
                 <tr>
                     <th class="align-middle">Product</th>
+                    @if(!empty($enable_installation_metadata))
+                        <th class="align-middle">Service Type</th>
+                    @endif
                     <th class="align-middle">Sell Unit Price</th>
                     <th class="align-middle">Stock</th>
                     <th class="align-middle">Quantity</th>
@@ -68,6 +134,51 @@
                                 </span>
                                 @include('livewire.includes.product-cart-modal-sale')
                             </td>
+
+                            @if(!empty($enable_installation_metadata))
+                                @php
+                                    $rowInstallationType = $installation_type[$lineKey] ?? 'item_only';
+                                @endphp
+                                <td class="align-middle" style="min-width: 210px;">
+                                    <small class="text-muted d-block mb-1">Service Type</small>
+                                    <select
+                                        class="form-control form-control-sm"
+                                        wire:model="installation_type.{{ $lineKey }}"
+                                        data-cart-sync-row
+                                        data-cart-sync-field="installation_type"
+                                        data-cart-row-id="{{ $cart_item->rowId }}"
+                                        data-cart-product-id="{{ $cart_item->id }}"
+                                        data-cart-line-key="{{ $lineKey }}"
+                                    >
+                                        <option value="item_only">Item Only</option>
+                                        <option value="with_installation">With Installation</option>
+                                    </select>
+
+                                    @if($rowInstallationType === 'with_installation')
+                                        @if(empty($customer_id))
+                                            <small class="text-warning d-block mt-1">Please select customer first.</small>
+                                        @elseif(empty($customer_vehicles))
+                                            <small class="text-warning d-block mt-1">No vehicle registered for this customer.</small>
+                                        @else
+                                            <small class="text-muted d-block mt-2">Vehicle</small>
+                                            <select
+                                                class="form-control form-control-sm mt-1"
+                                                wire:model="customer_vehicle_id.{{ $lineKey }}"
+                                                data-cart-sync-row
+                                                data-cart-sync-field="customer_vehicle_id"
+                                                data-cart-row-id="{{ $cart_item->rowId }}"
+                                                data-cart-product-id="{{ $cart_item->id }}"
+                                                data-cart-line-key="{{ $lineKey }}"
+                                            >
+                                                <option value="">Select vehicle</option>
+                                                @foreach($customer_vehicles as $vehicle)
+                                                    <option value="{{ $vehicle['id'] }}">{{ $vehicle['label'] }}</option>
+                                                @endforeach
+                                            </select>
+                                        @endif
+                                    @endif
+                                </td>
+                            @endif
 
                             <td class="align-middle">
                                 {{ format_currency((float)($cart_item->price ?? 0)) }}
@@ -134,15 +245,35 @@
                             </td>
 
                             <td class="align-middle text-center">
-                                <a href="#" wire:click.prevent="removeItem('{{ $cart_item->rowId }}')">
-                                    <i class="bi bi-x-circle font-2xl text-danger"></i>
-                                </a>
+                                <div class="sentra-cart-action-wrapper">
+                                    @if(!empty($enable_installation_metadata))
+                                        <button
+                                            type="button"
+                                            class="btn sentra-cart-action-btn sentra-cart-action-add"
+                                            wire:click.prevent="duplicateSaleCartRow('{{ $cart_item->rowId }}', '{{ $lineKey }}')"
+                                            title="Add another row for this product"
+                                            aria-label="Add another row for this product"
+                                        >
+                                            <i class="bi bi-plus-lg"></i>
+                                        </button>
+                                    @endif
+
+                                    <button
+                                        type="button"
+                                        class="btn sentra-cart-action-btn sentra-cart-action-remove"
+                                        wire:click.prevent="removeItem('{{ $cart_item->rowId }}', '{{ $lineKey }}')"
+                                        title="Remove row"
+                                        aria-label="Remove row"
+                                    >
+                                        <i class="bi bi-x-lg"></i>
+                                    </button>
+                                </div>
                             </td>
                         </tr>
                     @endforeach
                 @else
                     <tr>
-                        <td colspan="8" class="text-center">
+                        <td colspan="{{ !empty($enable_installation_metadata) ? 9 : 8 }}" class="text-center">
                             <span class="text-danger">
                                 Please search &amp; select products!
                             </span>

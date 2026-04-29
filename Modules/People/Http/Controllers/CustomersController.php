@@ -23,12 +23,27 @@ class CustomersController extends Controller
     public function create() {
         abort_if(Gate::denies('create_customers'), 403);
 
+        $active = session('active_branch');
+        if ($active === 'all' || empty($active) || !is_numeric($active)) {
+            return redirect()
+                ->route('customers.index')
+                ->with('error', 'Please select a specific branch before creating a customer.');
+        }
+
         return view('people::customers.create');
     }
 
 
     public function store(Request $request) {
         abort_if(Gate::denies('create_customers'), 403);
+
+        $active = session('active_branch');
+        if ($active === 'all' || empty($active) || !is_numeric($active)) {
+            return redirect()
+                ->back()
+                ->withInput()
+                ->with('error', 'Please select a specific branch before creating a customer.');
+        }
 
         $request->validate([
             'customer_name'  => 'required|string|max:255',
@@ -40,6 +55,7 @@ class CustomersController extends Controller
         ]);
 
         Customer::create([
+            'branch_id'      => (int) $active,
             'customer_name'  => $request->customer_name,
             'customer_phone' => $request->customer_phone,
             'customer_email' => $request->customer_email,
@@ -56,10 +72,18 @@ class CustomersController extends Controller
 
     public function show(Customer $customer) {
         abort_if(Gate::denies('show_customers'), 403);
+        $this->ensureCustomerIsAccessible($customer);
 
         $activeBranch = session('active_branch');
+        $customerBranchId = $customer->branch_id;
         $vehicles = $customer->vehicles()
-            ->when(is_numeric($activeBranch), function ($query) use ($activeBranch) {
+            ->when(!is_null($customerBranchId), function ($query) use ($customerBranchId) {
+                $query->where(function ($q) use ($customerBranchId) {
+                    $q->whereNull('branch_id')
+                        ->orWhere('branch_id', (int) $customerBranchId);
+                });
+            })
+            ->when(is_null($customerBranchId) && is_numeric($activeBranch), function ($query) use ($activeBranch) {
                 $query->where(function ($q) use ($activeBranch) {
                     $q->whereNull('branch_id')
                         ->orWhere('branch_id', (int) $activeBranch);
@@ -74,6 +98,7 @@ class CustomersController extends Controller
 
     public function edit(Customer $customer) {
         abort_if(Gate::denies('edit_customers'), 403);
+        $this->ensureCustomerIsAccessible($customer);
 
         return view('people::customers.edit', compact('customer'));
     }
@@ -81,6 +106,7 @@ class CustomersController extends Controller
 
     public function update(Request $request, Customer $customer) {
         abort_if(Gate::denies('update_customers'), 403);
+        $this->ensureCustomerIsAccessible($customer);
 
         $request->validate([
             'customer_name'  => 'required|string|max:255',
@@ -108,6 +134,7 @@ class CustomersController extends Controller
 
     public function destroy(Customer $customer) {
         abort_if(Gate::denies('delete_customers'), 403);
+        $this->ensureCustomerIsAccessible($customer);
 
         $customer->delete();
 
@@ -121,10 +148,23 @@ class CustomersController extends Controller
         abort_if(Gate::denies('edit_customers'), 403);
         $this->ensureCustomerIsAccessible($customer);
 
+        $active = session('active_branch');
+        if ($active === 'all' || empty($active) || !is_numeric($active)) {
+            return redirect()
+                ->route('customers.show', $customer)
+                ->with('error', 'Please select a specific branch before adding a vehicle.');
+        }
+
+        if (is_null($customer->branch_id)) {
+            return redirect()
+                ->route('customers.show', $customer)
+                ->with('error', 'This customer has no branch assigned. Please assign a branch before adding a vehicle.');
+        }
+
         $validated = $request->validate($this->vehicleRules());
 
         $customer->vehicles()->create([
-            'branch_id' => $this->resolveVehicleBranchId($customer),
+            'branch_id' => (int) $customer->branch_id,
             'vehicle_name' => $validated['vehicle_name'] ?? null,
             'car_plate' => $validated['car_plate'],
             'chassis_number' => $validated['chassis_number'] ?? null,
@@ -144,6 +184,7 @@ class CustomersController extends Controller
         $validated = $request->validate($this->vehicleRules());
 
         $vehicle->update([
+            'branch_id' => $customer->branch_id,
             'vehicle_name' => $validated['vehicle_name'] ?? null,
             'car_plate' => $validated['car_plate'],
             'chassis_number' => $validated['chassis_number'] ?? null,
@@ -203,13 +244,4 @@ class CustomersController extends Controller
         }
     }
 
-    private function resolveVehicleBranchId(Customer $customer): ?int
-    {
-        $activeBranch = session('active_branch');
-        if (is_numeric($activeBranch)) {
-            return (int) $activeBranch;
-        }
-
-        return !is_null($customer->branch_id) ? (int) $customer->branch_id : null;
-    }
 }

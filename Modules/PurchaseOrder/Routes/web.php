@@ -15,8 +15,26 @@ Route::middleware(['auth'])->group(function () {
 
     // Convert PO -> Purchase (existing)
     Route::get('/purchase-order-purchases/{purchaseorder}', 'PurchaseOrderPurchasesController')
+        ->middleware('branch.selected')
         ->name('purchase-order-purchases.create');
 
-    // Resource PO
-    Route::resource('purchase-orders', 'PurchaseOrderController');
+    // Resource PO (index/show are read-only)
+    Route::get('/purchase-orders', 'PurchaseOrderController@index')
+        ->name('purchase-orders.index');
+
+    Route::middleware('branch.selected')->group(function () {
+        Route::get('/purchase-orders/create', 'PurchaseOrderController@create')
+            ->name('purchase-orders.create');
+        Route::post('/purchase-orders', 'PurchaseOrderController@store')
+            ->name('purchase-orders.store');
+        Route::get('/purchase-orders/{purchase_order}/edit', 'PurchaseOrderController@edit')
+            ->name('purchase-orders.edit');
+        Route::match(['put', 'patch'], '/purchase-orders/{purchase_order}', 'PurchaseOrderController@update')
+            ->name('purchase-orders.update');
+        Route::delete('/purchase-orders/{purchase_order}', 'PurchaseOrderController@destroy')
+            ->name('purchase-orders.destroy');
+    });
+
+    Route::get('/purchase-orders/{purchase_order}', 'PurchaseOrderController@show')
+        ->name('purchase-orders.show');
 });

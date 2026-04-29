@@ -11,17 +11,21 @@ Route::group([
         ->name('sale-orders.index');
 
     Route::get('/create', 'SaleOrderController@create')
+        ->middleware('branch.selected')
         ->name('sale-orders.create');
 
     Route::post('/', 'SaleOrderController@store')
+        ->middleware('branch.selected')
         ->name('sale-orders.store');
 
     // ✅ EDIT
     Route::get('/{saleOrder}/edit', 'SaleOrderController@edit')
+        ->middleware('branch.selected')
         ->name('sale-orders.edit');
 
     // ✅ UPDATE
     Route::put('/{saleOrder}', 'SaleOrderController@update')
+        ->middleware('branch.selected')
         ->name('sale-orders.update');
 
     // ✅ SHOW
@@ -48,5 +52,6 @@ Route::group([
 
     // ✅ DELETE
     Route::delete('/{saleOrder}', 'SaleOrderController@destroy')
+        ->middleware('branch.selected')
         ->name('sale-orders.destroy');
 });

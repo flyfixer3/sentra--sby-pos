@@ -42,10 +42,15 @@ class QuotationStatusService
             ->whereNull('deleted_at')
             ->exists();
 
-        $newStatus = ($hasActiveSaleOrder || $hasActiveSaleDelivery) ? 'Completed' : 'Pending';
+        $newStatus = ($hasActiveSaleOrder || $hasActiveSaleDelivery) ? 'completed' : 'pending';
 
         // Hindari update kalau status sudah sama (biar tidak spam updated_at)
-        if ((string) $quotation->status !== (string) $newStatus) {
+        $currentStatus = strtolower(trim((string) ($quotation->status ?? '')));
+        if ($currentStatus === 'sent') {
+            $currentStatus = 'completed';
+        }
+
+        if ($currentStatus !== $newStatus) {
             $quotation->update([
                 'status' => $newStatus,
             ]);

@@ -12,16 +12,32 @@
 
 @section('content')
 @php
-    $branchId = \App\Support\BranchContext::id();
+    $settings = settings();
+    $documentBranch = $branch ?? $quotation->branch ?? null;
+    $branchId = $quotation->branch_id ?? \App\Support\BranchContext::id();
+    $companyName = $documentBranch->name ?? $settings->company_name ?? 'Company';
+    $companyAddress = $documentBranch->address ?? $settings->company_address ?? '-';
+    $companyEmail = $documentBranch->email ?? $settings->company_email ?? '-';
+    $companyPhone = $documentBranch->phone ?? $settings->company_phone ?? '-';
     $createdByName = optional($quotation->creator)->name ?? optional($quotation->creator)->username ?? '-';
     $updatedByName = optional($quotation->updater)->name ?? optional($quotation->updater)->username ?? '-';
 
     $st = strtolower(trim((string) ($quotation->status ?? 'pending')));
+    if ($st === 'sent') {
+        $st = 'completed';
+    }
     $badgeClass = match($st) {
         'pending' => 'bg-warning text-dark',
         'completed' => 'bg-success',
         'cancelled' => 'bg-danger',
         default => 'bg-secondary',
+    };
+
+    $statusLabel = match($st) {
+        'pending' => 'Pending',
+        'completed' => 'Completed',
+        'cancelled' => 'Cancelled',
+        default => strtoupper($st),
     };
 
     $dateText = $quotation->date
@@ -55,7 +71,7 @@
                 <div>
                     <div class="d-flex align-items-center gap-2 flex-wrap">
                         <h4 class="mb-0">{{ $quotation->reference }}</h4>
-                        <span class="badge {{ $badgeClass }}">{{ strtoupper($st) }}</span>
+                        <span class="badge {{ $badgeClass }}">{{ $statusLabel }}</span>
                     </div>
 
                     <div class="text-muted small mt-1">
@@ -130,11 +146,11 @@
                         <span class="badge bg-light text-dark border"><i class="bi bi-building me-1"></i> Info</span>
                     </div>
                     <hr class="my-2">
-                    <div class="fw-bold">{{ settings()->company_name }}</div>
-                    <div class="text-muted small">{{ settings()->company_address }}</div>
+                    <div class="fw-bold">{{ $companyName }}</div>
+                    <div class="text-muted small">{{ $companyAddress }}</div>
                     <div class="small mt-2">
-                        <div>Email: <strong>{{ settings()->company_email }}</strong></div>
-                        <div>Phone: <strong>{{ settings()->company_phone }}</strong></div>
+                        <div>Email: <strong>{{ $companyEmail }}</strong></div>
+                        <div>Phone: <strong>{{ $companyPhone }}</strong></div>
                     </div>
                 </div>
             </div>
@@ -169,7 +185,7 @@
                     <div class="small">
                         <div>Reference: <strong>{{ $quotation->reference }}</strong></div>
                         <div>Date: <strong>{{ $dateText }}</strong></div>
-                        <div>Status: <strong>{{ $quotation->status ?? '-' }}</strong></div>
+                        <div>Status: <strong>{{ $statusLabel }}</strong></div>
                         <div>Payment Status: <strong>{{ $quotation->payment_status ?? '-' }}</strong></div>
                     </div>
                 </div>
@@ -223,6 +239,8 @@
                             <th>Product</th>
                             <th class="text-end" style="width:160px;">Net Unit Price</th>
                             <th class="text-end" style="width:120px;">Qty</th>
+                            <th style="width:180px;">Service Type</th>
+                            <th style="width:220px;">Vehicle</th>
                             <th class="text-end" style="width:140px;">Discount</th>
                             <th class="text-end" style="width:140px;">Tax</th>
                             <th class="text-end" style="width:160px;">Sub Total</th>
@@ -230,6 +248,10 @@
                     </thead>
                     <tbody>
                         @forelse($quotation->quotationDetails as $item)
+                            @php
+                                $installationType = (string) ($item->installation_type ?? 'item_only');
+                                $vehicle = $item->customerVehicle;
+                            @endphp
                             <tr>
                                 <td>
                                     <div class="fw-semibold">{{ $item->product_name }}</div>
@@ -239,13 +261,25 @@
                                 </td>
                                 <td class="text-end">{{ format_currency($item->unit_price) }}</td>
                                 <td class="text-end">{{ number_format((int)$item->quantity) }}</td>
+                                <td>
+                                    {{ $installationType === 'with_installation' ? 'With Installation' : 'Item Only' }}
+                                </td>
+                                <td>
+                                    @if($installationType === 'with_installation' && $vehicle)
+                                        {{ $vehicle->car_plate }}{{ $vehicle->vehicle_name ? ' / ' . $vehicle->vehicle_name : '' }}
+                                    @elseif($installationType === 'with_installation')
+                                        Vehicle not found
+                                    @else
+                                        -
+                                    @endif
+                                </td>
                                 <td class="text-end">{{ format_currency($item->product_discount_amount) }}</td>
                                 <td class="text-end">{{ format_currency($item->product_tax_amount) }}</td>
                                 <td class="text-end fw-semibold">{{ format_currency($item->sub_total) }}</td>
                             </tr>
                         @empty
                             <tr>
-                                <td colspan="6" class="text-center text-muted py-4">No items.</td>
+                                <td colspan="8" class="text-center text-muted py-4">No items.</td>
                             </tr>
                         @endforelse
                     </tbody>

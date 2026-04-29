@@ -5,9 +5,13 @@ namespace Modules\Quotation\Http\Controllers;
 use App\Support\BranchContext;
 use Gloudemans\Shoppingcart\Facades\Cart;
 use Illuminate\Routing\Controller;
+use Illuminate\Validation\ValidationException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
 use Modules\People\Entities\Customer;
+use Modules\People\Entities\CustomerVehicle;
+use Modules\Branch\Entities\Branch;
+use Modules\Mutation\Entities\Mutation;
 use Modules\Product\Entities\Product;
 use Modules\Product\Entities\Warehouse;
 use Modules\SaleDelivery\Entities\SaleDelivery;
@@ -23,6 +27,121 @@ use Modules\Sale\Entities\SaleDetails;
 
 class QuotationController extends Controller
 {
+    private function quotationBranchStock(int $productId, $branchId): int
+    {
+        if (!is_numeric($branchId) || (int) $branchId <= 0 || $productId <= 0) {
+            return 0;
+        }
+
+        $warehouseIds = Warehouse::query()
+            ->where('branch_id', (int) $branchId)
+            ->pluck('id');
+
+        if ($warehouseIds->isEmpty()) {
+            return 0;
+        }
+
+        $stock = 0;
+        foreach ($warehouseIds as $warehouseId) {
+            $stock += max(0, (int) (Mutation::query()
+                ->where('product_id', $productId)
+                ->where('warehouse_id', (int) $warehouseId)
+                ->latest()
+                ->value('stock_last') ?? 0));
+        }
+
+        return (int) $stock;
+    }
+
+    private function normalizeQuotationDetailInstallationType($value): string
+    {
+        return $value === 'with_installation' ? 'with_installation' : 'item_only';
+    }
+
+    private function normalizeQuotationProductDiscountType($value): string
+    {
+        $discountType = strtolower(trim((string) $value));
+
+        return in_array($discountType, ['fixed', 'percentage'], true) ? $discountType : 'fixed';
+    }
+
+    private function normalizeQuotationStatus($value): string
+    {
+        $status = strtolower(trim((string) $value));
+
+        if ($status === 'sent') {
+            $status = 'completed';
+        }
+
+        return in_array($status, ['pending', 'completed'], true) ? $status : 'pending';
+    }
+
+    private function isPendingQuotation($quotation): bool
+    {
+        return $this->normalizeQuotationStatus($quotation->status ?? 'pending') === 'pending';
+    }
+
+    private function resolveQuotationDetailInstallationMetadata($cartItem, int $customerId, int $branchId): array
+    {
+        $installationType = $this->normalizeQuotationDetailInstallationType($cartItem->options->installation_type ?? 'item_only');
+
+        if ($installationType !== 'with_installation') {
+            return [
+                'installation_type' => 'item_only',
+                'customer_vehicle_id' => null,
+            ];
+        }
+
+        $vehicleId = (int) ($cartItem->options->customer_vehicle_id ?? 0);
+        if ($vehicleId <= 0) {
+            throw ValidationException::withMessages([
+                'customer_vehicle_id' => 'Vehicle is required for quotation items with installation.',
+            ]);
+        }
+
+        $vehicle = CustomerVehicle::query()
+            ->where('id', $vehicleId)
+            ->where('customer_id', $customerId)
+            ->where(function ($query) use ($branchId) {
+                $query->whereNull('branch_id')
+                    ->orWhere('branch_id', $branchId);
+            })
+            ->first();
+
+        if (!$vehicle) {
+            throw ValidationException::withMessages([
+                'customer_vehicle_id' => 'Selected vehicle does not belong to the selected customer.',
+            ]);
+        }
+
+        return [
+            'installation_type' => 'with_installation',
+            'customer_vehicle_id' => (int) $vehicle->id,
+        ];
+    }
+
+    private function resolveQuotationProductCode($cartItem): string
+    {
+        $productCode = trim((string) ($cartItem->options->product_code ?? ''));
+
+        if ($productCode === '') {
+            $productCode = trim((string) ($cartItem->options->code ?? ''));
+        }
+
+        if ($productCode === '') {
+            $productCode = trim((string) (Product::query()
+                ->where('id', (int) $cartItem->id)
+                ->value('product_code') ?? ''));
+        }
+
+        if ($productCode === '') {
+            throw ValidationException::withMessages([
+                'product_code' => 'Product code is missing for product: ' . (string) ($cartItem->name ?? 'Unknown Product') . '. Please re-add the product.',
+            ]);
+        }
+
+        return $productCode;
+    }
 
     public function index(QuotationsDataTable $dataTable) {
         abort_if(Gate::denies('access_quotations'), 403);
@@ -69,7 +188,7 @@ class QuotationController extends Controller
                 })
                 ->firstOrFail();
 
-            $status = strtolower(trim((string) ($request->status ?? 'pending')));
+            $status = $this->normalizeQuotationStatus($request->status ?? 'pending');
 
             $quotation = Quotation::create([
                 'branch_id'           => $branchId,
@@ -87,18 +206,28 @@ class QuotationController extends Controller
             ]);
 
             foreach (Cart::instance('quotation')->content() as $cart_item) {
+                $productCode = $this->resolveQuotationProductCode($cart_item);
+                $installationMetadata = $this->resolveQuotationDetailInstallationMetadata($cart_item, (int) $customer->id, (int) $branchId);
+                $discountType = $this->normalizeQuotationProductDiscountType($cart_item->options->product_discount_type ?? 'fixed');
+                $unitPrice = max(0, (int) ($cart_item->options->unit_price ?? $cart_item->price ?? 0));
+                $finalPrice = max(0, (int) ($cart_item->price ?? $unitPrice));
+                $subTotal = max(0, (int) ($cart_item->options->sub_total ?? ($finalPrice * (int) $cart_item->qty)));
+                $productDiscountAmount = max(0, (int) ($cart_item->options->product_discount ?? 0));
+
                 QuotationDetails::create([
                     'quotation_id' => $quotation->id,
                     'product_id' => $cart_item->id,
                     'product_name' => $cart_item->name,
-                    'product_code' => $cart_item->options->code,
+                    'product_code' => $productCode,
                     'quantity' => $cart_item->qty,
-                    'price' => (int) $cart_item->price,
-                    'unit_price' => (int) $cart_item->options->unit_price,
-                    'sub_total' => (int) $cart_item->options->sub_total,
-                    'product_discount_amount' => (int) $cart_item->options->product_discount,
-                    'product_discount_type' => $cart_item->options->product_discount_type,
+                    'price' => $finalPrice,
+                    'unit_price' => $unitPrice,
+                    'sub_total' => $subTotal,
+                    'product_discount_amount' => $productDiscountAmount,
+                    'product_discount_type' => $discountType,
                     'product_tax_amount' => (int) $cart_item->options->product_tax,
+                    'installation_type' => $installationMetadata['installation_type'],
+                    'customer_vehicle_id' => $installationMetadata['customer_vehicle_id'],
                 ]);
             }
 
@@ -109,24 +238,41 @@ class QuotationController extends Controller
         return redirect()->route('quotations.index');
     }
 
-    public function show(Quotation $quotation) {
+    public function show($quotation) {
         abort_if(Gate::denies('show_quotations'), 403);
 
-        $quotation->loadMissing(['creator', 'updater']);
+        $quotation = Quotation::withoutGlobalScopes()
+            ->with(['creator', 'updater', 'branch', 'quotationDetails.customerVehicle'])
+            ->findOrFail((int) $quotation);
 
-        $branchId = BranchContext::id();
+        $quotation->loadMissing(['creator', 'updater', 'branch', 'quotationDetails.customerVehicle']);
 
-        $customer = Customer::query()
-        ->where('id', $quotation->customer_id)
-        ->where(fn($q)=>$q->whereNull('branch_id')->orWhere('branch_id',$branchId))
-        ->firstOrFail();
+        $branchId = $quotation->branch_id ?: BranchContext::id();
 
-        return view('quotation::show', compact('quotation', 'customer'));
+        $customer = Customer::withoutGlobalScopes()
+            ->where('id', $quotation->customer_id)
+            ->when(is_numeric($branchId), function ($query) use ($branchId) {
+                $query->where(function ($q) use ($branchId) {
+                    $q->whereNull('branch_id')->orWhere('branch_id', (int) $branchId);
+                });
+            })
+            ->firstOrFail();
+
+        $branch = !empty($quotation->branch_id)
+            ? Branch::withoutGlobalScopes()->find((int) $quotation->branch_id)
+            : null;
+
+        return view('quotation::show', compact('quotation', 'customer', 'branch'));
     }
 
 
     public function edit(Quotation $quotation) {
         abort_if(Gate::denies('edit_quotations'), 403);
+
+        if (!$this->isPendingQuotation($quotation)) {
+            toast('Only pending quotations can be edited.', 'error');
+            return redirect()->route('quotations.show', $quotation->id);
+        }
 
         $quotation_details = $quotation->quotationDetails;
 
@@ -136,21 +282,42 @@ class QuotationController extends Controller
 
         $cart = Cart::instance('quotation');
 
+        $products = Product::query()
+            ->whereIn('id', $quotation_details->pluck('product_id')->filter()->unique()->values())
+            ->get()
+            ->keyBy('id');
+
         foreach ($quotation_details as $quotation_detail) {
+            $product = $products->get((int) $quotation_detail->product_id);
+            $currentBranchStock = $this->quotationBranchStock((int) $quotation_detail->product_id, $branchId);
+            $productCode = $quotation_detail->product_code ?: ($product->product_code ?? null);
+
             $cart->add([
                 'id'      => $quotation_detail->product_id,
-                'name'    => $quotation_detail->product_name,
+                'name'    => $quotation_detail->product_name ?: ($product->product_name ?? ('Product #' . $quotation_detail->product_id)),
                 'qty'     => $quotation_detail->quantity,
                 'price'   => $quotation_detail->price,
                 'weight'  => 1,
                 'options' => [
+                    'line_key' => 'quotation_detail_' . $quotation_detail->id,
                     'product_discount' => $quotation_detail->product_discount_amount,
                     'product_discount_type' => $quotation_detail->product_discount_type,
                     'sub_total'   => $quotation_detail->sub_total,
-                    'code'        => $quotation_detail->product_code,
-                    'stock'       => Product::findOrFail($quotation_detail->product_id)->product_quantity,
+                    'code'        => $productCode,
+                    'product_code' => $productCode,
+                    'stock'       => $currentBranchStock,
+                    'reserved_stock' => 0,
+                    'sellable_stock' => $currentBranchStock,
+                    'stock_scope' => 'branch',
+                    'warehouse_id' => null,
+                    'warehouse_name' => null,
+                    'unit' => $product->product_unit ?? null,
                     'product_tax' => $quotation_detail->product_tax_amount,
-                    'unit_price'  => $quotation_detail->unit_price
+                    'unit_price'  => $quotation_detail->unit_price,
+                    'installation_type' => $this->normalizeQuotationDetailInstallationType($quotation_detail->installation_type ?? 'item_only'),
+                    'customer_vehicle_id' => $this->normalizeQuotationDetailInstallationType($quotation_detail->installation_type ?? 'item_only') === 'with_installation'
+                        ? $quotation_detail->customer_vehicle_id
+                        : null,
                 ]
             ]);
         }
@@ -175,9 +342,24 @@ class QuotationController extends Controller
     {
         abort_if(Gate::denies('edit_quotations'), 403);
 
+        if (!$this->isPendingQuotation($quotation)) {
+            toast('Only pending quotations can be edited.', 'error');
+            return redirect()->route('quotations.show', $quotation->id);
+        }
+
         $branchId = BranchContext::id(); // wajib ada (karena route write sudah pakai branch.selected)
 
         DB::transaction(function () use ($request, $quotation, $branchId) {
+            $quotation = Quotation::query()
+                ->lockForUpdate()
+                ->with('quotationDetails')
+                ->findOrFail((int) $quotation->id);
+
+            if (!$this->isPendingQuotation($quotation)) {
+                throw ValidationException::withMessages([
+                    'status' => 'Only pending quotations can be edited.',
+                ]);
+            }
 
             // ✅ validasi customer harus global atau branch aktif
             $customer = Customer::query()
@@ -193,7 +375,7 @@ class QuotationController extends Controller
                 $quotation_detail->delete();
             }
 
-            $status = strtolower(trim((string) ($request->status ?? 'pending')));
+            $status = $this->normalizeQuotationStatus($request->status ?? 'pending');
 
             // ✅ update header quotation (branch-aware + legacy safe)
             $updateData = [
@@ -220,18 +402,28 @@ class QuotationController extends Controller
 
             // insert details baru dari cart
             foreach (Cart::instance('quotation')->content() as $cart_item) {
+                $productCode = $this->resolveQuotationProductCode($cart_item);
+                $installationMetadata = $this->resolveQuotationDetailInstallationMetadata($cart_item, (int) $customer->id, (int) $branchId);
+                $discountType = $this->normalizeQuotationProductDiscountType($cart_item->options->product_discount_type ?? 'fixed');
+                $unitPrice = max(0, (int) ($cart_item->options->unit_price ?? $cart_item->price ?? 0));
+                $finalPrice = max(0, (int) ($cart_item->price ?? $unitPrice));
+                $subTotal = max(0, (int) ($cart_item->options->sub_total ?? ($finalPrice * (int) $cart_item->qty)));
+                $productDiscountAmount = max(0, (int) ($cart_item->options->product_discount ?? 0));
+
                 QuotationDetails::create([
                     'quotation_id'             => $quotation->id,
                     'product_id'               => $cart_item->id,
                     'product_name'             => $cart_item->name,
-                    'product_code'             => $cart_item->options->code,
+                    'product_code'             => $productCode,
                     'quantity'                 => (int) $cart_item->qty,
-                    'price'                    => (int) $cart_item->price,
-                    'unit_price'               => (int) $cart_item->options->unit_price,
-                    'sub_total'                => (int) $cart_item->options->sub_total,
-                    'product_discount_amount'  => (int) $cart_item->options->product_discount,
-                    'product_discount_type'    => (int) $cart_item->options->product_discount_type,
+                    'price'                    => $finalPrice,
+                    'unit_price'               => $unitPrice,
+                    'sub_total'                => $subTotal,
+                    'product_discount_amount'  => $productDiscountAmount,
+                    'product_discount_type'    => $discountType,
                     'product_tax_amount'       => (int) $cart_item->options->product_tax,
+                    'installation_type'        => $installationMetadata['installation_type'],
+                    'customer_vehicle_id'      => $installationMetadata['customer_vehicle_id'],
                 ]);
             }
 
@@ -248,6 +440,11 @@ class QuotationController extends Controller
 
         try {
             $quotation = Quotation::query()->findOrFail($id);
+
+            if (!$this->isPendingQuotation($quotation)) {
+                toast('Only pending quotations can be deleted.', 'error');
+                return redirect()->back();
+            }
 
             // Block kalau masih punya turunan aktif (SO/SD yang belum soft delete)
             if (QuotationStatusService::hasActiveDescendant((int) $quotation->id)) {
@@ -362,6 +559,7 @@ class QuotationController extends Controller
                 // 2) ✅ Copy items ke sale_details
                 // ==========================================
                 foreach ($quotation->quotationDetails as $d) {
+                    $installationType = $this->normalizeQuotationDetailInstallationType($d->installation_type ?? 'item_only');
 
                     $detailData = [
                         'sale_id'                 => $saleId,
@@ -374,6 +572,10 @@ class QuotationController extends Controller
                         'sub_total'               => (int) ($d->sub_total ?? 0),
                         'product_tax_amount'      => (int) ($d->product_tax_amount ?? 0),
                         'product_discount_amount' => (int) ($d->product_discount_amount ?? 0),
+                        'installation_type'        => $installationType,
+                        'customer_vehicle_id'      => $installationType === 'with_installation'
+                            ? ((int) ($d->customer_vehicle_id ?? 0) ?: null)
+                            : null,
                     ];
 
                     // kalau sale_details butuh warehouse_id (di SaleController kamu selalu isi)
@@ -429,8 +631,20 @@ class QuotationController extends Controller
 
             toast('Direct Invoice created. Sale Delivery generated (pending) for manual confirm.', 'success');
 
-            // kamu mau arahkan ke invoice dulu (lebih masuk akal)
-            return redirect()->route('sales.show', $saleId);
+            $redirect = !empty($saleDeliveryId)
+                ? redirect()->route('sales.index')
+                : redirect()->route('sales.show', $saleId);
+
+            if (!empty($saleDeliveryId)) {
+                $redirect->with('auto_delivery_notice', [
+                    'title' => 'Sale Created',
+                    'message' => 'A Sale Delivery has been automatically created. Please confirm the Sale Delivery to complete the delivery process.',
+                    'primary_label' => 'Go to Sale Delivery',
+                    'url' => route('sale-deliveries.confirm.form', (int) $saleDeliveryId),
+                ]);
+            }
+
+            return $redirect;
 
         } catch (\Throwable $e) {
             toast($e->getMessage(), 'error');

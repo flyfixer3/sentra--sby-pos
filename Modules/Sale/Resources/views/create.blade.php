@@ -133,13 +133,6 @@
                                 </div>
                             </div>
 
-                            <div class="col-lg-2">
-                                <div class="form-group">
-                                    <label for="reference">Car Plate<span class="text-danger">*</span></label>
-                                    <input type="text" class="form-control" name="car_number_plate" id="car_number_plate" required>
-                                </div>
-                            </div>
-
                             <div class="col-lg-4">
                                 <div class="from-group">
                                     <div class="form-group">
@@ -152,7 +145,7 @@
                                                     $selected = (int) old('customer_id', $prefillCustomerId) === (int)$customer->id;
                                                 @endphp
                                                 <option value="{{ $customer->id }}" @if($selected) selected @endif>
-                                                    {{ $customer->customer_name }}
+                                                    {{ $customer->customer_name }}  |  {{ $customer->customer_phone }}
                                                 </option>
                                             @endforeach
                                         </select>
@@ -192,6 +185,8 @@
                         <livewire:product-cart-sale
                             :cartInstance="'sale'"
                             :data="$lockedFinancial"
+                            :customerId="(int) old('customer_id', $prefillCustomerId)"
+                            :enableInstallationMetadata="true"
                             :warehouses="$warehouses"
                         />
 
@@ -355,6 +350,13 @@
         }
     }
 
+    function notifySaleCustomerChanged() {
+        var customerId = $('#customer_id').val() || $('input[name="customer_id"]').val() || '';
+        if (window.Livewire && typeof window.Livewire.emit === 'function') {
+            window.Livewire.emit('saleCustomerChanged', customerId);
+        }
+    }
+
     $(document).ready(function () {
         $('#paid_amount').maskMoney({
             prefix:'{{ settings()->currency->symbol }}',
@@ -368,10 +370,14 @@
         setLockedFinancialInputsIfAny();
         document.addEventListener('livewire:load', function () {
             setLockedFinancialInputsIfAny();
+            notifySaleCustomerChanged();
         });
 
         // fallback: if Livewire rerenders
         document.addEventListener('DOMContentLoaded', function(){ setLockedFinancialInputsIfAny(); });
+
+        $('#customer_id').on('change', notifySaleCustomerChanged);
+        notifySaleCustomerChanged();
 
         $('#getTotalAmount').click(function () {
             // total_amount is produced by the Livewire component
