@@ -23,7 +23,14 @@
                     @endif
                 </div>
                 <div class="text-right">
-                    <span class="badge badge-{{ $stockOpname->status === 'finalized' ? 'success' : 'secondary' }} px-3 py-2">
+                    @php
+                        $opnameStatusClass = match ($stockOpname->status) {
+                            'finalized' => 'success',
+                            'reviewed' => 'info',
+                            default => 'secondary',
+                        };
+                    @endphp
+                    <span class="badge badge-{{ $opnameStatusClass }} px-3 py-2">
                         {{ strtoupper($stockOpname->status) }}
                     </span>
                     @if($stockOpname->adjustment)
@@ -49,10 +56,15 @@
                                     @csrf
                                     <button type="submit" class="btn btn-outline-warning btn-sm rounded-pill px-3">Tandai Kosong Jadi 0</button>
                                 </form>
-                                @can('create_adjustments')
-                                <form action="{{ route('inventory.stock-opnames.finalize', $stockOpname) }}" method="POST" class="d-inline" onsubmit="return confirm('Finalize stock opname ini menjadi adjustment + mutation?');">
+                                <form action="{{ route('inventory.stock-opnames.review', $stockOpname) }}" method="POST" class="d-inline" onsubmit="return confirm('Kunci review ini? Qty fisik dan resolve tidak bisa diubah lagi setelah masuk tahap reviewed.');">
                                     @csrf
-                                    <button type="submit" class="btn btn-success btn-sm rounded-pill px-3">Finalize</button>
+                                    <button type="submit" class="btn btn-info btn-sm rounded-pill px-3">Kunci Review</button>
+                                </form>
+                            @elseif($stockOpname->status === 'reviewed')
+                                @can('create_adjustments')
+                                <form action="{{ route('inventory.stock-opnames.finalize', $stockOpname) }}" method="POST" class="d-inline" onsubmit="return confirm('Finalize adjustment untuk item yang sudah ditandai adjustment?');">
+                                    @csrf
+                                    <button type="submit" class="btn btn-success btn-sm rounded-pill px-3">Finalize Adjustment</button>
                                 </form>
                                 @endcan
                             @endif
@@ -171,6 +183,7 @@
                                     <th class="text-right">Fisik</th>
                                     <th class="text-right">Selisih</th>
                                     <th>Status</th>
+                                    <th>Resolve</th>
                                     <th>Catatan</th>
                                 </tr>
                             </thead>
@@ -184,6 +197,16 @@
                                             elseif ((int) $item->diff_qty > 0) { $statusText = 'Plus'; $statusClass = 'warning'; }
                                             else { $statusText = 'Minus'; $statusClass = 'danger'; }
                                         }
+                                        $needsResolve = !is_null($item->physical_qty) && (int) $item->diff_qty !== 0;
+                                        $resolutionTypeLabels = [
+                                            'missing_sale' => 'Lupa Input Penjualan',
+                                            'missing_purchase' => 'Lupa Input Pembelian',
+                                            'missing_transfer' => 'Lupa Input Transfer',
+                                            'rack_movement' => 'Salah Rack / Perpindahan Rack',
+                                            'adjustment' => 'Adjustment',
+                                            'other' => 'Lainnya',
+                                        ];
+                                        $resolutionLabel = $item->resolution_type ? ($resolutionTypeLabels[$item->resolution_type] ?? strtoupper($item->resolution_type)) : null;
                                     @endphp
                                     <tr>
                                         <td>{{ $item->product_code_snapshot }}</td>
@@ -201,11 +224,117 @@
                                             {{ is_null($item->diff_qty) ? '-' : number_format((int) $item->diff_qty) }}
                                         </td>
                                         <td><span class="badge badge-{{ $statusClass }}">{{ $statusText }}</span></td>
+                                        <td style="min-width:280px;">
+                                            @php
+                                                $actionLink = $actionLinks[$item->id] ?? null;
+                                            @endphp
+                                            @if(!$needsResolve)
+                                                <span class="text-muted small">Tidak perlu resolve</span>
+                                            @elseif($stockOpname->status === 'finalized')
+                                                <div class="small">
+                                                    <div><span class="badge badge-{{ $item->resolution_type === 'adjustment' ? 'warning' : 'info' }}">{{ $resolutionLabel ?? 'Pending' }}</span></div>
+                                                    @if($item->resolution_reference)
+                                                        <div class="text-muted mt-1">Ref: {{ $item->resolution_reference }}</div>
+                                                    @endif
+                                                    @if($item->resolution_note)
+                                                        <div class="text-muted mt-1">{{ $item->resolution_note }}</div>
+                                                    @endif
+                                                    @if($actionLink)
+                                                        <div class="mt-2">
+                                                            @if($actionLink['url'])
+                                                                <a href="{{ $actionLink['url'] }}" target="_blank" class="btn btn-sm btn-outline-{{ $actionLink['style'] }} rounded-pill px-3">{{ $actionLink['label'] }}</a>
+                                                            @else
+                                                                <span class="badge badge-{{ $actionLink['style'] }}">{{ $actionLink['label'] }}</span>
+                                                            @endif
+                                                        </div>
+                                                    @endif
+                                                </div>
+                                            @elseif($item->review_status === 'resolved')
+                                                <div class="small border rounded p-2 bg-light">
+                                                    <div class="mb-1">
+                                                        <span class="badge badge-{{ $item->resolution_type === 'adjustment' ? 'warning' : 'info' }}">{{ $resolutionLabel ?? 'Resolved' }}</span>
+                                                    </div>
+                                                    @if($item->resolution_reference)
+                                                        <div class="text-muted">Ref: {{ $item->resolution_reference }}</div>
+                                                    @endif
+                                                    @if($item->resolution_note)
+                                                        <div class="text-muted mt-1">{{ $item->resolution_note }}</div>
+                                                    @endif
+                                                    <div class="text-muted mt-1">
+                                                        Resolved {{ optional($item->resolved_at)->format('d/m/Y H:i') }}
+                                                    </div>
+                                                    @if($actionLink)
+                                                        <div class="mt-2">
+                                                            @if($actionLink['url'])
+                                                                <a href="{{ $actionLink['url'] }}" target="_blank" class="btn btn-sm btn-outline-{{ $actionLink['style'] }} rounded-pill px-3">{{ $actionLink['label'] }}</a>
+                                                            @else
+                                                                <span class="badge badge-{{ $actionLink['style'] }}">{{ $actionLink['label'] }}</span>
+                                                            @endif
+                                                        </div>
+                                                    @endif
+                                                    @if($stockOpname->status === 'draft')
+                                                        <div class="d-flex flex-wrap mt-2" style="gap:8px;">
+                                                            <button type="button" class="btn btn-sm btn-outline-secondary rounded-pill px-3 js-edit-resolve">Edit Resolve</button>
+                                                            <form action="{{ route('inventory.stock-opnames.items.reset-resolve', [$stockOpname, $item]) }}" method="POST" class="d-inline" onsubmit="return confirm('Reset resolve item ini?');">
+                                                                @csrf
+                                                                <button type="submit" class="btn btn-sm btn-outline-danger rounded-pill px-3">Reset Resolve</button>
+                                                            </form>
+                                                        </div>
+                                                        <form action="{{ route('inventory.stock-opnames.items.resolve', [$stockOpname, $item]) }}" method="POST" class="resolve-form d-none mt-2">
+                                                            @csrf
+                                                            <div class="form-group mb-2">
+                                                                <select name="resolution_type" class="form-control form-control-sm" required>
+                                                                    <option value="">Pilih solusi</option>
+                                                                    <option value="missing_sale" {{ $item->resolution_type === 'missing_sale' ? 'selected' : '' }}>Lupa Input Penjualan</option>
+                                                                    <option value="missing_purchase" {{ $item->resolution_type === 'missing_purchase' ? 'selected' : '' }}>Lupa Input Pembelian</option>
+                                                                    <option value="missing_transfer" {{ $item->resolution_type === 'missing_transfer' ? 'selected' : '' }}>Lupa Input Transfer</option>
+                                                                    <option value="rack_movement" {{ $item->resolution_type === 'rack_movement' ? 'selected' : '' }}>Salah Rack / Perpindahan Rack</option>
+                                                                    <option value="adjustment" {{ $item->resolution_type === 'adjustment' ? 'selected' : '' }}>Adjustment</option>
+                                                                    <option value="other" {{ $item->resolution_type === 'other' ? 'selected' : '' }}>Lainnya</option>
+                                                                </select>
+                                                            </div>
+                                                            <div class="form-group mb-2">
+                                                                <input type="text" name="resolution_reference" class="form-control form-control-sm" value="{{ $item->resolution_reference }}" placeholder="Ref transaksi opsional">
+                                                            </div>
+                                                            <div class="form-group mb-2">
+                                                                <textarea name="resolution_note" class="form-control form-control-sm" rows="2" placeholder="Catatan penyebab / tindakan">{{ $item->resolution_note }}</textarea>
+                                                            </div>
+                                                            <div class="d-flex flex-wrap" style="gap:8px;">
+                                                                <button type="submit" class="btn btn-sm btn-outline-primary rounded-pill px-3">Update Resolve</button>
+                                                                <button type="button" class="btn btn-sm btn-outline-secondary rounded-pill px-3 js-cancel-edit-resolve">Batal</button>
+                                                            </div>
+                                                        </form>
+                                                    @endif
+                                                </div>
+                                            @else
+                                                <form action="{{ route('inventory.stock-opnames.items.resolve', [$stockOpname, $item]) }}" method="POST" class="resolve-form">
+                                                    @csrf
+                                                    <div class="form-group mb-2">
+                                                        <select name="resolution_type" class="form-control form-control-sm" required>
+                                                            <option value="">Pilih solusi</option>
+                                                            <option value="missing_sale">Lupa Input Penjualan</option>
+                                                            <option value="missing_purchase">Lupa Input Pembelian</option>
+                                                            <option value="missing_transfer">Lupa Input Transfer</option>
+                                                            <option value="rack_movement">Salah Rack / Perpindahan Rack</option>
+                                                            <option value="adjustment">Adjustment</option>
+                                                            <option value="other">Lainnya</option>
+                                                        </select>
+                                                    </div>
+                                                    <div class="form-group mb-2">
+                                                        <input type="text" name="resolution_reference" class="form-control form-control-sm" placeholder="Ref transaksi opsional">
+                                                    </div>
+                                                    <div class="form-group mb-2">
+                                                        <textarea name="resolution_note" class="form-control form-control-sm" rows="2" placeholder="Catatan penyebab / tindakan"></textarea>
+                                                    </div>
+                                                    <button type="submit" class="btn btn-sm btn-outline-primary rounded-pill px-3">Simpan Resolve</button>
+                                                </form>
+                                            @endif
+                                        </td>
                                         <td>{{ $item->note ?: '-' }}</td>
                                     </tr>
                                 @empty
                                     <tr>
-                                        <td colspan="8" class="text-center text-muted">Tidak ada item.</td>
+                                        <td colspan="9" class="text-center text-muted">Tidak ada item.</td>
                                     </tr>
                                 @endforelse
                             </tbody>
@@ -248,6 +377,18 @@
                             <div class="summary-label">Minus</div>
                             <div class="summary-value text-danger">{{ number_format($summary['minus_count']) }}</div>
                         </div>
+                        <div class="summary-card">
+                            <div class="summary-label">Belum Direview</div>
+                            <div class="summary-value text-danger">{{ number_format($summary['unresolved_difference_count']) }}</div>
+                        </div>
+                        <div class="summary-card">
+                            <div class="summary-label">Sudah Direview</div>
+                            <div class="summary-value text-info">{{ number_format($summary['resolved_difference_count']) }}</div>
+                        </div>
+                        <div class="summary-card">
+                            <div class="summary-label">Akan Adjustment</div>
+                            <div class="summary-value text-warning">{{ number_format($summary['adjustment_count']) }}</div>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -258,7 +399,7 @@
                     <div class="small mb-2">Qty Sistem: <b>{{ number_format($summary['system_total']) }}</b></div>
                     <div class="small mb-2">Qty Fisik Terinput: <b>{{ number_format($summary['physical_total']) }}</b></div>
                     <div class="small text-muted">
-                        Finalize akan membuat mutation + adjustment hanya untuk item dengan selisih.
+                        Draft dipakai untuk input fisik dan review penyebab. Setelah <b>Kunci Review</b>, qty fisik dikunci. Finalize hanya membuat mutation + adjustment untuk item yang di-resolve sebagai <b>Adjustment</b>.
                     </div>
                 </div>
             </div>
@@ -416,6 +557,30 @@
     });
 
     body.appendChild(makeRow());
+
+    document.querySelectorAll('.js-edit-resolve').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+            const wrapper = btn.closest('.border');
+            const form = wrapper ? wrapper.querySelector('.resolve-form') : null;
+            if (form) {
+                form.classList.remove('d-none');
+                btn.parentElement.classList.add('d-none');
+            }
+        });
+    });
+
+    document.querySelectorAll('.js-cancel-edit-resolve').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+            const form = btn.closest('.resolve-form');
+            if (form) {
+                form.classList.add('d-none');
+                const actions = form.parentElement.querySelector('.d-flex.flex-wrap.mt-2');
+                if (actions) {
+                    actions.classList.remove('d-none');
+                }
+            }
+        });
+    });
 })();
 </script>
 @endpush

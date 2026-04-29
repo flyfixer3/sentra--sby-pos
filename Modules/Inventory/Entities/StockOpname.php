@@ -21,10 +21,19 @@ class StockOpname extends BaseModel
         'note',
         'generated_at',
         'imported_at',
+        'reviewed_at',
+        'reviewed_by',
         'finalized_at',
         'adjustment_id',
         'created_by',
         'updated_by',
+    ];
+
+    protected $casts = [
+        'generated_at' => 'datetime',
+        'imported_at' => 'datetime',
+        'reviewed_at' => 'datetime',
+        'finalized_at' => 'datetime',
     ];
 
     public function branch(): BelongsTo

@@ -35,8 +35,14 @@ Route::middleware(['auth'])
             ->name('stock-opnames.products.search');
         Route::post('/stock-opnames/{stockOpname}/manual-item', [StockOpnameController::class, 'storeManualItem'])
             ->name('stock-opnames.manual-item.store');
+        Route::post('/stock-opnames/{stockOpname}/items/{item}/resolve', [StockOpnameController::class, 'resolveItem'])
+            ->name('stock-opnames.items.resolve');
+        Route::post('/stock-opnames/{stockOpname}/items/{item}/reset-resolve', [StockOpnameController::class, 'resetResolve'])
+            ->name('stock-opnames.items.reset-resolve');
         Route::post('/stock-opnames/{stockOpname}/mark-missing-zero', [StockOpnameController::class, 'markMissingAsZero'])
             ->name('stock-opnames.mark-missing-zero');
+        Route::post('/stock-opnames/{stockOpname}/review', [StockOpnameController::class, 'review'])
+            ->name('stock-opnames.review');
         Route::post('/stock-opnames/{stockOpname}/finalize', [StockOpnameController::class, 'finalize'])
             ->name('stock-opnames.finalize');
 

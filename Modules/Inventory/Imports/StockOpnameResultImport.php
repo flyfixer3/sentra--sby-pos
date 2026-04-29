@@ -93,6 +93,12 @@ class StockOpnameResultImport implements OnEachRow, WithHeadingRow
             $item->update([
                 'physical_qty' => $physicalQty,
                 'diff_qty' => $physicalQty - (int) $item->system_qty,
+                'review_status' => 'pending',
+                'resolution_type' => null,
+                'resolution_reference' => null,
+                'resolution_note' => null,
+                'resolved_at' => null,
+                'resolved_by' => null,
                 'note' => $note !== '' ? $note : $item->note,
                 'counted_at' => now(),
             ]);

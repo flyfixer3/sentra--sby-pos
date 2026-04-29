@@ -8,6 +8,11 @@ use Modules\Product\Entities\Product;
 
 class StockOpnameItem extends Model
 {
+    protected $casts = [
+        'counted_at' => 'datetime',
+        'resolved_at' => 'datetime',
+    ];
+
     protected $fillable = [
         'stock_opname_id',
         'product_id',
@@ -19,6 +24,12 @@ class StockOpnameItem extends Model
         'system_qty',
         'physical_qty',
         'diff_qty',
+        'review_status',
+        'resolution_type',
+        'resolution_reference',
+        'resolution_note',
+        'resolved_at',
+        'resolved_by',
         'note',
         'counted_at',
     ];

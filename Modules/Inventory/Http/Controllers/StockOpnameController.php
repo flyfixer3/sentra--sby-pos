@@ -155,8 +155,13 @@ class StockOpnameController extends Controller
 
         $items = $itemsQuery->paginate(50)->withQueryString();
         $summary = $this->buildSummary($stockOpname);
+        $actionLinks = [];
 
-        return view('inventory::stock-opnames.show', compact('stockOpname', 'items', 'summary', 'search', 'status'));
+        foreach ($items as $item) {
+            $actionLinks[$item->id] = $this->resolveActionLink($stockOpname, $item);
+        }
+
+        return view('inventory::stock-opnames.show', compact('stockOpname', 'items', 'summary', 'search', 'status', 'actionLinks'));
     }
 
     public function downloadTemplate(StockOpname $stockOpname)
@@ -317,6 +322,12 @@ class StockOpnameController extends Controller
                     'rack_name_snapshot' => (string) $rackNameSnapshot,
                     'physical_qty' => $physicalQty,
                     'diff_qty' => $physicalQty - (int) $item->system_qty,
+                    'review_status' => 'pending',
+                    'resolution_type' => null,
+                    'resolution_reference' => null,
+                    'resolution_note' => null,
+                    'resolved_at' => null,
+                    'resolved_by' => null,
                     'note' => $note !== '' ? $note : $item->note,
                     'counted_at' => now(),
                 ]);
@@ -338,6 +349,12 @@ class StockOpnameController extends Controller
             ->update([
                 'physical_qty' => 0,
                 'diff_qty' => DB::raw('0 - system_qty'),
+                'review_status' => 'pending',
+                'resolution_type' => null,
+                'resolution_reference' => null,
+                'resolution_note' => null,
+                'resolved_at' => null,
+                'resolved_by' => null,
                 'counted_at' => now(),
                 'updated_at' => now(),
             ]);
@@ -349,19 +366,94 @@ class StockOpnameController extends Controller
         return redirect()->route('inventory.stock-opnames.show', $stockOpname);
     }
 
-    public function finalize(Request $request, StockOpname $stockOpname)
+    public function resolveItem(Request $request, StockOpname $stockOpname, StockOpnameItem $item)
     {
-        abort_if(Gate::denies('create_adjustments'), 403);
+        abort_if(Gate::denies('access_inventories'), 403);
+        abort_if($stockOpname->status !== 'draft', 422);
+        abort_if((int) $item->stock_opname_id !== (int) $stockOpname->id, 404);
+
+        $request->validate([
+            'resolution_type' => ['required', 'string', 'in:missing_sale,missing_purchase,missing_transfer,rack_movement,adjustment,other'],
+            'resolution_reference' => ['nullable', 'string', 'max:255'],
+            'resolution_note' => ['nullable', 'string', 'max:2000'],
+        ]);
+
+        if (is_null($item->physical_qty)) {
+            toast('Qty fisik item ini belum diisi. Lengkapi dulu sebelum resolve.', 'error');
+            return redirect()->route('inventory.stock-opnames.show', $stockOpname, ['status' => 'missing_input']);
+        }
+
+        $type = (string) $request->resolution_type;
+        $reference = trim((string) $request->resolution_reference);
+        $note = trim((string) $request->resolution_note);
+
+        $item->update([
+            'review_status' => 'resolved',
+            'resolution_type' => $type,
+            'resolution_reference' => $reference !== '' ? $reference : null,
+            'resolution_note' => $note !== '' ? $note : null,
+            'resolved_at' => now(),
+            'resolved_by' => Auth::id(),
+        ]);
+
+        toast('Review item opname berhasil disimpan.', 'success');
+        return redirect()->route('inventory.stock-opnames.show', $stockOpname);
+    }
+
+    public function resetResolve(StockOpname $stockOpname, StockOpnameItem $item)
+    {
+        abort_if(Gate::denies('access_inventories'), 403);
+        abort_if($stockOpname->status !== 'draft', 422);
+        abort_if((int) $item->stock_opname_id !== (int) $stockOpname->id, 404);
+
+        $item->update([
+            'review_status' => 'pending',
+            'resolution_type' => null,
+            'resolution_reference' => null,
+            'resolution_note' => null,
+            'resolved_at' => null,
+            'resolved_by' => null,
+        ]);
+
+        toast('Resolve item opname berhasil di-reset.', 'success');
+        return redirect()->route('inventory.stock-opnames.show', $stockOpname);
+    }
+
+    public function review(StockOpname $stockOpname)
+    {
+        abort_if(Gate::denies('access_inventories'), 403);
         abort_if($stockOpname->status !== 'draft', 422);
 
         $summary = $this->buildSummary($stockOpname);
         if ($summary['missing_input'] > 0) {
-            toast('Masih ada item yang belum diisi fisiknya. Lengkapi dulu sebelum finalize.', 'error');
+            toast('Masih ada item yang belum diisi fisiknya. Lengkapi dulu sebelum kunci review.', 'error');
             return redirect()->route('inventory.stock-opnames.show', $stockOpname);
         }
 
-        if ($summary['difference_count'] <= 0) {
-            toast('Tidak ada selisih untuk difinalisasi.', 'info');
+        if ($summary['unresolved_difference_count'] > 0) {
+            toast('Masih ada item selisih yang belum direview. Resolve dulu sebelum kunci review.', 'error');
+            return redirect()->route('inventory.stock-opnames.show', $stockOpname);
+        }
+
+        $stockOpname->update([
+            'status' => 'reviewed',
+            'reviewed_at' => now(),
+            'reviewed_by' => Auth::id(),
+            'updated_by' => Auth::id(),
+        ]);
+
+        toast('Stock opname berhasil dikunci ke tahap review. Qty fisik tidak bisa diubah lagi.', 'success');
+        return redirect()->route('inventory.stock-opnames.show', $stockOpname);
+    }
+
+    public function finalize(Request $request, StockOpname $stockOpname)
+    {
+        abort_if(Gate::denies('create_adjustments'), 403);
+        abort_if($stockOpname->status !== 'reviewed', 422);
+
+        $summary = $this->buildSummary($stockOpname);
+        if ($summary['adjustment_count'] <= 0) {
+            toast('Tidak ada item adjustment untuk difinalisasi.', 'info');
             return redirect()->route('inventory.stock-opnames.show', $stockOpname);
         }
 
@@ -383,6 +475,8 @@ class StockOpnameController extends Controller
             $items = $stockOpname->items()
                 ->whereNotNull('physical_qty')
                 ->where('diff_qty', '!=', 0)
+                ->where('review_status', 'resolved')
+                ->where('resolution_type', 'adjustment')
                 ->orderBy('product_code_snapshot')
                 ->get();
 
@@ -444,6 +538,53 @@ class StockOpnameController extends Controller
         return redirect()->route('inventory.stock-opnames.show', $stockOpname);
     }
 
+    private function resolveActionLink(StockOpname $stockOpname, StockOpnameItem $item): ?array
+    {
+        if ($item->review_status !== 'resolved' || !$item->resolution_type) {
+            return null;
+        }
+
+        $params = [
+            'opname' => $stockOpname->reference,
+            'opname_item' => $item->id,
+            'product_code' => $item->product_code_snapshot,
+            'product_name' => $item->product_name_snapshot,
+            'qty_system' => (int) $item->system_qty,
+            'qty_physical' => (int) $item->physical_qty,
+            'qty_diff' => (int) $item->diff_qty,
+            'branch_id' => (int) $stockOpname->branch_id,
+        ];
+
+        return match ($item->resolution_type) {
+            'missing_sale' => [
+                'label' => 'Buat Penjualan',
+                'url' => route('sales.create', $params),
+                'style' => 'primary',
+            ],
+            'missing_purchase' => [
+                'label' => 'Buat Pembelian',
+                'url' => route('purchases.create', $params),
+                'style' => 'success',
+            ],
+            'missing_transfer' => [
+                'label' => 'Buat Transfer',
+                'url' => route('transfers.create', $params),
+                'style' => 'info',
+            ],
+            'rack_movement' => [
+                'label' => 'Buat Rack Movement',
+                'url' => route('inventory.rack-movements.create', $params),
+                'style' => 'dark',
+            ],
+            'adjustment' => [
+                'label' => $stockOpname->status === 'reviewed' ? 'Siap Finalize Adjustment' : 'Akan Masuk Adjustment',
+                'url' => null,
+                'style' => 'warning',
+            ],
+            default => null,
+        };
+    }
+
     private function activeBranchId(bool $mustBeSpecific = true)
     {
         $active = session('active_branch');
@@ -479,6 +620,11 @@ class StockOpnameController extends Controller
             'plus_count' => (clone $base)->whereNotNull('physical_qty')->where('diff_qty', '>', 0)->count(),
             'minus_count' => (clone $base)->whereNotNull('physical_qty')->where('diff_qty', '<', 0)->count(),
             'difference_count' => (clone $base)->whereNotNull('physical_qty')->where('diff_qty', '!=', 0)->count(),
+            'resolved_difference_count' => (clone $base)->whereNotNull('physical_qty')->where('diff_qty', '!=', 0)->where('review_status', 'resolved')->count(),
+            'unresolved_difference_count' => (clone $base)->whereNotNull('physical_qty')->where('diff_qty', '!=', 0)->where(function ($q) {
+                $q->whereNull('review_status')->orWhere('review_status', 'pending');
+            })->count(),
+            'adjustment_count' => (clone $base)->whereNotNull('physical_qty')->where('diff_qty', '!=', 0)->where('review_status', 'resolved')->where('resolution_type', 'adjustment')->count(),
             'system_total' => (int) ((clone $base)->sum('system_qty') ?? 0),
             'physical_total' => (int) ((clone $base)->whereNotNull('physical_qty')->sum('physical_qty') ?? 0),
         ];
