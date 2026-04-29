@@ -5,6 +5,7 @@ use Modules\Inventory\Http\Controllers\OpeningStockImportController;
 use Modules\Inventory\Http\Controllers\RackController;
 use Modules\Inventory\Http\Controllers\RackImportController;
 use Modules\Inventory\Http\Controllers\RackMovementController;
+use Modules\Inventory\Http\Controllers\StockOpnameController;
 use Modules\Inventory\Http\Controllers\StockController;
 use Modules\Inventory\Http\Controllers\StockQualityController;
 
@@ -15,6 +16,29 @@ Route::middleware(['auth'])
 
         Route::get('/stocks', [StockController::class, 'index'])
             ->name('stocks.index');
+
+        Route::get('/stock-opnames', [StockOpnameController::class, 'index'])
+            ->name('stock-opnames.index');
+        Route::get('/stock-opnames/create', [StockOpnameController::class, 'create'])
+            ->middleware('branch.selected')
+            ->name('stock-opnames.create');
+        Route::post('/stock-opnames', [StockOpnameController::class, 'store'])
+            ->middleware('branch.selected')
+            ->name('stock-opnames.store');
+        Route::get('/stock-opnames/{stockOpname}', [StockOpnameController::class, 'show'])
+            ->name('stock-opnames.show');
+        Route::get('/stock-opnames/{stockOpname}/template', [StockOpnameController::class, 'downloadTemplate'])
+            ->name('stock-opnames.template');
+        Route::post('/stock-opnames/{stockOpname}/import', [StockOpnameController::class, 'import'])
+            ->name('stock-opnames.import');
+        Route::get('/stock-opnames/{stockOpname}/products/search', [StockOpnameController::class, 'searchProducts'])
+            ->name('stock-opnames.products.search');
+        Route::post('/stock-opnames/{stockOpname}/manual-item', [StockOpnameController::class, 'storeManualItem'])
+            ->name('stock-opnames.manual-item.store');
+        Route::post('/stock-opnames/{stockOpname}/mark-missing-zero', [StockOpnameController::class, 'markMissingAsZero'])
+            ->name('stock-opnames.mark-missing-zero');
+        Route::post('/stock-opnames/{stockOpname}/finalize', [StockOpnameController::class, 'finalize'])
+            ->name('stock-opnames.finalize');
 
         /**
          * ✅ NEW: Stock Detail Modal (options + data)

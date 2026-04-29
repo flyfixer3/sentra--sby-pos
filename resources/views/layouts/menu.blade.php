@@ -96,6 +96,11 @@
                 <i class="c-sidebar-nav-icon bi bi-stack" style="line-height: 1;"></i> Stocks
             </a>
         </li>
+        <li class="c-sidebar-nav-item">
+            <a class="c-sidebar-nav-link {{ request()->routeIs('inventory.stock-opnames.*') ? 'c-active' : '' }}" href="{{ route('inventory.stock-opnames.index') }}">
+                <i class="c-sidebar-nav-icon bi bi-clipboard-data" style="line-height: 1;"></i> Stock Opname
+            </a>
+        </li>
         @can('import_opening_stock')
             <li class="c-sidebar-nav-item">
                 <a class="c-sidebar-nav-link {{ request()->routeIs('inventory.stocks.import-opening.index') ? 'c-active' : '' }}" href="{{ route('inventory.stocks.import-opening.index') }}">
