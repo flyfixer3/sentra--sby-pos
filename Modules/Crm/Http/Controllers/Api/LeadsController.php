@@ -591,6 +591,7 @@ class LeadsController extends Controller
         }
 
         $products = Product::without('media')
+            ->withoutGlobalScope('branch') // Products are a global catalog; branch scope must not filter here
             ->whereIn('id', $productIds)
             ->get()
             ->keyBy('id');
