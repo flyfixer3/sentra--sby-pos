@@ -59,18 +59,9 @@ class ProductDataTable extends DataTable
 
     public function query(Product $model)
     {
-        $query = $model->newQueryWithoutScopes()->with('category', 'accessory');
-        $activeBranch = session('active_branch');
-
-        if ($activeBranch !== 'all' && is_numeric($activeBranch)) {
-            $branchId = (int) $activeBranch;
-            $query->where(function ($q) use ($branchId) {
-                $q->whereNull('products.branch_id')
-                    ->orWhere('products.branch_id', $branchId);
-            });
-        }
-
-        return $query;
+        // Product master bersifat global. Cabang hanya membedakan stok/mutasi,
+        // jadi list product tidak boleh ikut terfilter branch aktif.
+        return $model->newQueryWithoutScopes()->with('category', 'accessory');
     }
 
     public function html()

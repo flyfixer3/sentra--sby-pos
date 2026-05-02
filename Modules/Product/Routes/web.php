@@ -9,6 +9,11 @@ use Modules\Product\Http\Controllers\WarehousesController;
 use Modules\Product\Http\Controllers\HppLedgerController;
 use Modules\Product\Http\Controllers\ProductImportController;
 use Modules\Product\Http\Controllers\DefectTypeController;
+use Modules\Product\Entities\Product;
+
+Route::bind('product', function ($value) {
+    return Product::withoutGlobalScopes()->findOrFail($value);
+});
 
 Route::middleware(['auth'])->prefix('warehouses')->group(function () {
     Route::get('{id}/preview', [WarehousesController::class, 'preview'])->name('warehouses.preview');
