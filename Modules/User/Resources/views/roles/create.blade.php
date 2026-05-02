@@ -435,9 +435,9 @@
                                                 <div class="col-6">
                                                     <div class="custom-control custom-switch">
                                                         <input type="checkbox" class="custom-control-input"
-                                                               id="delete_customers" name="permissions[]"
-                                                               value="delete_customers" {{ old('delete_customers') ? 'checked' : '' }}>
-                                                        <label class="custom-control-label" for="delete_customers">Delete</label>
+                                                               id="delete_suppliers" name="permissions[]"
+                                                               value="delete_suppliers" {{ old('delete_suppliers') ? 'checked' : '' }}>
+                                                        <label class="custom-control-label" for="delete_suppliers">Delete</label>
                                                     </div>
                                                 </div>
                                             </div>
@@ -927,6 +927,30 @@
                                         ],
                                     ];
                                 @endphp
+
+                                @foreach($additionalPermissionGroups as $groupTitle => $permissions)
+                                    <div class="col-lg-4 col-md-6 mb-3">
+                                        <div class="card h-100 border-0 shadow">
+                                            <div class="card-header">
+                                                {{ $groupTitle }}
+                                            </div>
+                                            <div class="card-body">
+                                                <div class="row">
+                                                    @foreach($permissions as $permission => $label)
+                                                        <div class="col-6">
+                                                            <div class="custom-control custom-switch">
+                                                                <input type="checkbox" class="custom-control-input"
+                                                                       id="{{ $permission }}" name="permissions[]"
+                                                                       value="{{ $permission }}" {{ old($permission) ? 'checked' : '' }}>
+                                                                <label class="custom-control-label" for="{{ $permission }}">{{ $label }}</label>
+                                                            </div>
+                                                        </div>
+                                                    @endforeach
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                @endforeach
 
                                 @foreach($additionalPermissionGroups as $groupTitle => $permissions)
                                     <div class="col-lg-4 col-md-6 mb-3">
