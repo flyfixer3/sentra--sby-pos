@@ -51,15 +51,27 @@ class SearchProduct extends Component
     }
 
     public function updatedQuery() {
+        $branchId = session('active_branch');
 
-        // $this->search_results = Mutation::with(['product', 'warehouse'])
-        // ->whereHas('product', function($q){
-        //     $q->where('product_name', 'like', '%' . $this->query . '%')->orWhere('product_code', 'like', '%' . $this->query . '%');
-        // })
-        // ->take($this->how_many)->get();
-        $this->search_results = Product::where('product_name', 'like', '%' . $this->query . '%')
-            ->orWhere('product_code', 'like', '%' . $this->query . '%')
-            ->take($this->how_many)->get();
+        $query = Product::withoutGlobalScopes()
+            ->where(function ($q) {
+                $q->where('product_name', 'like', '%' . $this->query . '%')
+                    ->orWhere('product_code', 'like', '%' . $this->query . '%');
+            });
+
+        // Product master bersifat global, tapi tetap izinkan produk cabang lama
+        // agar flow transaksi lama tidak kehilangan item branch-specific.
+        if ($branchId !== 'all' && is_numeric($branchId)) {
+            $query->where(function ($q) use ($branchId) {
+                $q->whereNull('branch_id')
+                    ->orWhere('branch_id', (int) $branchId);
+            });
+        }
+
+        $this->search_results = $query
+            ->orderBy('product_code')
+            ->take($this->how_many)
+            ->get();
     }
 
     public function loadMore() {
