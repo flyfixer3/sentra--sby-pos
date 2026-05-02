@@ -19,6 +19,7 @@ class ProductsController extends Controller
         $limit = min(max((int) $request->query('limit', 10), 1), 25);
 
         $products = Product::query()
+            ->withoutGlobalScope('branch') // Products are a global catalog; stock is branch-scoped separately
             ->without('media')
             ->select('id', 'product_code', 'product_name', 'product_price', 'product_unit')
             ->when($search !== '', function ($query) use ($search) {
