@@ -23,7 +23,12 @@ class UserCredentialResource extends JsonResource
         // Branches available to the user
         $branches = method_exists($user, 'allAvailableBranches')
             ? $user->allAvailableBranches()
-                ->map(fn ($b) => [ 'id' => (int) $b->id, 'name' => (string) $b->name ])
+                ->map(fn ($b) => [
+                    'id' => (int) $b->id,
+                    'name' => (string) $b->name,
+                    'entity_id' => (int) ($b->entity_id ?? 0),
+                    'entity_name' => (string) optional($b->entity)->name,
+                ])
                 ->values()->toArray()
             : [];
 

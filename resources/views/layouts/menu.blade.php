@@ -472,11 +472,23 @@
     BRANCHES
 ========================= --}}
 @can('access_branches')
-<li class="c-sidebar-nav-item c-sidebar-nav-dropdown {{ request()->routeIs('branches.*') ? 'c-show' : '' }}">
+<li class="c-sidebar-nav-item c-sidebar-nav-dropdown {{ request()->routeIs('branches.*') || request()->routeIs('entities.*') ? 'c-show' : '' }}">
     <a class="c-sidebar-nav-link c-sidebar-nav-dropdown-toggle" href="#">
         <i class="c-sidebar-nav-icon bi bi-wallet2" style="line-height: 1;"></i> Branches
     </a>
     <ul class="c-sidebar-nav-dropdown-items">
+        @can('create_branch')
+        <li class="c-sidebar-nav-item">
+            <a class="c-sidebar-nav-link {{ request()->routeIs('entities.create') ? 'c-active' : '' }}" href="{{ route('entities.create') }}">
+                <i class="c-sidebar-nav-icon bi bi-diagram-3" style="line-height: 1;"></i> Create Entity
+            </a>
+        </li>
+        @endcan
+        <li class="c-sidebar-nav-item">
+            <a class="c-sidebar-nav-link {{ request()->routeIs('entities.index') ? 'c-active' : '' }}" href="{{ route('entities.index') }}">
+                <i class="c-sidebar-nav-icon bi bi-diagram-3-fill" style="line-height: 1;"></i> All Entities
+            </a>
+        </li>
         @can('create_branches')
         <li class="c-sidebar-nav-item">
             <a class="c-sidebar-nav-link {{ request()->routeIs('branches.create') ? 'c-active' : '' }}" href="{{ route('branches.create') }}">

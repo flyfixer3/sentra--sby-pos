@@ -20,8 +20,11 @@ return [
     'allowed_methods' => ['*'],
 
     // Restrict via env for production. Example:
-    // CORS_ALLOWED_ORIGINS=https://crm.example.com,https://admin.example.com
-    'allowed_origins' => array_filter(array_map('trim', explode(',', env('CORS_ALLOWED_ORIGINS', 'http://localhost:3000,http://127.0.0.1:3000,http://localhost:3001,http://127.0.0.1:3001')))),
+    // CORS_ALLOWED_ORIGINS=https://accounting.sentraautoglass.com
+    'allowed_origins' => array_filter(array_map('trim', explode(',', env(
+        'CORS_ALLOWED_ORIGINS',
+        'http://localhost:3000,http://127.0.0.1:3000,http://localhost:3001,http://127.0.0.1:3001,https://accounting.sentraautoglass.com'
+    )))),
 
     'allowed_origins_patterns' => [],
 

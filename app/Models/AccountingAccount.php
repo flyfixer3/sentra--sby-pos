@@ -14,6 +14,11 @@ class AccountingAccount extends Model
         'account_number',
         'account_name',
         'description',
+        'is_active',
+    ];
+
+    protected $casts = [
+        'is_active' => 'boolean',
     ];
 
     public function subaccounts(): HasMany {

@@ -3,11 +3,6 @@
         <i class="bi bi-pencil"></i>
     </a>
 @endcan
-@can('show_branches')
-    <a href="{{ route('branches.show', $data->id) }}" class="btn btn-primary btn-sm">
-        <i class="bi bi-eye"></i>
-    </a>
-@endcan
 @can('delete_branches')
     <button id="delete" class="btn btn-danger btn-sm" onclick="
         event.preventDefault();

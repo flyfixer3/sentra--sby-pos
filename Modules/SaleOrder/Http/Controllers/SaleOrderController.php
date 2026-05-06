@@ -2,8 +2,10 @@
 
 namespace Modules\SaleOrder\Http\Controllers;
 
+use App\Services\AccountingPeriodLockService;
 use App\Support\BranchContext;
 use Barryvdh\DomPDF\Facade\Pdf;
+use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
 use Illuminate\Support\Facades\DB;
@@ -669,6 +671,10 @@ class SaleOrderController extends Controller
                     if (empty($depositPaymentMethod)) abort(422, 'Deposit Payment Method is required when DP (planned/received) > 0.');
                 }
 
+                if ($depositReceived > 0 && AccountingPeriodLockService::isLocked(Carbon::parse((string) $request->date), (int) $branchId)) {
+                    throw new \RuntimeException('The selected accounting period is locked.');
+                }
+
                 $so = SaleOrder::create([
                     'branch_id' => $branchId,
                     'customer_id' => (int) $customer->id,
@@ -769,9 +775,12 @@ class SaleOrderController extends Controller
                     ]);
 
                     \App\Helpers\Helper::addNewTransaction([
+                        'branch_id' => (int) $branchId,
                         'date' =>  (string) $request->date,
                         'label' => "Deposit For Sale Order #".$so->reference,
                         'description' => "Sale Order: ".$so->reference,
+                        'source_type' => 'sale_payment',
+                        'source_id' => $salePayment->id,
                         'purchase_id' => null,
                         'purchase_payment_id' => null,
                         'purchase_return_id' => null,

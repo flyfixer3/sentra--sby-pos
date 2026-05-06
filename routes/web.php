@@ -18,6 +18,7 @@ Auth::routes(['register' => false]);
 
 Route::group(['middleware' => 'auth'], function () {
     Route::get('/home', 'HomeController@index')->name('home');
+    Route::resource('entities', 'EntityController')->except('show');
 
     Route::post('/session/keep-alive', function () {
         return response()->json(['ok' => true]);

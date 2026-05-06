@@ -8,12 +8,15 @@ use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
+use Carbon\Carbon;
 use Modules\Sale\Entities\Sale;
 use App\Helpers\Helper;
+use App\Services\AccountingPeriodLockService;
 use Modules\Sale\Entities\SalePayment;
 use Barryvdh\DomPDF\Facade\Pdf;
 use Modules\People\Entities\Customer;
 use Modules\Branch\Entities\Branch;
+use App\Support\BranchContext;
 
 class SalePaymentsController extends Controller
 {
@@ -59,6 +62,15 @@ class SalePaymentsController extends Controller
             'amount.min' => 'The amount must be at least 1.',
             'amount.max' => 'The amount cannot be greater than the due amount of ' . format_currency($sale->due_amount) . '.',
         ]);
+
+        $branchId = BranchContext::id();
+        if (!$branchId && isset($sale->branch_id)) {
+            $branchId = (int) $sale->branch_id;
+        }
+
+        if (AccountingPeriodLockService::isLocked(Carbon::parse($request->date), $branchId ? (int) $branchId : null)) {
+            return back()->withErrors('The selected accounting period is locked.')->withInput();
+        }
     
         // dd($request);
         DB::transaction(function () use ($request) {
@@ -71,8 +83,12 @@ class SalePaymentsController extends Controller
                 'payment_method' => $request->payment_method,
                 'deposit_code' => $request->deposit_code
             ]);
-
             $sale = Sale::findOrFail($request->sale_id);
+            $branchId = BranchContext::id();
+            if (!$branchId && isset($sale->branch_id)) {
+                $branchId = (int) $sale->branch_id;
+            }
+
             $due_amount = $sale->due_amount - $request->amount;
 
             if ($due_amount == $sale->total_amount) {
@@ -89,9 +105,12 @@ class SalePaymentsController extends Controller
                 'payment_status' => $payment_status
             ]);
             Helper::addNewTransaction([
+                'branch_id' => $branchId ?: null,
                 'date' =>  $request->date,
                 'label' => "Payment For Sale #".$request->reference,
                 'description' => "Sale ID: ".$request->reference,
+                'source_type' => 'sale_payment',
+                'source_id' => $sale_payment->id,
                 'purchase_id' => null,
                 'purchase_payment_id' => null,
                 'purchase_return_id' => null,
@@ -107,7 +126,7 @@ class SalePaymentsController extends Controller
                     'type' => 'debit'
                 ],
                 [
-                    'subaccount_number' => '1-10100', // Hutang Usaha
+                    'subaccount_number' => Helper::resolveAccountingMapping('sale_payment', 'receivable', $branchId ?: null, null, '1-10100'),
                     'amount' => $request->amount,
                     'type' => 'credit'
                 ],

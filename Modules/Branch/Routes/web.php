@@ -14,5 +14,5 @@ use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\SwitchBranchController;
 
 Route::middleware(['auth'])->group(function () {
-    Route::resource('branches', BranchController::class);
+    Route::resource('branches', BranchController::class)->except('show');
 });

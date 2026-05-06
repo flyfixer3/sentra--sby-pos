@@ -15,12 +15,21 @@ return [
     |
     */
 
-    'stateful' => explode(',', env('SANCTUM_STATEFUL_DOMAINS', sprintf(
-        '%s%s',
-        'localhost,localhost:3000,192.168.18.103,192.168.18.103:3000,127.0.0.1,127.0.0.1:8000,::1',
-        'dkiasys.com',
-        Sanctum::currentApplicationUrlWithPort()
-    ))),
+    'stateful' => explode(',', env(
+        'SANCTUM_STATEFUL_DOMAINS',
+        implode(',', array_filter([
+            'localhost',
+            'localhost:3000',
+            '127.0.0.1',
+            '127.0.0.1:3000',
+            '127.0.0.1:8000',
+            '::1',
+            'accounting.sentraautoglass.com',
+            'internal.sentraautoglass.com',
+            parse_url(config('app.url'), PHP_URL_HOST),
+            Sanctum::currentApplicationUrlWithPort(),
+        ]))
+    )),
 
     /*
     |--------------------------------------------------------------------------

@@ -20,9 +20,14 @@
             <div class="col-12">
                 <div class="card">
                     <div class="card-body">
-                        <a href="{{ route('branches.create') }}" class="btn btn-primary">
-                            Add Branch <i class="bi bi-plus"></i>
-                        </a>
+                        <div class="d-flex flex-wrap gap-2">
+                            <a href="{{ route('branches.create') }}" class="btn btn-primary mr-2 mb-2">
+                                Add Branch <i class="bi bi-plus"></i>
+                            </a>
+                            <a href="{{ route('entities.index') }}" class="btn btn-outline-primary mb-2">
+                                Manage Entities <i class="bi bi-diagram-3"></i>
+                            </a>
+                        </div>
 
                         <hr>
 

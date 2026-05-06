@@ -81,15 +81,15 @@ class User extends Authenticatable implements HasMedia
         // tetap dukung role Super Admin (kalau kamu pakai)
         $roleNames = $this->getRoleNames()->map(fn ($role) => strtolower((string) $role))->all();
         if (in_array('super admin', $roleNames, true) || in_array('administrator', $roleNames, true)) {
-            return \Modules\Branch\Entities\Branch::query()->orderBy('name')->get();
+            return \Modules\Branch\Entities\Branch::query()->with('entity')->orderBy('name')->get();
         }
 
         // permission-based ALL
         if ($this->can('view_all_branches')) {
-            return \Modules\Branch\Entities\Branch::query()->orderBy('name')->get();
+            return \Modules\Branch\Entities\Branch::query()->with('entity')->orderBy('name')->get();
         }
 
         // kalau bukan ALL, return cabang pivot (Collection)
-        return $this->branches()->orderBy('name')->get();
+        return $this->branches()->with('entity')->orderBy('name')->get();
     }
 }

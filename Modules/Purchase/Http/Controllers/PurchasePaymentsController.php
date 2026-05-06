@@ -4,6 +4,9 @@ namespace Modules\Purchase\Http\Controllers;
 
 
 use App\Helpers\Helper;
+use App\Services\AccountingPeriodLockService;
+use App\Support\BranchContext;
+use Carbon\Carbon;
 use Modules\Purchase\DataTables\PurchasePaymentsDataTable;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
@@ -44,6 +47,16 @@ class PurchasePaymentsController extends Controller
             'purchase_id' => 'required',
             'payment_method' => 'required|string|max:255'
         ]);
+        $purchase = Purchase::findOrFail($request->purchase_id);
+        $branchId = BranchContext::id();
+        if (!$branchId && isset($purchase->branch_id)) {
+            $branchId = (int) $purchase->branch_id;
+        }
+
+        if (AccountingPeriodLockService::isLocked(Carbon::parse($request->date), $branchId ? (int) $branchId : null)) {
+            return back()->withErrors('The selected accounting period is locked.')->withInput();
+        }
+
         $created_payment = null;
         DB::transaction(function () use ($request) {
             $created_payment = PurchasePayment::create([
@@ -57,6 +70,10 @@ class PurchasePaymentsController extends Controller
             // dd($created_payment);
         
             $purchase = Purchase::findOrFail($request->purchase_id);
+            $branchId = BranchContext::id();
+            if (!$branchId && isset($purchase->branch_id)) {
+                $branchId = (int) $purchase->branch_id;
+            }
 
             $newPaidAmount = ($purchase->paid_amount + $request->amount) * 1;
             $paymentSnapshot = Purchase::resolvePaymentSnapshot($purchase->total_amount, $newPaidAmount);
@@ -67,8 +84,12 @@ class PurchasePaymentsController extends Controller
                 'payment_status' => $paymentSnapshot['payment_status']
             ]);
             Helper::addNewTransaction([
+                'branch_id' => $branchId ?: null,
+                'date' => $request->date,
                 'label' => "Payment for Supplier Order",
                 'description' => "Order ID: ".$request->reference,
+                'source_type' => 'purchase_payment',
+                'source_id' => $created_payment->id,
                 'purchase_id' => null,
                 'purchase_payment_id' => $created_payment->id,
                 'purchase_return_id' => null,
@@ -79,7 +100,7 @@ class PurchasePaymentsController extends Controller
                 'sale_return_payment_id' => null,
             ], [
                 [
-                    'subaccount_number' => '2-20100', // Persediaan dalam pengiriman
+                    'subaccount_number' => Helper::resolveAccountingMapping('purchase_payment', 'payable', $branchId ?: null, null, '2-20100'),
                     'amount' => $request->amount,
                     'type' => 'debit'
                 ],

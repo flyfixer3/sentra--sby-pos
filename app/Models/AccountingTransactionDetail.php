@@ -16,6 +16,10 @@ class AccountingTransactionDetail extends Model
         'type'
     ];
 
+    protected $casts = [
+        'amount' => 'float',
+    ];
+
     public function transaction() {
         return $this->belongsTo(AccountingTransaction::class);
     }

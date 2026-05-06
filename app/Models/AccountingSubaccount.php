@@ -17,7 +17,14 @@ class AccountingSubaccount extends Model
         'subaccount_name',
         'description',
         'total_debit',
-        'total_credit'
+        'total_credit',
+        'is_active',
+    ];
+
+    protected $casts = [
+        'is_active' => 'boolean',
+        'total_debit' => 'float',
+        'total_credit' => 'float',
     ];
 
     public function account(): BelongsTo {

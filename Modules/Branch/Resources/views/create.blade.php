@@ -28,14 +28,31 @@
                         <div class="form-row">
                             <div class="col-lg-6">
                                 <div class="form-group">
+                                    <label for="entity_id">Entity <span class="text-danger">*</span></label>
+                                    <select class="form-control" name="entity_id" id="entity_id" required>
+                                        <option value="">-- Choose Entity --</option>
+                                        @foreach($entities as $entity)
+                                            <option value="{{ $entity->id }}" {{ (string) old('entity_id') === (string) $entity->id ? 'selected' : '' }}>
+                                                {{ $entity->name }} ({{ $entity->code }})
+                                            </option>
+                                        @endforeach
+                                    </select>
+                                    <small class="form-text text-muted">Branch ini akan dilaporkan ke entity yang dipilih.</small>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="form-row">
+                            <div class="col-lg-6">
+                                <div class="form-group">
                                     <label for="branch_name">Branch Name <span class="text-danger">*</span></label>
-                                    <input type="text" class="form-control" name="branch_name" required>
+                                    <input type="text" class="form-control" name="branch_name" required value="{{ old('branch_name') }}">
                                 </div>
                             </div>
                             <div class="col-lg-6">
                                 <div class="form-group">
                                     <label for="branch_address">Address <span class="text-danger">*</span></label>
-                                    <input type="text" class="form-control" name="branch_address" required>
+                                    <input type="text" class="form-control" name="branch_address" required value="{{ old('branch_address') }}">
                                 </div>
                             </div>
                         </div>
@@ -44,7 +61,7 @@
                             <div class="col-lg-4">
                                 <div class="form-group">
                                     <label for="branch_phone">Phone <span class="text-danger">*</span></label>
-                                    <input type="text" class="form-control" name="branch_phone" required>
+                                    <input type="text" class="form-control" name="branch_phone" required value="{{ old('branch_phone') }}">
                                 </div>
                             </div>
                         </div>
@@ -68,8 +85,8 @@
                             <div class="input-group">
                                 <select class="form-control" name="existing_warehouse_id" id="existing_warehouse_id">
                                     <option value="">-- Choose Available Warehouse --</option>
-                                    @foreach(\Modules\Product\Entities\Warehouse::whereNull('branch_id')->get() as $warehouse)
-                                        <option value="{{ $warehouse->id }}">
+                                    @foreach($availableWarehouses as $warehouse)
+                                        <option value="{{ $warehouse->id }}" {{ (string) old('existing_warehouse_id') === (string) $warehouse->id ? 'selected' : '' }}>
                                             {{ $warehouse->warehouse_name }} ({{ $warehouse->warehouse_code }})
                                         </option>
                                     @endforeach
@@ -86,11 +103,11 @@
                         <div id="newWarehouseFields" class="d-none">
                             <div class="form-group">
                                 <label for="new_warehouse_code">New Warehouse Code <span class="text-danger">*</span></label>
-                                <input type="text" class="form-control" name="new_warehouse_code">
+                                <input type="text" class="form-control" name="new_warehouse_code" value="{{ old('new_warehouse_code') }}">
                             </div>
                             <div class="form-group">
                                 <label for="new_warehouse_name">New Warehouse Name <span class="text-danger">*</span></label>
-                                <input type="text" class="form-control" name="new_warehouse_name">
+                                <input type="text" class="form-control" name="new_warehouse_name" value="{{ old('new_warehouse_name') }}">
                             </div>
                         </div>
 

@@ -9,7 +9,9 @@ use Illuminate\Support\Facades\Gate;
 use Modules\Expense\Entities\Expense;
 use PhpOffice\PhpSpreadsheet\Calculation\MathTrig\Exp;
 use App\Helpers\Helper;
+use App\Services\AccountingPeriodLockService;
 use App\Support\BranchContext;
+use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
 use Modules\Expense\Entities\ExpenseCategory;
 
@@ -62,6 +64,10 @@ class ExpenseController extends Controller
 
         $category = ExpenseCategory::findOrFail((int) $request->category_id);
 
+        if (AccountingPeriodLockService::isLocked(Carbon::parse($request->date), (int) $branchId)) {
+            return back()->withErrors('The selected accounting period is locked.')->withInput();
+        }
+
         // Kalau CREDIT (uang keluar), category harus punya mapping akun beban
         if ($type === 'credit') {
             if (empty($category->subaccount_number)) {
@@ -89,9 +95,12 @@ class ExpenseController extends Controller
             if ($type === 'credit') {
                 // OUT: Debit Beban (kategori), Credit Kas/Bank (payment_method)
                 Helper::addNewTransaction([
+                    'branch_id' => $branchId,
                     'date' => $request->date,
                     'label' => "Expense (Cash Out)",
                     'description' => "Expense Ref: {$expense->reference} | {$category->category_name}",
+                    'source_type' => 'expense',
+                    'source_id' => $expense->id,
                     'purchase_id' => null,
                     'purchase_payment_id' => null,
                     'purchase_return_id' => null,
@@ -115,9 +124,12 @@ class ExpenseController extends Controller
             } else {
                 // IN: Debit Kas/Bank penerima (payment_method), Credit akun sumber (from_account)
                 Helper::addNewTransaction([
+                    'branch_id' => $branchId,
                     'date' => $request->date,
                     'label' => "Petty Cash (Cash In)",
                     'description' => "Expense Ref: {$expense->reference} | Source: {$request->from_account}",
+                    'source_type' => 'expense',
+                    'source_id' => $expense->id,
                     'purchase_id' => null,
                     'purchase_payment_id' => null,
                     'purchase_return_id' => null,
@@ -181,6 +193,10 @@ class ExpenseController extends Controller
         }
 
         $category = ExpenseCategory::findOrFail((int) $request->category_id);
+
+        if (AccountingPeriodLockService::isLocked(Carbon::parse($request->date), (int) $branchId)) {
+            return back()->withErrors('The selected accounting period is locked.')->withInput();
+        }
 
         if ($type === 'credit') {
             if (empty($category->subaccount_number)) {

@@ -15,16 +15,15 @@ class BranchesDataTable extends DataTable
     public function dataTable($query) {
         return datatables()
             ->eloquent($query)
-            ->addRowAttr('data-href', function ($data) {
-                return route('branches.show', $data->id);
-            })
+            ->addColumn('entity_name', fn ($data) => optional($data->entity)->name ?: '-')
+            ->editColumn('is_active', fn ($data) => $data->is_active ? 'Active' : 'Inactive')
             ->addColumn('action', function ($data) {
                 return view('branch::partials.actions', compact('data'));
             });
     }
 
     public function query(Branch $model) {
-        return $model->newQuery();
+        return $model->newQuery()->with('entity');
     }
 
     public function html() {
@@ -35,7 +34,7 @@ class BranchesDataTable extends DataTable
             ->dom("<'row'<'col-md-3'l><'col-md-5 mb-2'B><'col-md-4'f>> .
                                         'tr' .
                                         <'row'<'col-md-5'i><'col-md-7 mt-2'p>>")
-            ->orderBy(3)
+            ->orderBy(0)
             ->buttons(
                 Button::make('excel')
                     ->text('<i class="bi bi-file-earmark-excel-fill"></i> Excel'),
@@ -53,19 +52,24 @@ class BranchesDataTable extends DataTable
             Column::make('name')
                 ->className('text-center align-middle'),
 
+            Column::computed('entity_name')
+                ->title('Entity')
+                ->className('text-center align-middle'),
+
             Column::make('address')
                 ->className('text-center align-middle'),
 
             Column::make('phone')
                 ->className('text-center align-middle'),
 
+            Column::make('is_active')
+                ->title('Status')
+                ->className('text-center align-middle'),
+
             Column::computed('action')
                 ->exportable(false)
                 ->printable(false)
                 ->className('text-center align-middle'),
-
-            Column::make('is_active')
-                ->title('status'),
         ];
     }
 

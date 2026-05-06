@@ -17,6 +17,7 @@ use Modules\PurchaseOrder\Entities\PurchaseOrder;
 use Modules\PurchaseDelivery\Entities\PurchaseDelivery;
 use Modules\Purchase\Entities\PurchasePayment;
 use App\Helpers\Helper;
+use App\Services\AccountingPeriodLockService;
 use Carbon\Carbon;
 use Modules\Purchase\Http\Requests\StorePurchaseRequest;
 use Modules\Purchase\Http\Requests\UpdatePurchaseRequest;
@@ -318,6 +319,12 @@ class PurchaseController extends Controller
     public function store(StorePurchaseRequest $request)
     {
         $autoDeliveryRedirectUrl = null;
+        $branchId = $this->getActiveBranchId();
+
+        if (AccountingPeriodLockService::isLocked(Carbon::parse($request->date), (int) $branchId)) {
+            toast('The selected accounting period is locked.', 'error');
+            return redirect()->back()->withInput();
+        }
 
         DB::transaction(function () use ($request, &$autoDeliveryRedirectUrl) {
 
@@ -565,6 +572,34 @@ class PurchaseController extends Controller
 
             Cart::instance('purchase')->destroy();
 
+            Helper::addNewTransaction([
+                'branch_id' => $branchId,
+                'date' => $request->date,
+                'label' => "Purchase Invoice for #" . $purchase->reference,
+                'description' => "Purchase ID: " . $purchase->reference,
+                'source_type' => 'purchase',
+                'source_id' => $purchase->id,
+                'purchase_id' => $purchase->id,
+                'purchase_payment_id' => null,
+                'purchase_return_id' => null,
+                'purchase_return_payment_id' => null,
+                'sale_id' => null,
+                'sale_payment_id' => null,
+                'sale_return_id' => null,
+                'sale_return_payment_id' => null,
+            ], [
+                [
+                    'subaccount_number' => Helper::resolveAccountingMapping('purchase', 'inventory', $branchId, null, '1-10200'),
+                    'amount' => $purchase->total_amount,
+                    'type' => 'debit'
+                ],
+                [
+                    'subaccount_number' => Helper::resolveAccountingMapping('purchase', 'payable', $branchId, null, '2-20100'),
+                    'amount' => $purchase->total_amount,
+                    'type' => 'credit'
+                ]
+            ]);
+
             if ($purchase->paid_amount > 0) {
                 $created_payment = PurchasePayment::create([
                     'date' => $request->date,
@@ -577,9 +612,12 @@ class PurchaseController extends Controller
                 $paymentSubaccountNumber = $this->resolvePaymentSubaccountNumber($created_payment->payment_method);
 
                 Helper::addNewTransaction([
-                    'date' => Carbon::now(),
+                    'branch_id' => $branchId,
+                    'date' => $request->date,
                     'label' => "Payment for Purchase Order #" . $purchase->reference,
                     'description' => "Purchase ID: " . $purchase->reference,
+                    'source_type' => 'purchase_payment',
+                    'source_id' => $created_payment->id,
                     'purchase_id' => null,
                     'purchase_payment_id' => $created_payment->id,
                     'purchase_return_id' => null,
@@ -590,7 +628,7 @@ class PurchaseController extends Controller
                     'sale_return_payment_id' => null,
                 ], [
                     [
-                        'subaccount_number' => '1-10200',
+                        'subaccount_number' => Helper::resolveAccountingMapping('purchase_payment', 'payable', $branchId, null, '2-20100'),
                         'amount' => $created_payment->amount,
                         'type' => 'debit'
                     ],
@@ -632,9 +670,9 @@ class PurchaseController extends Controller
         // - Cash / Kas => 1-10100
         // - Bank Transfer / Bank => 1-10200
         return match ($pm) {
-            'cash' => '1-10100',
-            'transfer', 'bank', 'bank transfer' => '1-10200',
-            default => '1-10100',
+            'cash' => '1-10001',
+            'transfer', 'bank', 'bank transfer' => '1-10002',
+            default => '1-10001',
         };
     }
 

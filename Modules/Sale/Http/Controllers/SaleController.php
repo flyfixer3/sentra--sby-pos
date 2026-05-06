@@ -1152,11 +1152,19 @@ class SaleController extends Controller
                 // ======================================================
                 // Accounting Transaction (pakai total_cost yg sudah benar)
                 // ======================================================
+                $saleReceivableSubaccount = Helper::resolveAccountingMapping('sale', 'receivable', $branchId, null, '1-10100');
+                $saleRevenueSubaccount = Helper::resolveAccountingMapping('sale', 'revenue', $branchId, null, '4-40000');
+                $saleCogsSubaccount = Helper::resolveAccountingMapping('sale', 'cogs', $branchId, null, '5-50000');
+                $saleInventorySubaccount = Helper::resolveAccountingMapping('sale', 'inventory', $branchId, null, '1-10200');
+
                 if ($total_cost <= 0) {
                     Helper::addNewTransaction([
+                        'branch_id' => $branchId,
                         'date' => $sale->date,
                         'label' => "Sale Invoice for #" . $sale->reference,
                         'description' => "Order ID: " . $sale->reference,
+                        'source_type' => 'sale',
+                        'source_id' => $sale->id,
                         'purchase_id' => null,
                         'purchase_payment_id' => null,
                         'purchase_return_id' => null,
@@ -1166,14 +1174,17 @@ class SaleController extends Controller
                         'sale_return_id' => null,
                         'sale_return_payment_id' => null,
                     ], [
-                        ['subaccount_number' => '1-10100', 'amount' => $sale->total_amount, 'type' => 'debit'],
-                        ['subaccount_number' => '4-40000', 'amount' => $sale->total_amount, 'type' => 'credit'],
+                        ['subaccount_number' => $saleReceivableSubaccount, 'amount' => $sale->total_amount, 'type' => 'debit'],
+                        ['subaccount_number' => $saleRevenueSubaccount, 'amount' => $sale->total_amount, 'type' => 'credit'],
                     ]);
                 } else {
                     Helper::addNewTransaction([
+                        'branch_id' => $branchId,
                         'date' => $sale->date,
                         'label' => "Sale Invoice for #" . $sale->reference,
                         'description' => "Order ID: " . $sale->reference,
+                        'source_type' => 'sale',
+                        'source_id' => $sale->id,
                         'purchase_id' => null,
                         'purchase_payment_id' => null,
                         'purchase_return_id' => null,
@@ -1183,10 +1194,10 @@ class SaleController extends Controller
                         'sale_return_id' => null,
                         'sale_return_payment_id' => null,
                     ], [
-                        ['subaccount_number' => '1-10100', 'amount' => $sale->total_amount, 'type' => 'debit'],
-                        ['subaccount_number' => '5-50000', 'amount' => $total_cost, 'type' => 'debit'],
-                        ['subaccount_number' => '4-40000', 'amount' => $sale->total_amount, 'type' => 'credit'],
-                        ['subaccount_number' => '1-10200', 'amount' => $total_cost, 'type' => 'credit'],
+                        ['subaccount_number' => $saleReceivableSubaccount, 'amount' => $sale->total_amount, 'type' => 'debit'],
+                        ['subaccount_number' => $saleCogsSubaccount, 'amount' => $total_cost, 'type' => 'debit'],
+                        ['subaccount_number' => $saleRevenueSubaccount, 'amount' => $sale->total_amount, 'type' => 'credit'],
+                        ['subaccount_number' => $saleInventorySubaccount, 'amount' => $total_cost, 'type' => 'credit'],
                     ]);
                 }
 
@@ -1223,9 +1234,12 @@ class SaleController extends Controller
                     $created_payment = SalePayment::create($paymentData);
 
                     Helper::addNewTransaction([
+                        'branch_id' => $branchId,
                         'date' => $sale->date,
                         'label' => "Payment for Sales Order #" . $sale->reference,
                         'description' => "Sale ID: " . $sale->reference,
+                        'source_type' => 'sale_payment',
+                        'source_id' => $created_payment->id,
                         'purchase_id' => null,
                         'purchase_payment_id' => null,
                         'purchase_return_id' => null,
@@ -1235,8 +1249,8 @@ class SaleController extends Controller
                         'sale_return_id' => null,
                         'sale_return_payment_id' => null,
                     ], [
-                        ['subaccount_number' => '1-10100', 'amount' => $created_payment->amount, 'type' => 'debit'],
-                        ['subaccount_number' => $created_payment->deposit_code, 'amount' => $created_payment->amount, 'type' => 'credit'],
+                        ['subaccount_number' => $created_payment->deposit_code, 'amount' => $created_payment->amount, 'type' => 'debit'],
+                        ['subaccount_number' => Helper::resolveAccountingMapping('sale_payment', 'receivable', $branchId, null, '1-10100'), 'amount' => $created_payment->amount, 'type' => 'credit'],
                     ]);
                 }
             });

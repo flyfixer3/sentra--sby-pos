@@ -2,6 +2,8 @@
 
 namespace App\Http\Controllers\Auth;
 
+use App\Helpers\Helper;
+use App\Http\Requests\ChangePasswordRequest;
 use App\Models\User;
 use Modules\Branch\Entities\Branch;
 use App\Http\Resources\UserCredentialResource;
@@ -46,23 +48,32 @@ class LoginController extends Controller
     }
     function masuk(Request $request) 
     {
-        // dd($request);
         $request->validate([
             'username' => 'required',
             'password' => 'required',
         ]);
 
-        $user = User::where('email', $request->username)->first();
+        $username = trim((string) $request->input('username'));
+
+        $user = User::query()
+            ->where('email', $username)
+            ->orWhere('name', $username)
+            ->first();
 
         if (is_null($user) || !Hash::check($request->password, $user->password)) {
-            throw ValidationException::withMessages([
-                'error' => ['Invalid username or password'],
-            ]);
+            return response()->json([
+                'message' => 'Invalid username or password',
+            ], 422);
+        }
+
+        if ((int) $user->is_active !== 1) {
+            return response()->json([
+                'message' => 'Account is inactive',
+            ], 403);
         }
 
         $user['token'] = $user->createToken('api-token')->plainTextToken;
 
-        // return dd($user);
         return new UserCredentialResource($user);
     }
 

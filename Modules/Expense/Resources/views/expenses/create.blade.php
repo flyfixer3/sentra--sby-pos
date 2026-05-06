@@ -82,8 +82,15 @@
                                         @foreach(
                                             \App\Models\AccountingSubaccount::join('accounting_accounts', 'accounting_accounts.id', '=', 'accounting_subaccounts.accounting_account_id')
                                                 ->where('accounting_accounts.is_active', '=', '1')
-                                                ->where('accounting_accounts.account_number', 3)
+                                                ->where('accounting_accounts.account_number', 1)
+                                                ->where(function ($query) {
+                                                    $query
+                                                        ->where('accounting_subaccounts.subaccount_name', 'like', '%Kas%')
+                                                        ->orWhere('accounting_subaccounts.subaccount_name', 'like', '%Bank%')
+                                                        ->orWhere('accounting_subaccounts.subaccount_name', 'like', '%Petty%');
+                                                })
                                                 ->select('accounting_subaccounts.*', 'accounting_accounts.account_number')
+                                                ->orderBy('accounting_subaccounts.subaccount_number')
                                                 ->get()
                                             as $account
                                         )
@@ -93,7 +100,7 @@
                                         @endforeach
                                     </select>
                                     <small class="text-muted">
-                                        CREDIT: account used to pay. DEBIT: account that receives money.
+                                        CREDIT: cash/bank account used to pay. DEBIT: cash/bank account that receives money.
                                     </small>
                                 </div>
                             </div>
@@ -106,8 +113,15 @@
                                         @foreach(
                                             \App\Models\AccountingSubaccount::join('accounting_accounts', 'accounting_accounts.id', '=', 'accounting_subaccounts.accounting_account_id')
                                                 ->where('accounting_accounts.is_active', '=', '1')
-                                                ->where('accounting_accounts.account_number', 3)
+                                                ->where('accounting_accounts.account_number', 1)
+                                                ->where(function ($query) {
+                                                    $query
+                                                        ->where('accounting_subaccounts.subaccount_name', 'like', '%Kas%')
+                                                        ->orWhere('accounting_subaccounts.subaccount_name', 'like', '%Bank%')
+                                                        ->orWhere('accounting_subaccounts.subaccount_name', 'like', '%Petty%');
+                                                })
                                                 ->select('accounting_subaccounts.*', 'accounting_accounts.account_number')
+                                                ->orderBy('accounting_subaccounts.subaccount_number')
                                                 ->get()
                                             as $account
                                         )
@@ -116,7 +130,7 @@
                                             </option>
                                         @endforeach
                                     </select>
-                                    <small class="text-muted">Example: transfer from BCA to Cash.</small>
+                                    <small class="text-muted">Example: transfer from Bank to Petty Cash.</small>
                                 </div>
                             </div>
                         </div>

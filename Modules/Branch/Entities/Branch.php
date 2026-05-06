@@ -9,7 +9,12 @@ use App\Models\BaseModel;
 
 class Branch extends BaseModel
 {
-    protected $fillable = ['name', 'address', 'phone', 'is_active'];
+    protected $fillable = ['entity_id', 'name', 'address', 'phone', 'is_active'];
+
+    public function entity()
+    {
+        return $this->belongsTo(\App\Models\Entity::class, 'entity_id');
+    }
 
     public function users()
     {

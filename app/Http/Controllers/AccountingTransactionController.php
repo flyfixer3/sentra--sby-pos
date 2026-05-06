@@ -7,218 +7,292 @@ use App\Http\Resources\AccountingTransactionCollectionResource;
 use App\Models\AccountingSubaccount;
 use App\Models\AccountingTransaction;
 use App\Models\AccountingTransactionDetail;
+use App\Services\AccountingPeriodLockService;
+use Modules\Branch\Entities\Branch;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Validator;
 
 class AccountingTransactionController extends Controller
 {
-    function allTransactions (Request $request) {
-        $startDate = $request->query('startDate', null);
-        $endDate = $request->query('endDate', null);
-        $month = $request->query('month', null);
-        $user = Auth::user();
+    public function allTransactions(Request $request)
+    {
+        $transactions = $this->buildTransactionQuery($request)
+            ->orderBy('date', 'asc')
+            ->get();
 
-        $transactions = AccountingTransaction::query()  
-            ->whereMonth('date','=',$month)
-            ->whereYear('date' ,'=', 2024)
-            // ->where('date', '>=', $startDate)
-            // ->where('date', '<=', $endDate)
-            ->where('accounting_posting_id', '=', null)
-            ->orderBy('date', 'ASC');
-
-        //     $transactions = AccountingTransaction::withWhereHas('details', fn($query) =>
-        //     $query->where('accounting_subaccount_id', '=', 1)
-        //    )->whereMonth('date','=','02');
         return [
-            'data' => new AccountingTransactionCollection($transactions->get()),
+            'data' => new AccountingTransactionCollection($transactions),
         ];
     }
 
-    function transactions (Request $request) {
-        // $user = Auth::user();
-        // $limit = $request->query('limit', 20);
-        // $search = trim($request->query('search', ''));
-
-        // $transactions = AccountingTransaction::query()
-        //     ->when(!empty($search), function ($query) use ($search) {
-        //         return $query->where('label', 'LIKE', '%' . $search . '%')
-        //             ->orWhere('description', 'LIKE', '%' . $search . '%');
-        //     })
-        //     ->where('accounting_posting_id', '=', null)
-        //     ->orderBy('date', 'DESC');
-
-        
-        // $total = AccountingTransaction::query()
-        //     ->where('accounting_posting_id', '=', null)
-        //     ->count();
-
-        // return [
-        //     'page' => new AccountingTransactionCollection($transactions->paginate($limit)),
-        //     'meta' => [
-        //         'total' => $total
-        //     ]
-        // ];
-
-        $user = Auth::user();
-        $limit = $request->query('limit', 20);
-        $month = $request->query('month', null);
-        $year = $request->query('year', null);
-        $search = trim($request->query('search', ''));
-
-        $transactions = AccountingTransaction::query()
-        ->when(!empty($year), function ($query) use ($year) {
-            return $query->whereYear('date','=',$year);
-        })
-        ->when(!empty($month), function ($query) use ($month) {
-            return $query->whereMonth('date','=',$month);
-        })
-        ->when(!empty($search), function ($query) use ($search) {
-            return $query->where('label', 'LIKE', '%' . $search . '%')
-                ->orWhere('description', 'LIKE', '%' . $search . '%');
-        })
-            ->where('accounting_posting_id', '=', null)
-            ->orderBy('date', 'DESC');
-
-        
-        $total = AccountingTransaction::query()
-            ->where('accounting_posting_id', '=', null)
-            ->count();
+    public function transactions(Request $request)
+    {
+        $limit = max((int) $request->query('limit', 20), 1);
+        $query = $this->buildTransactionQuery($request)->orderBy('date', 'desc');
+        $paginator = $query->paginate($limit);
 
         return [
-            'page' => new AccountingTransactionCollection($transactions->paginate($total)),
+            'page' => new AccountingTransactionCollection($paginator),
             'meta' => [
-                'total' => $total
-            ]
+                'total' => $paginator->total(),
+            ],
         ];
     }
 
-    function transaction (Request $request) {
-        $user = Auth::user();
-
+    public function transaction(Request $request)
+    {
         $transaction = AccountingTransaction::query()
-            ->where('id', '=', $request->route('id'))
-            ->first();
+            ->with(['details.subaccount.account', 'branch', 'entity'])
+            ->find($request->route('id'));
+
+        if ($transaction === null) {
+            return response()->json([
+                'message' => 'Transaction not found',
+            ], 404);
+        }
 
         return [
             'data' => new AccountingTransactionCollectionResource($transaction),
         ];
     }
 
-    function create (Request $request) {
-        $validator = Validator::make($request->all(), [
-            'date' => 'required|date',
-            'description' => 'string|nullable',
-            'details' => 'required|array',
-            'label' => 'required|string',
-            'details.*.subaccountId' => 'required|integer',
-            'details.*.amount' => 'required|numeric',
-            'details.*.type' => 'required|in:debit,credit',
-        ]);
-        $validator->validate();
-        // $test = Carbon::parse($request->input('date'), 'Asia/Jakarta');
-        
-        // return response()->json(['message' => $test], 400);
-        $user = Auth::user();
-        DB::beginTransaction();
-        $transaction = AccountingTransaction::create([
-            'label' => $request->input('label'),
-            'date' => Carbon::parse($request->input('date')),
-            'description' => $request->input('description'),
-        ]);
+    public function create(Request $request)
+    {
+        $payload = $this->validatePayload($request, false);
+        $entityId = $payload['entity_id'] ?? $this->resolveEntityIdFromBranch($payload['branch_id'] ?? null);
 
-        foreach ($request->input('details') as $detail) {
-            $subaccount = AccountingSubaccount::query()->where('id', '=', $detail['subaccountId'])->first();
-            if ($subaccount == null) {
-                DB::rollBack();
-                return response()->json(['message' => 'Subaccount not found'], 400);
-            }
-            if ($detail['type'] == 'debit') {
-                $subaccount->total_debit += $detail['amount'];
-            } else {
-                $subaccount->total_credit += $detail['amount'];
-            }
-            $subaccount->save();
-            AccountingTransactionDetail::create([
-                'accounting_transaction_id' => $transaction->id,
-                'accounting_subaccount_id' => $detail['subaccountId'],
-                'amount' => $detail['amount'],
-                'type' => $detail['type'],
-            ]);
+        if (AccountingPeriodLockService::isLocked(Carbon::parse($payload['date']), $payload['branch_id'] ?? null, $entityId)) {
+            return response()->json([
+                'message' => 'The selected accounting period is locked.',
+            ], 422);
         }
-        DB::commit();
+
+        $transaction = DB::transaction(function () use ($payload, $entityId) {
+            $status = $payload['status'] ?? 'draft';
+            $transaction = AccountingTransaction::create([
+                'entity_id' => $entityId,
+                'branch_id' => $payload['branch_id'] ?? null,
+                'label' => $payload['label'],
+                'date' => Carbon::parse($payload['date']),
+                'description' => $payload['description'] ?? null,
+                'source_type' => $payload['source_type'] ?? null,
+                'source_id' => $payload['source_id'] ?? null,
+                'status' => $status,
+                'posted_at' => $status === 'posted' ? now() : null,
+                'reversed_at' => $status === 'reversed' ? now() : null,
+            ]);
+
+            $this->syncTransactionDetails($transaction, $payload['details']);
+
+            return $transaction->load('details.subaccount.account');
+        });
+
+        return response()->json([
+            'message' => 'Transaction saved successfully',
+            'data' => new AccountingTransactionCollectionResource($transaction),
+        ]);
     }
 
-    function update (Request $request) {
-        $validator = Validator::make($request->all(), [
-            'id' => 'required|integer',
-            'date' => 'required|date',
-            'description' => 'string|nullable',
-            'details' => 'required|array',
-            'label' => 'required|string',
-            'details.*.id' => 'required|integer',
-            'details.*.subaccountId' => 'required|integer',
-            'details.*.amount' => 'required|numeric',
-            'details.*.type' => 'required|in:debit,credit',
-        ]);
-        $validator->validate();
+    public function update(Request $request)
+    {
+        $payload = $this->validatePayload($request, true);
 
-        $user = Auth::user();
+        $transaction = AccountingTransaction::query()->find($payload['id']);
 
-        DB::beginTransaction();
-        $transaction = AccountingTransaction::find($request->input('id'));
-        if ($transaction == null || 
-            (($transaction->ibo_id != null && $transaction->ibo_id != $user->ibo_id) ||
-            ($transaction->training_center_id != null && $transaction->training_center_id != $user->training_center_id))) {
-            return response()->json(['message' => 'Transaction not found'], 404);
-        }
-        // return response()->json(['message' => Carbon::parse($request->input('date'))], 404);
-        $transaction->label = $request->input('label');
-        $transaction->date = Carbon::parse($request->input('date'));
-        $transaction->description = $request->input('description');
-        $transaction->save();
-
-        $oldDetails = AccountingTransactionDetail::query()->where('accounting_transaction_id', '=', $request->input('id'))->get();
-        foreach ($oldDetails as $oldDetail) {
-            $subaccount = AccountingSubaccount::query()->where('id', '=', $oldDetail->accounting_subaccount_id)->first();
-            if ($oldDetail->type == 'debit') {
-                $subaccount->total_debit -= $oldDetail->amount;
-            } else {
-                $subaccount->total_credit -= $oldDetail->amount;
-            }
-            $subaccount->save();
-            $oldDetail->delete();
+        if ($transaction === null) {
+            return response()->json([
+                'message' => 'Transaction not found',
+            ], 404);
         }
 
-        foreach ($request->input('details') as $detail) {
-            $subaccount = AccountingSubaccount::query()->where('id', '=', $detail['subaccountId'])->first();
-            if ($subaccount == null) {
-                DB::rollBack();
-                return response()->json(['message' => 'Subaccount not found'], 400);
-            }
-            if ($detail['type'] == 'debit') {
-                $subaccount->total_debit += $detail['amount'];
-            } else {
-                $subaccount->total_credit += $detail['amount'];
-            }
-            $subaccount->save();
-            AccountingTransactionDetail::create([
-                'accounting_transaction_id' => $transaction->id,
-                'accounting_subaccount_id' => $detail['subaccountId'],
-                'amount' => $detail['amount'],
-                'type' => $detail['type'],
+        if ($transaction->automated || $transaction->accounting_posting_id !== null) {
+            return response()->json([
+                'message' => 'Automated or posted transactions cannot be edited',
+            ], 422);
+        }
+
+        $entityId = $payload['entity_id'] ?? $this->resolveEntityIdFromBranch($payload['branch_id'] ?? null);
+
+        if (AccountingPeriodLockService::isLocked(Carbon::parse($payload['date']), $payload['branch_id'] ?? null, $entityId)) {
+            return response()->json([
+                'message' => 'The selected accounting period is locked.',
+            ], 422);
+        }
+
+        $transaction = DB::transaction(function () use ($transaction, $payload, $entityId) {
+            $status = $payload['status'] ?? $transaction->status ?? 'draft';
+            $transaction->update([
+                'entity_id' => $entityId,
+                'branch_id' => $payload['branch_id'] ?? null,
+                'label' => $payload['label'],
+                'date' => Carbon::parse($payload['date']),
+                'description' => $payload['description'] ?? null,
+                'source_type' => $payload['source_type'] ?? $transaction->source_type,
+                'source_id' => $payload['source_id'] ?? $transaction->source_id,
+                'status' => $status,
+                'posted_at' => $status === 'posted' ? ($transaction->posted_at ?? now()) : null,
+                'reversed_at' => $status === 'reversed' ? now() : null,
             ]);
-        }
-        DB::commit();
+
+            $this->revertTransactionDetails($transaction);
+            $this->syncTransactionDetails($transaction, $payload['details']);
+
+            return $transaction->load('details.subaccount.account');
+        });
+
+        return response()->json([
+            'message' => 'Transaction saved successfully',
+            'data' => new AccountingTransactionCollectionResource($transaction),
+        ]);
     }
 
-    function upsert (Request $request) {
-        if ($request->input('id') != null) {
+    public function upsert(Request $request)
+    {
+        if ($request->filled('id')) {
             return $this->update($request);
-        } else {
-            return $this->create($request);
+        }
+
+        return $this->create($request);
+    }
+
+    private function buildTransactionQuery(Request $request)
+    {
+        $month = $request->query('month');
+        $year = $request->query('year');
+        $branchId = $request->query('branch_id');
+        $entityId = $request->query('entity_id');
+        $status = trim((string) $request->query('status', ''));
+        $sourceType = trim((string) $request->query('source_type', ''));
+        $automated = $request->query('automated');
+        $search = trim((string) $request->query('search', ''));
+        $startDate = $request->query('startDate');
+        $endDate = $request->query('endDate');
+
+        return AccountingTransaction::query()
+            ->with(['details.subaccount.account', 'branch', 'entity'])
+            ->whereNull('accounting_posting_id')
+            ->when($entityId, fn ($query) => $query->where('entity_id', (int) $entityId))
+            ->when($branchId, fn ($query) => $query->where('branch_id', (int) $branchId))
+            ->when($status !== '', fn ($query) => $query->where('status', $status))
+            ->when($sourceType !== '', fn ($query) => $query->where('source_type', $sourceType))
+            ->when($automated !== null && $automated !== '', fn ($query) => $query->where('automated', filter_var($automated, FILTER_VALIDATE_BOOLEAN)))
+            ->when($year, fn ($query) => $query->whereYear('date', (int) $year))
+            ->when($month, fn ($query) => $query->whereMonth('date', (int) $month))
+            ->when($startDate, fn ($query) => $query->whereDate('date', '>=', $startDate))
+            ->when($endDate, fn ($query) => $query->whereDate('date', '<=', $endDate))
+            ->when($search !== '', function ($query) use ($search) {
+                $query->where(function ($subQuery) use ($search) {
+                    $subQuery
+                        ->where('label', 'like', '%' . $search . '%')
+                        ->orWhere('description', 'like', '%' . $search . '%');
+                });
+            });
+    }
+
+    private function validatePayload(Request $request, bool $isUpdate): array
+    {
+        $rules = [
+            'entity_id' => ['nullable', 'integer', 'exists:entities,id'],
+            'branch_id' => ['nullable', 'integer', 'exists:branches,id'],
+            'date' => ['required', 'date'],
+            'description' => ['nullable', 'string'],
+            'details' => ['required', 'array', 'min:2'],
+            'label' => ['required', 'string'],
+            'source_type' => ['nullable', 'string'],
+            'source_id' => ['nullable', 'integer'],
+            'status' => ['nullable', 'in:draft,posted,reversed,failed'],
+            'details.*.subaccountId' => ['required', 'integer', 'distinct'],
+            'details.*.amount' => ['required', 'numeric', 'gt:0'],
+            'details.*.type' => ['required', 'in:debit,credit'],
+        ];
+
+        if ($isUpdate) {
+            $rules['id'] = ['required', 'integer'];
+            $rules['details.*.id'] = ['nullable', 'integer'];
+        }
+
+        $validator = Validator::make($request->all(), $rules);
+        $validator->after(function ($validator) use ($request) {
+            $details = $request->input('details', []);
+            $totalDebit = 0;
+            $totalCredit = 0;
+
+            foreach ($details as $detail) {
+                $amount = (float) ($detail['amount'] ?? 0);
+                if (($detail['type'] ?? null) === 'debit') {
+                    $totalDebit += $amount;
+                }
+
+                if (($detail['type'] ?? null) === 'credit') {
+                    $totalCredit += $amount;
+                }
+            }
+
+            if (round($totalDebit, 2) !== round($totalCredit, 2)) {
+                $validator->errors()->add('details', 'Total debit and credit must be equal.');
+            }
+        });
+
+        return $validator->validate();
+    }
+
+    private function resolveEntityIdFromBranch(?int $branchId): ?int
+    {
+        if ($branchId === null) {
+            return null;
+        }
+
+        return Branch::query()->where('id', $branchId)->value('entity_id');
+    }
+
+    private function syncTransactionDetails(AccountingTransaction $transaction, array $details): void
+    {
+        foreach ($details as $detail) {
+            $subaccount = AccountingSubaccount::query()->find($detail['subaccountId']);
+
+            if ($subaccount === null) {
+                throw new \RuntimeException('Subaccount not found: ' . $detail['subaccountId']);
+            }
+
+            if ($detail['type'] === 'debit') {
+                $subaccount->total_debit += (float) $detail['amount'];
+            } else {
+                $subaccount->total_credit += (float) $detail['amount'];
+            }
+
+            $subaccount->save();
+
+            AccountingTransactionDetail::create([
+                'accounting_transaction_id' => $transaction->id,
+                'accounting_subaccount_id' => $detail['subaccountId'],
+                'amount' => $detail['amount'],
+                'type' => $detail['type'],
+            ]);
+        }
+    }
+
+    private function revertTransactionDetails(AccountingTransaction $transaction): void
+    {
+        $oldDetails = AccountingTransactionDetail::query()
+            ->where('accounting_transaction_id', $transaction->id)
+            ->get();
+
+        foreach ($oldDetails as $oldDetail) {
+            $subaccount = AccountingSubaccount::query()->find($oldDetail->accounting_subaccount_id);
+
+            if ($subaccount !== null) {
+                if ($oldDetail->type === 'debit') {
+                    $subaccount->total_debit -= (float) $oldDetail->amount;
+                } else {
+                    $subaccount->total_credit -= (float) $oldDetail->amount;
+                }
+
+                $subaccount->save();
+            }
+
+            $oldDetail->delete();
         }
     }
 }
