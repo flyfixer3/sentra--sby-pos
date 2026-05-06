@@ -26,3 +26,5 @@ temp*
 route_list*
 routes_dump*
 test-php.php
+*.sql
+sentra_pos_micel_legacy_import_*.sql
