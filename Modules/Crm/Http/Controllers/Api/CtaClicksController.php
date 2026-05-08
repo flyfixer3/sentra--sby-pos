@@ -23,6 +23,7 @@ class CtaClicksController extends Controller
             'utm_content' => ['nullable', 'string', 'max:150'],
             'landing_page_url' => ['nullable', 'string', 'max:2048'],
             'cta_type' => ['nullable', 'string', 'max:50'],
+            'cta_source' => ['nullable', 'string', 'max:100'],
             'target_whatsapp_number' => ['nullable', 'string', 'max:50'],
         ]);
 
@@ -34,6 +35,8 @@ class CtaClicksController extends Controller
             ->where('cta_type', $data['cta_type'])
             ->where('target_whatsapp_number', $data['target_whatsapp_number'])
             ->where('last_clicked_at', '>=', $windowStart)
+            ->when($data['cta_source'], fn ($query) => $query->where('cta_source', $data['cta_source']))
+            ->when(!$data['cta_source'], fn ($query) => $query->whereNull('cta_source'))
             ->when($data['ref_code'], fn ($query) => $query->where('ref_code', $data['ref_code']))
             ->when(!$data['ref_code'] && $data['source'], fn ($query) => $query->where('source', $data['source']))
             ->when(!$data['ref_code'] && !$data['source'], fn ($query) => $query->whereNull('ref_code')->whereNull('source'))
@@ -45,6 +48,7 @@ class CtaClicksController extends Controller
                 'click_count' => $existing->click_count + 1,
                 'last_clicked_at' => now(),
                 'landing_page_url' => $data['landing_page_url'] ?: $existing->landing_page_url,
+                'cta_source' => $existing->cta_source ?: $data['cta_source'],
                 'ip_address' => $data['ip_address'],
                 'user_agent' => $data['user_agent'],
             ])->save();
@@ -108,6 +112,7 @@ class CtaClicksController extends Controller
             'utm_content',
             'landing_page_url',
             'cta_type',
+            'cta_source',
             'target_whatsapp_number',
         ] as $key) {
             $data[$key] = $data[$key] ?? null;
@@ -124,6 +129,7 @@ class CtaClicksController extends Controller
 
         $data['session_id'] = (string) $data['session_id'];
         $data['cta_type'] = Str::lower($data['cta_type'] ?: 'cta');
+        $data['cta_source'] = $data['cta_source'] ? Str::lower($data['cta_source']) : null;
         $data['target_whatsapp_number'] = isset($data['target_whatsapp_number'])
             ? preg_replace('/\D+/', '', $data['target_whatsapp_number'])
             : null;
