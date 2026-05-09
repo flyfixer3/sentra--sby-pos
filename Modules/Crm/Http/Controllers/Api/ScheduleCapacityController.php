@@ -2,7 +2,6 @@
 
 namespace Modules\Crm\Http\Controllers\Api;
 
-use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
 use Illuminate\Support\Facades\Auth;
@@ -11,94 +10,96 @@ use Illuminate\Support\Facades\Gate;
 
 class ScheduleCapacityController extends Controller
 {
-    /**
-     * Default max jobs per branch per day.
-     * Can be made configurable per branch later.
-     */
     private const DAILY_CAPACITY = 10;
 
     /**
      * GET /api/crm/schedule/capacity?date=YYYY-MM-DD
-     *
-     * Returns scheduled job counts for each accessible branch on the given date.
-     * Read-only — never mutates any data.
+     * Read-only. Returns per-branch job counts for the given date.
      */
     public function index(Request $request)
     {
         abort_if(Gate::denies('show_crm_leads'), 403);
 
-        // Parse and validate the requested date (defaults to today)
-        $rawDate = $request->query('date', now()->toDateString());
-        try {
-            $date = Carbon::createFromFormat('Y-m-d', $rawDate)->startOfDay();
-        } catch (\Exception $e) {
-            return response()->json(['error' => 'Format tanggal tidak valid. Gunakan YYYY-MM-DD.'], 422);
+        // Validate + normalise date — fallback to today if malformed
+        $date = (string) $request->query('date', '');
+        if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $date)) {
+            $date = now()->toDateString();
         }
 
-        // Resolve branches the current user can access
         /** @var \App\Models\User $user */
-        $user = Auth::user();
+        $user     = Auth::user();
         $branches = $user->allAvailableBranches();
-        $branchIds = $branches->pluck('id')->map(fn ($id) => (int) $id)->all();
+        $branchIds = [];
+        foreach ($branches as $b) {
+            $branchIds[] = (int) $b->id;
+        }
 
         if (empty($branchIds)) {
-            return response()->json(['date' => $date->toDateString(), 'branches' => []]);
+            return response()->json(['date' => $date, 'branches' => []]);
         }
 
-        // Count service orders per branch for the requested date (all relevant statuses)
-        $counts = DB::table('crm_service_orders')
+        // Fetch all relevant rows for this date, group counts in PHP
+        $rows = DB::table('crm_service_orders')
             ->whereNull('deleted_at')
             ->whereIn('branch_id', $branchIds)
-            ->whereDate('scheduled_date', $date->toDateString())
+            ->whereDate('scheduled_date', $date)
             ->whereIn('status', ['scheduled', 'in_progress', 'completed'])
-            ->select(
-                'branch_id',
-                DB::raw("SUM(CASE WHEN status = 'scheduled'   THEN 1 ELSE 0 END) as scheduled_count"),
-                DB::raw("SUM(CASE WHEN status = 'in_progress' THEN 1 ELSE 0 END) as in_progress_count"),
-                DB::raw("SUM(CASE WHEN status = 'completed'   THEN 1 ELSE 0 END) as completed_count"),
-                DB::raw("SUM(CASE WHEN status IN ('scheduled','in_progress') THEN 1 ELSE 0 END) as total_active"),
-                DB::raw('COUNT(*) as total_today'),
-            )
-            ->groupBy('branch_id')
-            ->get()
-            ->keyBy('branch_id');
+            ->select('branch_id', 'status')
+            ->get();
 
-        $capacity = self::DAILY_CAPACITY;
+        // Build count map indexed by branch_id (integer key)
+        $countMap = [];
+        foreach ($rows as $row) {
+            $bid = (int) $row->branch_id;
+            if (!isset($countMap[$bid])) {
+                $countMap[$bid] = ['scheduled' => 0, 'in_progress' => 0, 'completed' => 0];
+            }
+            $s = (string) $row->status;
+            if (isset($countMap[$bid][$s])) {
+                $countMap[$bid][$s]++;
+            }
+        }
 
-        $branchData = $branches->map(function ($branch) use ($counts, $capacity) {
-            $bid         = (int) $branch->id;
-            $row         = $counts->get($bid);
-            $scheduled   = $row ? (int) $row->scheduled_count   : 0;
-            $inProgress  = $row ? (int) $row->in_progress_count : 0;
-            $completed   = $row ? (int) $row->completed_count   : 0;
-            $totalActive = $row ? (int) $row->total_active      : 0;
-            $totalToday  = $row ? (int) $row->total_today       : 0;
-            $available   = max($capacity - $totalActive, 0);
+        $capacity   = self::DAILY_CAPACITY;
+        $branchList = [];
 
-            $status = match (true) {
-                $totalActive >= $capacity                    => 'full',
-                $totalActive >= (int) ceil($capacity * 0.7) => 'busy',
-                $totalActive === 0                          => 'empty',
-                default                                     => 'available',
-            };
+        foreach ($branches as $branch) {
+            $bid        = (int) $branch->id;
+            $c          = isset($countMap[$bid]) ? $countMap[$bid] : ['scheduled' => 0, 'in_progress' => 0, 'completed' => 0];
+            $scheduled  = (int) $c['scheduled'];
+            $inProgress = (int) $c['in_progress'];
+            $completed  = (int) $c['completed'];
+            $active     = $scheduled + $inProgress;
+            $total      = $active + $completed;
+            $available  = max($capacity - $active, 0);
 
-            return [
-                'branch_id'          => $bid,
-                'branch_name'        => $branch->name,
-                'scheduled_count'    => $scheduled,
-                'in_progress_count'  => $inProgress,
-                'completed_count'    => $completed,
-                'total_active'       => $totalActive,
-                'total_today'        => $totalToday,
-                'capacity'           => $capacity,
-                'available_slots'    => $available,
-                'status'             => $status,
+            if ($active >= $capacity) {
+                $status = 'full';
+            } elseif ($active >= (int) ceil($capacity * 0.7)) {
+                $status = 'busy';
+            } elseif ($active === 0) {
+                $status = 'empty';
+            } else {
+                $status = 'available';
+            }
+
+            $branchList[] = [
+                'branch_id'         => $bid,
+                'branch_name'       => (string) $branch->name,
+                'scheduled_count'   => $scheduled,
+                'in_progress_count' => $inProgress,
+                'completed_count'   => $completed,
+                'total_active'      => $active,
+                'total_today'       => $total,
+                'capacity'          => $capacity,
+                'available_slots'   => $available,
+                'status'            => $status,
             ];
-        });
+        }
 
         return response()->json([
-            'date'     => $date->toDateString(),
-            'branches' => $branchData->values(),
+            'date'     => $date,
+            'branches' => $branchList,
         ]);
     }
 }
