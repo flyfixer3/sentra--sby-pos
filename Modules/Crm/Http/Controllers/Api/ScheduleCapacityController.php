@@ -45,17 +45,19 @@ class ScheduleCapacityController extends Controller
             return response()->json(['date' => $date->toDateString(), 'branches' => []]);
         }
 
-        // Count active service orders per branch for the requested date
+        // Count service orders per branch for the requested date (all relevant statuses)
         $counts = DB::table('crm_service_orders')
             ->whereNull('deleted_at')
             ->whereIn('branch_id', $branchIds)
             ->whereDate('scheduled_date', $date->toDateString())
-            ->whereIn('status', ['scheduled', 'in_progress'])
+            ->whereIn('status', ['scheduled', 'in_progress', 'completed'])
             ->select(
                 'branch_id',
                 DB::raw("SUM(CASE WHEN status = 'scheduled'   THEN 1 ELSE 0 END) as scheduled_count"),
                 DB::raw("SUM(CASE WHEN status = 'in_progress' THEN 1 ELSE 0 END) as in_progress_count"),
-                DB::raw('COUNT(*) as total_active'),
+                DB::raw("SUM(CASE WHEN status = 'completed'   THEN 1 ELSE 0 END) as completed_count"),
+                DB::raw("SUM(CASE WHEN status IN ('scheduled','in_progress') THEN 1 ELSE 0 END) as total_active"),
+                DB::raw('COUNT(*) as total_today'),
             )
             ->groupBy('branch_id')
             ->get()
@@ -64,18 +66,20 @@ class ScheduleCapacityController extends Controller
         $capacity = self::DAILY_CAPACITY;
 
         $branchData = $branches->map(function ($branch) use ($counts, $capacity) {
-            $bid        = (int) $branch->id;
-            $row        = $counts->get($bid);
-            $scheduled  = $row ? (int) $row->scheduled_count  : 0;
-            $inProgress = $row ? (int) $row->in_progress_count : 0;
-            $total      = $row ? (int) $row->total_active      : 0;
-            $available  = max($capacity - $total, 0);
+            $bid         = (int) $branch->id;
+            $row         = $counts->get($bid);
+            $scheduled   = $row ? (int) $row->scheduled_count   : 0;
+            $inProgress  = $row ? (int) $row->in_progress_count : 0;
+            $completed   = $row ? (int) $row->completed_count   : 0;
+            $totalActive = $row ? (int) $row->total_active      : 0;
+            $totalToday  = $row ? (int) $row->total_today       : 0;
+            $available   = max($capacity - $totalActive, 0);
 
             $status = match (true) {
-                $total >= $capacity                        => 'full',
-                $total >= (int) ceil($capacity * 0.7)     => 'busy',
-                $total === 0                              => 'empty',
-                default                                   => 'available',
+                $totalActive >= $capacity                    => 'full',
+                $totalActive >= (int) ceil($capacity * 0.7) => 'busy',
+                $totalActive === 0                          => 'empty',
+                default                                     => 'available',
             };
 
             return [
@@ -83,7 +87,9 @@ class ScheduleCapacityController extends Controller
                 'branch_name'        => $branch->name,
                 'scheduled_count'    => $scheduled,
                 'in_progress_count'  => $inProgress,
-                'total_active'       => $total,
+                'completed_count'    => $completed,
+                'total_active'       => $totalActive,
+                'total_today'        => $totalToday,
                 'capacity'           => $capacity,
                 'available_slots'    => $available,
                 'status'             => $status,
