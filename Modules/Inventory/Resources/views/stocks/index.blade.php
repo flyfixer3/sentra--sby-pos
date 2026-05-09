@@ -365,7 +365,7 @@
     .table-wrap{
         border: 1px solid #e2e8f0;
         border-radius: 12px;
-        overflow-x: auto;
+        overflow-x: visible;
         overflow-y: visible;
     }
     .table-modern thead th{

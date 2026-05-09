@@ -2,6 +2,7 @@
 
 namespace Modules\Mutation\Http\Controllers;
 
+use Carbon\Carbon;
 use Modules\Mutation\DataTables\MutationsDataTable;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
@@ -193,7 +194,7 @@ class MutationController extends Controller
 
         $mutation->update([
             'reference' => $request->reference,
-            'date'      => $request->date,
+            'date'      => $this->normalizeDateForDatabase($request->date),
             'note'      => $request->note,
         ]);
 
@@ -529,6 +530,8 @@ class MutationController extends Controller
         ?string $bucket = null,   // good|defect|damaged
         string $logMode = 'single' // 'single' | 'summary'
     ): \Modules\Mutation\Entities\Mutation {
+        $date = $this->normalizeDateForDatabase($date);
+
         if (!in_array($mutationType, ['In', 'Out'], true)) {
             throw new \RuntimeException("Invalid mutationType: {$mutationType}");
         }
@@ -843,6 +846,8 @@ class MutationController extends Controller
         string $note,
         string $date
     ): void {
+        $date = $this->normalizeDateForDatabase($date);
+
         if ($qty <= 0) {
             throw new \RuntimeException("Qty must be > 0");
         }
@@ -1004,6 +1009,8 @@ class MutationController extends Controller
         string $note,
         string $date
     ): void {
+        $date = $this->normalizeDateForDatabase($date);
+
         if (!in_array($direction, ['In', 'Out'], true)) {
             throw new \RuntimeException("Invalid transfer direction: {$direction}");
         }
@@ -1424,5 +1431,30 @@ class MutationController extends Controller
 
         toast('Mutation Deleted!', 'warning');
         return redirect()->route('mutations.index');
+    }
+
+    private function normalizeDateForDatabase($value): string
+    {
+        if ($value instanceof \DateTimeInterface) {
+            return Carbon::instance($value)->toDateString();
+        }
+
+        $value = trim((string) $value);
+        if ($value === '') {
+            return now()->toDateString();
+        }
+
+        foreach (['Y-m-d', 'd/m/Y', 'd-m-Y', 'd M, Y', 'd F, Y'] as $format) {
+            try {
+                $date = Carbon::createFromFormat($format, $value);
+                if ($date !== false) {
+                    return $date->toDateString();
+                }
+            } catch (\Throwable $e) {
+                // Try the next supported project date format.
+            }
+        }
+
+        return Carbon::parse($value)->toDateString();
     }
 }

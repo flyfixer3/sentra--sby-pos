@@ -122,6 +122,11 @@
         width: 100%;
     }
 
+    .table-responsive.dt-scroll-container,
+    .table-wrap.dt-scroll-container {
+        overflow: visible !important;
+    }
+
     .dataTables_scroll,
     .dataTables_scrollHead,
     .dataTables_scrollBody {
@@ -130,12 +135,20 @@
 
     .dataTables_scrollBody {
         overflow-x: auto !important;
-        overflow-y: visible !important;
+        overflow-y: hidden !important;
     }
 
     .dataTables_wrapper table.dataTable {
-        width: 100% !important;
         margin-bottom: 0 !important;
         white-space: nowrap;
+    }
+
+    .dt-dropdown-portal {
+        position: fixed !important;
+        z-index: 2050 !important;
+        margin: 0 !important;
+        right: auto !important;
+        bottom: auto !important;
+        transform: none !important;
     }
 </style>
