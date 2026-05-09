@@ -45,8 +45,7 @@ class MutationController extends Controller
 
     public function create()
     {
-        abort_if(Gate::denies('create_mutations'), 403);
-        return view('mutation::create');
+        abort(404);
     }
 
     public function readCSV($csvFile, $array)

@@ -191,13 +191,6 @@
         <i class="c-sidebar-nav-icon bi bi-clipboard-check" style="line-height: 1;"></i> Mutations
     </a>
     <ul class="c-sidebar-nav-dropdown-items">
-        @can('create_mutations')
-        <li class="c-sidebar-nav-item">
-            <a class="c-sidebar-nav-link {{ request()->routeIs('mutations.create') ? 'c-active' : '' }}" href="{{ route('mutations.create') }}">
-                <i class="c-sidebar-nav-icon bi bi-journal-plus" style="line-height: 1;"></i> Create Mutations
-            </a>
-        </li>
-        @endcan
         <li class="c-sidebar-nav-item">
             <a class="c-sidebar-nav-link {{ request()->routeIs('mutations.index') ? 'c-active' : '' }}" href="{{ route('mutations.index') }}">
                 <i class="c-sidebar-nav-icon bi bi-journals" style="line-height: 1;"></i> All Mutations

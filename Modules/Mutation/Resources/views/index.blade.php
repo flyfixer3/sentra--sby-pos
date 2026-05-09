@@ -19,11 +19,21 @@
         <div class="col-12">
             <div class="card">
                 <div class="card-body">
-                    <div class="d-flex flex-wrap align-items-center justify-content-between">
-                        <a href="{{ route('mutations.create') }}" class="btn btn-primary">
-                            Add Mutation <i class="bi bi-plus"></i>
-                        </a>
+                    <div class="alert alert-info mb-3">
+                        <div class="d-flex align-items-start" style="gap: 10px;">
+                            <i class="bi bi-info-circle mt-1"></i>
+                            <div>
+                                <div class="font-weight-bold">Mutations are generated automatically</div>
+                                <div class="small mb-0">
+                                    Data mutation dibuat otomatis dari proses sistem seperti purchase delivery,
+                                    sale delivery, transfer, adjustment, rack movement, dan opening stock.
+                                    Manual create mutation sudah dinonaktifkan untuk menjaga akurasi stok.
+                                </div>
+                            </div>
+                        </div>
                     </div>
+
+                    <hr>
 
                     <hr>
 
