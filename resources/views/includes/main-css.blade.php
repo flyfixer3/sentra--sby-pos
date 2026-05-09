@@ -116,4 +116,26 @@
     table.dataTable thead td.dt-orderable-none::after {
         content: none !important;
     }
+
+    .dataTables_wrapper,
+    .table-wrap {
+        width: 100%;
+    }
+
+    .dataTables_scroll,
+    .dataTables_scrollHead,
+    .dataTables_scrollBody {
+        width: 100% !important;
+    }
+
+    .dataTables_scrollBody {
+        overflow-x: auto !important;
+        overflow-y: visible !important;
+    }
+
+    .dataTables_wrapper table.dataTable {
+        width: 100% !important;
+        margin-bottom: 0 !important;
+        white-space: nowrap;
+    }
 </style>

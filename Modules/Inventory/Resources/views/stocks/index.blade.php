@@ -86,6 +86,10 @@
                             <span class="font-weight-bold text-dark">Damaged</span>:
                             stok yang tercatat rusak dan dipisahkan dari stok yang masih layak.
                         </div>
+                        <div class="small mb-1">
+                            <span class="font-weight-bold text-dark">Outgoing</span>:
+                            stok yang sedang/proses keluar dari pool cabang, misalnya karena delivery penjualan, transfer keluar, atau adjustment keluar.
+                        </div>
                         <div class="small text-muted mb-0">
                             Untuk melihat rincian per gudang, rak, dan kondisi barang, klik tombol <b>View Detail</b>.
                         </div>
@@ -361,7 +365,8 @@
     .table-wrap{
         border: 1px solid #e2e8f0;
         border-radius: 12px;
-        overflow: hidden;
+        overflow-x: auto;
+        overflow-y: visible;
     }
     .table-modern thead th{
         background: #f8fafc !important;
