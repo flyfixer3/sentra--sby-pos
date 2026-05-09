@@ -57,6 +57,110 @@ class ProductsController extends Controller
     }
 
     /**
+     * GET /api/crm/products/{id}/branch-stock?branch_id=X
+     *
+     * Returns detailed per-rack stock breakdown for a single product in a specific branch.
+     * Includes qty_good, qty_defect, qty_damaged per rack location. Read-only.
+     */
+    public function branchStock(Request $request, int $id)
+    {
+        abort_if(Gate::denies('show_crm_leads'), 403);
+
+        $branchId = (int) $request->query('branch_id', 0);
+        if ($branchId <= 0) {
+            return response()->json(['error' => 'Parameter branch_id diperlukan.'], 422);
+        }
+
+        // Verify the user is allowed to access this branch
+        /** @var \App\Models\User $user */
+        $user = Auth::user();
+        $allowedIds = $user->allAvailableBranches()
+            ->pluck('id')
+            ->map(fn ($id) => (int) $id)
+            ->all();
+
+        if (!in_array($branchId, $allowedIds, true)) {
+            abort(403, 'Akses cabang tidak diizinkan.');
+        }
+
+        // Fetch the product (global catalog)
+        $product = Product::withoutGlobalScope('branch')
+            ->without('media')
+            ->select('id', 'product_code', 'product_name', 'product_price', 'product_unit')
+            ->findOrFail($id);
+
+        $branch = \Modules\Branch\Entities\Branch::find($branchId);
+
+        // Aggregate stock totals for this product + branch
+        $stockRow = DB::table('stocks')
+            ->where('product_id', $id)
+            ->where('branch_id', $branchId)
+            ->selectRaw('
+                COALESCE(SUM(qty_total),    0) as total_qty,
+                COALESCE(SUM(qty_reserved), 0) as reserved_qty,
+                COALESCE(SUM(qty_incoming), 0) as incoming_qty
+            ')
+            ->first();
+
+        $totalQty    = $stockRow ? (int) $stockRow->total_qty    : 0;
+        $reservedQty = $stockRow ? (int) $stockRow->reserved_qty : 0;
+        $incomingQty = $stockRow ? (int) $stockRow->incoming_qty : 0;
+        $availableQty = max($totalQty - $reservedQty, 0);
+
+        // Per-rack breakdown with condition details (qty_good / defect / damaged)
+        $racks = DB::table('stock_racks')
+            ->join('racks', 'racks.id', '=', 'stock_racks.rack_id')
+            ->leftJoin('warehouses', 'warehouses.id', '=', 'stock_racks.warehouse_id')
+            ->where('stock_racks.product_id', $id)
+            ->where('stock_racks.branch_id', $branchId)
+            ->where(function ($q) {
+                // Only return racks that actually have some quantity
+                $q->where('stock_racks.qty_total', '>', 0)
+                  ->orWhere('stock_racks.qty_good',    '>', 0)
+                  ->orWhere('stock_racks.qty_defect',  '>', 0)
+                  ->orWhere('stock_racks.qty_damaged',  '>', 0);
+            })
+            ->select(
+                'stock_racks.rack_id',
+                'racks.code as rack_code',
+                'racks.name as rack_name',
+                'stock_racks.warehouse_id',
+                'warehouses.warehouse_name',
+                'stock_racks.qty_total',
+                'stock_racks.qty_good',
+                'stock_racks.qty_defect',
+                'stock_racks.qty_damaged',
+            )
+            ->orderBy('racks.code')
+            ->get()
+            ->map(fn ($r) => [
+                'rack_id'        => (int) $r->rack_id,
+                'rack_code'      => $r->rack_code,
+                'rack_name'      => $r->rack_name,
+                'warehouse_name' => $r->warehouse_name,
+                'qty_total'      => (int) $r->qty_total,
+                'qty_good'       => (int) $r->qty_good,
+                'qty_defect'     => (int) $r->qty_defect,
+                'qty_damaged'    => (int) $r->qty_damaged,
+            ]);
+
+        return response()->json([
+            'product_id'    => (int) $product->id,
+            'product_code'  => $product->product_code  ?? '',
+            'product_name'  => $product->product_name  ?? '',
+            'product_price' => (int) ($product->product_price ?? 0),
+            'product_unit'  => $product->product_unit,
+            'branch_id'     => $branchId,
+            'branch_name'   => $branch?->name ?? "Branch #{$branchId}",
+            'total_qty'     => $totalQty,
+            'reserved_qty'  => $reservedQty,
+            'incoming_qty'  => $incomingQty,
+            'available_qty' => $availableQty,
+            'racks'         => $racks->values(),
+        ]);
+    }
+
+    /**
      * GET /api/crm/products/all-branches?search=...
      *
      * Read-only stock lookup across every branch the authenticated user can access.

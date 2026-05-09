@@ -54,7 +54,8 @@ Route::middleware($middlewares)->prefix('crm')->group(function () {
     Route::post('/users/{id}/access', [UsersController::class, 'toggleAccess']);
 
     Route::get('/cta-clicks', [CtaClicksController::class, 'index']);
-    Route::get('/products/all-branches', [ProductsController::class, 'allBranches']); // must be before /products
+    Route::get('/products/all-branches', [ProductsController::class, 'allBranches']); // must be before /{id}
+    Route::get('/products/{id}/branch-stock', [ProductsController::class, 'branchStock']);
     Route::get('/products', [ProductsController::class, 'index']);
     Route::get('/customers', [CustomersController::class, 'index']);
 
