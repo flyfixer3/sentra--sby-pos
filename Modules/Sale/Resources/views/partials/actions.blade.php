@@ -45,6 +45,20 @@
                 </a>
             @endcan
 
+            @can('access_sale_payments')
+                <a href="{{ route('sale-payments.index', $data->id) }}" class="dropdown-item">
+                    <i class="bi bi-cash-coin mr-2 text-warning" style="line-height: 1;"></i> Show Payments
+                </a>
+            @endcan
+
+            @can('access_sale_payments')
+                @if((int) ($data->due_amount ?? 0) > 0)
+                    <a href="{{ route('sale-payments.create', $data->id) }}" class="dropdown-item">
+                        <i class="bi bi-plus-circle-dotted mr-2 text-success" style="line-height: 1;"></i> Add Payment
+                    </a>
+                @endif
+            @endcan
+
             @can('edit_sales')
                 @if($data->isEditableInvoice())
                     <a href="{{ route('sales.edit', $data->id) }}" class="dropdown-item">
