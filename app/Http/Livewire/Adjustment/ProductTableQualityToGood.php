@@ -65,6 +65,10 @@ class ProductTableQualityToGood extends Component
 
     public function productSelected($payload): void
     {
+        if (is_array($payload) && !empty($payload['__selection_context']) && $payload['__selection_context'] !== 'adjustment_quality_to_good') {
+            return;
+        }
+
         $productId = (int) ($payload['id'] ?? $payload['product_id'] ?? 0);
         if ($productId <= 0) return;
 

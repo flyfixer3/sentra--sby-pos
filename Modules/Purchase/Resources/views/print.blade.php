@@ -73,11 +73,15 @@
                             </thead>
                             <tbody>
                             @foreach($purchase->purchaseDetails as $item)
+                                @php
+                                    $productName = $item->product->product_name ?? $item->product_name ?? '-';
+                                    $productCode = $item->product->product_code ?? $item->product_code ?? '-';
+                                @endphp
                                 <tr>
                                     <td class="align-middle">
-                                        {{ $item->product_name }} <br>
+                                        {{ $productName }} <br>
                                         <span class="badge badge-success">
-                                                {{ $item->product_code }}
+                                                {{ $productCode }}
                                             </span>
                                     </td>
 

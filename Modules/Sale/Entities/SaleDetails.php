@@ -19,7 +19,7 @@ class SaleDetails extends Model
     protected $with = ['product'];
 
     public function product() {
-        return $this->belongsTo(Product::class, 'product_id', 'id');
+        return $this->belongsTo(Product::class, 'product_id', 'id')->withoutGlobalScopes();
     }
 
     public function warehouse() {

@@ -54,9 +54,6 @@
 
     @php
         use Carbon\Carbon;
-        use Modules\Product\Entities\ProductDefectItem;
-        use Modules\Product\Entities\ProductDamagedItem;
-
         $creatorName = optional($adjustment->creator)->name ?? optional($adjustment->creator)->username ?? '-';
         $createdAt   = $adjustment->created_at ? Carbon::parse($adjustment->created_at)->format('d M Y H:i') : '-';
 
@@ -75,34 +72,14 @@
             }
         }
 
-        // per-unit rows linked to this adjustment (for QC section)
-        $defectItems = ProductDefectItem::query()
-            ->where('reference_type', \Modules\Adjustment\Entities\Adjustment::class)
-            ->where('reference_id', $adjustment->id)
-            ->orderBy('id')
-            ->get();
-
-        $damagedItems = ProductDamagedItem::query()
-            ->where('reference_type', \Modules\Adjustment\Entities\Adjustment::class)
-            ->where('reference_id', $adjustment->id)
-            ->orderBy('id')
-            ->get();
+        $defectItems = $defectItems ?? collect();
+        $damagedItems = $damagedItems ?? collect();
+        $rackLabelMap = $rackLabelMap ?? [];
 
         $qualityType = null;
         if ($defectItems->count() > 0) $qualityType = 'defect';
         if ($damagedItems->count() > 0) $qualityType = 'damaged';
         if ($defectItems->count() > 0 && $damagedItems->count() > 0) $qualityType = 'mixed';
-
-        // ✅ rack label map (for QC section + fallback)
-        $rackLabelMap = \DB::table('racks')
-            ->where('warehouse_id', (int)($adjustment->warehouse_id ?? 0))
-            ->get(['id','code','name'])
-            ->mapWithKeys(function ($r) {
-                $label = trim((string)($r->code ?? '') . ((string)($r->name ?? '') !== '' ? ' - ' . (string)($r->name ?? '') : ''));
-                if ($label === '') $label = 'Rack#' . (int)$r->id;
-                return [(int)$r->id => $label];
-            })
-            ->toArray();
 
         $parseCond = function (?string $note): string {
             $note = (string) $note;
@@ -128,6 +105,50 @@
                 'DAMAGED' => 'bi bi-x-octagon',
                 default => 'bi bi-check-circle',
             };
+        };
+
+        $cleanNote = function (?string $note): string {
+            $note = trim((string) $note);
+            if ($note === '') return '';
+
+            $parts = array_map('trim', explode('|', $note));
+            $parts = array_values(array_filter($parts, function ($part) {
+                return $part !== '' && !preg_match('/^COND=/i', $part);
+            }));
+
+            return trim(implode(' | ', $parts));
+        };
+
+        $conditionFlow = function (?string $note) use ($parseCond): array {
+            $note = (string) $note;
+
+            if (preg_match('/\bQRC\s+([A-Z_]+)->([A-Z_]+)\b/i', $note, $m)) {
+                return [strtoupper((string) $m[1]), strtoupper((string) $m[2])];
+            }
+
+            if (preg_match('/Quality Reclass\s+([A-Z_]+)\s*->\s*([A-Z_]+)/i', $note, $m)) {
+                return [strtoupper((string) $m[1]), strtoupper((string) $m[2])];
+            }
+
+            $cond = $parseCond($note);
+            return [$cond, $cond];
+        };
+
+        $unitDirection = function ($unit) use ($adjustment): string {
+            if ((int) ($unit->reference_id ?? 0) === (int) $adjustment->id) {
+                return 'Added';
+            }
+
+            if ((int) ($unit->moved_out_reference_id ?? 0) === (int) $adjustment->id) {
+                return 'Reduced / Reclassed Out';
+            }
+
+            return '-';
+        };
+
+        $rackText = function ($rackId) use ($rackLabelMap): string {
+            $rackId = (int) $rackId;
+            return $rackLabelMap[$rackId] ?? ($rackId > 0 ? 'Rack#' . $rackId : '-');
         };
     @endphp
 
@@ -187,15 +208,23 @@
                             <tr>
                                 <th>Product</th>
                                 <th>Rack</th>
-                                <th class="text-center" style="width:160px">Condition</th>
+                                <th class="text-center" style="width:210px">Condition / Flow</th>
                                 <th class="text-center" style="width:170px">Type / Qty</th>
                             </tr>
 
                             @foreach($adjustment->adjustedProducts as $adjustedProduct)
                                 @php
-                                    $cond = $parseCond($adjustedProduct->note ?? '');
+                                    [$sourceCond, $targetCond] = $conditionFlow($adjustedProduct->note ?? '');
+                                    $cond = $targetCond ?: $sourceCond;
                                     $badgeCls = $condBadgeClass($cond);
                                     $iconCls = $condIcon($cond);
+                                    $itemNote = $cleanNote($adjustedProduct->note ?? '');
+                                    $rowDefectItems = $defectItems
+                                        ->where('product_id', (int) $adjustedProduct->product_id)
+                                        ->where('rack_id', (int) $adjustedProduct->rack_id);
+                                    $rowDamagedItems = $damagedItems
+                                        ->where('product_id', (int) $adjustedProduct->product_id)
+                                        ->where('rack_id', (int) $adjustedProduct->rack_id);
 
                                     $typeText = $isQuality
                                         ? 'Quality Reclass'
@@ -212,6 +241,12 @@
                                         <div class="muted">
                                             Code: {{ $adjustedProduct->product->product_code ?? '-' }}
                                         </div>
+                                        @if($itemNote !== '')
+                                            <div class="mt-2">
+                                                <span class="muted">Description / Note:</span><br>
+                                                {{ $itemNote }}
+                                            </div>
+                                        @endif
                                     </td>
 
                                     <td>
@@ -226,10 +261,7 @@
                                         @if($isQuality)
                                             <span class="qc-badge">
                                                 <i class="bi bi-shield-check"></i>
-                                                Quality
-                                                @if($qualityType && $qualityType !== 'mixed')
-                                                    ({{ $qualityType }})
-                                                @endif
+                                                {{ $sourceCond }} → {{ $targetCond }}
                                             </span>
                                         @else
                                             <span class="{{ $badgeCls }}">
@@ -249,11 +281,45 @@
                                     </td>
                                 </tr>
 
-                                @if(!empty($adjustedProduct->note))
+                                @if(in_array('DEFECT', [$sourceCond, $targetCond], true) && $rowDefectItems->count() > 0)
                                     <tr>
                                         <td colspan="4">
-                                            <strong>Item Note:</strong><br>
-                                            {{ $adjustedProduct->note }}
+                                            <strong>Defect Information:</strong>
+                                            <div class="mt-2">
+                                                @foreach($rowDefectItems as $unit)
+                                                    <div class="mb-2">
+                                                        <span class="badge badge-warning">Unit #{{ $unit->id }}</span>
+                                                        <span class="muted ml-1">Defect Type:</span>
+                                                        {{ \App\Support\DefectTypeSupport::text($unit->defect_types ?? [], '-') }}
+                                                        @if(!empty($unit->description))
+                                                            <span class="muted ml-2">Description:</span> {{ $unit->description }}
+                                                        @endif
+                                                    </div>
+                                                @endforeach
+                                            </div>
+                                        </td>
+                                    </tr>
+                                @endif
+
+                                @if(in_array('DAMAGED', [$sourceCond, $targetCond], true) && $rowDamagedItems->count() > 0)
+                                    <tr>
+                                        <td colspan="4">
+                                            <strong>Damaged Information:</strong>
+                                            <div class="mt-2">
+                                                @foreach($rowDamagedItems as $unit)
+                                                    <div class="mb-2">
+                                                        <span class="badge badge-danger">Unit #{{ $unit->id }}</span>
+                                                        <span class="muted ml-1">Damage Type:</span>
+                                                        {{ $unit->damage_type ?? '-' }}
+                                                        @if(!empty($unit->reason))
+                                                            <span class="muted ml-2">Reason:</span> {{ $unit->reason }}
+                                                        @endif
+                                                        @if(!empty($unit->resolution_note))
+                                                            <span class="muted ml-2">Description:</span> {{ $unit->resolution_note }}
+                                                        @endif
+                                                    </div>
+                                                @endforeach
+                                            </div>
                                         </td>
                                     </tr>
                                 @endif
@@ -261,23 +327,25 @@
                         </table>
                     </div>
 
-                    @if($isQuality)
+                    @if($defectItems->count() > 0 || $damagedItems->count() > 0)
                         <div class="mt-4">
 
                             <div class="d-flex align-items-center justify-content-between mb-2">
-                                <h5 class="mb-0">Quality Reclass Details</h5>
+                                <h5 class="mb-0">Defect / Damaged Unit Details</h5>
                                 <div class="muted">
-                                    Showing per-unit records linked to this adjustment.
+                                    Showing per-unit records created or consumed by this adjustment.
                                 </div>
                             </div>
 
-                            @if($qualityType === 'defect')
+                            @if($defectItems->count() > 0)
                                 <div class="table-responsive">
                                     <table class="table table-bordered table-sm">
                                         <thead>
                                             <tr>
                                                 <th style="width:60px" class="text-center">#</th>
+                                                <th>Product</th>
                                                 <th>Rack</th>
+                                                <th style="width:150px">Direction</th>
                                                 <th>Defect Type</th>
                                                 <th>Description</th>
                                                 <th style="width:120px" class="text-center">Photo</th>
@@ -286,11 +354,16 @@
                                         <tbody>
                                             @forelse($defectItems as $i => $it)
                                                 @php
-                                                    $rackText = $rackLabelMap[(int)($it->rack_id ?? 0)] ?? ('Rack#' . (int)($it->rack_id ?? 0));
+                                                    $product = $it->product;
                                                 @endphp
                                                 <tr>
                                                     <td class="text-center">{{ $i+1 }}</td>
-                                                    <td>{{ $rackText }}</td>
+                                                    <td>
+                                                        <strong>{{ $product->product_name ?? '-' }}</strong>
+                                                        <div class="muted">Code: {{ $product->product_code ?? '-' }}</div>
+                                                    </td>
+                                                    <td>{{ $rackText($it->rack_id ?? 0) }}</td>
+                                                    <td>{{ $unitDirection($it) }}</td>
                                                     <td>{{ \App\Support\DefectTypeSupport::text($it->defect_types ?? [], '-') }}</td>
                                                     <td>{{ $it->description ?? '-' }}</td>
                                                     <td class="text-center">
@@ -306,20 +379,24 @@
                                                 </tr>
                                             @empty
                                                 <tr>
-                                                    <td colspan="5" class="text-center muted">No defect items found.</td>
+                                                    <td colspan="7" class="text-center muted">No defect items found.</td>
                                                 </tr>
                                             @endforelse
                                         </tbody>
                                     </table>
                                 </div>
+                            @endif
 
-                            @elseif($qualityType === 'damaged')
+                            @if($damagedItems->count() > 0)
                                 <div class="table-responsive">
                                     <table class="table table-bordered table-sm">
                                         <thead>
                                             <tr>
                                                 <th style="width:60px" class="text-center">#</th>
+                                                <th>Product</th>
                                                 <th>Rack</th>
+                                                <th style="width:150px">Direction</th>
+                                                <th>Damage Type</th>
                                                 <th>Reason</th>
                                                 <th>Description</th>
                                                 <th style="width:120px" class="text-center">Photo</th>
@@ -328,13 +405,19 @@
                                         <tbody>
                                             @forelse($damagedItems as $i => $it)
                                                 @php
-                                                    $rackText = $rackLabelMap[(int)($it->rack_id ?? 0)] ?? ('Rack#' . (int)($it->rack_id ?? 0));
+                                                    $product = $it->product;
                                                 @endphp
                                                 <tr>
                                                     <td class="text-center">{{ $i+1 }}</td>
-                                                    <td>{{ $rackText }}</td>
+                                                    <td>
+                                                        <strong>{{ $product->product_name ?? '-' }}</strong>
+                                                        <div class="muted">Code: {{ $product->product_code ?? '-' }}</div>
+                                                    </td>
+                                                    <td>{{ $rackText($it->rack_id ?? 0) }}</td>
+                                                    <td>{{ $unitDirection($it) }}</td>
                                                     <td>{{ $it->damage_type ?? '-' }}</td>
                                                     <td>{{ $it->reason ?? '-' }}</td>
+                                                    <td>{{ $it->resolution_note ?? '-' }}</td>
                                                     <td class="text-center">
                                                         @if(!empty($it->photo_path))
                                                             @php $url = asset('storage/'.$it->photo_path); @endphp
@@ -348,21 +431,11 @@
                                                 </tr>
                                             @empty
                                                 <tr>
-                                                    <td colspan="5" class="text-center muted">No damaged items found.</td>
+                                                    <td colspan="8" class="text-center muted">No damaged items found.</td>
                                                 </tr>
                                             @endforelse
                                         </tbody>
                                     </table>
-                                </div>
-
-                            @elseif($qualityType === 'mixed')
-                                <div class="alert alert-warning">
-                                    QC items contain both <b>defect</b> and <b>damaged</b>. This is unusual; please check data.
-                                </div>
-
-                            @else
-                                <div class="alert alert-light border">
-                                    No per-unit QC records found for this adjustment.
                                 </div>
                             @endif
 

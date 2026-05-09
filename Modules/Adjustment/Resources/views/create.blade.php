@@ -266,12 +266,50 @@
 
     // ✅ remember last selected warehouse in Stock tab (biar UX enak)
     let LAST_STOCK_WAREHOUSE_ID = parseInt(window.DEFAULT_STOCK_WAREHOUSE_ID || 0);
+    window.currentAdjustmentMode = window.currentAdjustmentMode || 'stock';
 
     // =========================
     // STOCK: Toggle ADD/SUB UI (JANGAN UBAH LOGIC EXISTING)
     // =========================
     function getAdjType(){
         return document.querySelector('input[name="adjustment_type"]:checked')?.value || 'add';
+    }
+
+    function isToGood(type){
+        return type === 'defect_to_good' || type === 'damaged_to_good';
+    }
+
+    function currentProductSelectionContext(){
+        if(window.currentAdjustmentMode === 'quality'){
+            const qualityType = document.getElementById('quality_type')?.value || 'defect';
+            return isToGood(qualityType) ? 'adjustment_quality_to_good' : 'adjustment_quality_classic';
+        }
+
+        return getAdjType() === 'sub' ? 'adjustment_stock_sub' : 'adjustment_stock_add';
+    }
+
+    function syncProductSelectionContext(){
+        const context = currentProductSelectionContext();
+
+        document.querySelectorAll('[data-product-selection-context-input]').forEach(function(input){
+            if(input.value !== context){
+                input.value = context;
+                input.dispatchEvent(new Event('input', { bubbles: true }));
+                input.dispatchEvent(new Event('change', { bubbles: true }));
+            }
+        });
+
+        if(window.Livewire){
+            Livewire.emit('productSelectionContextChanged', context);
+        }
+    }
+
+    window.currentProductSelectionContext = currentProductSelectionContext;
+    window.syncProductSelectionContext = syncProductSelectionContext;
+
+    function setAdjustmentMode(mode){
+        window.currentAdjustmentMode = mode === 'quality' ? 'quality' : 'stock';
+        syncProductSelectionContext();
     }
 
     function ensureStockWarehouseSelected(){
@@ -337,6 +375,8 @@
             if (btnText) btnText.textContent = 'Create Adjustment (ADD)';
             setStockWarehouseHeaderVisible(true);
         }
+
+        syncProductSelectionContext();
     }
 
     function bindAdjTypeToggle(){
@@ -382,10 +422,6 @@
     // - Classic (GOOD->Issue) UI & JS sekarang ADA di partial (qrc*)
     // - ToGood tetap Livewire (existing)
     // =========================
-    function isToGood(type){
-        return type === 'defect_to_good' || type === 'damaged_to_good';
-    }
-
     function toggleQualityUIMode(type){
         const classic = document.getElementById('qualityClassicWrap');
         const toGoodWrap = document.getElementById('qualityIssueToGoodWrap');
@@ -402,6 +438,8 @@
             if(classic) classic.style.display = 'block';
             if(toGoodWrap) toGoodWrap.style.display = 'none';
         }
+
+        syncProductSelectionContext();
     }
 
     // =========================
@@ -454,6 +492,21 @@
     document.addEventListener('DOMContentLoaded', function () {
         // STOCK init
         bindAdjTypeToggle();
+        setAdjustmentMode(document.getElementById('pane-quality')?.classList.contains('active') ? 'quality' : 'stock');
+
+        document.getElementById('tab-stock')?.addEventListener('click', function () {
+            setAdjustmentMode('stock');
+        });
+
+        document.getElementById('tab-quality')?.addEventListener('click', function () {
+            setAdjustmentMode('quality');
+        });
+
+        if (window.jQuery) {
+            $('#adjustmentTabs a[data-toggle="pill"]').on('shown.bs.tab', function (event) {
+                setAdjustmentMode(event.target && event.target.id === 'tab-quality' ? 'quality' : 'stock');
+            });
+        }
 
         const stockWh = document.getElementById('warehouse_id_stock');
         if (stockWh) {

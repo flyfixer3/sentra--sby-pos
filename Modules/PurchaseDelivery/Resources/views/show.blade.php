@@ -379,13 +379,15 @@
                                 $rowKey = "pd-item-{$i}";
 
                                 $rackSummary = $rackInSummaryByProduct[$pid] ?? [];
+                                $productName = $detail->product->product_name ?? $detail->product_name ?? '-';
+                                $productCode = $detail->product->product_code ?? $detail->product_code ?? '';
                             @endphp
 
                             <tr>
                                 <td>
-                                    <div style="font-weight:800;">{{ $detail->product_name ?? '-' }}</div>
-                                    @if(!empty($detail->product_code))
-                                        <span class="pd-code">{{ $detail->product_code }}</span>
+                                    <div style="font-weight:800;">{{ $productName }}</div>
+                                    @if(!empty($productCode))
+                                        <span class="pd-code">{{ $productCode }}</span>
                                     @endif
                                 </td>
 
@@ -443,9 +445,9 @@
                                         <div class="perunit-card">
                                             <div class="perunit-title">
                                                 <div>
-                                                    Per-Unit Details — <span style="font-weight:900;">{{ $detail->product_name ?? '-' }}</span>
-                                                    @if(!empty($detail->product_code))
-                                                        <span class="pd-code ms-2">{{ $detail->product_code }}</span>
+                                                    Per-Unit Details — <span style="font-weight:900;">{{ $productName }}</span>
+                                                    @if(!empty($productCode))
+                                                        <span class="pd-code ms-2">{{ $productCode }}</span>
                                                     @endif
                                                 </div>
 

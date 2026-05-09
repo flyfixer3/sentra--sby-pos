@@ -11,10 +11,12 @@ class SearchProduct extends Component
 
     public bool $requireWarehouse = false;
     public bool $warehouseSelected = true;
+    public ?string $selectionContext = null;
 
     protected $listeners = [
         'fromWarehouseSelected' => 'onWarehouseSelected',
         'enableWarehouseRequirement' => 'enableWarehouseRequirement',
+        'productSelectionContextChanged' => 'productSelectionContextChanged',
     ];
 
     public $query;
@@ -36,6 +38,12 @@ class SearchProduct extends Component
         }
 
         $this->warehouseSelected = !empty($payload);
+    }
+
+    public function productSelectionContextChanged($context): void
+    {
+        $context = is_string($context) ? trim($context) : null;
+        $this->selectionContext = $context !== '' ? $context : null;
     }
 
 
@@ -86,6 +94,13 @@ class SearchProduct extends Component
     }
 
     public function selectProduct($product) {
+        if ($this->selectionContext) {
+            $payload = is_array($product) ? $product : $product->toArray();
+            $payload['__selection_context'] = $this->selectionContext;
+            $this->emit('productSelected', $payload);
+            return;
+        }
+
         $this->emit('productSelected', $product);
     }
 }

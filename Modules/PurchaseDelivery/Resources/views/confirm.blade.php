@@ -19,6 +19,8 @@
 @php
     $st = strtolower(trim((string)($purchaseDelivery->status ?? 'pending')));
     $details = $purchaseDelivery->purchaseDeliveryDetails ?? collect();
+    $lockedWarehouseId = (int) ($lockedWarehouseId ?? 0);
+    $warehouseLocked = $lockedWarehouseId > 0;
 
     $warehouseSelected = !empty($purchaseDelivery->warehouse_id);
 
@@ -58,7 +60,12 @@
                     </small>
                 </div>
 
-                @if(!$warehouseSelected)
+                @if($warehouseLocked)
+                    <div class="alert alert-info mt-3 mb-0">
+                        <b>Warehouse locked.</b>
+                        Warehouse is locked because this Purchase Delivery was already partially confirmed.
+                    </div>
+                @elseif(!$warehouseSelected)
                     <div class="alert alert-warning mt-3 mb-0">
                         <b>Warehouse belum dipilih.</b>
                         Pilih warehouse dulu supaya sistem bisa filter rack dan alokasi placement.
@@ -91,7 +98,10 @@
                   class="row g-2 align-items-end">
                 <div class="col-md-6">
                     <label class="mb-1"><b>Warehouse *</b></label>
-                    <select name="warehouse_id" class="form-control" id="warehouse_id_select" required>
+                    @if($warehouseLocked)
+                        <input type="hidden" name="warehouse_id" value="{{ $lockedWarehouseId }}">
+                    @endif
+                    <select name="warehouse_id" class="form-control" id="warehouse_id_select" required {{ $warehouseLocked ? 'disabled' : '' }}>
                         <option value="">-- Select Warehouse --</option>
                         @foreach(($warehouses ?? []) as $wh)
                             <option value="{{ (int)$wh->id }}" {{ (int)$purchaseDelivery->warehouse_id === (int)$wh->id ? 'selected' : '' }}>
@@ -101,7 +111,11 @@
                         @endforeach
                     </select>
                     <div class="text-muted mt-1">
-                        <small>Warehouse ini akan dipakai untuk filter rack dan untuk mutation IN saat confirm batch.</small>
+                        @if($warehouseLocked)
+                            <small>Warehouse is locked because this Purchase Delivery was already partially confirmed.</small>
+                        @else
+                            <small>Warehouse ini akan dipakai untuk filter rack dan untuk mutation IN saat confirm batch.</small>
+                        @endif
                     </div>
                 </div>
 
@@ -131,6 +145,9 @@
           id="confirm-form"
           enctype="multipart/form-data">
         @csrf
+        @if($warehouseSelected)
+            <input type="hidden" name="warehouse_id" value="{{ (int) $purchaseDelivery->warehouse_id }}">
+        @endif
 
         <div class="card">
             <div class="card-body p-0">
@@ -192,12 +209,16 @@
                                 data-expected="{{ $expected }}"
                                 data-already="{{ $alreadyConfirmed }}"
                                 data-remaining="{{ $remaining }}">
+                                @php
+                                    $productName = $detail->product->product_name ?? $detail->product_name ?? '-';
+                                    $productCode = $detail->product->product_code ?? $detail->product_code ?? '';
+                                @endphp
 
                                 <td class="align-middle">
                                     <div class="d-flex align-items-start justify-content-between">
                                         <div>
-                                            <div class="font-weight-bold">{{ $detail->product_name ?? '-' }}</div>
-                                            <div class="text-muted"><small>{{ $detail->product_code ?? '' }}</small></div>
+                                            <div class="font-weight-bold">{{ $productName }}</div>
+                                            <div class="text-muted"><small>{{ $productCode }}</small></div>
                                         </div>
                                         <span class="badge badge-pill badge-light border px-2 py-1">
                                             DID: {{ (int) $detail->id }}

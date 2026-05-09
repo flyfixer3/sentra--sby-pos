@@ -5,6 +5,7 @@ namespace Modules\PurchaseDelivery\Entities;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Modules\Inventory\Entities\Rack;
+use Modules\Product\Entities\Product;
 
 class PurchaseDeliveryDetails extends Model
 {
@@ -41,6 +42,11 @@ class PurchaseDeliveryDetails extends Model
     public function purchaseDelivery()
     {
         return $this->belongsTo(PurchaseDelivery::class, 'purchase_delivery_id');
+    }
+
+    public function product()
+    {
+        return $this->belongsTo(Product::class, 'product_id')->withoutGlobalScopes();
     }
 
     // ✅ NEW

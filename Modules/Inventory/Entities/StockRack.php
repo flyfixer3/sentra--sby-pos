@@ -29,7 +29,7 @@ class StockRack extends BaseModel
 
     public function product(): BelongsTo
     {
-        return $this->belongsTo(\Modules\Product\Entities\Product::class, 'product_id');
+        return $this->belongsTo(\Modules\Product\Entities\Product::class, 'product_id')->withoutGlobalScopes();
     }
 
     public function rack(): BelongsTo

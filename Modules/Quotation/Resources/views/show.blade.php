@@ -252,11 +252,15 @@
                                 $installationType = (string) ($item->installation_type ?? 'item_only');
                                 $vehicle = $item->customerVehicle;
                             @endphp
+                            @php
+                                $productName = $item->product->product_name ?? $item->product_name ?? '-';
+                                $productCode = $item->product->product_code ?? $item->product_code ?? '-';
+                            @endphp
                             <tr>
                                 <td>
-                                    <div class="fw-semibold">{{ $item->product_name }}</div>
+                                    <div class="fw-semibold">{{ $productName }}</div>
                                     <div class="text-muted small">
-                                        <span class="badge bg-success">{{ $item->product_code }}</span>
+                                        <span class="badge bg-success">{{ $productCode }}</span>
                                     </div>
                                 </td>
                                 <td class="text-end">{{ format_currency($item->unit_price) }}</td>

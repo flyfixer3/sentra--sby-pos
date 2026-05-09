@@ -145,7 +145,7 @@
                 return Array.from(map.values());
             }
 
-            function readSelectedFromPicker(picker) {
+            function readSelectedFromPicker(picker, fallbackToDataset) {
                 if (!picker) return [];
 
                 const checked = Array.from(picker.querySelectorAll('.defect-type-option:checked')).map((input) => input.value);
@@ -153,7 +153,7 @@
                     return normalizeDefectTypes(checked);
                 }
 
-                return normalizeDefectTypes(picker.dataset.selected || '[]');
+                return fallbackToDataset ? normalizeDefectTypes(picker.dataset.selected || '[]') : [];
             }
 
             function updatePickerSummary(picker, selected) {
@@ -183,7 +183,7 @@
             }
 
             function renderPickerChecklist(picker) {
-                const selected = readSelectedFromPicker(picker);
+                const selected = readSelectedFromPicker(picker, true);
                 const list = picker.querySelector('.defect-type-checklist');
                 if (!list) return;
 

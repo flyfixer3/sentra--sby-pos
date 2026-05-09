@@ -135,12 +135,14 @@
                             @php
                                 $maxQty = (int) ($detail->delivery_remaining_quantity ?? 0);
                                 $allocatedQty = (int) ($detail->allocated_delivery_quantity ?? 0);
+                                $productName = $detail->product->product_name ?? $detail->product_name ?? '-';
+                                $productCode = $detail->product->product_code ?? $detail->product_code ?? '-';
                             @endphp
 
                             <tr data-row="{{ $detail->id }}">
                                 <td>
-                                    <div class="font-weight-bold">{{ $detail->product_name }}</div>
-                                    <span class="badge bg-success">{{ $detail->product_code }}</span>
+                                    <div class="font-weight-bold">{{ $productName }}</div>
+                                    <span class="badge bg-success">{{ $productCode }}</span>
                                     <div class="pd-mini mt-1">
                                         Ordered: <span class="pd-remaining">{{ (int) ($detail->quantity ?? 0) }}</span>
                                         • Already in PD: <span class="pd-remaining">{{ $allocatedQty }}</span>
