@@ -7,6 +7,20 @@ use Illuminate\Support\Facades\Gate;
 
 class StoreSaleRequest extends FormRequest
 {
+    protected function prepareForValidation(): void
+    {
+        normalize_currency_request($this, [
+            'shipping_amount',
+            'fee_amount',
+            'total_amount',
+            'paid_amount',
+        ]);
+
+        if ($this->input('discount_type') === 'fixed') {
+            normalize_currency_request($this, ['header_discount_value']);
+        }
+    }
+
     public function rules()
     {
         return [

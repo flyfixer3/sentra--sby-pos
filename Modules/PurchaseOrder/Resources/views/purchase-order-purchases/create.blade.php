@@ -237,7 +237,7 @@
 
     $(document).on('click', '#getTotalAmount', function () {
         const raw = $('input[name="total_amount"]').val() || '0';
-        const num = parseInt(raw.toString().replace(/[^\d]/g, ''), 10) || 0;
+        const num = parseInt(raw.toString().replace(/[^\d-]/g, ''), 10) || 0;
         $('#paid_amount').maskMoney('mask', num);
     });
 
@@ -246,7 +246,7 @@
 
         $('#purchase-form').on('submit', function () {
             const paid_amount = $('#paid_amount').maskMoney('destroy')[0];
-            const new_number = parseInt((paid_amount.value || '').toString().replace(/[^\d]/g, ''), 10) || 0;
+            const new_number = parseInt((paid_amount.value || '').toString().replace(/[^\d-]/g, ''), 10) || 0;
             $('#paid_amount').val(new_number);
         });
     });

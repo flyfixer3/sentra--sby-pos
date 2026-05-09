@@ -177,7 +177,7 @@
 
         $('#expense-form').submit(function () {
             var amount = $('#amount').maskMoney('destroy')[0];
-            var new_number = parseInt(amount.value.toString().replaceAll(/[Rp.]/g, ""));
+            var new_number = parseInt((amount.value || "").toString().replace(/[^\d-]/g, ""), 10) || 0;
             $('#amount').val(new_number);
         });
     });

@@ -28,6 +28,12 @@ class UpdateQuotationRequest extends FormRequest
 
     protected function prepareForValidation(): void
     {
+        normalize_currency_request($this, [
+            'shipping_amount',
+            'total_amount',
+            'discount_amount',
+        ]);
+
         $status = strtolower(trim((string) $this->input('status', '')));
 
         if ($status === 'sent') {

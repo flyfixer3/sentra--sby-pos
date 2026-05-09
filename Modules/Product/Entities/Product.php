@@ -50,7 +50,7 @@ class Product extends BaseModel implements HasMedia
     }
 
     public function setProductCostAttribute($value) {
-        $this->attributes['product_cost'] = ($value * 1);
+        $this->attributes['product_cost'] = normalize_currency($value);
     }
 
     public function getProductCostAttribute($value) {
@@ -58,7 +58,7 @@ class Product extends BaseModel implements HasMedia
     }
 
     public function setProductPriceAttribute($value) {
-        $this->attributes['product_price'] = ($value * 1);
+        $this->attributes['product_price'] = normalize_currency($value);
     }
 
     public function getProductPriceAttribute($value) {

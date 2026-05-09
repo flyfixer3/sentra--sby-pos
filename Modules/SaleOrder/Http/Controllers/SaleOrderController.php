@@ -472,6 +472,21 @@ class SaleOrderController extends Controller
     public function store(Request $request)
     {
         abort_if(Gate::denies('create_sale_orders'), 403);
+        normalize_currency_request($request, [
+            'shipping_amount',
+            'fee_amount',
+            'deposit_amount',
+            'deposit_received_amount',
+            'items.*.price',
+            'items.*.original_price',
+            'items.*.unit_price',
+            'items.*.product_discount_amount',
+            'items.*.sub_total',
+        ]);
+
+        if ($request->input('discount_type') === 'fixed') {
+            normalize_currency_request($request, ['header_discount_value']);
+        }
 
         try {
             if ($request->filled('branch_id')) {
@@ -1082,6 +1097,20 @@ class SaleOrderController extends Controller
     public function update(Request $request, SaleOrder $saleOrder)
     {
         abort_if(Gate::denies('edit_sale_orders'), 403);
+        normalize_currency_request($request, [
+            'shipping_amount',
+            'fee_amount',
+            'deposit_amount',
+            'items.*.price',
+            'items.*.original_price',
+            'items.*.unit_price',
+            'items.*.product_discount_amount',
+            'items.*.sub_total',
+        ]);
+
+        if ($request->input('discount_type') === 'fixed') {
+            normalize_currency_request($request, ['header_discount_value']);
+        }
 
         try {
             $branchId = BranchContext::id();

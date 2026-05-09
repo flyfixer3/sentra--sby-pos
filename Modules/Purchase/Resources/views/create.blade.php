@@ -222,7 +222,7 @@ $(function () {
 
     $('#purchase-form').on('submit', function () {
         var paid_amount = $('#paid_amount').maskMoney('destroy')[0];
-        var digits = (paid_amount.value || '').toString().replace(/[^\d]/g, '');
+        var digits = (paid_amount.value || '').toString().replace(/[^\d-]/g, '');
         var new_number = parseInt(digits || '0', 10) || 0;
         $('#paid_amount').val(new_number);
     });
