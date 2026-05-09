@@ -42,7 +42,7 @@ class ScheduleCapacityController extends Controller
         $rows = DB::table('crm_service_orders')
             ->whereNull('deleted_at')
             ->whereIn('branch_id', $branchIds)
-            ->whereDate('scheduled_date', $date)
+            ->whereDate('scheduled_at', $date)
             ->whereIn('status', ['scheduled', 'in_progress', 'completed'])
             ->select('branch_id', 'status')
             ->get();
