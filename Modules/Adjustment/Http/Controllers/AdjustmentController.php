@@ -3,6 +3,7 @@
 namespace Modules\Adjustment\Http\Controllers;
 
 use App\Support\DefectTypeSupport;
+use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
 use Illuminate\Support\Facades\Auth;
@@ -390,7 +391,7 @@ class AdjustmentController extends Controller
 
         $request->validate($rules, $messages);
 
-        $date = (string) $request->date;
+        $date = $this->normalizeDateForDatabase($request->date);
         $note = html_entity_decode((string) ($request->note ?? ''), ENT_QUOTES, 'UTF-8');
 
         $decodeJsonArray = function ($raw): array {
@@ -1235,7 +1236,9 @@ class AdjustmentController extends Controller
             return is_array($arr) ? $arr : [];
         };
 
-        DB::transaction(function () use ($request, $adjustment, $branchId, $newWarehouseId, $decodeJsonArray) {
+        $date = $this->normalizeDateForDatabase($request->date);
+
+        DB::transaction(function () use ($request, $adjustment, $branchId, $newWarehouseId, $decodeJsonArray, $date) {
 
             $usedDefect = ProductDefectItem::query()
                 ->where('reference_type', Adjustment::class)
@@ -1270,7 +1273,7 @@ class AdjustmentController extends Controller
             AdjustedProduct::where('adjustment_id', $adjustment->id)->delete();
 
             $adjustment->update([
-                'date'         => (string) $request->date,
+                'date'         => $date,
                 'note'         => $request->note,
                 'branch_id'    => $branchId,
                 'warehouse_id' => $newWarehouseId,
@@ -1406,7 +1409,7 @@ class AdjustmentController extends Controller
                         $qty,
                         $reference,
                         $mutationNote,
-                        (string) $request->date,
+                        $date,
                         $rackId,
                         'good',
                         'summary'
@@ -1458,7 +1461,7 @@ class AdjustmentController extends Controller
                         $qty,
                         $reference,
                         $mutationNote,
-                        (string) $request->date,
+                        $date,
                         $rackId,
                         'defect',
                         'summary'
@@ -1512,7 +1515,7 @@ class AdjustmentController extends Controller
                         $qty,
                         $reference,
                         $mutationNote,
-                        (string) $request->date,
+                        $date,
                         $rackId,
                         'damaged',
                         'summary'
@@ -1547,7 +1550,7 @@ class AdjustmentController extends Controller
                         $qty,
                         $reference,
                         $mutationNote,
-                        (string) $request->date,
+                        $date,
                         $rackId,
                         'defect',
                         'summary'
@@ -1590,7 +1593,7 @@ class AdjustmentController extends Controller
                         $qty,
                         $reference,
                         $mutationNote,
-                        (string) $request->date,
+                        $date,
                         $rackId,
                         'damaged',
                         'summary'
@@ -1915,6 +1918,7 @@ class AdjustmentController extends Controller
         // =========================
         // DATA PREP
         // =========================
+        $date = $this->normalizeDateForDatabase($request->input('date'));
         $globalNote = html_entity_decode((string) $request->input('user_note', ''), ENT_QUOTES, 'UTF-8');
         $globalNote = trim($globalNote);
 
@@ -1941,7 +1945,7 @@ class AdjustmentController extends Controller
             // Create adjustment header
             // =========================
             $adjustment = new \Modules\Adjustment\Entities\Adjustment();
-            $adjustment->date = (string) $request->input('date');
+            $adjustment->date = $date;
             $adjustment->reference = $this->generateQualityReclassReference($type);
             $adjustment->branch_id = $activeBranchId;
             $adjustment->created_by = Auth::id();
@@ -1977,7 +1981,6 @@ class AdjustmentController extends Controller
                 }
 
                 $reference = (string) $adjustment->reference;
-                $date = (string) $adjustment->date;
 
                 foreach ($items as $idx => $it) {
                     $productId = (int) ($it['product_id'] ?? 0);
@@ -2331,7 +2334,7 @@ class AdjustmentController extends Controller
                         $qty,
                         $reference,
                         $mutationNote,
-                        (string) $adjustment->date,
+                        $date,
                         $rid,
                         $fromCondition,
                         'summary'
@@ -2345,7 +2348,7 @@ class AdjustmentController extends Controller
                         $qty,
                         $reference,
                         $mutationNote,
-                        (string) $adjustment->date,
+                        $date,
                         $rid,
                         'good',
                         'summary'
@@ -2632,6 +2635,31 @@ class AdjustmentController extends Controller
         }
 
         return $product;
+    }
+
+    private function normalizeDateForDatabase($value): string
+    {
+        if ($value instanceof \DateTimeInterface) {
+            return Carbon::instance($value)->toDateString();
+        }
+
+        $value = trim((string) $value);
+        if ($value === '') {
+            return now()->toDateString();
+        }
+
+        foreach (['Y-m-d', 'd/m/Y', 'd-m-Y', 'd M, Y', 'd F, Y'] as $format) {
+            try {
+                $date = Carbon::createFromFormat($format, $value);
+                if ($date !== false) {
+                    return $date->toDateString();
+                }
+            } catch (\Throwable $e) {
+                // Try the next supported project date format.
+            }
+        }
+
+        return Carbon::parse($value)->toDateString();
     }
 
     public function qualityProducts(Request $request)
