@@ -820,7 +820,7 @@ class PurchaseController extends Controller
         abort_if(Gate::denies('show_purchases'), 403);
 
         $purchase->loadMissing([
-            'purchaseDetails',
+            'purchaseDetails.product',
         ]);
 
         $supplier = Supplier::findOrFail($purchase->supplier_id);
@@ -900,7 +900,7 @@ class PurchaseController extends Controller
         abort_if(Gate::denies('edit_purchases'), 403);
 
         $purchase->loadMissing([
-            'purchaseDetails',
+            'purchaseDetails.product',
             'purchaseDelivery',
         ]);
 

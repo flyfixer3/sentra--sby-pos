@@ -17,7 +17,7 @@ class PurchasePayment extends Model
     }
 
     public function setAmountAttribute($value) {
-        $this->attributes['amount'] = $value * 1;
+        $this->attributes['amount'] = normalize_currency($value);
     }
 
     public function getAmountAttribute($value) {

@@ -65,11 +65,27 @@
                 </div>
             </div>
 
+            <div class="mb-3">
+                <div class="input-group">
+                    <div class="input-group-prepend">
+                        <span class="input-group-text bg-white">
+                            <i class="bi bi-search"></i>
+                        </span>
+                    </div>
+                    <input
+                        type="search"
+                        id="rack-product-search"
+                        class="form-control"
+                        placeholder="Search product code, product name, or rack stock..."
+                        autocomplete="off"
+                    >
+                </div>
+            </div>
+
             <div class="table-responsive">
                 <table class="table table-bordered table-striped mb-0">
                     <thead class="thead-dark">
                         <tr>
-                            <th style="width:60px;">#</th>
                             <th style="width:90px;">Product ID</th>
                             <th>Product</th>
                             <th style="width:140px;" class="text-right">Total Qty</th>
@@ -78,10 +94,9 @@
                             <th style="width:140px;" class="text-right">Damage Qty</th>
                         </tr>
                     </thead>
-                    <tbody>
-                        @forelse($products as $i => $product)
-                            <tr>
-                                <td class="align-middle">{{ $i + 1 }}</td>
+                    <tbody id="rack-products-table-body">
+                        @forelse($products as $product)
+                            <tr class="rack-product-row">
                                 <td class="align-middle">{{ (int) $product->product_id }}</td>
                                 <td class="align-middle">
                                     <div class="font-weight-bold">{{ $product->product_name ?? '-' }}</div>
@@ -101,11 +116,18 @@
                             </tr>
                         @empty
                             <tr>
-                                <td colspan="7" class="text-center text-muted py-4">
+                                <td colspan="6" class="text-center text-muted py-4">
                                     No product stock is currently linked to this rack.
                                 </td>
                             </tr>
                         @endforelse
+                        @if($products->isNotEmpty())
+                            <tr id="rack-products-no-match-row" class="d-none">
+                                <td colspan="6" class="text-center text-muted py-4">
+                                    No matching product stock found.
+                                </td>
+                            </tr>
+                        @endif
                     </tbody>
                 </table>
             </div>
@@ -113,3 +135,47 @@
     </div>
 </div>
 @endsection
+
+@push('page_scripts')
+<script>
+    (function () {
+        var searchInput = document.getElementById('rack-product-search');
+        var tableBody = document.getElementById('rack-products-table-body');
+        var noMatchRow = document.getElementById('rack-products-no-match-row');
+
+        if (!searchInput || !tableBody) {
+            return;
+        }
+
+        var rows = Array.prototype.slice.call(tableBody.querySelectorAll('.rack-product-row'));
+        var debounceTimer = null;
+
+        function normalizeSearchText(value) {
+            return (value || '').toString().toLowerCase();
+        }
+
+        function filterRows() {
+            var query = normalizeSearchText(searchInput.value).trim();
+            var visibleCount = 0;
+
+            rows.forEach(function (row) {
+                var matches = !query || normalizeSearchText(row.textContent).indexOf(query) !== -1;
+                row.classList.toggle('d-none', !matches);
+
+                if (matches) {
+                    visibleCount++;
+                }
+            });
+
+            if (noMatchRow) {
+                noMatchRow.classList.toggle('d-none', visibleCount > 0);
+            }
+        }
+
+        searchInput.addEventListener('input', function () {
+            window.clearTimeout(debounceTimer);
+            debounceTimer = window.setTimeout(filterRows, 120);
+        });
+    })();
+</script>
+@endpush

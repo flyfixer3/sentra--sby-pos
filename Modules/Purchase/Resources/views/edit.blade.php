@@ -219,8 +219,7 @@
 
             $('#purchase-form').submit(function () {
                 var paid_amount = $('#paid_amount').maskMoney('destroy')[0];
-                var raw = paid_amount.value.toString().replaceAll(/[Rp.]/g, "");
-                var new_number = parseInt(raw || 0);
+                var new_number = parseInt((paid_amount.value || "").toString().replace(/[^\d-]/g, ""), 10) || 0;
                 $('#paid_amount').val(new_number);
             });
         });

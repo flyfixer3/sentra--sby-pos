@@ -294,13 +294,15 @@
                 if (!empty($vehicle->vehicle_name)) {
                     $vehicleLabel .= ' / ' . $vehicle->vehicle_name;
                 }
+                $productName = $item->product->product_name ?? $item->product_name ?? '-';
+                $productCode = $item->product->product_code ?? $item->product_code ?? '';
             }
         @endphp
         <tr>
             <td>
-                <div class="fw-semibold">{{ $item->product_name }}</div>
-                @if(!empty($item->product_code))
-                    <span class="code-pill">{{ $item->product_code }}</span>
+                <div class="fw-semibold">{{ $productName }}</div>
+                @if(!empty($productCode))
+                    <span class="code-pill">{{ $productCode }}</span>
                 @endif
                 @if($isInstalled)
                     <div class="muted" style="margin-top:4px;">Vehicle: {{ $vehicleLabel }}</div>

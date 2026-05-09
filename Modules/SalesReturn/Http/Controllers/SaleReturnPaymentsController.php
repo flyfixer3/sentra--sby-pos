@@ -33,6 +33,7 @@ class SaleReturnPaymentsController extends Controller
 
     public function store(Request $request) {
         abort_if(Gate::denies('access_sale_return_payments'), 403);
+        normalize_currency_request($request, ['amount']);
 
         $request->validate([
             'date' => 'required|date',
@@ -89,6 +90,7 @@ class SaleReturnPaymentsController extends Controller
 
     public function update(Request $request, SaleReturnPayment $saleReturnPayment) {
         abort_if(Gate::denies('access_sale_return_payments'), 403);
+        normalize_currency_request($request, ['amount']);
 
         $request->validate([
             'date' => 'required|date',

@@ -235,8 +235,8 @@
             // $('#product-form').submit(function () {
             //     var product_cost = $('#product_cost').maskMoney('destroy')[0];
             //     var product_price = $('#product_price').maskMoney('destroy')[0];
-            //     var new_number_cost = parseInt(product_cost.value.toString().replaceAll(/[Rp.]/g, ""));
-            //     var new_number_price = parseInt(product_price.value.toString().replaceAll(/[Rp.]/g, ""));
+            //     var new_number_cost = parseInt((product_cost.value || "").toString().replace(/[^\d-]/g, ""), 10) || 0;
+            //     var new_number_price = parseInt((product_price.value || "").toString().replace(/[^\d-]/g, ""), 10) || 0;
             //     if(new_number_cost <= 0 || new_number_cost == NAN){
             //         $('#product_cost').val(0);
             //     }else{

@@ -7,6 +7,14 @@ use Illuminate\Support\Facades\Gate;
 
 class StoreProductRequest extends FormRequest
 {
+    protected function prepareForValidation(): void
+    {
+        normalize_currency_request($this, [
+            'product_cost',
+            'product_price',
+        ]);
+    }
+
     /**
      * Get the validation rules that apply to the request.
      *

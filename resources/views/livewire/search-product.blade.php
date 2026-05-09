@@ -1,4 +1,6 @@
 <div class="position-relative">
+    <input type="hidden" wire:model.defer="selectionContext" data-product-selection-context-input>
+
     <div class="card mb-0 border-0 shadow-sm">
         <div class="card-body">
             <div class="form-group mb-0">

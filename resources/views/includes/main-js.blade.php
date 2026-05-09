@@ -10,6 +10,18 @@
 
 @include('includes.session-timeout')
 
+<script>
+    (function () {
+        if (window.jQuery && jQuery.fn && jQuery.fn.dataTable) {
+            jQuery.extend(true, jQuery.fn.dataTable.defaults, {
+                scrollX: true,
+                responsive: false,
+                autoWidth: false
+            });
+        }
+    })();
+</script>
+
 @stack('page_scripts')
 
 <script>

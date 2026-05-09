@@ -450,7 +450,7 @@ class AdjustmentController extends Controller
                         $total = $good + $defect + $damaged;
                         if ($total <= 0) continue;
 
-                        Product::findOrFail($productId);
+                        $this->resolveAdjustmentProduct($productId, $branchId, (int) $idx + 1);
 
                         $baseNote = trim(
                             'Adjustment Add #' . (int) $adjustment->id
@@ -786,7 +786,7 @@ class AdjustmentController extends Controller
                         throw new \RuntimeException("Note is required at line #" . ($idx + 1));
                     }
 
-                    Product::findOrFail($productId);
+                    $this->resolveAdjustmentProduct($productId, $branchId, (int) $idx + 1);
 
                     // ---------- A) GOOD allocations (multi wh/rack) ----------
                     $goodAlloc = (array) ($it['good_allocations'] ?? []);
@@ -1070,10 +1070,75 @@ class AdjustmentController extends Controller
             'creator',
             'branch',
             'warehouse',
-            'adjustedProducts.product',
+            'adjustedProducts.rack',
+            'adjustedProducts.product' => function ($query) {
+                $query->withoutGlobalScopes();
+            },
         ]);
 
-        return view('adjustment::show', compact('adjustment'));
+        $adjustmentReferenceType = Adjustment::class;
+
+        $defectItems = ProductDefectItem::query()
+            ->with([
+                'product' => function ($query) {
+                    $query->withoutGlobalScopes();
+                },
+            ])
+            ->where(function ($query) use ($adjustment, $adjustmentReferenceType) {
+                $query->where(function ($q) use ($adjustment, $adjustmentReferenceType) {
+                    $q->where('reference_type', $adjustmentReferenceType)
+                        ->where('reference_id', $adjustment->id);
+                })->orWhere(function ($q) use ($adjustment, $adjustmentReferenceType) {
+                    $q->where('moved_out_reference_type', $adjustmentReferenceType)
+                        ->where('moved_out_reference_id', $adjustment->id);
+                });
+            })
+            ->orderBy('product_id')
+            ->orderBy('rack_id')
+            ->orderBy('id')
+            ->get();
+
+        $damagedItems = ProductDamagedItem::query()
+            ->with([
+                'product' => function ($query) {
+                    $query->withoutGlobalScopes();
+                },
+            ])
+            ->where(function ($query) use ($adjustment, $adjustmentReferenceType) {
+                $query->where(function ($q) use ($adjustment, $adjustmentReferenceType) {
+                    $q->where('reference_type', $adjustmentReferenceType)
+                        ->where('reference_id', $adjustment->id);
+                })->orWhere(function ($q) use ($adjustment, $adjustmentReferenceType) {
+                    $q->where('moved_out_reference_type', $adjustmentReferenceType)
+                        ->where('moved_out_reference_id', $adjustment->id);
+                });
+            })
+            ->orderBy('product_id')
+            ->orderBy('rack_id')
+            ->orderBy('id')
+            ->get();
+
+        $rackIds = $adjustment->adjustedProducts
+            ->pluck('rack_id')
+            ->merge($defectItems->pluck('rack_id'))
+            ->merge($damagedItems->pluck('rack_id'))
+            ->filter()
+            ->map(function ($rackId) {
+                return (int) $rackId;
+            })
+            ->unique()
+            ->values();
+
+        $rackLabelMap = DB::table('racks')
+            ->whereIn('id', $rackIds)
+            ->get(['id', 'code', 'name'])
+            ->mapWithKeys(function ($rack) {
+                $label = trim((string) ($rack->code ?? '') . ((string) ($rack->name ?? '') !== '' ? ' - ' . (string) $rack->name : ''));
+                return [(int) $rack->id => $label !== '' ? $label : 'Rack#' . (int) $rack->id];
+            })
+            ->toArray();
+
+        return view('adjustment::show', compact('adjustment', 'defectItems', 'damagedItems', 'rackLabelMap'));
     }
 
     public function edit(Adjustment $adjustment)
@@ -1238,7 +1303,7 @@ class AdjustmentController extends Controller
                     $condition = 'good';
                 }
 
-                Product::findOrFail($productId);
+                $this->resolveAdjustmentProduct($productId, $branchId, (int) $key + 1);
 
                 $defectUnits = [];
                 if ($type === 'add' && $condition === 'defect') {
@@ -1924,7 +1989,7 @@ class AdjustmentController extends Controller
                     }
 
                     $this->assertRackBelongsToWarehouse($rackId, $warehouseId);
-                    Product::findOrFail($productId);
+                    $this->resolveAdjustmentProduct($productId, $activeBranchId, (int) $idx + 1);
 
                     $itemNote = trim(
                         'Quality Reclass #' . (int) $adjustment->id . ' | GOOD->' . strtoupper($type) . ($globalNote ? ' | ' . $globalNote : '')
@@ -2546,6 +2611,27 @@ class AdjustmentController extends Controller
         }
 
         return $file->store($folder, 'public');
+    }
+
+    private function resolveAdjustmentProduct(int $productId, int $branchId, int $lineNumber): Product
+    {
+        if ($productId <= 0) {
+            throw new \RuntimeException("Line #{$lineNumber}: selected product is invalid. Please re-select the product.");
+        }
+
+        $product = Product::withoutGlobalScopes()
+            ->where('id', $productId)
+            ->where(function ($query) use ($branchId) {
+                $query->whereNull('branch_id')
+                    ->orWhere('branch_id', (int) $branchId);
+            })
+            ->first();
+
+        if (!$product) {
+            throw new \RuntimeException("Line #{$lineNumber}: selected product was not found for the active branch. Please re-select the product.");
+        }
+
+        return $product;
     }
 
     public function qualityProducts(Request $request)

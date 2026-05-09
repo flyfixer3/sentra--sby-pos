@@ -17,12 +17,28 @@ use Modules\Mutation\Http\Controllers\MutationController;
 Route::group(['middleware' => 'auth'], function () {
     //Product Mutation
     Route::get('mutations', [MutationController::class, 'index'])->name('mutations.index');
-    Route::get('mutations/create', [MutationController::class, 'create'])
-        ->middleware('branch.selected')
-        ->name('mutations.create');
-    Route::post('mutations', [MutationController::class, 'store'])
-        ->middleware('branch.selected')
-        ->name('mutations.store');
-    Route::get('mutations/{mutation}', [MutationController::class, 'show'])->name('mutations.show');
+    
+    // Route::get('mutations/{mutation}', [MutationController::class, 'show'])->name('mutations.show');
+        /*
+    |--------------------------------------------------------------------------
+    | Manual Mutation Creation Disabled
+    |--------------------------------------------------------------------------
+    |
+    | Mutation sekarang hanya boleh dibuat otomatis dari flow sistem:
+    | - Purchase Delivery
+    | - Sale Delivery
+    | - Transfer
+    | - Adjustment
+    | - Rack Movement
+    | - Opening Stock Import
+    | - Stock Quality movement
+    |
+    | Karena itu route mutations/create dan mutations.store tidak dibuka lagi.
+    | Method store() di MutationController tetap dibiarkan untuk sementara
+    | sebagai fallback/history, tapi tidak diexpose melalui route.
+    |
+    */
 
+    Route::get('mutations/{mutation}', [MutationController::class, 'show'])
+        ->name('mutations.show');
 });

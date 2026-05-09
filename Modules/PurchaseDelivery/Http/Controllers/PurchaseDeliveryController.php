@@ -90,7 +90,7 @@ class PurchaseDeliveryController extends Controller
                 ->with('error', 'This PO belongs to a different branch than the active branch.');
         }
 
-        $purchaseOrder->load(['supplier', 'purchaseOrderDetails']);
+        $purchaseOrder->load(['supplier', 'purchaseOrderDetails.product']);
 
         $remainingItems = $purchaseOrder->purchaseOrderDetailsWithDeliveryRemaining()
             ->filter(function ($detail) {
@@ -198,11 +198,13 @@ class PurchaseDeliveryController extends Controller
                     throw new \RuntimeException("Submitted PD quantity exceeds remaining ordered quantity for item {$poDetail->product_name}. Remaining available: {$maxQty}");
                 }
 
+                $product = Product::withoutGlobalScopes()->find((int) $poDetail->product_id);
+
                 PurchaseDeliveryDetails::create([
                     'purchase_delivery_id' => (int) $delivery->id,
                     'product_id'           => (int) $poDetail->product_id,
-                    'product_name'         => (string) $poDetail->product_name,
-                    'product_code'         => (string) $poDetail->product_code,
+                    'product_name'         => (string) ($product->product_name ?? $poDetail->product_name),
+                    'product_code'         => (string) ($product->product_code ?? $poDetail->product_code),
                     'quantity'             => (int) $qty,
                     'qty_received'         => 0,
                     'qty_defect'           => 0,
@@ -335,13 +337,26 @@ class PurchaseDeliveryController extends Controller
         $purchaseDelivery->load([
             'purchaseOrder',
             'purchase',
-            'purchaseDeliveryDetails',
+            'purchaseDeliveryDetails.product',
             'warehouse',
         ]);
 
         $branchId = $this->activeBranchIdOrFail('purchase-deliveries.index');
         if ((int) $purchaseDelivery->branch_id !== (int) $branchId) {
             abort(403, 'Active branch mismatch for this Purchase Delivery.');
+        }
+
+        $lockedWarehouseId = $this->resolveLockedWarehouseForPartialDelivery($purchaseDelivery);
+        if ($this->purchaseDeliveryHasConfirmedQuantity($purchaseDelivery) && $lockedWarehouseId <= 0) {
+            return redirect()
+                ->route('purchase-deliveries.show', $purchaseDelivery->id)
+                ->with('error', 'Cannot confirm remaining items because the previous confirmation warehouse could not be determined.');
+        }
+
+        if ($lockedWarehouseId > 0 && (int) ($purchaseDelivery->warehouse_id ?? 0) !== $lockedWarehouseId) {
+            $purchaseDelivery->update(['warehouse_id' => $lockedWarehouseId]);
+            $purchaseDelivery->setAttribute('warehouse_id', $lockedWarehouseId);
+            $purchaseDelivery->load(['warehouse']);
         }
 
         // ✅ list warehouse untuk dropdown di confirm
@@ -358,6 +373,12 @@ class PurchaseDeliveryController extends Controller
          */
         if ($request->filled('warehouse_id')) {
             $whId = (int) $request->warehouse_id;
+
+            if ($lockedWarehouseId > 0 && $whId !== $lockedWarehouseId) {
+                return redirect()
+                    ->route('purchase-deliveries.confirm', $purchaseDelivery->id)
+                    ->with('error', 'Warehouse is locked because this Purchase Delivery was already partially confirmed.');
+            }
 
             $wh = Warehouse::findOrFail($whId);
             if ((int) $wh->branch_id !== (int) $purchaseDelivery->branch_id) {
@@ -376,9 +397,11 @@ class PurchaseDeliveryController extends Controller
                 abort(422, 'This delivery can no longer be confirmed.');
             }
 
-            $purchaseDelivery->update([
-                'warehouse_id' => $whId,
-            ]);
+            if ($lockedWarehouseId <= 0) {
+                $purchaseDelivery->update([
+                    'warehouse_id' => $whId,
+                ]);
+            }
 
             // reload relation warehouse
             $purchaseDelivery->loadMissing(['warehouse']);
@@ -400,7 +423,75 @@ class PurchaseDeliveryController extends Controller
             'purchaseDelivery' => $purchaseDelivery,
             'racks'            => $racks,
             'warehouses'       => $warehouses,
+            'lockedWarehouseId'=> $lockedWarehouseId,
         ]);
+    }
+
+    private function purchaseDeliveryHasConfirmedQuantity(PurchaseDelivery $purchaseDelivery): bool
+    {
+        $details = $purchaseDelivery->relationLoaded('purchaseDeliveryDetails')
+            ? $purchaseDelivery->purchaseDeliveryDetails
+            : $purchaseDelivery->purchaseDeliveryDetails()->get(['qty_received', 'qty_defect', 'qty_damaged']);
+
+        foreach ($details as $detail) {
+            $confirmed = (int) ($detail->qty_received ?? 0)
+                + (int) ($detail->qty_defect ?? 0)
+                + (int) ($detail->qty_damaged ?? 0);
+
+            if ($confirmed > 0) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private function resolveLockedWarehouseForPartialDelivery(PurchaseDelivery $purchaseDelivery): int
+    {
+        if (!$this->purchaseDeliveryHasConfirmedQuantity($purchaseDelivery)) {
+            return 0;
+        }
+
+        $warehouseId = (int) ($purchaseDelivery->warehouse_id ?? 0);
+        if ($warehouseId > 0) {
+            return $warehouseId;
+        }
+
+        $baseRef = 'PD-' . (int) $purchaseDelivery->id;
+        $mutationWarehouseIds = Mutation::withoutGlobalScopes()
+            ->where('reference', 'like', $baseRef . '-B%')
+            ->pluck('warehouse_id')
+            ->filter()
+            ->map(function ($id) {
+                return (int) $id;
+            })
+            ->unique()
+            ->values();
+
+        if ($mutationWarehouseIds->count() === 1) {
+            return (int) $mutationWarehouseIds->first();
+        }
+
+        $defectWarehouseIds = ProductDefectItem::withoutGlobalScopes()
+            ->where('reference_type', PurchaseDelivery::class)
+            ->where('reference_id', (int) $purchaseDelivery->id)
+            ->pluck('warehouse_id');
+
+        $damagedWarehouseIds = ProductDamagedItem::withoutGlobalScopes()
+            ->where('reference_type', PurchaseDelivery::class)
+            ->where('reference_id', (int) $purchaseDelivery->id)
+            ->pluck('warehouse_id');
+
+        $unitWarehouseIds = $defectWarehouseIds
+            ->merge($damagedWarehouseIds)
+            ->filter()
+            ->map(function ($id) {
+                return (int) $id;
+            })
+            ->unique()
+            ->values();
+
+        return $unitWarehouseIds->count() === 1 ? (int) $unitWarehouseIds->first() : 0;
     }
 
     private function assertRackBelongsToWarehouse(int $rackId, int $warehouseId): void
@@ -478,10 +569,28 @@ class PurchaseDeliveryController extends Controller
                 abort(422, 'This delivery can no longer be confirmed.');
             }
 
+            $purchaseDelivery->loadMissing(['purchaseDeliveryDetails']);
+            $lockedWarehouseId = $this->resolveLockedWarehouseForPartialDelivery($purchaseDelivery);
+            if ($this->purchaseDeliveryHasConfirmedQuantity($purchaseDelivery) && $lockedWarehouseId <= 0) {
+                throw \Illuminate\Validation\ValidationException::withMessages([
+                    'warehouse_id' => 'Cannot confirm remaining items because the previous confirmation warehouse could not be determined.',
+                ]);
+            }
+
             // =========================================================
-            // ✅ FIX UTAMA WAREHOUSE:
+            // ✅ WAREHOUSE:
+            // - first confirmation can choose warehouse
+            // - remaining confirmation is locked to previous warehouse
             // =========================================================
-            $warehouseId = (int) ($request->warehouse_id ?? 0);
+            $submittedWarehouseId = (int) ($request->warehouse_id ?? 0);
+            $warehouseId = $lockedWarehouseId > 0 ? $lockedWarehouseId : $submittedWarehouseId;
+
+            if ($lockedWarehouseId > 0 && $submittedWarehouseId > 0 && $submittedWarehouseId !== $lockedWarehouseId) {
+                throw \Illuminate\Validation\ValidationException::withMessages([
+                    'warehouse_id' => 'Warehouse is locked because this Purchase Delivery was already partially confirmed.',
+                ]);
+            }
+
             if ($warehouseId <= 0) {
                 $warehouseId = (int) ($purchaseDelivery->warehouse_id ?? 0);
             }
@@ -505,7 +614,7 @@ class PurchaseDeliveryController extends Controller
 
             $purchaseDelivery->loadMissing([
                 'purchaseOrder.purchaseOrderDetails',
-                'purchaseDeliveryDetails',
+                'purchaseDeliveryDetails.product',
                 'warehouse',
                 'purchase', // ✅ boleh ada, tapi jangan DIANDALKAN karena PD kamu memang tidak simpan purchase_id
             ]);
@@ -1090,7 +1199,7 @@ class PurchaseDeliveryController extends Controller
             'creator',
             'noteUpdater',
             'confirmNoteUpdater',
-            'purchaseDeliveryDetails',
+            'purchaseDeliveryDetails.product',
         ]);
 
         $vendorName = optional(optional($purchaseDelivery->purchaseOrder)->supplier)->supplier_name

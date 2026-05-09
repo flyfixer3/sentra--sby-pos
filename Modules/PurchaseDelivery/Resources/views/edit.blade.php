@@ -151,10 +151,14 @@
                         </thead>
                         <tbody>
                             @forelse($purchaseDelivery->purchaseDeliveryDetails as $d)
+                                @php
+                                    $productName = $d->product->product_name ?? $d->product_name ?? '-';
+                                    $productCode = $d->product->product_code ?? $d->product_code ?? '-';
+                                @endphp
                                 <tr>
                                     <td>
-                                        <div class="font-weight-bold">{{ $d->product_name ?? '-' }}</div>
-                                        <span class="badge bg-success">{{ $d->product_code ?? '-' }}</span>
+                                        <div class="font-weight-bold">{{ $productName }}</div>
+                                        <span class="badge bg-success">{{ $productCode }}</span>
                                     </td>
 
                                     <td>

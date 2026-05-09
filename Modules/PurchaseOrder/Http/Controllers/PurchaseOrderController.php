@@ -31,7 +31,7 @@ class PurchaseOrderController extends Controller
 
         $purchase_order = PurchaseOrder::withoutGlobalScopes()
             ->with([
-                'purchaseOrderDetails',
+                'purchaseOrderDetails.product',
                 'supplier',
                 'branch',
             ])
@@ -42,7 +42,7 @@ class PurchaseOrderController extends Controller
         }
 
         $purchase_order->loadMissing([
-            'purchaseOrderDetails',
+            'purchaseOrderDetails.product',
             'supplier',
             'branch',
         ]);
@@ -162,11 +162,13 @@ class PurchaseOrderController extends Controller
             // ✅ CREATE PO DETAILS
             // ==========================
             foreach ($cart->content() as $item) {
+                $product = Product::withoutGlobalScopes()->find((int) $item->id);
+
                 PurchaseOrderDetails::create([
                     'purchase_order_id'        => (int) $purchaseOrder->id,
                     'product_id'               => (int) $item->id,
-                    'product_name'             => (string) $item->name,
-                    'product_code'             => (string) $item->options->code,
+                    'product_name'             => (string) ($product->product_name ?? $item->name),
+                    'product_code'             => (string) ($product->product_code ?? $item->options->code ?? ''),
                     'quantity'                 => (int) $item->qty,
                     'fulfilled_quantity'       => 0,
                     'price'                    => (float) $item->price,
@@ -227,7 +229,7 @@ class PurchaseOrderController extends Controller
         abort_if(\Illuminate\Support\Facades\Gate::denies('show_purchase_orders'), 403);
 
         $purchase_order = \Modules\PurchaseOrder\Entities\PurchaseOrder::with([
-            'purchaseOrderDetails',
+            'purchaseOrderDetails.product',
             'purchases',
             'purchaseDeliveries',
             'supplier',
@@ -359,11 +361,13 @@ class PurchaseOrderController extends Controller
                     $fulfilled_qty = $newQty;
                 }
 
+                $product = Product::withoutGlobalScopes()->find((int) $cart_item->id);
+
                 PurchaseOrderDetails::create([
                     'purchase_order_id' => $purchase_order->id,
                     'product_id' => (int) $cart_item->id,
-                    'product_name' => (string) $cart_item->name,
-                    'product_code' => (string) $cart_item->options->code,
+                    'product_name' => (string) ($product->product_name ?? $cart_item->name),
+                    'product_code' => (string) ($product->product_code ?? $cart_item->options->code ?? ''),
                     'quantity' => $newQty,
                     'fulfilled_quantity' => $fulfilled_qty,
 

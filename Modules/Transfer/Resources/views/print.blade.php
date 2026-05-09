@@ -258,7 +258,7 @@
         <tbody>
             @foreach($transfer->items as $index => $item)
                 @php
-                    $productName = $item->product->product_name ?? ($item->product->name ?? '-');
+                    $productName = $item->product->product_name ?? '-';
                     $productCode = $item->product->product_code ?? null;
                     $displayName = $productCode ? ($productName . ' | ' . $productCode) : $productName;
                     $unit = 'PCS';

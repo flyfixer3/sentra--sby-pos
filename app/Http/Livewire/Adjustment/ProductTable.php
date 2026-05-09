@@ -67,7 +67,7 @@ class ProductTable extends Component
                 $productId = (int) ($row['product_id'] ?? 0);
                 if (!$productId) continue;
 
-                $p = Product::find($productId);
+                $p = Product::withoutGlobalScopes()->find($productId);
                 if (!$p) continue;
 
                 $this->products[] = [
@@ -196,8 +196,31 @@ class ProductTable extends Component
     // =========================
     // PRODUCT SELECTED
     // =========================
+    private function shouldHandleProductSelection($product): bool
+    {
+        if (!is_array($product) || empty($product['__selection_context'])) {
+            return true;
+        }
+
+        $context = (string) $product['__selection_context'];
+
+        if ($this->mode === 'stock_add') {
+            return $context === 'adjustment_stock_add';
+        }
+
+        if ($this->mode === 'quality') {
+            return $context === 'adjustment_quality_classic';
+        }
+
+        return true;
+    }
+
     public function productSelected($product)
     {
+        if (!$this->shouldHandleProductSelection($product)) {
+            return;
+        }
+
         $productId = is_array($product) ? (int) ($product['id'] ?? 0) : (int) $product;
         if (!$productId) return;
 
@@ -229,7 +252,7 @@ class ProductTable extends Component
             }
         }
 
-        $p = Product::find($productId);
+        $p = Product::withoutGlobalScopes()->find($productId);
         if (!$p) {
             session()->flash('message', 'Product not found!');
             $this->dispatchQualitySummary();

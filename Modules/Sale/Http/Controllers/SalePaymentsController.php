@@ -41,6 +41,7 @@ class SalePaymentsController extends Controller
 
     public function store(Request $request) {
         abort_if(Gate::denies('access_sale_payments'), 403);
+        normalize_currency_request($request, ['amount']);
         
         $sale = Sale::findOrFail($request->sale_id);
         $request->validate([
@@ -151,6 +152,7 @@ class SalePaymentsController extends Controller
 
     public function update(Request $request, SalePayment $salePayment) {
         abort_if(Gate::denies('access_sale_payments'), 403);
+        normalize_currency_request($request, ['amount']);
 
         $request->validate([
             'date' => 'required|date',

@@ -347,12 +347,15 @@
 
                                     $sub = (float) ($item->sub_total ?? 0);
                                     if ($sub <= 0) $sub = $shownUnitPrice * $qty;
+
+                                    $productName = $item->product->product_name ?? $item->product_name ?? '-';
+                                    $productCode = $item->product->product_code ?? $item->product_code ?? '-';
                                 @endphp
                                 <tr>
                                     <td>
-                                        <div style="font-weight:800;">{{ $item->product_name }}</div>
+                                        <div style="font-weight:800;">{{ $productName }}</div>
                                         <div class="mt-1">
-                                            <span class="item-code">{{ $item->product_code }}</span>
+                                            <span class="item-code">{{ $productCode }}</span>
                                         </div>
                                     </td>
                                     <td class="text-end">{{ format_currency($shownUnitPrice) }}</td>

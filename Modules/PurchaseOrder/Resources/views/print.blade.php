@@ -261,11 +261,15 @@
     </thead>
     <tbody>
     @forelse($purchase_order->purchaseOrderDetails as $item)
+        @php
+            $productName = $item->product->product_name ?? $item->product_name ?? '-';
+            $productCode = $item->product->product_code ?? $item->product_code ?? '-';
+        @endphp
         <tr>
             <td class="col-no">{{ $loop->iteration }}</td>
             <td>
-                <strong>{{ $item->product_name ?? '-' }}</strong>
-                <span class="product-code">Code: {{ $item->product_code ?? '-' }}</span>
+                <strong>{{ $productName }}</strong>
+                <span class="product-code">Code: {{ $productCode }}</span>
             </td>
             <td class="text-right">{{ format_currency($item->unit_price ?? 0) }}</td>
             <td class="col-qty">{{ $item->quantity ?? 0 }}</td>

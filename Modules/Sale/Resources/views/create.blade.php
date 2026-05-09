@@ -319,7 +319,7 @@
 <script>
     function parseMoneyToInt(val) {
         if (!val) return 0;
-        var digits = val.toString().replace(/[^\d]/g, '');
+        var digits = val.toString().replace(/[^\d-]/g, '');
         return digits ? (parseInt(digits, 10) || 0) : 0;
     }
 

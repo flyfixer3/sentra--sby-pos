@@ -23,12 +23,82 @@ if (!function_exists('format_currency')) {
         $thousand_separator = $settings->currency->thousand_separator;
 
         if ($position == 'prefix') {
-            $formatted_value = $symbol . number_format((float) $value, 0, $thousand_separator, $decimal_separator);
+            $formatted_value = $symbol . number_format((float) $value, 0, $decimal_separator, $thousand_separator);
         } else {
-            $formatted_value = number_format((float) $value, 0, $thousand_separator, $decimal_separator) . $symbol;
+            $formatted_value = number_format((float) $value, 0, $decimal_separator, $thousand_separator) . $symbol;
         }
 
         return $formatted_value;
+    }
+}
+
+if (!function_exists('normalize_currency')) {
+    function normalize_currency($value, $default = 0) {
+        if ($value === null || $value === '') {
+            return $default;
+        }
+
+        if (is_int($value)) {
+            return $value;
+        }
+
+        if (is_float($value)) {
+            return (int) round($value);
+        }
+
+        $value = trim((string) $value);
+        if ($value === '') {
+            return $default;
+        }
+
+        $negative = strpos($value, '-') === 0;
+        $digits = preg_replace('/\D+/', '', $value);
+
+        if ($digits === '') {
+            return $default;
+        }
+
+        $amount = (int) $digits;
+
+        return $negative ? -$amount : $amount;
+    }
+}
+
+if (!function_exists('normalize_currency_request')) {
+    function normalize_currency_request($request, array $fields, $default = 0) {
+        $normalized = [];
+        $input = $request->all();
+
+        foreach ($fields as $field) {
+            if (strpos($field, '.*.') !== false) {
+                [$prefix, $suffix] = explode('.*.', $field, 2);
+                $items = data_get($input, $prefix);
+
+                if (!is_array($items)) {
+                    continue;
+                }
+
+                foreach ($items as $index => $item) {
+                    if (!is_array($item) || !array_key_exists($suffix, $item)) {
+                        continue;
+                    }
+
+                    data_set($normalized, $prefix . '.' . $index . '.' . $suffix, normalize_currency($item[$suffix], $default));
+                }
+
+                continue;
+            }
+
+            if (!$request->exists($field)) {
+                continue;
+            }
+
+            $normalized[$field] = normalize_currency($request->input($field), $default);
+        }
+
+        if (!empty($normalized)) {
+            $request->merge($normalized);
+        }
     }
 }
 

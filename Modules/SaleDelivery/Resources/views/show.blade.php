@@ -229,7 +229,7 @@
                             <tr @if($isMismatch) class="table-danger" @endif>
                                 <td>
                                     <div class="fw-semibold">{{ $it->product?->product_name ?? ($it->product_name ?? '-') }}</div>
-                                    <div class="text-muted small">product_id: {{ (int)($it->product_id ?? 0) }}</div>
+                                    <span class="text-muted small">product_id: {{ (int)($it->product_id ?? 0) }}</span> <span class="text-muted small">| product_code: {{ $it->product?->product_code ?? '-' }}</span>
                                 </td>
 
                                 <td class="text-end">

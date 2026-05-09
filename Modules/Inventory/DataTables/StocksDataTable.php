@@ -34,7 +34,13 @@ class StocksDataTable extends DataTable
             ->editColumn('good_qty', fn ($row) => number_format((int) ($row->good_qty ?? 0)))
             ->editColumn('reserved_qty', fn ($row) => number_format((int) ($row->reserved_qty ?? 0)))
             ->editColumn('incoming_qty', fn ($row) => number_format((int) ($row->incoming_qty ?? 0)))
-            ->editColumn('available_qty', fn ($row) => number_format((int) ($row->available_qty ?? 0)))
+            ->editColumn('available_qty', function ($row) {
+                $qty = (int) ($row->available_qty ?? 0);
+
+                return '<span class="badge bg-success rounded-pill px-3 py-1 text-white">'
+                    . number_format($qty)
+                    . '</span>';
+            })
             ->editColumn('outgoing_qty', fn ($row) => number_format((int) ($row->outgoing_qty ?? 0)))
 
             /**
@@ -88,7 +94,7 @@ class StocksDataTable extends DataTable
                 ';
             })
 
-            ->rawColumns(['warehouse_name', 'defect_qty', 'damaged_qty', 'action']);
+            ->rawColumns(['warehouse_name', 'available_qty', 'defect_qty', 'damaged_qty', 'action']);
     }
 
     public function query(): \Illuminate\Database\Query\Builder
@@ -308,7 +314,8 @@ class StocksDataTable extends DataTable
                 Button::make('reload')->text('<i class="bi bi-arrow-repeat"></i> Reload')
             )
             ->parameters([
-                'responsive' => true,
+                'scrollX' => true,
+                'responsive' => false,
                 'autoWidth' => false,
                 'processing' => true,
                 'serverSide' => true,

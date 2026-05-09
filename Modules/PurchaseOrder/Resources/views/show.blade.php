@@ -374,11 +374,13 @@
                                 $ordered = (int) ($item->quantity ?? 0);
                                 $fulfilled = (int) ($item->fulfilled_quantity ?? 0);
                                 $remaining = max(0, $ordered - $fulfilled);
+                                $productName = $item->product->product_name ?? $item->product_name ?? '-';
+                                $productCode = $item->product->product_code ?? $item->product_code ?? '-';
                             @endphp
                             <tr>
                                 <td>
-                                    <div style="font-weight:900;">{{ $item->product_name }}</div>
-                                    <span class="po-code">{{ $item->product_code }}</span>
+                                    <div style="font-weight:900;">{{ $productName }}</div>
+                                    <span class="po-code">{{ $productCode }}</span>
                                 </td>
                                 <td>{{ format_currency($item->unit_price) }}</td>
                                 <td class="text-center">{{ $ordered }}</td>

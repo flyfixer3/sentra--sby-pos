@@ -7,6 +7,16 @@ use Illuminate\Support\Facades\Gate;
 
 class UpdatePurchaseRequest extends FormRequest
 {
+    protected function prepareForValidation(): void
+    {
+        normalize_currency_request($this, [
+            'shipping_amount',
+            'total_amount',
+            'paid_amount',
+            'discount_amount',
+        ]);
+    }
+
     /**
      * Get the validation rules that apply to the request.
      *

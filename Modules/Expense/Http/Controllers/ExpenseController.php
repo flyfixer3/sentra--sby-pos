@@ -35,6 +35,7 @@ class ExpenseController extends Controller
     public function store(Request $request) 
     {
         abort_if(Gate::denies('create_expenses'), 403);
+        normalize_currency_request($request, ['amount']);
 
         $branchId = BranchContext::id();
         abort_unless($branchId, 403); // wajib pilih cabang spesifik (bukan ALL) untuk input transaksi
@@ -167,6 +168,7 @@ class ExpenseController extends Controller
     public function update(Request $request, Expense $expense) 
     {
         abort_if(Gate::denies('edit_expenses'), 403);
+        normalize_currency_request($request, ['amount']);
 
         $branchId = BranchContext::id();
         abort_unless($branchId, 403);

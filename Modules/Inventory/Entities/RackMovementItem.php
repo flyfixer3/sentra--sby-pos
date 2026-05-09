@@ -26,6 +26,6 @@ class RackMovementItem extends BaseModel
 
     public function product(): BelongsTo
     {
-        return $this->belongsTo(Product::class, 'product_id');
+        return $this->belongsTo(Product::class, 'product_id')->withoutGlobalScopes();
     }
 }
