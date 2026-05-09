@@ -99,8 +99,9 @@ Route::middleware($middlewares)->prefix('crm')->group(function () {
     Route::get('/service-orders/{id}/warranty', [WarrantiesController::class, 'show']);
     Route::put('/service-orders/{id}/warranty', [WarrantiesController::class, 'upsert']);
 
-    // Schedule capacity (read-only, for availability page)
+    // Schedule endpoints (read-only, for availability page)
     Route::get('/schedule/capacity', [ScheduleCapacityController::class, 'index']);
+    Route::get('/schedule/jobs',     [ScheduleCapacityController::class, 'jobs']);
 
     // Reports
     Route::prefix('reports')->group(function () {
