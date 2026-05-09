@@ -10,6 +10,7 @@ use Modules\Crm\Http\Controllers\Api\TechniciansController;
 use Modules\Crm\Http\Controllers\Api\ServiceOrderPhotosController;
 use Modules\Crm\Http\Controllers\Api\WarrantiesController;
 use Modules\Crm\Http\Controllers\Api\ReportsController;
+use Modules\Crm\Http\Controllers\Api\ScheduleCapacityController;
 use Modules\Crm\Http\Controllers\Api\UsersController;
 use Modules\Crm\Http\Controllers\Api\NotificationsController;
 use Modules\Crm\Http\Controllers\Api\CustomersController;
@@ -96,6 +97,9 @@ Route::middleware($middlewares)->prefix('crm')->group(function () {
     // Warranty
     Route::get('/service-orders/{id}/warranty', [WarrantiesController::class, 'show']);
     Route::put('/service-orders/{id}/warranty', [WarrantiesController::class, 'upsert']);
+
+    // Schedule capacity (read-only, for availability page)
+    Route::get('/schedule/capacity', [ScheduleCapacityController::class, 'index']);
 
     // Reports
     Route::prefix('reports')->group(function () {
