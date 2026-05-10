@@ -857,6 +857,7 @@ class PurchaseController extends Controller
         if ($poId > 0) {
             // ambil semua PD untuk PO tsb
             $relatedDeliveries = PurchaseDelivery::query()
+                ->with(['purchaseDeliveryDetails'])
                 ->where('purchase_order_id', $poId)
                 ->orderByDesc('date')
                 ->orderByDesc('id')
@@ -864,6 +865,7 @@ class PurchaseController extends Controller
         } elseif (!empty($purchase->purchase_delivery_id)) {
             // fallback terakhir: tampilkan PD tunggal
             $relatedDeliveries = PurchaseDelivery::query()
+                ->with(['purchaseDeliveryDetails'])
                 ->where('id', (int) $purchase->purchase_delivery_id)
                 ->get();
         }

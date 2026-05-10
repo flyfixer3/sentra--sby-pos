@@ -118,6 +118,15 @@
 
                                                 <span class="badge {{ $badgeClass }}">{{ $sd->status }}</span>
 
+                                                @can('confirm_sale_deliveries')
+                                                    @if($st === 'pending')
+                                                        <a href="{{ route('sale-deliveries.confirm.form', $sd->id) }}"
+                                                           class="btn btn-sm btn-outline-success d-print-none">
+                                                            <i class="bi bi-check2-circle"></i> Confirm Delivery
+                                                        </a>
+                                                    @endif
+                                                @endcan
+
                                                 @if(!empty($sd->note) && str_starts_with((string)$sd->note, '[AUTO]'))
                                                     <span class="badge bg-secondary">AUTO</span>
                                                 @endif
