@@ -798,11 +798,18 @@ class MutationController extends Controller
 
         if ($bucketCol && in_array($bucketCol, ['qty_good', 'qty_defect', 'qty_damaged'], true)) {
             $curBucket = (int) ($sr->{$bucketCol} ?? 0);
-            if (!($mutationType === 'Out' && $curBucket < $qty)) {
-                $newBucket = $mutationType === 'In' ? ($curBucket + $qty) : ($curBucket - $qty);
-                if ($newBucket < 0) $newBucket = 0;
-                $update[$bucketCol] = (int) $newBucket;
+
+            if ($mutationType === 'Out' && $curBucket < $qty) {
+                $bucketName = strtoupper(str_replace('qty_', '', $bucketCol));
+                throw new \RuntimeException(
+                    "Not enough {$bucketName} stock on rack. Need {$qty}, available {$curBucket}. "
+                    . "Branch {$branchId}, WH {$warehouseId}, Rack {$resolvedRackId}, Product {$productId}. Ref {$reference}"
+                );
             }
+
+            $newBucket = $mutationType === 'In' ? ($curBucket + $qty) : ($curBucket - $qty);
+            if ($newBucket < 0) $newBucket = 0;
+            $update[$bucketCol] = (int) $newBucket;
         }
 
         DB::table('stock_racks')

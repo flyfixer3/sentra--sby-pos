@@ -126,7 +126,7 @@
                                                     @can('edit_customers')
                                                         <button
                                                             type="button"
-                                                            class="btn btn-outline-primary sale-add-vehicle-trigger d-none"
+                                                            class="btn btn-outline-primary sale-add-vehicle-trigger"
                                                             id="sale_add_vehicle_btn"
                                                             data-toggle="modal"
                                                             data-target="#saleAddVehicleModal"
@@ -264,7 +264,6 @@
                 if (!button) return;
                 var customerId = document.getElementById('customer_id')?.value || '';
                 var enabled = customerId !== '';
-                button.classList.toggle('d-none', !enabled);
                 button.disabled = !enabled;
             }
 
@@ -602,6 +601,7 @@
                             }
 
                             saleHideModal(modal);
+                            window.setTimeout(saleCleanupModalBackdrops, 150);
                             modalForm.reset();
                             saleFlashVehicleMessage('sale_vehicle_success', result.data.message || 'Vehicle created.');
                             if (window.Livewire && typeof window.Livewire.emit === 'function') {

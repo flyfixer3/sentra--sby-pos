@@ -22,6 +22,10 @@ class ProductDefectItem extends Model
         'defect_types',
         'description',
         'photo_path',
+        'moved_out_at',
+        'moved_out_by',
+        'moved_out_reference_type',
+        'moved_out_reference_id',
         'created_by',
     ];
 
@@ -32,6 +36,9 @@ class ProductDefectItem extends Model
         'product_id'   => 'integer',
         'reference_id' => 'integer',
         'quantity'     => 'integer',
+        'moved_out_reference_id' => 'integer',
+        'moved_out_by' => 'integer',
+        'moved_out_at' => 'datetime',
         'created_by'   => 'integer',
         'defect_types' => 'array',
     ];

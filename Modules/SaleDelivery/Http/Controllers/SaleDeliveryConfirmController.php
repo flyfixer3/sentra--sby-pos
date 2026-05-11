@@ -589,7 +589,7 @@ class SaleDeliveryConfirmController extends Controller
                             ->where('product_id', (int) $productId)
                             ->whereNull('moved_out_at')
                             ->whereIn('id', $defIds)
-                            ->get(['id', 'warehouse_id']);
+                            ->get(['id', 'warehouse_id', 'rack_id']);
 
                         if ($rows->count() !== count($defIds)) {
                             throw new \RuntimeException("Some DEFECT IDs are invalid / already moved out (item ID {$itemId}).");
@@ -599,6 +599,20 @@ class SaleDeliveryConfirmController extends Controller
                             $wid = (int) ($r->warehouse_id ?? 0);
                             if ($wid <= 0) {
                                 throw new \RuntimeException("DEFECT item warehouse_id is missing (ID {$r->id}).");
+                            }
+
+                            $rackId = (int) ($r->rack_id ?? 0);
+                            if ($rackId <= 0) {
+                                throw new \RuntimeException("DEFECT item rack_id is missing (ID {$r->id}).");
+                            }
+
+                            $rackOk = DB::table('racks')
+                                ->where('id', (int) $rackId)
+                                ->where('warehouse_id', (int) $wid)
+                                ->exists();
+
+                            if (!$rackOk) {
+                                throw new \RuntimeException("DEFECT item rack_id does not belong to warehouse (ID {$r->id}).");
                             }
 
                             $ok = Warehouse::query()
@@ -631,7 +645,7 @@ class SaleDeliveryConfirmController extends Controller
                             ->where('resolution_status', 'pending')
                             ->whereNull('moved_out_at')
                             ->whereIn('id', $damIds)
-                            ->get(['id', 'warehouse_id']);
+                            ->get(['id', 'warehouse_id', 'rack_id']);
 
                         if ($rows->count() !== count($damIds)) {
                             throw new \RuntimeException("Some DAMAGED IDs are invalid / already moved out (item ID {$itemId}).");
@@ -641,6 +655,20 @@ class SaleDeliveryConfirmController extends Controller
                             $wid = (int) ($r->warehouse_id ?? 0);
                             if ($wid <= 0) {
                                 throw new \RuntimeException("DAMAGED item warehouse_id is missing (ID {$r->id}).");
+                            }
+
+                            $rackId = (int) ($r->rack_id ?? 0);
+                            if ($rackId <= 0) {
+                                throw new \RuntimeException("DAMAGED item rack_id is missing (ID {$r->id}).");
+                            }
+
+                            $rackOk = DB::table('racks')
+                                ->where('id', (int) $rackId)
+                                ->where('warehouse_id', (int) $wid)
+                                ->exists();
+
+                            if (!$rackOk) {
+                                throw new \RuntimeException("DAMAGED item rack_id does not belong to warehouse (ID {$r->id}).");
                             }
 
                             $ok = Warehouse::query()
@@ -655,6 +683,12 @@ class SaleDeliveryConfirmController extends Controller
                             $usedWarehouseIds[] = $wid;
                         }
                     }
+
+                    $it->update([
+                        'qty_good' => $good,
+                        'qty_defect' => $defect,
+                        'qty_damaged' => $damaged,
+                    ]);
 
                     // reserved pool reduce by product (strict)
                     $pid = (int) $it->product_id;
@@ -775,8 +809,10 @@ class SaleDeliveryConfirmController extends Controller
                             }
 
                             $row->update([
-                                'moved_out_at'  => now(),
-                                'moved_out_ref' => (string) $reference,
+                                'moved_out_at' => now(),
+                                'moved_out_by' => auth()->id(),
+                                'moved_out_reference_type' => SaleDelivery::class,
+                                'moved_out_reference_id' => (int) $saleDelivery->id,
                             ]);
 
                             $this->mutationController->applyInOut(
@@ -835,8 +871,10 @@ class SaleDeliveryConfirmController extends Controller
                             }
 
                             $row->update([
-                                'moved_out_at'  => now(),
-                                'moved_out_ref' => (string) $reference,
+                                'moved_out_at' => now(),
+                                'moved_out_by' => auth()->id(),
+                                'moved_out_reference_type' => SaleDelivery::class,
+                                'moved_out_reference_id' => (int) $saleDelivery->id,
                             ]);
 
                             $this->mutationController->applyInOut(

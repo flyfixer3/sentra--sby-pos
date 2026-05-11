@@ -33,6 +33,19 @@
     .so-customer-results .list-group-item {
         cursor: pointer;
     }
+    .so-customer-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        align-items: flex-start;
+    }
+    .so-customer-row .input-group {
+        flex: 1 1 260px;
+    }
+    .so-add-vehicle-trigger {
+        height: calc(1.5em + .75rem + 2px);
+        white-space: nowrap;
+    }
 </style>
 @endpush
 
@@ -151,18 +164,32 @@
                             <div class="col-md-9 mb-3">
                                 <label class="form-label" for="so_customer_id">Customer {!! $requiredMark !!}</label>
                                 <div class="so-customer-autocomplete">
-                                    <div class="input-group">
-                                        <input type="text"
-                                               id="so_customer_search"
-                                               name="customer_search"
-                                               class="form-control @error('customer_id') is-invalid @enderror"
-                                               placeholder="Search customer by name, phone, or email..."
-                                               autocomplete="off"
-                                               value="{{ $selectedCustomerLabel }}"
-                                               data-selected-id="{{ $selectedCustomerId }}"
-                                               data-selected-label="{{ $selectedCustomerLabel }}"
-                                               data-search-url="{{ route('customers.search') }}">
-                                        <button class="btn btn-outline-secondary" type="button" id="so_customer_clear" aria-label="Clear customer">&times;</button>
+                                    <div class="so-customer-row">
+                                        <div class="input-group">
+                                            <input type="text"
+                                                   id="so_customer_search"
+                                                   name="customer_search"
+                                                   class="form-control @error('customer_id') is-invalid @enderror"
+                                                   placeholder="Search customer by name, phone, or email..."
+                                                   autocomplete="off"
+                                                   value="{{ $selectedCustomerLabel }}"
+                                                   data-selected-id="{{ $selectedCustomerId }}"
+                                                   data-selected-label="{{ $selectedCustomerLabel }}"
+                                                   data-search-url="{{ route('customers.search') }}">
+                                            <button class="btn btn-outline-secondary" type="button" id="so_customer_clear" aria-label="Clear customer">&times;</button>
+                                        </div>
+                                        @can('edit_customers')
+                                            <button
+                                                type="button"
+                                                class="btn btn-outline-primary so-add-vehicle-trigger"
+                                                id="so_add_vehicle_btn"
+                                                data-toggle="modal"
+                                                data-target="#soAddVehicleModal"
+                                                disabled
+                                            >
+                                                + Add Vehicle
+                                            </button>
+                                        @endcan
                                     </div>
                                     <input type="hidden" name="customer_id" id="so_customer_id" value="{{ $selectedCustomerId }}">
                                     <div id="so_customer_results" class="so-customer-results list-group d-none"></div>
@@ -721,6 +748,7 @@
             soCustomerHideResults();
             notifySaleOrderCustomerChanged();
             soUpdateItemsErrorState();
+            soUpdateAddVehicleState();
         }
 
         function soClearCustomerSelection() {
@@ -739,6 +767,7 @@
 
             notifySaleOrderCustomerChanged();
             soUpdateItemsErrorState();
+            soUpdateAddVehicleState();
         }
 
         function soInitCustomerAutocomplete() {
@@ -777,6 +806,7 @@
                 if (input.dataset.selectedLabel && value !== input.dataset.selectedLabel) {
                     hidden.value = '';
                     input.dataset.selectedId = '';
+                    soUpdateAddVehicleState();
                 }
 
                 if (value.length < 2) {
@@ -811,6 +841,13 @@
             clearBtn?.addEventListener('click', function () {
                 soClearCustomerSelection();
             });
+        }
+
+        function soUpdateAddVehicleState() {
+            const button = document.getElementById('so_add_vehicle_btn');
+            if (!button) return;
+            const customerId = document.getElementById('so_customer_id')?.value || '';
+            button.disabled = customerId === '';
         }
 
         function soVehicleUrlFromTemplate(template, customerId) {
@@ -857,6 +894,11 @@
             const modalForm = modal.querySelector('form');
             if (!modalForm) return;
 
+            if (!modal.dataset.cleanupBound) {
+                modal.addEventListener('hidden.bs.modal', soCleanupModalBackdrops);
+                modal.dataset.cleanupBound = '1';
+            }
+
             modalForm.addEventListener('submit', function (e) {
                 e.preventDefault();
 
@@ -888,9 +930,8 @@
                             return;
                         }
 
-                        if (window.jQuery) {
-                            window.jQuery(modal).modal('hide');
-                        }
+                        soHideModal(modal);
+                        window.setTimeout(soCleanupModalBackdrops, 150);
 
                         modalForm.reset();
                         soFlashVehicleMessage('so_vehicle_success', data.message || 'Vehicle created.');
@@ -909,6 +950,27 @@
             });
         }
 
+        function soHideModal(modal) {
+            if (!modal) return;
+            if (window.bootstrap && typeof window.bootstrap.Modal === 'function') {
+                window.bootstrap.Modal.getOrCreateInstance(modal).hide();
+                return;
+            }
+            if (window.jQuery) {
+                window.jQuery(modal).modal('hide');
+            }
+        }
+
+        function soCleanupModalBackdrops() {
+            if (document.querySelectorAll('.modal.show').length > 0) return;
+            document.body.classList.remove('modal-open');
+            document.body.style.removeProperty('padding-right');
+            document.body.style.removeProperty('overflow');
+            document.querySelectorAll('.modal-backdrop').forEach(function (backdrop) {
+                backdrop.parentNode?.removeChild(backdrop);
+            });
+        }
+
         if (window.Livewire && typeof window.Livewire.hook === 'function') {
             window.Livewire.hook('message.processed', () => {
                 soRecalc();
@@ -919,6 +981,7 @@
         soInitCustomerAutocomplete();
         soUpdateItemsErrorState();
         soBindVehicleModal();
+        soUpdateAddVehicleState();
 
         document.addEventListener('click', function (event) {
             const button = event.target.closest('.so-add-vehicle-btn');
