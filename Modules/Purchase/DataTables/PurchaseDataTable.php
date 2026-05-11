@@ -97,6 +97,7 @@ class PurchaseDataTable extends DataTable
     public function query(Purchase $model)
     {
         $query = $model->newQuery()
+            ->with(['purchaseDelivery.purchaseDeliveryDetails'])
             ->select([
                 'purchases.*',
                 'suppliers.supplier_name as supplier_name',

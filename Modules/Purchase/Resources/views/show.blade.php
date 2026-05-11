@@ -299,6 +299,18 @@
                                     @if(isset($relatedDeliveries) && $relatedDeliveries->isNotEmpty())
                                         <div class="d-flex flex-column mt-1" style="gap:6px;">
                                             @foreach($relatedDeliveries as $pd)
+                                                @php
+                                                    $pdStatus = strtolower(trim((string) ($pd->status ?? 'pending')));
+                                                    $pdDetails = $pd->purchaseDeliveryDetails ?? collect();
+                                                    $pdExpected = $pdDetails->sum(fn($detail) => (int) ($detail->quantity ?? 0));
+                                                    $pdConfirmed = $pdDetails->sum(function ($detail) {
+                                                        return (int) ($detail->qty_received ?? 0)
+                                                            + (int) ($detail->qty_defect ?? 0)
+                                                            + (int) ($detail->qty_damaged ?? 0);
+                                                    });
+                                                    $pdCanConfirm = in_array($pdStatus, ['pending', 'partial'], true)
+                                                        && max(0, $pdExpected - $pdConfirmed) > 0;
+                                                @endphp
                                                 <div class="mini-delivery">
                                                     <div class="d-flex flex-column">
                                                         <a href="{{ route('purchase-deliveries.show', $pd->id) }}">
@@ -311,6 +323,14 @@
                                                     <span class="{{ $pdBadgeClass($pd->status) }}" style="text-transform:uppercase;">
                                                         {{ strtolower((string)$pd->status) }}
                                                     </span>
+                                                    @can('confirm_purchase_deliveries')
+                                                        @if($pdCanConfirm)
+                                                            <a href="{{ route('purchase-deliveries.confirm', $pd->id) }}"
+                                                               class="btn btn-sm btn-outline-success d-print-none">
+                                                                <i class="bi bi-check2-circle"></i> Confirm
+                                                            </a>
+                                                        @endif
+                                                    @endcan
                                                 </div>
                                             @endforeach
                                         </div>
