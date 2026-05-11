@@ -148,7 +148,7 @@ class ScheduleCapacityController extends Controller
                 'so.scheduled_at',
                 'so.status',
                 'so.branch_id',
-                'so.install_location_type',
+                'l.install_location_type',
                 'so.address_snapshot',
                 'so.admin_note',
                 'l.contact_name',
