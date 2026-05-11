@@ -164,43 +164,74 @@ class TechniciansController extends Controller
     {
         $this->requireBranch();
         $data = $request->validate([
-            'technician_note' => ['nullable', 'string'],
-            'note' => ['nullable', 'string'],
+            'technician_note'  => ['nullable', 'string'],
+            'note'             => ['nullable', 'string'],
+            // Purchase / packing extra fields
+            'condition_status' => ['nullable', 'in:good,defect'],
+            'handover_notes'   => ['nullable', 'string'],
+            'packing_length'   => ['nullable', 'numeric', 'min:0'],
+            'packing_width'    => ['nullable', 'numeric', 'min:0'],
+            'packing_height'   => ['nullable', 'numeric', 'min:0'],
         ]);
 
         $so = ServiceOrder::withCount([
                 'photos as before_photos_count' => function($q){ $q->where('phase','before'); },
                 'photos as after_photos_count' => function($q){ $q->where('phase','after'); },
             ])
+            ->with('lead:id,service_type')
             ->findOrFail($id);
 
-        // Business rule: Cannot complete job without before photo
-        if ((int) $so->before_photos_count <= 0) {
-            abort(422, 'Cannot complete job without at least one before photo.');
-        }
-        if ((int) $so->after_photos_count <= 0) {
-            abort(422, 'Cannot complete job without at least one after photo.');
+        $serviceType = $so->lead?->service_type ?? '';
+        $isPurchaseOnly = $serviceType === 'pembelian_kaca';
+        $isPacking      = $serviceType === 'packing';
+
+        // Photo requirements vary by service type:
+        // pembelian_kaca → no photos needed (it's a handover, not installation)
+        // packing / all others → require before + after photos
+        if (!$isPurchaseOnly) {
+            if ((int) $so->before_photos_count <= 0) {
+                abort(422, 'Cannot complete job without at least one before photo.');
+            }
+            if ((int) $so->after_photos_count <= 0) {
+                abort(422, 'Cannot complete job without at least one after photo.');
+            }
         }
 
         $row = $this->actingTechnicianRow($so, $request);
-        if (!$row || !in_array($row->status, ['assigned','started'], true)) abort(422, 'You must be assigned and have started before completing.');
+        if (!$row || !in_array($row->status, ['assigned','started'], true)) {
+            abort(422, 'You must be assigned and have started before completing.');
+        }
 
         $row->update([
-            'status' => 'completed',
+            'status'       => 'completed',
             'completed_at' => now(),
-            'note' => $data['note'] ?? $data['technician_note'] ?? $row->note,
+            'note'         => $data['note'] ?? $data['technician_note'] ?? $row->note,
         ]);
 
         // If all assigned technicians completed, mark SO as completed
         $remaining = ServiceOrderTechnician::where('service_order_id', $so->id)
             ->where('status', '!=', 'completed')
             ->count();
+
         if ($remaining === 0) {
-            $so->update([
-                'status' => 'completed',
-                'completed_at' => now(),
-                'technician_note' => $data['technician_note'] ?? $data['note'] ?? $so->technician_note,
-            ]);
+            $soUpdate = [
+                'status'           => 'completed',
+                'completed_at'     => now(),
+                'technician_note'  => $data['technician_note'] ?? $data['note'] ?? $so->technician_note,
+            ];
+
+            // Persist purchase / packing extra fields when provided
+            if ($isPurchaseOnly || $isPacking) {
+                if (isset($data['condition_status'])) $soUpdate['condition_status'] = $data['condition_status'];
+                if (isset($data['handover_notes']))   $soUpdate['handover_notes']   = $data['handover_notes'];
+            }
+            if ($isPacking) {
+                if (isset($data['packing_length'])) $soUpdate['packing_length'] = $data['packing_length'];
+                if (isset($data['packing_width']))  $soUpdate['packing_width']  = $data['packing_width'];
+                if (isset($data['packing_height'])) $soUpdate['packing_height'] = $data['packing_height'];
+            }
+
+            $so->update($soUpdate);
 
             if ($so->lead_id) {
                 $so->lead()->update(['status' => 'selesai']);
