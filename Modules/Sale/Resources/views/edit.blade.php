@@ -130,6 +130,7 @@
                                                             id="sale_add_vehicle_btn"
                                                             data-toggle="modal"
                                                             data-target="#saleAddVehicleModal"
+                                                            @if($selectedCustomerId <= 0 || trim($selectedCustomerLabel) === '') disabled @endif
                                                         >
                                                             + Add Vehicle
                                                         </button>
@@ -253,18 +254,39 @@
     <script src="{{ asset('js/jquery-mask-money.js') }}"></script>
     <script>
         $(document).ready(function () {
+            function saleGetSelectedCustomerIdForVehicle() {
+                var input = document.getElementById('sale_customer_search');
+                var hidden = document.getElementById('customer_id');
+
+                var hiddenId = (hidden?.value || '').toString().trim();
+                var selectedId = (input?.dataset.selectedId || '').toString().trim();
+                var selectedLabel = (input?.dataset.selectedLabel || '').toString().trim();
+                var visibleLabel = (input?.value || '').toString().trim();
+
+                if (!hiddenId || !selectedId) return '';
+                if (hiddenId !== selectedId) return '';
+                if (!selectedLabel || !visibleLabel) return '';
+                if (selectedLabel !== visibleLabel) return '';
+
+                return hiddenId;
+            }
+
             function notifySaleCustomerChanged() {
+                var customerId = saleGetSelectedCustomerIdForVehicle();
                 if (window.Livewire && typeof window.Livewire.emit === 'function') {
-                    window.Livewire.emit('saleCustomerChanged', $('#customer_id').val() || '');
+                    window.Livewire.emit('saleCustomerChanged', customerId);
                 }
             }
 
             function saleUpdateAddVehicleState() {
                 var button = document.getElementById('sale_add_vehicle_btn');
                 if (!button) return;
-                var customerId = document.getElementById('customer_id')?.value || '';
+                var customerId = saleGetSelectedCustomerIdForVehicle();
                 var enabled = customerId !== '';
                 button.disabled = !enabled;
+                if (!button.disabled) {
+                    button.removeAttribute('disabled');
+                }
             }
 
             function saleClearVehicleSelections() {
@@ -411,6 +433,19 @@
                 input.addEventListener('input', function () {
                     var value = (input.value || '').toString().trim();
 
+                    if (value === '') {
+                        if (hidden.value) {
+                            hidden.value = '';
+                            notifySaleCustomerChanged();
+                            saleClearVehicleSelections();
+                        }
+                        input.dataset.selectedId = '';
+                        input.dataset.selectedLabel = '';
+                        saleUpdateAddVehicleState();
+                        saleCustomerHideResults();
+                        return;
+                    }
+
                     if (input.dataset.selectedLabel && value !== input.dataset.selectedLabel) {
                         if (hidden.value) {
                             hidden.value = '';
@@ -481,6 +516,18 @@
                 clearBtn?.addEventListener('click', function () {
                     saleClearCustomerSelection();
                 });
+
+                if (!input.disabled && !saleGetSelectedCustomerIdForVehicle()) {
+                    if (hidden.value) {
+                        hidden.value = '';
+                        notifySaleCustomerChanged();
+                        saleClearVehicleSelections();
+                    }
+                    input.dataset.selectedId = '';
+                    if ((input.value || '').toString().trim() === '') {
+                        input.dataset.selectedLabel = '';
+                    }
+                }
 
                 saleUpdateAddVehicleState();
             }
@@ -561,7 +608,7 @@
                 modalForm.addEventListener('submit', function (e) {
                     e.preventDefault();
 
-                    var customerId = $('#customer_id').val() || '';
+                    var customerId = saleGetSelectedCustomerIdForVehicle();
                     if (!customerId) {
                         saleFlashVehicleMessage('sale_vehicle_error', 'Please select customer first.');
                         return;

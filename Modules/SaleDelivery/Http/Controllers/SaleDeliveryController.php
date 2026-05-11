@@ -7,6 +7,7 @@ use Illuminate\Routing\Controller;
 use App\Support\BranchContext;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
+use Illuminate\Support\Facades\Schema;
 
 use Modules\People\Entities\Customer;
 use Modules\Product\Entities\Warehouse;
@@ -131,25 +132,31 @@ class SaleDeliveryController extends Controller
                     throw new \RuntimeException('All items are already planned in existing deliveries (pending/confirmed/partial).');
                 }
 
+                $firstRowByProduct = [];
                 foreach ($saleOrder->items as $it) {
                     $pid = (int) $it->product_id;
+                    if ($pid <= 0) continue;
+                    if (!isset($firstRowByProduct[$pid])) {
+                        $firstRowByProduct[$pid] = $it;
+                    }
+                }
 
-                    if ($pid <= 0) {
+                foreach ($remainingMap as $pid => $rem) {
+                    $pid = (int) $pid;
+                    $rem = (int) $rem;
+
+                    if ($pid <= 0 || $rem <= 0) {
                         continue;
                     }
 
-                    $rem = (int) ($remainingMap[$pid] ?? 0);
-
-                    if ($rem <= 0) {
-                        continue;
-                    }
+                    $row = $firstRowByProduct[$pid] ?? null;
 
                     $prefillItems[] = [
                         'product_id' => $pid,
-                        'product_name' => $it->product?->product_name,
-                        'product_code' => $it->product?->product_code,
+                        'product_name' => $row?->product?->product_name,
+                        'product_code' => $row?->product?->product_code,
                         'quantity' => $rem,
-                        'price' => (int) ($it->price ?? 0),
+                        'price' => (int) ($row?->price ?? 0),
                     ];
                 }
             }
@@ -187,27 +194,32 @@ class SaleDeliveryController extends Controller
                     ->get(['id', 'product_name', 'product_code'])
                     ->keyBy('id');
 
+                $detailFirstByProduct = [];
                 foreach ($details as $d) {
                     $pid = (int) $d->product_id;
-
-                    if ($pid <= 0) {
-                        continue;
+                    if ($pid <= 0) continue;
+                    if (!isset($detailFirstByProduct[$pid])) {
+                        $detailFirstByProduct[$pid] = $d;
                     }
+                }
 
-                    $rem = (int) ($remainingMap[$pid] ?? 0);
+                foreach ($remainingMap as $pid => $rem) {
+                    $pid = (int) $pid;
+                    $rem = (int) $rem;
 
-                    if ($rem <= 0) {
+                    if ($pid <= 0 || $rem <= 0) {
                         continue;
                     }
 
                     $product = $productMap->get($pid);
+                    $detail = $detailFirstByProduct[$pid] ?? null;
 
                     $prefillItems[] = [
                         'product_id' => $pid,
                         'product_name' => $product?->product_name,
                         'product_code' => $product?->product_code,
                         'quantity' => $rem,
-                        'price' => (int) ($d->price ?? 0),
+                        'price' => (int) ($detail->price ?? 0),
                     ];
                 }
             }
@@ -361,6 +373,8 @@ class SaleDeliveryController extends Controller
                     'created_by'    => auth()->id(),
                 ]);
 
+                $createdItems = [];
+
                 foreach ($deliveryItems as $row) {
 
                     // ✅ FIX: 0 / negatif dianggap "tidak diisi" => NULL
@@ -372,7 +386,7 @@ class SaleDeliveryController extends Controller
                         $price = null;
                     }
 
-                    SaleDeliveryItem::create([
+                    $createdItems[] = SaleDeliveryItem::create([
                         'sale_delivery_id' => (int) $saleDelivery->id,
                         'product_id'       => (int) $row['product_id'],
                         'quantity'         => (int) $row['quantity'],
@@ -381,6 +395,72 @@ class SaleDeliveryController extends Controller
                         'qty_defect'       => 0,
                         'qty_damaged'      => 0,
                     ]);
+                }
+
+                if ($source === 'sale_order') {
+                    if (!Schema::hasTable('sale_delivery_item_allocations')) {
+                        throw new \RuntimeException('Missing allocation table. Please run the latest migrations first.');
+                    }
+
+                    $soItems = \Modules\SaleOrder\Entities\SaleOrderItem::query()
+                        ->where('sale_order_id', (int) $saleOrderId)
+                        ->orderBy('id')
+                        ->get();
+
+                    $remainingByItem = $this->getPlannedRemainingQtyBySaleOrderItem((int) $saleOrderId);
+
+                    $itemsByProduct = [];
+                    foreach ($soItems as $soItem) {
+                        $pid = (int) ($soItem->product_id ?? 0);
+                        if ($pid <= 0) continue;
+                        if (!isset($itemsByProduct[$pid])) $itemsByProduct[$pid] = [];
+                        $itemsByProduct[$pid][] = $soItem;
+                    }
+
+                    $allocRows = [];
+
+                    foreach ($createdItems as $deliveryItem) {
+                        $pid = (int) ($deliveryItem->product_id ?? 0);
+                        $qtyToAllocate = (int) ($deliveryItem->quantity ?? 0);
+
+                        if ($pid <= 0 || $qtyToAllocate <= 0) continue;
+
+                        $rows = $itemsByProduct[$pid] ?? [];
+                        foreach ($rows as $soItem) {
+                            if ($qtyToAllocate <= 0) break;
+
+                            $soItemId = (int) ($soItem->id ?? 0);
+                            if ($soItemId <= 0) continue;
+
+                            $remainingItem = (int) ($remainingByItem[$soItemId] ?? 0);
+                            if ($remainingItem <= 0) continue;
+
+                            $allocQty = min($qtyToAllocate, $remainingItem);
+                            if ($allocQty <= 0) continue;
+
+                            $allocRows[] = [
+                                'sale_delivery_id' => (int) $saleDelivery->id,
+                                'sale_delivery_item_id' => (int) $deliveryItem->id,
+                                'sale_order_id' => (int) $saleOrderId,
+                                'sale_order_item_id' => (int) $soItemId,
+                                'product_id' => (int) $pid,
+                                'quantity' => (int) $allocQty,
+                                'created_at' => now(),
+                                'updated_at' => now(),
+                            ];
+
+                            $remainingByItem[$soItemId] = (int) max(0, $remainingItem - $allocQty);
+                            $qtyToAllocate -= $allocQty;
+                        }
+
+                        if ($qtyToAllocate > 0) {
+                            throw new \RuntimeException("Unable to allocate delivery qty for product_id {$pid}. Remaining mismatch.");
+                        }
+                    }
+
+                    if (!empty($allocRows)) {
+                        DB::table('sale_delivery_item_allocations')->insert($allocRows);
+                    }
                 }
             });
 

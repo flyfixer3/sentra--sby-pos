@@ -74,7 +74,15 @@
 
                                         @if(!empty($saleOrderDepositInfo['sale_order_reference']))
                                             <div>
-                                                SO: <strong>{{ $saleOrderDepositInfo['sale_order_reference'] }}</strong>
+                                                SO:
+                                                @if(!empty($saleOrderDepositInfo['sale_order_id']))
+                                                    <a href="{{ route('sale-orders.show', $saleOrderDepositInfo['sale_order_id']) }}"
+                                                    class="text-decoration-none">
+                                                        <strong>{{ $saleOrderDepositInfo['sale_order_reference'] }}</strong>
+                                                    </a>
+                                                @else
+                                                    <strong>{{ $saleOrderDepositInfo['sale_order_reference'] }}</strong>
+                                                @endif
                                             </div>
                                         @endif
 

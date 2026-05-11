@@ -903,6 +903,10 @@ class SaleDeliveryConfirmController extends Controller
                     'confirmed_by' => auth()->id(),
                     'confirmed_at' => now(),
                 ]);
+
+                if ((int) ($saleDelivery->sale_order_id ?? 0) > 0) {
+                    $this->updateSaleOrderFulfillmentStatus((int) $saleDelivery->sale_order_id);
+                }
             });
 
             session()->flash('success', 'Sale Delivery confirmed successfully.');

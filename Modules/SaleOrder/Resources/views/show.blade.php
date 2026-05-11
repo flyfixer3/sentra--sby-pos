@@ -294,10 +294,14 @@
                             $itemDiscount = (int) ($it->product_discount_amount ?? max(0, $unitPrice - $netPrice));
                             $lineSubtotal = (int) ($it->sub_total ?? ($ordered * $netPrice));
 
-                            $remConfirmed = (int) ($remainingConfirmedMap[$pid] ?? 0);
+                            $remConfirmed = isset($remainingByItem) && isset($remainingByItem[$it->id])
+                                ? (int) $remainingByItem[$it->id]
+                                : (int) ($remainingConfirmedMap[$pid] ?? 0);
                             $delivered = max(0, $ordered - $remConfirmed);
 
-                            $remPlanned = (int) ($plannedRemainingMap[$pid] ?? 0);
+                            $remPlanned = isset($plannedRemainingByItem) && isset($plannedRemainingByItem[$it->id])
+                                ? (int) $plannedRemainingByItem[$it->id]
+                                : (int) ($plannedRemainingMap[$pid] ?? 0);
                             $plannedCovered = max(0, $ordered - $remPlanned);
 
                             $deliveredPct = $ordered > 0 ? (int) round(($delivered / $ordered) * 100) : 0;

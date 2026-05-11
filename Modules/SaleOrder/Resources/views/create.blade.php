@@ -214,7 +214,7 @@
                                                 id="so_add_vehicle_btn"
                                                 data-toggle="modal"
                                                 data-target="#soAddVehicleModal"
-                                                disabled
+                                                @if($selectedCustomerId <= 0 || trim($selectedCustomerLabel) === '') disabled @endif
                                             >
                                                 + Add Vehicle
                                             </button>
@@ -980,9 +980,27 @@
         soInitDpMode();
         soRecalc();
 
+        function soGetSelectedCustomerIdForVehicle() {
+            const input = document.getElementById('so_customer_search');
+            const hidden = document.getElementById('so_customer_id');
+
+            const hiddenId = (hidden?.value || '').toString().trim();
+            const selectedId = (input?.dataset.selectedId || '').toString().trim();
+            const selectedLabel = (input?.dataset.selectedLabel || '').toString().trim();
+            const visibleLabel = (input?.value || '').toString().trim();
+
+            if (!hiddenId || !selectedId) return '';
+            if (hiddenId !== selectedId) return '';
+            if (!selectedLabel || !visibleLabel) return '';
+            if (selectedLabel !== visibleLabel) return '';
+
+            return hiddenId;
+        }
+
         function notifySaleOrderCustomerChanged() {
+            const customerId = soGetSelectedCustomerIdForVehicle();
             if (window.Livewire && typeof window.Livewire.emit === 'function') {
-                window.Livewire.emit('saleOrderCustomerChanged', document.getElementById('so_customer_id')?.value || '');
+                window.Livewire.emit('saleOrderCustomerChanged', customerId);
             }
         }
 
@@ -1090,6 +1108,18 @@
             input.addEventListener('input', function () {
                 const value = (input.value || '').toString().trim();
 
+                if (value === '') {
+                    if (hidden.value) {
+                        hidden.value = '';
+                        notifySaleOrderCustomerChanged();
+                    }
+                    input.dataset.selectedId = '';
+                    input.dataset.selectedLabel = '';
+                    soUpdateAddVehicleState();
+                    soCustomerHideResults();
+                    return;
+                }
+
                 if (input.dataset.selectedLabel && value !== input.dataset.selectedLabel) {
                     hidden.value = '';
                     input.dataset.selectedId = '';
@@ -1128,13 +1158,29 @@
             clearBtn?.addEventListener('click', function () {
                 soClearCustomerSelection();
             });
+
+            if (!input.disabled && !soGetSelectedCustomerIdForVehicle()) {
+                if (hidden.value) {
+                    hidden.value = '';
+                    notifySaleOrderCustomerChanged();
+                }
+                input.dataset.selectedId = '';
+                if ((input.value || '').toString().trim() === '') {
+                    input.dataset.selectedLabel = '';
+                }
+            }
+
+            soUpdateAddVehicleState();
         }
 
         function soUpdateAddVehicleState() {
             const button = document.getElementById('so_add_vehicle_btn');
             if (!button) return;
-            const customerId = document.getElementById('so_customer_id')?.value || '';
+            const customerId = soGetSelectedCustomerIdForVehicle();
             button.disabled = customerId === '';
+            if (!button.disabled) {
+                button.removeAttribute('disabled');
+            }
         }
 
         function soVehicleUrlFromTemplate(template, customerId) {
@@ -1189,7 +1235,7 @@
             modalForm.addEventListener('submit', function (e) {
                 e.preventDefault();
 
-                const customerId = document.getElementById('so_customer_id')?.value || '';
+                const customerId = soGetSelectedCustomerIdForVehicle();
                 if (!customerId) {
                     soFlashVehicleMessage('so_vehicle_error', 'Please select customer first.');
                     return;
