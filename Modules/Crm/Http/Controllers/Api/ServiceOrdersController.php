@@ -197,6 +197,48 @@ class ServiceOrdersController extends Controller
         return response()->json($so->fresh(['customer','lead','technicians.user','photos.media','warranty']));
     }
 
+    public function reschedule(\Illuminate\Http\Request $request, int $id)
+    {
+        abort_if(Gate::denies('edit_crm_service_orders'), 403);
+        $this->requireBranch();
+
+        $data = $request->validate([
+            'scheduled_at' => ['required', 'string'],
+            'reason'       => ['nullable', 'string', 'max:500'],
+        ]);
+
+        $so = ServiceOrder::findOrFail($id);
+
+        $prevScheduledAt = $so->scheduled_at;
+
+        $historyEntry = [
+            'from'           => $prevScheduledAt,
+            'to'             => $data['scheduled_at'],
+            'reason'         => $data['reason'] ?? null,
+            'user_id'        => auth()->id(),
+            'rescheduled_at' => now()->toISOString(),
+        ];
+
+        $history = is_array($so->reschedule_history) ? $so->reschedule_history : [];
+        $history[] = $historyEntry;
+
+        $so->update([
+            'scheduled_at'      => $data['scheduled_at'],
+            'reschedule_history' => $history,
+        ]);
+
+        // Keep lead's scheduled_at in sync
+        if ($so->lead_id) {
+            $so->lead()->update(['scheduled_at' => $data['scheduled_at']]);
+        }
+
+        return response()->json([
+            'message'            => 'Rescheduled',
+            'service_order'      => $so->fresh(['technicians.user','photos.media','warranty','lead']),
+            'reschedule_history' => $so->reschedule_history,
+        ]);
+    }
+
     public function destroy(int $id)
     {
         abort_if(Gate::denies('delete_crm_service_orders'), 403);

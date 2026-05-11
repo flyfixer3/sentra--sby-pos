@@ -16,6 +16,9 @@ class ServiceOrder extends BaseModel implements HasMedia
 
     protected $table = 'crm_service_orders';
     protected $guarded = [];
+    protected $casts = [
+        'reschedule_history' => 'array',
+    ];
 
     public function branch(): BelongsTo { return $this->belongsTo(\Modules\Branch\Entities\Branch::class, 'branch_id'); }
     public function lead(): BelongsTo { return $this->belongsTo(Lead::class, 'lead_id'); }
