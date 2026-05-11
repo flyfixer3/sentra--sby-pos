@@ -156,9 +156,20 @@
 
                                     @if($rowInstallationType === 'with_installation')
                                         @if(empty($customer_id))
-                                            <small class="text-warning d-block mt-1">Please select customer first.</small>
+                                            <small class="text-muted d-block mt-1">Select customer first to add vehicle.</small>
                                         @elseif(empty($customer_vehicles))
                                             <small class="text-warning d-block mt-1">No vehicle registered for this customer.</small>
+                                            @can('edit_customers')
+                                                <button
+                                                    type="button"
+                                                    class="btn btn-outline-primary btn-sm mt-1 sale-add-vehicle-btn"
+                                                    data-line-key="{{ $lineKey }}"
+                                                    data-toggle="modal"
+                                                    data-target="#saleAddVehicleModal"
+                                                >
+                                                    + Add Vehicle
+                                                </button>
+                                            @endcan
                                         @else
                                             <small class="text-muted d-block mt-2">Vehicle</small>
                                             <select

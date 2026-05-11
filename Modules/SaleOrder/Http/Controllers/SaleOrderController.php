@@ -10,6 +10,8 @@ use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Validation\ValidationException;
 use Modules\Crm\Entities\Lead;
 use Modules\People\Entities\Customer;
 use Modules\People\Entities\CustomerVehicle;
@@ -68,6 +70,85 @@ class SaleOrderController extends Controller
         return redirect()->back()->withInput();
     }
 
+    private function normalizeSaleOrderItemsForValidation(Request $request): void
+    {
+        $rawItems = $request->input('items');
+        $jsonItems = null;
+
+        if ($request->filled('sale_order_items_json')) {
+            $decodedItems = json_decode((string) $request->input('sale_order_items_json'), true);
+            if (is_array($decodedItems)) {
+                $jsonItems = $decodedItems;
+            }
+        }
+
+        $normalizeRows = function ($rows) {
+            return collect((array) $rows)
+            ->map(function ($row) {
+                if (!is_array($row)) {
+                    return null;
+                }
+
+                $productId = (int) ($row['product_id'] ?? $row['id'] ?? 0);
+                $quantity = (int) ($row['quantity'] ?? 0);
+
+                $discountType = (string) ($row['product_discount_type'] ?? 'fixed') === 'percentage'
+                    ? 'percentage'
+                    : 'fixed';
+
+                $price = normalize_currency($row['price'] ?? $row['unit_price'] ?? 0);
+                $unitPrice = normalize_currency($row['unit_price'] ?? $price);
+                $originalPrice = normalize_currency($row['original_price'] ?? $unitPrice);
+                $productDiscountAmount = normalize_currency($row['product_discount_amount'] ?? 0);
+                $discountValue = $row['discount_value'] ?? 0;
+
+                if ($discountType === 'fixed') {
+                    $discountValue = normalize_currency($discountValue);
+                } else {
+                    $discountValue = is_numeric($discountValue) ? (float) $discountValue : 0;
+                }
+
+                $subTotal = normalize_currency($row['sub_total'] ?? ($quantity * $price));
+                $installationType = (string) ($row['installation_type'] ?? $row['service_type'] ?? 'item_only') === 'with_installation'
+                    ? 'with_installation'
+                    : 'item_only';
+
+                if ($productId <= 0 || $quantity <= 0) {
+                    return null;
+                }
+
+                return [
+                    'product_id' => $productId,
+                    'product_name' => $row['product_name'] ?? null,
+                    'product_code' => $row['product_code'] ?? null,
+                    'quantity' => $quantity,
+                    'price' => $price,
+                    'original_price' => $originalPrice,
+                    'unit_price' => $unitPrice,
+                    'discount_value' => $discountValue,
+                    'product_discount_amount' => $productDiscountAmount,
+                    'product_discount_type' => $discountType,
+                    'sub_total' => $subTotal,
+                    'installation_type' => $installationType,
+                    'customer_vehicle_id' => !empty($row['customer_vehicle_id'])
+                        ? (int) $row['customer_vehicle_id']
+                        : null,
+                ];
+            })
+            ->filter()
+            ->values()
+            ->all();
+        };
+
+        $items = $normalizeRows($rawItems ?? []);
+
+        if (empty($items) && !empty($jsonItems)) {
+            $items = $normalizeRows($jsonItems);
+        }
+
+        $request->merge(['items' => $items]);
+    }
+
     private function buildSaleOrderItemSnapshots(array $rows, $productMap): array
     {
         $items = [];
@@ -89,22 +170,14 @@ class SaleOrderController extends Controller
             }
 
             $masterUnitPrice = max(0, (int) ($product->product_price ?? 0));
+            $unitPrice = max(0, (int) ($row['price'] ?? $row['unit_price'] ?? $row['original_price'] ?? $masterUnitPrice));
+            if ($unitPrice <= 0) {
+                $unitPrice = $masterUnitPrice;
+            }
 
-            $requestedUnitPrice = array_key_exists('original_price', $row) && $row['original_price'] !== null
-                ? max(0, (int) $row['original_price'])
-                : max(0, (int) ($row['unit_price'] ?? $masterUnitPrice));
-
-            $unitPrice = $requestedUnitPrice > 0 ? $requestedUnitPrice : $masterUnitPrice;
             $discountType = (string) ($row['product_discount_type'] ?? 'fixed') === 'percentage'
                 ? 'percentage'
                 : 'fixed';
-
-            if (array_key_exists('price', $row) && $row['price'] !== null && $row['price'] !== '') {
-                $netPrice = max(0, (int) $row['price']);
-            } else {
-                $submittedDiscount = max(0, (int) ($row['product_discount_amount'] ?? $row['discount_value'] ?? 0));
-                $netPrice = max(0, $unitPrice - min($submittedDiscount, $unitPrice));
-            }
 
             if ($discountType === 'percentage') {
                 $discountValue = array_key_exists('discount_value', $row)
@@ -114,9 +187,14 @@ class SaleOrderController extends Controller
                 if ($discountValue < 0 || $discountValue > 100) {
                     throw new \RuntimeException('Item discount percentage cannot exceed 100%.');
                 }
+
+                $itemDiscountAmount = (int) round($unitPrice * ($discountValue / 100));
+            } else {
+                $itemDiscountAmount = max(0, (int) ($row['discount_value'] ?? $row['product_discount_amount'] ?? 0));
             }
 
-            $itemDiscountAmount = max(0, $unitPrice - $netPrice);
+            $itemDiscountAmount = min($itemDiscountAmount, $unitPrice);
+            $netPrice = max(0, $unitPrice - $itemDiscountAmount);
             $subTotal = (int) ($qty * $netPrice);
             [$installationType, $customerVehicleId] = $this->resolveSaleOrderItemInstallationMetadata(
                 $row,
@@ -153,6 +231,196 @@ class SaleOrderController extends Controller
         ];
     }
 
+    private function buildQtyByProductFromItems($items): array
+    {
+        $qtyByProduct = [];
+
+        if ($items instanceof \Illuminate\Support\Collection) {
+            $items = $items->all();
+        }
+
+        if ($items === null) {
+            return $qtyByProduct;
+        }
+
+        if (is_object($items) && !is_iterable($items)) {
+            $items = [$items];
+        }
+
+        foreach ($items as $item) {
+            $pid = (int) data_get($item, 'product_id', 0);
+            $qty = (int) data_get($item, 'quantity', 0);
+
+            if ($pid <= 0 || $qty <= 0) {
+                continue;
+            }
+
+            if (!isset($qtyByProduct[$pid])) {
+                $qtyByProduct[$pid] = 0;
+            }
+
+            $qtyByProduct[$pid] += $qty;
+        }
+
+        return $qtyByProduct;
+    }
+
+    private function incrementReservedPoolStock(int $branchId, array $qtyByProduct, string $source): void
+    {
+        if ($branchId <= 0 || empty($qtyByProduct)) {
+            return;
+        }
+
+        foreach ($qtyByProduct as $productId => $qtyAdd) {
+            $productId = (int) $productId;
+            $qtyAdd = (int) $qtyAdd;
+
+            if ($productId <= 0 || $qtyAdd <= 0) {
+                continue;
+            }
+
+            $row = DB::table('stocks')
+                ->where('branch_id', (int) $branchId)
+                ->whereNull('warehouse_id')
+                ->where('product_id', (int) $productId)
+                ->lockForUpdate()
+                ->first();
+
+            if (!$row) {
+                $stockId = DB::table('stocks')->insertGetId([
+                    'product_id'     => (int) $productId,
+                    'branch_id'      => (int) $branchId,
+                    'warehouse_id'   => null,
+                    'qty_total'      => 0,
+                    'qty_reserved'   => 0,
+                    'qty_incoming'   => 0,
+                    'min_stock'      => 0,
+                    'note'           => 'Auto created by Sale Order reserve. Ref: ' . $source,
+                    'created_by'     => auth()->id(),
+                    'updated_by'     => auth()->id(),
+                    'created_at'     => now(),
+                    'updated_at'     => now(),
+                ]);
+
+                $row = DB::table('stocks')
+                    ->where('id', (int) $stockId)
+                    ->lockForUpdate()
+                    ->first();
+            }
+
+            $beforeReserved = (int) ($row->qty_reserved ?? 0);
+            $afterReserved = $beforeReserved + $qtyAdd;
+
+            DB::table('stocks')
+                ->where('id', (int) $row->id)
+                ->update([
+                    'qty_reserved' => $afterReserved,
+                    'updated_by'   => auth()->id(),
+                    'updated_at'   => now(),
+                ]);
+
+            if (config('app.debug')) {
+                Log::debug('Sale Order reserved pool stock incremented.', [
+                    'source' => $source,
+                    'branch_id' => (int) $branchId,
+                    'product_id' => (int) $productId,
+                    'stock_id' => (int) $row->id,
+                    'qty_add' => (int) $qtyAdd,
+                    'before_reserved' => $beforeReserved,
+                    'after_reserved' => $afterReserved,
+                ]);
+            }
+        }
+    }
+
+    private function decrementReservedPoolStock(int $branchId, array $qtyByProduct, string $source): void
+    {
+        if ($branchId <= 0 || empty($qtyByProduct)) {
+            return;
+        }
+
+        foreach ($qtyByProduct as $productId => $qtyReduce) {
+            $productId = (int) $productId;
+            $qtyReduce = (int) $qtyReduce;
+
+            if ($productId <= 0 || $qtyReduce <= 0) {
+                continue;
+            }
+
+            $row = DB::table('stocks')
+                ->where('branch_id', (int) $branchId)
+                ->whereNull('warehouse_id')
+                ->where('product_id', (int) $productId)
+                ->lockForUpdate()
+                ->first();
+
+            if (!$row) {
+                DB::table('stocks')->insert([
+                    'product_id'     => (int) $productId,
+                    'branch_id'      => (int) $branchId,
+                    'warehouse_id'   => null,
+                    'qty_total'      => 0,
+                    'qty_reserved'   => 0,
+                    'qty_incoming'   => 0,
+                    'min_stock'      => 0,
+                    'note'           => 'Auto created by Sale Order rollback. Ref: ' . $source,
+                    'created_by'     => auth()->id(),
+                    'updated_by'     => auth()->id(),
+                    'created_at'     => now(),
+                    'updated_at'     => now(),
+                ]);
+
+                $row = (object) ['qty_reserved' => 0];
+            }
+
+            DB::table('stocks')
+                ->where('branch_id', (int) $branchId)
+                ->whereNull('warehouse_id')
+                ->where('product_id', (int) $productId)
+                ->update([
+                    'qty_reserved' => DB::raw("GREATEST(COALESCE(qty_reserved,0) - {$qtyReduce}, 0)"),
+                    'updated_by'   => auth()->id(),
+                    'updated_at'   => now(),
+                ]);
+        }
+    }
+
+    private function applyReservedPoolDelta(int $branchId, array $oldQtyByProduct, array $newQtyByProduct, string $source): void
+    {
+        if ($branchId <= 0) {
+            return;
+        }
+
+        $productIds = array_unique(array_merge(array_keys($oldQtyByProduct), array_keys($newQtyByProduct)));
+        $add = [];
+        $reduce = [];
+
+        foreach ($productIds as $pid) {
+            $pid = (int) $pid;
+            if ($pid <= 0) {
+                continue;
+            }
+
+            $oldQty = (int) ($oldQtyByProduct[$pid] ?? 0);
+            $newQty = (int) ($newQtyByProduct[$pid] ?? 0);
+            $delta = $newQty - $oldQty;
+
+            if ($delta > 0) {
+                $add[$pid] = $delta;
+            } elseif ($delta < 0) {
+                $reduce[$pid] = abs($delta);
+            }
+        }
+
+        if (!empty($add)) {
+            $this->incrementReservedPoolStock($branchId, $add, $source);
+        }
+
+        if (!empty($reduce)) {
+            $this->decrementReservedPoolStock($branchId, $reduce, $source);
+        }
+    }
+
     private function normalizeSaleOrderItemInstallationType($value): string
     {
         return (string) $value === 'with_installation' ? 'with_installation' : 'item_only';
@@ -167,8 +435,12 @@ class SaleOrderController extends Controller
         }
 
         $vehicleId = (int) ($row['customer_vehicle_id'] ?? 0);
-        if ($customerId <= 0 || $vehicleId <= 0) {
-            throw new \RuntimeException('Vehicle is required for Sale Order items with installation.');
+        if ($vehicleId <= 0) {
+            return ['with_installation', null];
+        }
+
+        if ($customerId <= 0) {
+            return ['with_installation', null];
         }
 
         $vehicleExists = CustomerVehicle::query()
@@ -488,6 +760,11 @@ class SaleOrderController extends Controller
             normalize_currency_request($request, ['header_discount_value']);
         }
 
+        $itemsBeforeNormalization = $request->input('items', []);
+        $itemsJsonBeforeNormalization = $request->input('sale_order_items_json');
+        $this->normalizeSaleOrderItemsForValidation($request);
+        $itemsAfterNormalization = $request->input('items', []);
+
         try {
             if ($request->filled('branch_id')) {
                 BranchContext::set($request->get('branch_id'));
@@ -524,16 +801,16 @@ class SaleOrderController extends Controller
                 'deposit_received_use_max' => 'nullable|in:1',
 
                 'items' => 'required|array|min:1',
-                'items.*.product_id' => 'required|integer',
+                'items.*.product_id' => 'required|integer|min:1',
                 'items.*.quantity' => 'required|integer|min:1',
-                'items.*.price' => 'nullable|integer|min:0',
+                'items.*.price' => 'required|integer|min:0',
                 'items.*.original_price' => 'nullable|integer|min:0',
                 'items.*.unit_price' => 'nullable|integer|min:0',
                 'items.*.discount_value' => 'nullable|numeric|min:0',
                 'items.*.product_discount_amount' => 'nullable|integer|min:0',
                 'items.*.product_discount_type' => 'nullable|in:fixed,percentage',
                 'items.*.sub_total' => 'nullable|integer|min:0',
-                'items.*.installation_type' => 'nullable|in:item_only,with_installation',
+                'items.*.installation_type' => 'required|in:item_only,with_installation',
                 'items.*.customer_vehicle_id' => 'nullable|integer',
             ];
 
@@ -541,7 +818,25 @@ class SaleOrderController extends Controller
             if ($source === 'sale') $rules['sale_id'] = 'required|integer';
             if ($source === 'lead') $rules['lead_id'] = 'required|integer';
 
-            $request->validate($rules);
+            $messages = [
+                'items.required' => 'Please add at least one product.',
+                'items.array' => 'Please add at least one product.',
+                'items.min' => 'Please add at least one product.',
+                'items.*.product_id.required' => 'Please add at least one product.',
+                'items.*.product_id.min' => 'Please add at least one product.',
+                'items.*.quantity.required' => 'Quantity is required for each item.',
+                'items.*.quantity.min' => 'Quantity must be at least 1.',
+                'items.*.price.required' => 'Sell Unit Price is required for each item.',
+                'items.*.price.integer' => 'Sell Unit Price must be a valid number.',
+                'items.*.installation_type.required' => 'Service Type is required for each item.',
+                'items.*.installation_type.in' => 'Service Type is invalid.',
+                'customer_id.required' => 'Customer is required.',
+                'date.required' => 'Date is required.',
+                'deposit_payment_method.required' => 'Deposit Payment Method is required when DP amount is greater than 0.',
+                'deposit_code.required' => 'Deposit To is required when DP amount is greater than 0.',
+            ];
+
+            $request->validate($rules, $messages);
 
             $saleOrderId = null;
 
@@ -606,11 +901,19 @@ class SaleOrderController extends Controller
                     ->values()
                     ->all();
 
-                if (empty($productIds)) abort(422, 'Items are empty.');
+                if (empty($productIds)) {
+                    throw ValidationException::withMessages([
+                        'items' => 'Please add at least one product.',
+                    ]);
+                }
 
-                $productMap = Product::query()
+                $productMap = Product::withoutGlobalScopes()
                     ->select('id', 'product_price')
                     ->whereIn('id', $productIds)
+                    ->where(function ($query) use ($branchId) {
+                        $query->whereNull('branch_id')
+                            ->orWhere('branch_id', (int) $branchId);
+                    })
                     ->get()
                     ->keyBy('id');
 
@@ -623,7 +926,11 @@ class SaleOrderController extends Controller
                 $qtyByProduct = $itemSnapshot['qty_by_product'];
                 $sellSubtotal = (int) $itemSnapshot['sell_subtotal'];
 
-                if (empty($qtyByProduct)) abort(422, 'Items are empty.');
+                if (empty($qtyByProduct)) {
+                    throw ValidationException::withMessages([
+                        'items' => 'Please add at least one product.',
+                    ]);
+                }
 
                 // totals
                 $taxPct = (float) $request->tax_percentage;
@@ -682,8 +989,19 @@ class SaleOrderController extends Controller
 
                 // wajib isi akun & method kalau planned>0 atau received>0
                 if ($depositAmount > 0 || $depositReceived > 0) {
-                    if (empty($depositCode)) abort(422, 'Deposit To is required when DP (planned/received) > 0.');
-                    if (empty($depositPaymentMethod)) abort(422, 'Deposit Payment Method is required when DP (planned/received) > 0.');
+                    $depositErrors = [];
+
+                    if (empty($depositCode)) {
+                        $depositErrors['deposit_code'] = 'Deposit To is required when DP amount is greater than 0.';
+                    }
+
+                    if (empty($depositPaymentMethod)) {
+                        $depositErrors['deposit_payment_method'] = 'Deposit Payment Method is required when DP amount is greater than 0.';
+                    }
+
+                    if (!empty($depositErrors)) {
+                        throw ValidationException::withMessages($depositErrors);
+                    }
                 }
 
                 if ($depositReceived > 0 && AccountingPeriodLockService::isLocked(Carbon::parse((string) $request->date), (int) $branchId)) {
@@ -737,43 +1055,18 @@ class SaleOrderController extends Controller
                         'customer_vehicle_id' => $row['customer_vehicle_id'] ?? null,
                     ]);
                 }
+                $savedItems = SaleOrderItem::query()
+                    ->where('sale_order_id', (int) $so->id)
+                    ->get(['product_id', 'quantity']);
+
+                $reservedAdd = $this->buildQtyByProductFromItems($savedItems);
+                $this->incrementReservedPoolStock((int) ($so->branch_id ?? 0), $reservedAdd, (string) ($so->reference ?? ('SO#' . $so->id)));
 
                 if ($lead) {
                     $lead->forceFill([
                         'sale_order_id' => (int) $so->id,
                         'status' => 'deal',
                     ])->save();
-                }
-
-                // reserve stock (existing)
-                foreach ($qtyByProduct as $pid => $qty) {
-                    $existing = DB::table('stocks')
-                        ->where('branch_id', (int) $branchId)
-                        ->whereNull('warehouse_id')
-                        ->where('product_id', (int) $pid)
-                        ->lockForUpdate()
-                        ->first();
-
-                    if ($existing) {
-                        DB::table('stocks')
-                            ->where('id', (int) $existing->id)
-                            ->update([
-                                'qty_reserved' => (int) ($existing->qty_reserved ?? 0) + (int) $qty,
-                                'updated_at' => now(),
-                            ]);
-                    } else {
-                        DB::table('stocks')->insert([
-                            'branch_id'    => (int) $branchId,
-                            'warehouse_id' => null,
-                            'product_id'   => (int) $pid,
-                            'qty_total' => 0,
-                            'qty_reserved'  => (int) $qty,
-                            'qty_incoming'  => 0,
-                            'min_stock'     => 0,
-                            'created_at' => now(),
-                            'updated_at' => now(),
-                        ]);
-                    }
                 }
 
                 // ✅ DP payment record: pakai DP Received
@@ -827,6 +1120,16 @@ class SaleOrderController extends Controller
             toast('Sale Order Created!', 'success');
             return redirect()->route('sale-orders.show', $saleOrderId);
 
+        } catch (ValidationException $e) {
+            Log::warning('Sale Order create validation failed.', [
+                'errors' => $e->errors(),
+                'items_before_normalization' => $itemsBeforeNormalization,
+                'sale_order_items_json_present' => is_string($itemsJsonBeforeNormalization) && $itemsJsonBeforeNormalization !== '',
+                'sale_order_items_json' => $itemsJsonBeforeNormalization,
+                'items_after_normalization' => $itemsAfterNormalization,
+            ]);
+
+            throw $e;
         } catch (\Throwable $e) {
             return $this->failBack($e->getMessage(), 422);
         }
@@ -1046,7 +1349,7 @@ class SaleOrderController extends Controller
                 throw new \RuntimeException('Only pending Sale Order can be edited.');
             }
 
-            $saleOrder->load(['items.customerVehicle']);
+            $saleOrder->load(['items.product', 'items.customerVehicle']);
 
             $customers = Customer::query()
                 ->where(function ($q) use ($branchId) {
@@ -1080,6 +1383,8 @@ class SaleOrderController extends Controller
                     'customer_vehicle_id' => $this->normalizeSaleOrderItemInstallationType($it->installation_type ?? 'item_only') === 'with_installation'
                         ? $it->customer_vehicle_id
                         : null,
+                    'product_name' => $it->product?->product_name,
+                    'product_code' => $it->product?->product_code,
                 ];
             })->values()->toArray();
 
@@ -1112,6 +1417,8 @@ class SaleOrderController extends Controller
             normalize_currency_request($request, ['header_discount_value']);
         }
 
+        $this->normalizeSaleOrderItemsForValidation($request);
+
         try {
             $branchId = BranchContext::id();
 
@@ -1143,17 +1450,31 @@ class SaleOrderController extends Controller
                 'deposit_code' => 'nullable|string|max:255',
 
                 'items' => 'required|array|min:1',
-                'items.*.product_id' => 'required|integer',
+                'items.*.product_id' => 'required|integer|min:1',
                 'items.*.quantity' => 'required|integer|min:1',
-                'items.*.price' => 'nullable|integer|min:0',
+                'items.*.price' => 'required|integer|min:0',
                 'items.*.original_price' => 'nullable|integer|min:0',
                 'items.*.unit_price' => 'nullable|integer|min:0',
                 'items.*.discount_value' => 'nullable|numeric|min:0',
                 'items.*.product_discount_amount' => 'nullable|integer|min:0',
                 'items.*.product_discount_type' => 'nullable|in:fixed,percentage',
                 'items.*.sub_total' => 'nullable|integer|min:0',
-                'items.*.installation_type' => 'nullable|in:item_only,with_installation',
+                'items.*.installation_type' => 'required|in:item_only,with_installation',
                 'items.*.customer_vehicle_id' => 'nullable|integer',
+            ], [
+                'items.required' => 'Please add at least one product.',
+                'items.array' => 'Please add at least one product.',
+                'items.min' => 'Please add at least one product.',
+                'items.*.product_id.required' => 'Please add at least one product.',
+                'items.*.product_id.min' => 'Please add at least one product.',
+                'items.*.quantity.required' => 'Quantity is required for each item.',
+                'items.*.quantity.min' => 'Quantity must be at least 1.',
+                'items.*.price.required' => 'Sell Unit Price is required for each item.',
+                'items.*.price.integer' => 'Sell Unit Price must be a valid number.',
+                'items.*.installation_type.required' => 'Service Type is required for each item.',
+                'items.*.installation_type.in' => 'Service Type is invalid.',
+                'customer_id.required' => 'Customer is required.',
+                'date.required' => 'Date is required.',
             ]);
 
             DB::transaction(function () use ($request, $saleOrder, $branchId) {
@@ -1167,6 +1488,7 @@ class SaleOrderController extends Controller
                 if ($st !== 'pending') {
                     throw new \RuntimeException('Only pending Sale Order can be edited.');
                 }
+                $oldQtyByProduct = $this->buildQtyByProductFromItems($saleOrder->items);
 
                 $customer = Customer::query()
                     ->where('id', (int) $request->customer_id)
@@ -1184,12 +1506,18 @@ class SaleOrderController extends Controller
                     ->all();
 
                 if (empty($productIds)) {
-                    throw new \RuntimeException('Items are empty.');
+                    throw ValidationException::withMessages([
+                        'items' => 'Please add at least one product.',
+                    ]);
                 }
 
-                $productMap = Product::query()
+                $productMap = Product::withoutGlobalScopes()
                     ->select('id', 'product_price')
                     ->whereIn('id', $productIds)
+                    ->where(function ($query) use ($branchId) {
+                        $query->whereNull('branch_id')
+                            ->orWhere('branch_id', (int) $branchId);
+                    })
                     ->get()
                     ->keyBy('id');
 
@@ -1203,7 +1531,9 @@ class SaleOrderController extends Controller
                 $sellSubtotal = (int) $itemSnapshot['sell_subtotal'];
 
                 if (empty($qtyByProduct)) {
-                    throw new \RuntimeException('Items are empty.');
+                    throw ValidationException::withMessages([
+                        'items' => 'Please add at least one product.',
+                    ]);
                 }
 
                 $taxPct = (float) $request->tax_percentage;
@@ -1270,6 +1600,8 @@ class SaleOrderController extends Controller
                         'customer_vehicle_id' => $row['customer_vehicle_id'] ?? null,
                     ]);
                 }
+                $newQtyByProduct = $this->buildQtyByProductFromItems($normalizedItems);
+                $this->applyReservedPoolDelta((int) ($saleOrder->branch_id ?? 0), $oldQtyByProduct, $newQtyByProduct, (string) ($saleOrder->reference ?? ('SO#' . $saleOrder->id)));
 
                 // DP payment record tetap tidak diubah di update (sesuai catatan kamu)
             });
@@ -1277,6 +1609,8 @@ class SaleOrderController extends Controller
             toast('Sale Order updated!', 'success');
             return redirect()->route('sale-orders.show', $saleOrder->id);
 
+        } catch (ValidationException $e) {
+            throw $e;
         } catch (\Throwable $e) {
             return $this->failBack($e->getMessage(), 422);
         }
@@ -1322,43 +1656,8 @@ class SaleOrderController extends Controller
                 if ($st !== 'pending') {
                     throw new \RuntimeException('Only pending Sale Order can be deleted.');
                 }
-
-                // ✅ build qtyByProduct dari items (yang masih aktif)
-                $qtyByProduct = [];
-                foreach (($so->items ?? []) as $it) {
-                    $pid = (int) ($it->product_id ?? 0);
-                    $qty = (int) ($it->quantity ?? 0);
-                    if ($pid <= 0 || $qty <= 0) continue;
-
-                    if (!isset($qtyByProduct[$pid])) $qtyByProduct[$pid] = 0;
-                    $qtyByProduct[$pid] += $qty;
-                }
-
-                // ✅ rollback reserved pool stock (warehouse_id NULL)
-                if (!empty($qtyByProduct)) {
-                    foreach ($qtyByProduct as $pid => $qty) {
-                        $pid = (int) $pid;
-                        $qty = (int) $qty;
-                        if ($pid <= 0 || $qty <= 0) continue;
-
-                        $poolRow = DB::table('stocks')
-                            ->where('branch_id', (int) $branchId)
-                            ->whereNull('warehouse_id')
-                            ->where('product_id', (int) $pid)
-                            ->lockForUpdate()
-                            ->first();
-
-                        if ($poolRow) {
-                            DB::table('stocks')
-                                ->where('id', (int) $poolRow->id)
-                                ->update([
-                                    'qty_reserved' => DB::raw("GREATEST(COALESCE(qty_reserved,0) - {$qty}, 0)"),
-                                    'updated_at'   => now(),
-                                ]);
-                        }
-                        // kalau pool row tidak ada, ya skip (data lama / tidak konsisten), tapi aman.
-                    }
-                }
+                $qtyByProduct = $this->buildQtyByProductFromItems($so->items);
+                $this->decrementReservedPoolStock((int) ($so->branch_id ?? 0), $qtyByProduct, (string) ($so->reference ?? ('SO#' . $so->id)));
 
                 // ✅ soft delete items dulu, lalu SO
                 SaleOrderItem::query()

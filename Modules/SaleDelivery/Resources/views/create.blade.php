@@ -131,20 +131,44 @@
                                 @endphp
                                 <tr>
                                     <td>
-                                        <select name="items[{{ $i }}][product_id]"
-                                                class="form-control"
-                                                required
-                                                {{ $isSaleOrder ? 'disabled' : '' }}>
-                                            @foreach($products as $p)
-                                                <option value="{{ $p->id }}"
-                                                    {{ (int) $pid === (int) $p->id ? 'selected' : '' }}>
-                                                    {{ $p->product_name }} ({{ $p->product_code }})
-                                                </option>
-                                            @endforeach
-                                        </select>
+                                        @php
+                                            $productName = is_array($row) ? ($row['product_name'] ?? null) : null;
+                                            $productCode = is_array($row) ? ($row['product_code'] ?? null) : null;
+
+                                            if ((!$productName || !$productCode) && !empty($pid)) {
+                                                $matchedProduct = $products->firstWhere('id', (int) $pid);
+                                                $productName = $productName ?: ($matchedProduct?->product_name ?? null);
+                                                $productCode = $productCode ?: ($matchedProduct?->product_code ?? null);
+                                            }
+
+                                            $productLabel = trim(($productName ?: ('Product #' . (int) $pid)) . ($productCode ? ' (' . $productCode . ')' : ''));
+                                        @endphp
 
                                         @if($isSaleOrder)
+                                            <div class="form-control bg-light" style="height:auto; min-height:38px;">
+                                                <div class="fw-bold">{{ $productName ?: ('Product #' . (int) $pid) }}</div>
+                                                <div class="small text-muted">
+                                                    @if($productCode)
+                                                        Code: <b>{{ $productCode }}</b>
+                                                        <span class="mx-1">•</span>
+                                                    @endif
+                                                    Product ID: <b>{{ (int) $pid }}</b>
+                                                </div>
+                                            </div>
+
                                             <input type="hidden" name="items[{{ $i }}][product_id]" value="{{ (int) $pid }}">
+                                        @else
+                                            <select name="items[{{ $i }}][product_id]"
+                                                    class="form-control"
+                                                    required>
+                                                <option value="">Select product</option>
+                                                @foreach($products as $p)
+                                                    <option value="{{ $p->id }}"
+                                                        {{ (int) $pid === (int) $p->id ? 'selected' : '' }}>
+                                                        {{ $p->product_name }} ({{ $p->product_code }})
+                                                    </option>
+                                                @endforeach
+                                            </select>
                                         @endif
                                     </td>
 

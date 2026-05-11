@@ -1123,7 +1123,6 @@ class SaleController extends Controller
                             $current = strtolower((string) ($so->status ?? 'pending'));
 
                             $updates = [
-                                'sale_id' => (int) $sale->id,
                                 'updated_by' => auth()->id(),
                             ];
 

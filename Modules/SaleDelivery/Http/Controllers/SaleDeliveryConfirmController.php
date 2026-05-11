@@ -107,11 +107,12 @@ class SaleDeliveryConfirmController extends Controller
     ): void {
         foreach ($allocations as $a) {
             $rackId = (int) ($a['from_rack_id'] ?? 0);
-            $qty    = (int) ($a['qty'] ?? 0);
+            $qty = (int) ($a['qty'] ?? 0);
 
-            if ($rackId <= 0 || $qty <= 0) continue;
+            if ($rackId <= 0 || $qty <= 0) {
+                continue;
+            }
 
-            // lock row stock per rack
             $row = DB::table('stock_racks')
                 ->where('branch_id', (int) $branchId)
                 ->where('warehouse_id', (int) $warehouseId)
@@ -120,22 +121,31 @@ class SaleDeliveryConfirmController extends Controller
                 ->lockForUpdate()
                 ->first();
 
-            $good   = (int) ($row->qty_good ?? 0);
-            $defect = (int) ($row->qty_defect ?? 0);
-            $damaged= (int) ($row->qty_damaged ?? 0);
-
-            $total = $good + $defect + $damaged;
-
-            if ($total < $qty) {
+            if (!$row) {
                 throw new \RuntimeException(
-                    "Not enough stock on selected rack. " .
+                    "Stock rack row not found. Product ID {$productId}, WH {$warehouseId}, Rack {$rackId}. Ref: {$reference}"
+                );
+            }
+
+            $good = (int) ($row->qty_good ?? 0);
+            $defect = (int) ($row->qty_defect ?? 0);
+            $damaged = (int) ($row->qty_damaged ?? 0);
+
+            /*
+            * GOOD allocation wajib hanya memakai qty_good.
+            * Jangan pakai total good+defect+damaged, karena itu bisa membuat
+            * stok defect/damaged dianggap tersedia sebagai GOOD.
+            */
+            if ($good < $qty) {
+                throw new \RuntimeException(
+                    "Not enough GOOD stock on selected rack. " .
                     "Product ID {$productId}, WH {$warehouseId}, Rack {$rackId}. " .
-                    "Need {$qty}, available TOTAL {$total} (G{$good}/D{$defect}/DM{$damaged}). Ref: {$reference}"
+                    "Need {$qty}, available GOOD {$good} " .
+                    "(breakdown: GOOD={$good}, DEFECT={$defect}, DAMAGED={$damaged}). Ref: {$reference}"
                 );
             }
         }
     }
-
 
     private function roleString(): string
     {

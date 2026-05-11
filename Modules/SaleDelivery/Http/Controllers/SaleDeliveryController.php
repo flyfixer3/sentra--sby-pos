@@ -77,13 +77,22 @@ class SaleDeliveryController extends Controller
 
         try {
             $source = (string) $request->get('source', '');
+
             if (!in_array($source, ['quotation', 'sale', 'sale_order'], true)) {
                 throw new \RuntimeException('Sale Delivery can only be created from Quotation, Sale, or Sale Order.');
             }
 
-            if ($source === 'quotation' && !$request->filled('quotation_id')) throw new \RuntimeException('quotation_id is required');
-            if ($source === 'sale' && !$request->filled('sale_id')) throw new \RuntimeException('sale_id is required');
-            if ($source === 'sale_order' && !$request->filled('sale_order_id')) throw new \RuntimeException('sale_order_id is required');
+            if ($source === 'quotation' && !$request->filled('quotation_id')) {
+                throw new \RuntimeException('quotation_id is required');
+            }
+
+            if ($source === 'sale' && !$request->filled('sale_id')) {
+                throw new \RuntimeException('sale_id is required');
+            }
+
+            if ($source === 'sale_order' && !$request->filled('sale_order_id')) {
+                throw new \RuntimeException('sale_order_id is required');
+            }
 
             $branchId = BranchContext::id();
 
@@ -91,8 +100,6 @@ class SaleDeliveryController extends Controller
                 ->forActiveBranch($branchId)
                 ->orderBy('customer_name')
                 ->get();
-
-            $products = Product::query()->orderBy('product_name')->limit(500)->get();
 
             $prefillItems = [];
             $prefillCustomerId = null;
@@ -104,7 +111,7 @@ class SaleDeliveryController extends Controller
                 $saleOrder = SaleOrder::query()
                     ->where('id', $saleOrderId)
                     ->where('branch_id', $branchId)
-                    ->with(['items'])
+                    ->with(['items.product'])
                     ->firstOrFail();
 
                 $prefillSaleOrderRef = $saleOrder->reference ?? ('SO#' . $saleOrder->id);
@@ -114,23 +121,35 @@ class SaleDeliveryController extends Controller
 
                 $hasAny = false;
                 foreach ($remainingMap as $v) {
-                    if ((int)$v > 0) { $hasAny = true; break; }
+                    if ((int) $v > 0) {
+                        $hasAny = true;
+                        break;
+                    }
                 }
+
                 if (!$hasAny) {
                     throw new \RuntimeException('All items are already planned in existing deliveries (pending/confirmed/partial).');
                 }
 
                 foreach ($saleOrder->items as $it) {
                     $pid = (int) $it->product_id;
-                    if ($pid <= 0) continue;
+
+                    if ($pid <= 0) {
+                        continue;
+                    }
 
                     $rem = (int) ($remainingMap[$pid] ?? 0);
-                    if ($rem <= 0) continue;
+
+                    if ($rem <= 0) {
+                        continue;
+                    }
 
                     $prefillItems[] = [
                         'product_id' => $pid,
-                        'quantity'   => $rem,
-                        'price'      => (int) ($it->price ?? 0),
+                        'product_name' => $it->product?->product_name,
+                        'product_code' => $it->product?->product_code,
+                        'quantity' => $rem,
+                        'price' => (int) ($it->price ?? 0),
                     ];
                 }
             }
@@ -143,7 +162,11 @@ class SaleDeliveryController extends Controller
                     ->where('branch_id', $branchId)
                     ->first();
 
-                if (!$sale) throw new \RuntimeException('Sale (invoice) not found in this branch.');
+                if (!$sale) {
+                    throw new \RuntimeException('Sale (invoice) not found in this branch.');
+                }
+
+                $prefillCustomerId = (int) ($sale->customer_id ?? 0);
 
                 $remainingMap = $this->getRemainingQtyBySale($saleId);
 
@@ -151,19 +174,71 @@ class SaleDeliveryController extends Controller
                     ->where('sale_id', $saleId)
                     ->get();
 
+                $productIds = $details
+                    ->pluck('product_id')
+                    ->map(fn ($id) => (int) $id)
+                    ->filter(fn ($id) => $id > 0)
+                    ->unique()
+                    ->values()
+                    ->all();
+
+                $productMap = Product::withoutGlobalScopes()
+                    ->whereIn('id', $productIds)
+                    ->get(['id', 'product_name', 'product_code'])
+                    ->keyBy('id');
+
                 foreach ($details as $d) {
                     $pid = (int) $d->product_id;
-                    if ($pid <= 0) continue;
+
+                    if ($pid <= 0) {
+                        continue;
+                    }
 
                     $rem = (int) ($remainingMap[$pid] ?? 0);
-                    if ($rem <= 0) continue;
+
+                    if ($rem <= 0) {
+                        continue;
+                    }
+
+                    $product = $productMap->get($pid);
 
                     $prefillItems[] = [
                         'product_id' => $pid,
-                        'quantity'   => $rem,
-                        'price'      => (int) ($d->price ?? 0),
+                        'product_name' => $product?->product_name,
+                        'product_code' => $product?->product_code,
+                        'quantity' => $rem,
+                        'price' => (int) ($d->price ?? 0),
                     ];
                 }
+            }
+
+            /*
+            * Product dropdown tetap dibutuhkan untuk flow non-Sale Order.
+            * Tetapi selected/prefill product wajib ikut dimasukkan walaupun tidak masuk limit 500,
+            * supaya tampilan tidak blank.
+            */
+            $products = Product::query()
+                ->orderBy('product_name')
+                ->limit(500)
+                ->get();
+
+            $prefillProductIds = collect($prefillItems)
+                ->pluck('product_id')
+                ->map(fn ($id) => (int) $id)
+                ->filter(fn ($id) => $id > 0)
+                ->unique()
+                ->values();
+
+            if ($prefillProductIds->isNotEmpty()) {
+                $prefillProducts = Product::withoutGlobalScopes()
+                    ->whereIn('id', $prefillProductIds->all())
+                    ->get();
+
+                $products = $products
+                    ->merge($prefillProducts)
+                    ->unique('id')
+                    ->sortBy('product_name')
+                    ->values();
             }
 
             return view('saledelivery::create', compact(
@@ -364,33 +439,35 @@ class SaleDeliveryController extends Controller
             }
 
             $branchId = BranchContext::id();
+
             if ((int) $saleDelivery->branch_id !== (int) $branchId) {
                 throw new \RuntimeException('Wrong branch context.');
             }
 
             $request->validate([
                 'date' => 'required|date',
-
-                // ✅ FIX: warehouse boleh null (karena flow kamu memang allow null)
                 'warehouse_id' => 'nullable|integer',
-
                 'note' => 'nullable|string|max:2000',
-                'items' => 'required|array|min:1',
-                'items.*.id' => 'nullable|integer',
-                'items.*.product_id' => 'required|integer',
-                'items.*.quantity' => 'required|integer|min:1',
-                'items.*.price' => 'nullable|integer|min:0',
             ]);
 
             DB::transaction(function () use ($request, $saleDelivery, $branchId) {
-
                 $saleDelivery = SaleDelivery::withoutGlobalScopes()
                     ->lockForUpdate()
                     ->with(['items'])
                     ->findOrFail($saleDelivery->id);
 
-                // ✅ warehouse_id optional
+                $st = strtolower(trim((string) ($saleDelivery->getRawOriginal('status') ?? $saleDelivery->status ?? 'pending')));
+
+                if ($st !== 'pending') {
+                    throw new \RuntimeException('Only pending Sale Delivery can be edited.');
+                }
+
+                if ((int) $saleDelivery->branch_id !== (int) $branchId) {
+                    throw new \RuntimeException('Wrong branch context.');
+                }
+
                 $warehouseId = null;
+
                 if (!empty($request->warehouse_id)) {
                     $warehouse = Warehouse::query()
                         ->where('branch_id', $branchId)
@@ -400,39 +477,18 @@ class SaleDeliveryController extends Controller
                     $warehouseId = (int) $warehouse->id;
                 }
 
+                /*
+                * Penting:
+                * Edit Sale Delivery hanya mengubah header.
+                * Items tidak disentuh karena view edit menampilkan items readonly.
+                * Pengurangan stok tetap hanya terjadi saat Confirm.
+                */
                 $saleDelivery->update([
                     'date' => $request->date,
-                    'warehouse_id' => $warehouseId,   // ✅ bisa null
+                    'warehouse_id' => $warehouseId,
                     'note' => $request->note,
                     'updated_by' => auth()->id(),
                 ]);
-
-                SaleDeliveryItem::where('sale_delivery_id', (int) $saleDelivery->id)->delete();
-
-                foreach ($request->items as $row) {
-
-                    // ✅ FIX: 0 / negatif dianggap "tidak diisi" => NULL
-                    $price = array_key_exists('price', $row) && $row['price'] !== null
-                        ? (int) $row['price']
-                        : null;
-
-                    if ($price !== null && $price <= 0) {
-                        $price = null;
-                    }
-
-                    SaleDeliveryItem::create([
-                        'sale_delivery_id' => (int) $saleDelivery->id,
-
-                        // ✅ kalau kamu memang mau item punya warehouse sendiri nanti:
-                        // 'warehouse_id' => $warehouseId,
-                        // tapi untuk sekarang tetap null biar konsisten sama flow kamu.
-                        'warehouse_id' => null,
-
-                        'product_id' => (int) $row['product_id'],
-                        'quantity' => (int) $row['quantity'],
-                        'price' => $price,
-                    ]);
-                }
             });
 
             toast('Sale Delivery Updated!', 'success');

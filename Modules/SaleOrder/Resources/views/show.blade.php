@@ -33,7 +33,6 @@
     }
 
     $quotationId = $saleOrder->quotation_id ? (int) $saleOrder->quotation_id : null;
-    $saleId      = $saleOrder->sale_id ? (int) $saleOrder->sale_id : null;
 
     $quotationUrl = null;
     if ($quotationId) {
@@ -43,19 +42,6 @@
             $quotationUrl = route('quotation.show', $quotationId);
         } elseif (\Illuminate\Support\Facades\Route::has('sale-quotations.show')) {
             $quotationUrl = route('sale-quotations.show', $quotationId);
-        }
-    }
-
-    $saleUrl = null;
-    if ($saleId) {
-        if (\Illuminate\Support\Facades\Route::has('sales.show')) {
-            $saleUrl = route('sales.show', $saleId);
-        } elseif (\Illuminate\Support\Facades\Route::has('sale.show')) {
-            $saleUrl = route('sale.show', $saleId);
-        } elseif (\Illuminate\Support\Facades\Route::has('invoices.show')) {
-            $saleUrl = route('invoices.show', $saleId);
-        } elseif (\Illuminate\Support\Facades\Route::has('sale-invoices.show')) {
-            $saleUrl = route('sale-invoices.show', $saleId);
         }
     }
 
@@ -113,19 +99,7 @@
                         </strong>
 
                         • Invoice (Sale):
-                        <strong>
-                            @if($saleId)
-                                @if($saleUrl)
-                                    <a href="{{ $saleUrl }}" class="text-decoration-none">
-                                        #{{ $saleId }}
-                                    </a>
-                                @else
-                                    #{{ $saleId }}
-                                @endif
-                            @else
-                                -
-                            @endif
-                        </strong>
+                        <span class="text-muted">listed per delivery below</span>
                     </div>
                 </div>
 
@@ -420,7 +394,7 @@
                             <th style="width:140px;">Date</th>
                             <th style="width:140px;">Status</th>
                             <th style="width:170px;">Invoice</th>
-                            <th class="text-center" style="width:120px;">Action</th>
+                            <th class="text-center" style="width:260px;">Action</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -469,9 +443,42 @@
                             </td>
 
                             <td class="text-center">
-                                <a class="btn btn-sm btn-outline-primary" href="{{ route('sale-deliveries.show', $d->id) }}">
-                                    <i class="bi bi-eye"></i> View
-                                </a>
+                                <div class="d-flex flex-wrap justify-content-center gap-1">
+                                    <a class="btn btn-sm btn-outline-primary" href="{{ route('sale-deliveries.show', $d->id) }}">
+                                        <i class="bi bi-eye"></i> View Delivery
+                                    </a>
+
+                                    @can('confirm_sale_deliveries')
+                                        @if($dst === 'pending')
+                                            <a class="btn btn-sm btn-outline-success"
+                                               href="{{ route('sale-deliveries.confirm.form', $d->id) }}">
+                                                <i class="bi bi-check2-circle"></i> Confirm Delivery
+                                            </a>
+                                        @endif
+                                    @endcan
+
+                                    @if($hasInvoice && $invUrl)
+                                        <a class="btn btn-sm btn-outline-success" href="{{ $invUrl }}">
+                                            <i class="bi bi-box-arrow-up-right"></i> View Invoice
+                                        </a>
+                                    @elseif($hasInvoice)
+                                        <span class="badge bg-success align-self-center">Invoice #{{ (int)$d->sale_id }}</span>
+                                    @else
+                                        @can('create_sales')
+                                            @if($dst === 'confirmed')
+                                                <form method="POST"
+                                                      action="{{ route('sale-deliveries.create-invoice', $d->id) }}"
+                                                      class="d-inline"
+                                                      onsubmit="return confirm('Create Invoice from this Sale Delivery? (1 Delivery = 1 Invoice)');">
+                                                    @csrf
+                                                    <button type="submit" class="btn btn-sm btn-outline-success">
+                                                        <i class="bi bi-receipt"></i> Create Invoice
+                                                    </button>
+                                                </form>
+                                            @endif
+                                        @endcan
+                                    @endif
+                                </div>
                             </td>
                         </tr>
                     @empty

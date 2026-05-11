@@ -19,11 +19,11 @@
         <table class="table table-bordered align-middle">
             <thead>
                 <tr>
-                    <th style="width: 30%;">Product</th>
-                    <th style="width: 10%;">Qty</th>
-                    <th style="width: 16%;">Sell Unit Price</th>
+                    <th style="width: 30%;">Product <span class="text-danger">*</span></th>
+                    <th style="width: 10%;">Qty <span class="text-danger">*</span></th>
+                    <th style="width: 16%;">Sell Unit Price <span class="text-danger">*</span></th>
                     <th style="width: 22%;">Item Discount</th>
-                    <th style="width: 17%;">Service Type</th>
+                    <th style="width: 17%;">Service Type <span class="text-danger">*</span></th>
                     <th style="width: 5%;" class="text-center">#</th>
                 </tr>
             </thead>
@@ -36,16 +36,20 @@
                     $qty = (int)($row['quantity'] ?? 1);
                     $price = (int)($row['price'] ?? 0);
                     $orig = (int)($row['original_price'] ?? 0);
-                    $unit = $orig > 0 ? $orig : $price;
+                    $unit = $price;
+                    $master = $orig > 0 ? $orig : $price;
                     $discountType = (string)($row['product_discount_type'] ?? 'fixed') === 'percentage' ? 'percentage' : 'fixed';
-                    $itemDiscount = max(0, $unit - $price);
-                    $discountValue = $row['discount_value'] ?? ($discountType === 'percentage' ? 0 : $itemDiscount);
-                    $subTotal = max(0, $qty) * max(0, $price);
+                    $discountValue = $row['discount_value'] ?? 0;
+                    $itemDiscount = $discountType === 'percentage'
+                        ? (int) round(max(0, $unit) * (max(0, min(100, (float) $discountValue)) / 100))
+                        : max(0, min(max(0, $unit), (int) $discountValue));
+                    $netPrice = max(0, $unit - $itemDiscount);
+                    $subTotal = max(0, $qty) * $netPrice;
                     $installationType = (string)($row['installation_type'] ?? 'item_only') === 'with_installation' ? 'with_installation' : 'item_only';
                     $customerVehicleId = (int)($row['customer_vehicle_id'] ?? 0);
                 @endphp
 
-                <tr
+                <tr wire:key="sale-order-item-row-{{ $i }}-{{ $pid }}"
                     wire:loading.class.delay.shortest="opacity-50"
                     wire:target="items.{{ $i }}.quantity,items.{{ $i }}.price,items.{{ $i }}.discount_value,items.{{ $i }}.product_discount_type,items.{{ $i }}.installation_type,items.{{ $i }}.customer_vehicle_id"
                 >
@@ -58,19 +62,21 @@
                                 @endif
                                 <span class="ms-1">ID: {{ $pid }}</span>
 
-                                @if($orig > 0)
-                                    <span class="ms-2">• Master: <strong>{{ format_currency($orig) }}</strong></span>
+                                @if($master > 0)
+                                    <span class="ms-2">• Master: <strong>{{ format_currency($master) }}</strong></span>
                                 @endif
                             </div>
                         @else
-                            <div class="text-muted small">Belum ada produk. Cari via search bar di atas.</div>
+                            <div class="text-muted small">Belum ada produk. Cari via search bar di atas. <span class="text-danger">*</span></div>
                         @endif
 
-                        <input type="hidden" name="items[{{ $i }}][product_id]" value="{{ $pid }}">
-                        <input type="hidden" name="items[{{ $i }}][original_price]" value="{{ $orig }}">
-                        <input type="hidden" name="items[{{ $i }}][unit_price]" value="{{ $unit }}">
-                        <input type="hidden" name="items[{{ $i }}][product_discount_amount]" value="{{ $itemDiscount }}">
-                        <input type="hidden" name="items[{{ $i }}][sub_total]" value="{{ $subTotal }}">
+                        <input type="hidden" form="soForm" name="items[{{ $i }}][product_id]" value="{{ $pid }}">
+                        <input type="hidden" form="soForm" name="items[{{ $i }}][product_name]" value="{{ $pname }}">
+                        <input type="hidden" form="soForm" name="items[{{ $i }}][product_code]" value="{{ $pcode }}">
+                        <input type="hidden" form="soForm" name="items[{{ $i }}][original_price]" value="{{ $orig }}">
+                        <input type="hidden" form="soForm" name="items[{{ $i }}][unit_price]" value="{{ $unit }}">
+                        <input type="hidden" form="soForm" name="items[{{ $i }}][product_discount_amount]" value="{{ $itemDiscount }}">
+                        <input type="hidden" form="soForm" name="items[{{ $i }}][sub_total]" value="{{ $subTotal }}">
                     </td>
 
                     <td>
@@ -79,10 +85,14 @@
                             class="form-control"
                             min="1"
                             wire:model.lazy="items.{{ $i }}.quantity"
+                            form="soForm"
                             name="items[{{ $i }}][quantity]"
                             value="{{ $qty }}"
                             @if($pid <= 0) disabled @endif
                         >
+                        @error('items.' . $i . '.quantity')
+                            <div class="text-danger small mt-1">{{ $message }}</div>
+                        @enderror
                     </td>
 
                     <td>
@@ -91,13 +101,17 @@
                             class="form-control"
                             min="0"
                             wire:model.lazy="items.{{ $i }}.price"
+                            form="soForm"
                             name="items[{{ $i }}][price]"
                             value="{{ $price }}"
                             @if($pid <= 0) disabled @endif
                         >
+                        @error('items.' . $i . '.price')
+                            <div class="text-danger small mt-1">{{ $message }}</div>
+                        @enderror
                         @if($pid > 0)
                             <div class="text-muted small mt-1">
-                                Unit: <strong>{{ format_currency($unit) }}</strong>
+                                Net Unit: <strong>{{ format_currency($netPrice) }}</strong>
                                 • Item Discount: <strong>{{ format_currency($itemDiscount) }}/pcs</strong>
                             </div>
                             <div class="text-muted small">
@@ -115,6 +129,7 @@
                                 step="{{ $discountType === 'percentage' ? '0.01' : '1' }}"
                                 @if($discountType === 'percentage') max="100" @endif
                                 wire:model.lazy="items.{{ $i }}.discount_value"
+                                form="soForm"
                                 name="items[{{ $i }}][discount_value]"
                                 value="{{ $discountValue }}"
                                 style="flex: 0 0 70%; max-width: 70%;"
@@ -123,6 +138,7 @@
                             <select
                                 class="form-control"
                                 wire:model.lazy="items.{{ $i }}.product_discount_type"
+                                form="soForm"
                                 name="items[{{ $i }}][product_discount_type]"
                                 style="flex: 0 0 30%; max-width: 30%;"
                                 @if($pid <= 0) disabled @endif
@@ -149,26 +165,40 @@
                         <select
                             class="form-control"
                             wire:model.lazy="items.{{ $i }}.installation_type"
+                            form="soForm"
                             name="items[{{ $i }}][installation_type]"
                             @if($pid <= 0) disabled @endif
                         >
                             <option value="item_only" {{ $installationType === 'item_only' ? 'selected' : '' }}>Item Only</option>
                             <option value="with_installation" {{ $installationType === 'with_installation' ? 'selected' : '' }}>With Installation</option>
                         </select>
+                        @error('items.' . $i . '.installation_type')
+                            <div class="text-danger small mt-1">{{ $message }}</div>
+                        @enderror
 
                         @if($installationType === 'with_installation')
                             <div class="small font-weight-bold mt-2">Vehicle</div>
 
                             @if(empty($customerId))
-                                <small class="text-warning d-block mt-1">Please select customer first.</small>
-                                <input type="hidden" name="items[{{ $i }}][customer_vehicle_id]" value="">
+                                <small class="text-muted d-block mt-1">Select customer first to add vehicle.</small>
+                                <input type="hidden" form="soForm" name="items[{{ $i }}][customer_vehicle_id]" value="">
                             @elseif(empty($customerVehicles))
                                 <small class="text-warning d-block mt-1">No vehicle registered for this customer.</small>
-                                <input type="hidden" name="items[{{ $i }}][customer_vehicle_id]" value="">
+                                @can('edit_customers')
+                                    <button type="button"
+                                            class="btn btn-outline-primary btn-sm mt-1 so-add-vehicle-btn"
+                                            data-row-index="{{ $i }}"
+                                            data-toggle="modal"
+                                            data-target="#soAddVehicleModal">
+                                        + Add Vehicle
+                                    </button>
+                                @endcan
+                                <input type="hidden" form="soForm" name="items[{{ $i }}][customer_vehicle_id]" value="">
                             @else
                                 <select
                                     class="form-control mt-1"
                                     wire:model.lazy="items.{{ $i }}.customer_vehicle_id"
+                                    form="soForm"
                                     name="items[{{ $i }}][customer_vehicle_id]"
                                     @if($pid <= 0) disabled @endif
                                 >
@@ -179,10 +209,10 @@
                                         </option>
                                     @endforeach
                                 </select>
-                                <small class="text-muted d-block mt-1">Vehicle is required for installation items.</small>
+                                <small class="text-muted d-block mt-1">Vehicle is optional for Sale Order items.</small>
                             @endif
                         @else
-                            <input type="hidden" name="items[{{ $i }}][customer_vehicle_id]" value="">
+                            <input type="hidden" form="soForm" name="items[{{ $i }}][customer_vehicle_id]" value="">
                         @endif
                     </td>
 

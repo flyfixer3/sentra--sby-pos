@@ -11,10 +11,36 @@
     </ol>
 @endsection
 
+@push('page_css')
+<style>
+    .so-customer-autocomplete {
+        position: relative;
+    }
+    .so-customer-results {
+        position: absolute;
+        top: 100%;
+        left: 0;
+        right: 0;
+        z-index: 1050;
+        max-height: 240px;
+        overflow-y: auto;
+        border: 1px solid rgba(0,0,0,.125);
+        background: #fff;
+        border-radius: .375rem;
+        margin-top: 4px;
+        box-shadow: 0 8px 18px rgba(0,0,0,.08);
+    }
+    .so-customer-results .list-group-item {
+        cursor: pointer;
+    }
+</style>
+@endpush
+
 @section('content')
 @php
     $items = old('items', $items ?? []);
     if (!is_array($items)) $items = [];
+    $requiredMark = '<span class="text-danger">*</span>';
 
     $oldTax = old('tax_percentage', (float)($saleOrder->tax_percentage ?? 0));
     $oldDiscountType = old('discount_type', 'percentage');
@@ -29,6 +55,25 @@
 
     $dpMethod = (string)($saleOrder->deposit_payment_method ?? '');
     $dpCode = (string)($saleOrder->deposit_code ?? '');
+
+    $selectedCustomerId = (int) old('customer_id', $saleOrder->customer_id);
+    $selectedCustomerLabel = '';
+    if ($selectedCustomerId > 0 && isset($customers)) {
+        $selectedCustomer = $customers->firstWhere('id', $selectedCustomerId);
+        if ($selectedCustomer) {
+            $selectedCustomerLabel = (string) $selectedCustomer->customer_name;
+            $selectedSecondary = $selectedCustomer->customer_phone ?: $selectedCustomer->customer_email;
+            if (!empty($selectedSecondary)) {
+                $selectedCustomerLabel .= ' - ' . $selectedSecondary;
+            }
+        }
+    }
+    $oldCustomerSearch = old('customer_search');
+    if (!is_null($oldCustomerSearch) && $oldCustomerSearch !== '') {
+        $selectedCustomerLabel = $oldCustomerSearch;
+    }
+
+    $itemsErrorMessage = $errors->first('items') ?: $errors->first('items.*');
 @endphp
 
 <div class="container-fluid mb-4">
@@ -86,28 +131,46 @@
                         </div>
                     </div>
 
-                    <form action="{{ route('sale-orders.update', $saleOrder->id) }}" method="POST" id="soEditForm">
+                      <form action="{{ route('sale-orders.update', $saleOrder->id) }}" method="POST" id="soForm" novalidate
+                          data-vehicles-url-template="{{ route('customers.vehicles.json', ['customer' => 'CUSTOMER_ID']) }}"
+                          data-store-url-template="{{ route('customers.vehicles.store-ajax', ['customer' => 'CUSTOMER_ID']) }}">
                         @csrf
                         @method('PUT')
 
                         <div class="row">
                             <div class="col-md-3 mb-3">
-                                <label class="form-label">Date</label>
-                                <input type="date" name="date" class="form-control"
+                                <label class="form-label" for="so_date">Date {!! $requiredMark !!}</label>
+                                <input type="date" name="date" id="so_date" class="form-control @error('date') is-invalid @enderror"
                                        value="{{ old('date', (string) $saleOrder->getRawOriginal('date')) }}" required>
+                                @error('date')
+                                    <div class="invalid-feedback d-block">{{ $message }}</div>
+                                @enderror
+                                <div id="so_date_client_error" class="invalid-feedback d-none">Date is required.</div>
                             </div>
 
                             <div class="col-md-9 mb-3">
-                                <label class="form-label">Customer</label>
-                                <select name="customer_id" id="so_customer_id" class="form-control" required>
-                                    <option value="">-- Choose --</option>
-                                    @foreach($customers as $c)
-                                        <option value="{{ $c->id }}"
-                                            {{ (int) old('customer_id', $saleOrder->customer_id) === (int) $c->id ? 'selected' : '' }}>
-                                            {{ $c->customer_name }}
-                                        </option>
-                                    @endforeach
-                                </select>
+                                <label class="form-label" for="so_customer_id">Customer {!! $requiredMark !!}</label>
+                                <div class="so-customer-autocomplete">
+                                    <div class="input-group">
+                                        <input type="text"
+                                               id="so_customer_search"
+                                               name="customer_search"
+                                               class="form-control @error('customer_id') is-invalid @enderror"
+                                               placeholder="Search customer by name, phone, or email..."
+                                               autocomplete="off"
+                                               value="{{ $selectedCustomerLabel }}"
+                                               data-selected-id="{{ $selectedCustomerId }}"
+                                               data-selected-label="{{ $selectedCustomerLabel }}"
+                                               data-search-url="{{ route('customers.search') }}">
+                                        <button class="btn btn-outline-secondary" type="button" id="so_customer_clear" aria-label="Clear customer">&times;</button>
+                                    </div>
+                                    <input type="hidden" name="customer_id" id="so_customer_id" value="{{ $selectedCustomerId }}">
+                                    <div id="so_customer_results" class="so-customer-results list-group d-none"></div>
+                                </div>
+                                @error('customer_id')
+                                    <div class="invalid-feedback d-block">{{ $message }}</div>
+                                @enderror
+                                <div id="so_customer_client_error" class="invalid-feedback d-none">Customer is required.</div>
                             </div>
 
                             <div class="col-md-12 mb-3">
@@ -117,6 +180,7 @@
                                     Warehouse tidak diatur di Sale Order (dipilih saat membuat Sale Delivery).
                                 </div>
                             </div>
+
                         </div>
 
                         <hr>
@@ -126,6 +190,15 @@
                                 :prefillItems="$items"
                                 :customerId="(int) old('customer_id', $saleOrder->customer_id)"
                             />
+                        </div>
+                        <div id="so_vehicle_success" class="alert alert-success d-none mt-2" role="alert"></div>
+                        <div id="so_vehicle_error" class="alert alert-danger d-none mt-2" role="alert"></div>
+                        <input type="hidden" name="sale_order_items_json" id="so_items_json" value="[]">
+                        <div id="so_items_client_error"
+                             class="alert alert-danger mt-2 {{ $itemsErrorMessage ? '' : 'd-none' }}"
+                             role="alert"
+                             data-default-message="Please add at least one product.">
+                            {{ $itemsErrorMessage ?: 'Please add at least one product.' }}
                         </div>
 
                         <hr>
@@ -211,8 +284,8 @@
                                 </table>
 
                                 <div class="small text-muted">
-                                    Grand Total dihitung dari item (qty × sell price) + tax + fee + shipping.<br>
-                                    Item discount sudah masuk ke Sell Unit Price per baris. Header discount mengurangi Grand Total.
+                                    Grand Total dihitung dari item subtotal setelah item discount + tax + fee + shipping.<br>
+                                    Header discount mengurangi Grand Total secara terpisah.
                                 </div>
                             </div>
                         </div>
@@ -237,6 +310,29 @@
         </div>
     </div>
 </div>
+
+@can('edit_customers')
+    <div class="modal fade" id="soAddVehicleModal" tabindex="-1" role="dialog" aria-labelledby="soAddVehicleModalLabel" aria-hidden="true">
+        <div class="modal-dialog" role="document">
+            <form action="#" method="POST" class="modal-content">
+                @csrf
+                <div class="modal-header">
+                    <h5 class="modal-title" id="soAddVehicleModalLabel">Add Vehicle</h5>
+                    <button type="button" class="close" data-dismiss="modal" aria-label="Close">
+                        <span aria-hidden="true">&times;</span>
+                    </button>
+                </div>
+                <div class="modal-body">
+                    @include('people::customers.partials.vehicle-form', ['vehicle' => null])
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-dismiss="modal">Close</button>
+                    <button type="submit" class="btn btn-primary">Save Vehicle</button>
+                </div>
+            </form>
+        </div>
+    </div>
+@endcan
 @endsection
 
 @push('page_scripts')
@@ -284,12 +380,19 @@
             const qtyInput  = document.querySelector(`input[name="items[${idx}][quantity]"]`);
             const priceInput= document.querySelector(`input[name="items[${idx}][price]"]`);
             const origInput = document.querySelector(`input[name="items[${idx}][original_price]"]`);
+            const discountValueInput = document.querySelector(`[name="items[${idx}][discount_value]"]`);
+            const discountTypeInput = document.querySelector(`[name="items[${idx}][product_discount_type]"]`);
 
             const qty  = qtyInput ? soParseInt(qtyInput.value) : 0;
-            const price= priceInput ? soParseInt(priceInput.value) : 0;
+            const sellPrice= priceInput ? soParseInt(priceInput.value) : 0;
             const orig = origInput ? soParseInt(origInput.value) : 0;
+            const discountType = discountTypeInput?.value === 'percentage' ? 'percentage' : 'fixed';
+            const discountAmount = discountType === 'percentage'
+                ? Math.round(Math.max(0, sellPrice) * (soClamp(soParseFloat(discountValueInput?.value), 0, 100) / 100))
+                : Math.min(Math.max(0, soParseInt(discountValueInput?.value)), Math.max(0, sellPrice));
+            const netPrice = Math.max(0, sellPrice - discountAmount);
 
-            if (qty > 0) rows.push({ pid, qty, price: Math.max(0, price), orig: Math.max(0, orig) });
+            if (qty > 0) rows.push({ pid, qty, price: netPrice, sellPrice: Math.max(0, sellPrice), orig: Math.max(0, orig) });
         });
 
         return rows;
@@ -317,25 +420,110 @@
 
             const qty = Math.max(1, soParseInt(qtyInput?.value));
             const price = Math.max(0, soParseInt(priceInput?.value));
-            const original = Math.max(0, soParseInt(originalInput?.value || unitInput?.value || price));
-            const unit = original > 0 ? original : price;
-            const discountAmount = Math.max(0, unit - price);
-            const subTotal = qty * price;
+            const original = Math.max(0, soParseInt(originalInput?.value || price));
+            const unit = price;
+            const discountType = discountTypeInput?.value === 'percentage' ? 'percentage' : 'fixed';
+            const discountAmount = discountType === 'percentage'
+                ? Math.round(unit * (soClamp(soParseFloat(discountValueInput?.value), 0, 100) / 100))
+                : Math.min(Math.max(0, soParseInt(discountValueInput?.value)), unit);
+            const netPrice = Math.max(0, unit - discountAmount);
+            const subTotal = qty * netPrice;
 
             if (qtyInput) qtyInput.value = String(qty);
             if (priceInput) priceInput.value = String(price);
-            if (originalInput) originalInput.value = String(unit);
+            if (originalInput) originalInput.value = String(original);
             if (unitInput) unitInput.value = String(unit);
             if (discountInput) discountInput.value = String(discountAmount);
             if (subTotalInput) subTotalInput.value = String(subTotal);
 
-            if (discountValueInput) {
-                const discountType = discountTypeInput?.value === 'percentage' ? 'percentage' : 'fixed';
-                discountValueInput.value = discountType === 'percentage' && unit > 0
-                    ? soToFixed2((discountAmount / unit) * 100)
-                    : String(discountAmount);
-            }
+            if (discountValueInput && discountType === 'fixed') discountValueInput.value = String(discountAmount);
+            if (discountValueInput && discountType === 'percentage') discountValueInput.value = soToFixed2(soClamp(soParseFloat(discountValueInput.value), 0, 100));
         });
+    }
+
+    function soSyncItemsJsonFallback(form) {
+        const target = document.getElementById('so_items_json');
+        if (!target) return;
+
+        const rows = [];
+        document.querySelectorAll('input[name^="items"][name$="[product_id]"]').forEach((pidInput) => {
+            const name = pidInput.getAttribute('name') || '';
+            const idxMatch = name.match(/items\[(\d+)\]\[product_id\]/);
+            if (!idxMatch) return;
+
+            const idx = idxMatch[1];
+            const getField = (field) => document.querySelector(`[name="items[${idx}][${field}]"]`);
+            const productId = soParseInt(pidInput.value);
+
+            if (productId <= 0) return;
+
+            rows.push({
+                product_id: productId,
+                product_name: getField('product_name')?.value || null,
+                product_code: getField('product_code')?.value || null,
+                quantity: soParseInt(getField('quantity')?.value || 0),
+                price: soParseInt(getField('price')?.value || 0),
+                original_price: soParseInt(getField('original_price')?.value || getField('unit_price')?.value || 0),
+                unit_price: soParseInt(getField('unit_price')?.value || getField('price')?.value || 0),
+                product_discount_amount: soParseInt(getField('product_discount_amount')?.value || 0),
+                discount_value: getField('discount_value')?.value || 0,
+                product_discount_type: getField('product_discount_type')?.value || 'fixed',
+                sub_total: soParseInt(getField('sub_total')?.value || 0),
+                installation_type: getField('installation_type')?.value || 'item_only',
+                customer_vehicle_id: getField('customer_vehicle_id')?.value || null
+            });
+        });
+
+        target.value = JSON.stringify(rows);
+    }
+
+    function soSetItemsError(show, message) {
+        const itemError = document.getElementById('so_items_client_error');
+        if (!itemError) return;
+
+        const defaultMessage = itemError.getAttribute('data-default-message') || 'Please add at least one product.';
+        itemError.textContent = message || defaultMessage;
+
+        if (show) {
+            itemError.classList.remove('d-none');
+        } else {
+            itemError.classList.add('d-none');
+        }
+    }
+
+    function soUpdateItemsErrorState() {
+        const hasRows = soGetRows().length > 0;
+        const shouldShow = !!window.__soSubmitAttempted && !hasRows;
+        soSetItemsError(shouldShow);
+    }
+
+    function soValidateRequiredBeforeSubmit() {
+        let valid = true;
+        const dateInput = document.getElementById('so_date');
+        const customerInput = document.getElementById('so_customer_id');
+        const customerSearch = document.getElementById('so_customer_search');
+        const dateError = document.getElementById('so_date_client_error');
+        const customerError = document.getElementById('so_customer_client_error');
+
+        if (!dateInput?.value) {
+            valid = false;
+            dateInput?.classList.add('is-invalid');
+            dateError?.classList.remove('d-none');
+        } else {
+            dateInput?.classList.remove('is-invalid');
+            dateError?.classList.add('d-none');
+        }
+
+        if (!customerInput?.value) {
+            valid = false;
+            customerSearch?.classList.add('is-invalid');
+            customerError?.classList.remove('d-none');
+        } else {
+            customerSearch?.classList.remove('is-invalid');
+            customerError?.classList.add('d-none');
+        }
+
+        return valid;
     }
 
     function soComputeSubtotalSell(rows) {
@@ -419,7 +607,19 @@
     function soPrepareBeforeSubmit(form) {
         if (!form) return true;
         soFinalizeRowInputsBeforeSubmit(form);
+        soSyncItemsJsonFallback(form);
         soRecalc();
+
+        const validRows = soGetRows();
+        const requiredFieldsValid = soValidateRequiredBeforeSubmit();
+        soSetItemsError(validRows.length === 0);
+
+        if (!requiredFieldsValid || validRows.length === 0) {
+            const firstError = document.querySelector('.is-invalid, #so_items_client_error:not(.d-none)');
+            firstError?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            return false;
+        }
+
         if (form.dataset.soReadyToSubmit === '1') return true;
         if (form.dataset.soSyncing === '1') return false;
 
@@ -432,7 +632,9 @@
     }
 
     document.addEventListener('DOMContentLoaded', function () {
-        const form = document.getElementById('soEditForm');
+        const form = document.getElementById('soForm');
+        const initialItemErrorVisible = !!(document.getElementById('so_items_client_error') && !document.getElementById('so_items_client_error').classList.contains('d-none'));
+        window.__soSubmitAttempted = window.__soSubmitAttempted || initialItemErrorVisible;
         const discEl = document.getElementById('so_header_discount_value');
         discEl?.addEventListener('input', function () {
             discEl.value = soNormalizeDecimalString(discEl.value);
@@ -452,12 +654,14 @@
                 id === 'so_shipping_amount'
             ) {
                 soRecalc();
+                soUpdateItemsErrorState();
             }
         });
 
         document.addEventListener('change', function (e) {
             const id = e.target?.id || '';
             if (id === 'so_discount_type') soRecalc();
+            soUpdateItemsErrorState();
         });
 
         soRecalc();
@@ -472,20 +676,265 @@
         document.addEventListener('livewire:load', notifySaleOrderCustomerChanged);
         notifySaleOrderCustomerChanged();
 
-        if (window.Livewire && typeof window.Livewire.hook === 'function') {
-            window.Livewire.hook('message.processed', () => {
-                soRecalc();
+        function soCustomerHideResults() {
+            const results = document.getElementById('so_customer_results');
+            if (!results) return;
+            results.classList.add('d-none');
+            results.innerHTML = '';
+        }
+
+        function soCustomerRenderResults(items) {
+            const results = document.getElementById('so_customer_results');
+            if (!results) return;
+
+            if (!items || items.length === 0) {
+                results.classList.add('d-none');
+                results.innerHTML = '';
+                return;
+            }
+
+            results.innerHTML = items.map((item) => {
+                const text = (item.text || '').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+                return '<button type="button" class="list-group-item list-group-item-action" data-id="' + item.id + '" data-text="' + text + '">' + text + '</button>';
+            }).join('');
+            results.classList.remove('d-none');
+        }
+
+        function soCustomerSelect(item) {
+            const input = document.getElementById('so_customer_search');
+            const hidden = document.getElementById('so_customer_id');
+
+            if (input) {
+                input.value = item.text || '';
+                input.dataset.selectedId = String(item.id || '');
+                input.dataset.selectedLabel = item.text || '';
+                input.classList.remove('is-invalid');
+            }
+
+            if (hidden) {
+                hidden.value = item.id || '';
+            }
+
+            const customerError = document.getElementById('so_customer_client_error');
+            customerError?.classList.add('d-none');
+
+            soCustomerHideResults();
+            notifySaleOrderCustomerChanged();
+            soUpdateItemsErrorState();
+        }
+
+        function soClearCustomerSelection() {
+            const input = document.getElementById('so_customer_search');
+            const hidden = document.getElementById('so_customer_id');
+
+            if (input) {
+                input.value = '';
+                input.dataset.selectedId = '';
+                input.dataset.selectedLabel = '';
+            }
+
+            if (hidden) {
+                hidden.value = '';
+            }
+
+            notifySaleOrderCustomerChanged();
+            soUpdateItemsErrorState();
+        }
+
+        function soInitCustomerAutocomplete() {
+            const input = document.getElementById('so_customer_search');
+            const hidden = document.getElementById('so_customer_id');
+            const results = document.getElementById('so_customer_results');
+            const clearBtn = document.getElementById('so_customer_clear');
+            if (!input || !hidden || !results) return;
+
+            let activeFetch = null;
+
+            function fetchResults(query) {
+                const url = input.getAttribute('data-search-url') || '';
+                if (!url) return;
+                if (activeFetch) {
+                    activeFetch.abort();
+                }
+                activeFetch = new AbortController();
+
+                fetch(url + '?q=' + encodeURIComponent(query), {
+                    headers: { 'X-Requested-With': 'XMLHttpRequest' },
+                    signal: activeFetch.signal
+                })
+                    .then((resp) => resp.ok ? resp.json() : Promise.reject(resp))
+                    .then((data) => {
+                        soCustomerRenderResults(data.results || []);
+                    })
+                    .catch(() => {
+                        soCustomerHideResults();
+                    });
+            }
+
+            input.addEventListener('input', function () {
+                const value = (input.value || '').toString().trim();
+
+                if (input.dataset.selectedLabel && value !== input.dataset.selectedLabel) {
+                    hidden.value = '';
+                    input.dataset.selectedId = '';
+                }
+
+                if (value.length < 2) {
+                    soCustomerHideResults();
+                    return;
+                }
+
+                fetchResults(value);
+            });
+
+            input.addEventListener('focus', function () {
+                const value = (input.value || '').toString().trim();
+                if (value.length >= 2 && (!results || results.classList.contains('d-none'))) {
+                    fetchResults(value);
+                }
+            });
+
+            results.addEventListener('click', function (event) {
+                const button = event.target.closest('[data-id]');
+                if (!button) return;
+                soCustomerSelect({
+                    id: button.getAttribute('data-id'),
+                    text: button.getAttribute('data-text')
+                });
+            });
+
+            document.addEventListener('click', function (event) {
+                if (event.target === input || results.contains(event.target)) return;
+                soCustomerHideResults();
+            });
+
+            clearBtn?.addEventListener('click', function () {
+                soClearCustomerSelection();
             });
         }
 
+        function soVehicleUrlFromTemplate(template, customerId) {
+            return (template || '').replace('CUSTOMER_ID', customerId);
+        }
+
+        function soFlashVehicleMessage(targetId, message) {
+            const el = document.getElementById(targetId);
+            if (!el) return;
+            el.textContent = message || '';
+            el.classList.remove('d-none');
+            window.setTimeout(() => {
+                el.classList.add('d-none');
+            }, 3500);
+        }
+
+        function soAutoSelectNewVehicle(newVehicleId) {
+            if (!newVehicleId) return;
+
+            const targetIndex = window.__soVehicleTargetIndex || '';
+            if (targetIndex !== '') {
+                const select = document.querySelector(`select[name="items[${targetIndex}][customer_vehicle_id]"]`);
+                if (select && !select.disabled) {
+                    select.value = String(newVehicleId);
+                    select.dispatchEvent(new Event('change', { bubbles: true }));
+                    return;
+                }
+            }
+
+            const saleOrderSelects = document.querySelectorAll('select[name^="items"][name$="[customer_vehicle_id]"]');
+            saleOrderSelects.forEach((select) => {
+                if (select.disabled) return;
+                if ((select.value || '') !== '') return;
+                select.value = String(newVehicleId);
+                select.dispatchEvent(new Event('change', { bubbles: true }));
+            });
+        }
+
+        function soBindVehicleModal() {
+            const form = document.getElementById('soForm');
+            const modal = document.getElementById('soAddVehicleModal');
+            if (!form || !modal) return;
+
+            const modalForm = modal.querySelector('form');
+            if (!modalForm) return;
+
+            modalForm.addEventListener('submit', function (e) {
+                e.preventDefault();
+
+                const customerId = document.getElementById('so_customer_id')?.value || '';
+                if (!customerId) {
+                    soFlashVehicleMessage('so_vehicle_error', 'Please select customer first.');
+                    return;
+                }
+
+                const template = form.getAttribute('data-store-url-template') || '';
+                const url = soVehicleUrlFromTemplate(template, customerId);
+                if (!url) return;
+
+                const formData = new FormData(modalForm);
+
+                fetch(url, {
+                    method: 'POST',
+                    headers: {
+                        'X-Requested-With': 'XMLHttpRequest',
+                        'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || ''
+                    },
+                    body: formData
+                })
+                    .then((resp) => resp.json().then((data) => ({ ok: resp.ok, data })))
+                    .then(({ ok, data }) => {
+                        if (!ok) {
+                            const msg = data && data.message ? data.message : 'Failed to create vehicle.';
+                            soFlashVehicleMessage('so_vehicle_error', msg);
+                            return;
+                        }
+
+                        if (window.jQuery) {
+                            window.jQuery(modal).modal('hide');
+                        }
+
+                        modalForm.reset();
+                        soFlashVehicleMessage('so_vehicle_success', data.message || 'Vehicle created.');
+
+                        if (window.Livewire && typeof window.Livewire.emit === 'function') {
+                            window.Livewire.emit('saleOrderCustomerChanged', customerId);
+                        }
+
+                        if (data.vehicle && data.vehicle.id) {
+                            soAutoSelectNewVehicle(data.vehicle.id);
+                        }
+                    })
+                    .catch(() => {
+                        soFlashVehicleMessage('so_vehicle_error', 'Failed to create vehicle.');
+                    });
+            });
+        }
+
+        if (window.Livewire && typeof window.Livewire.hook === 'function') {
+            window.Livewire.hook('message.processed', () => {
+                soRecalc();
+                soUpdateItemsErrorState();
+            });
+        }
+
+        soInitCustomerAutocomplete();
+        soUpdateItemsErrorState();
+        soBindVehicleModal();
+
+        document.addEventListener('click', function (event) {
+            const button = event.target.closest('.so-add-vehicle-btn');
+            if (!button) return;
+            window.__soVehicleTargetIndex = button.getAttribute('data-row-index') || '';
+        });
+
         form?.addEventListener('submit', function (event) {
+            window.__soSubmitAttempted = true;
             if (!soPrepareBeforeSubmit(form)) {
                 event.preventDefault();
             }
         });
 
         window.addEventListener('sale-order-cart-synced', function () {
-            const activeForm = document.getElementById('soEditForm');
+            const activeForm = document.getElementById('soForm');
             if (!activeForm || activeForm.dataset.soSyncing !== '1') {
                 return;
             }

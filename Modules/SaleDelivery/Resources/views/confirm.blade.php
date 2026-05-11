@@ -592,9 +592,11 @@
 
     function buildGoodRows(pid, wid){
         const racks = racksForWarehouse(wid);
+
         return racks.map(r => {
             const rid = toInt(r.id);
             const st = getRackStock(pid, wid, rid);
+
             return {
                 type: 'good',
                 warehouse_id: toInt(wid),
@@ -604,6 +606,7 @@
                 stock_good: toInt(st.good),
                 stock_defect: toInt(st.defect),
                 stock_damaged: toInt(st.damaged),
+                sub: `${getWarehouseName(wid)} • ${rackLabel(r)} • GOOD: ${toInt(st.good)} • DEFECT: ${toInt(st.defect)} • DAMAGED: ${toInt(st.damaged)}`
             };
         });
     }
@@ -873,7 +876,7 @@
 
                 if (r.type === 'good') {
                     const rid = toInt(r.rack_id);
-                    const avail = toInt(r.stock_total);
+                    const avail = toInt(r.stock_good);
                     const disabled = avail <= 0;
 
                     let curQty = toInt(goodAllocMap[rid] || 0);
@@ -892,7 +895,7 @@
                             <div class="sub">${r.sub}</div>
                         </div>
                         <div class="right">
-                            <span class="badge badge-light border">Avail: <b>${avail}</b></span>
+                            <span class="badge badge-light border">GOOD: <b>${avail}</b></span>
                             <input type="number"
                                 class="form-control form-control-sm qty-mini m-good-qty"
                                 data-rack="${rid}"

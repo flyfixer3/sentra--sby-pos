@@ -28,6 +28,12 @@ Route::group(['middleware' => 'auth'], function () {
 
         Route::post('customers/{customer}/vehicles', 'CustomersController@storeVehicle')
             ->name('customers.vehicles.store');
+        Route::get('customers/search', 'CustomersController@search')
+            ->name('customers.search');
+        Route::get('customers/{customer}/vehicles-json', 'CustomersController@vehiclesJson')
+            ->name('customers.vehicles.json');
+        Route::post('customers/{customer}/vehicles-ajax', 'CustomersController@storeVehicleAjax')
+            ->name('customers.vehicles.store-ajax');
         Route::patch('customers/{customer}/vehicles/{vehicle}', 'CustomersController@updateVehicle')
             ->name('customers.vehicles.update');
         Route::delete('customers/{customer}/vehicles/{vehicle}', 'CustomersController@destroyVehicle')

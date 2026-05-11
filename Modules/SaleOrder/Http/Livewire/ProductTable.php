@@ -16,7 +16,7 @@ class ProductTable extends Component
      *   'product_name' => string|null,
      *   'product_code' => string|null,
      *   'quantity' => int,
-     *   'price' => int,                    // net selling price after item discount
+     *   'price' => int,                    // live sell unit price before item discount
      *   'original_price' => int,           // master price from DB (baseline)
      *   'product_discount_type' => string, // fixed = nominal discount, percentage = % off unit price
      *   'discount_value' => float|int,     // nominal discount or percentage value
@@ -46,11 +46,16 @@ class ProductTable extends Component
 
             $price = max(0, (int)($r['price'] ?? 0));
             $originalPrice = max(0, (int)($r['original_price'] ?? $r['unit_price'] ?? 0));
+            $submittedUnitPrice = $r['unit_price'] ?? $originalPrice;
+            $sellUnitPrice = max(0, (int) ($submittedUnitPrice ?: $price));
+            if ($sellUnitPrice <= 0) {
+                $sellUnitPrice = $price;
+            }
             $discountType = $this->normalizeDiscountType($r['product_discount_type'] ?? 'fixed');
-            $discountAmount = max(0, (int)($r['product_discount_amount'] ?? max(0, $originalPrice - $price)));
+            $discountAmount = max(0, (int)($r['product_discount_amount'] ?? max(0, $sellUnitPrice - $price)));
 
             $discountValue = $discountType === 'percentage'
-                ? ($originalPrice > 0 ? round(($discountAmount / $originalPrice) * 100, 2) : 0)
+                ? ($sellUnitPrice > 0 ? round(($discountAmount / $sellUnitPrice) * 100, 2) : 0)
                 : $discountAmount;
 
             $this->items[] = [
@@ -58,7 +63,7 @@ class ProductTable extends Component
                 'product_name'           => $r['product_name'] ?? null,
                 'product_code'           => $r['product_code'] ?? null,
                 'quantity'               => max(1, (int)($r['quantity'] ?? 1)),
-                'price'                  => $price,
+                'price'                  => $sellUnitPrice,
                 'original_price'         => $originalPrice,
                 'product_discount_type'  => $discountType,
                 'discount_value'         => $discountValue,
@@ -133,11 +138,11 @@ class ProductTable extends Component
             'quantity'               => 1,
             'price'                  => 0,
             'original_price'         => 0,
-                'product_discount_type'  => 'fixed',
-                'discount_value'         => 0,
-                'installation_type'      => 'item_only',
-                'customer_vehicle_id'    => null,
-            ];
+            'product_discount_type'  => 'fixed',
+            'discount_value'         => 0,
+            'installation_type'      => 'item_only',
+            'customer_vehicle_id'    => null,
+        ];
     }
 
     public function onProductSelected($product): void
@@ -146,11 +151,31 @@ class ProductTable extends Component
         if ($pid <= 0) return;
 
         $masterPrice = (int) data_get($product, 'product_price', 0);
+        $productName = trim((string) data_get($product, 'product_name', ''));
+        $productCode = trim((string) data_get($product, 'product_code', ''));
+
+        if ($productName === '' || $productCode === '' || $masterPrice <= 0) {
+            $masterProduct = Product::withoutGlobalScopes()
+                ->select('id', 'product_name', 'product_code', 'product_price')
+                ->find($pid);
+
+            if ($masterProduct) {
+                $productName = $productName !== '' ? $productName : (string) ($masterProduct->product_name ?? '');
+                $productCode = $productCode !== '' ? $productCode : (string) ($masterProduct->product_code ?? '');
+                $masterPrice = $masterPrice > 0 ? $masterPrice : (int) ($masterProduct->product_price ?? 0);
+            }
+        }
 
         foreach ($this->items as $idx => $row) {
             if ((int)$row['product_id'] === $pid) {
                 $this->items[$idx]['quantity'] = (int)$this->items[$idx]['quantity'] + 1;
 
+                if (empty($this->items[$idx]['product_name'])) {
+                    $this->items[$idx]['product_name'] = $productName;
+                }
+                if (empty($this->items[$idx]['product_code'])) {
+                    $this->items[$idx]['product_code'] = $productCode;
+                }
                 if ((int)($this->items[$idx]['original_price'] ?? 0) <= 0) {
                     $this->items[$idx]['original_price'] = $masterPrice;
                 }
@@ -166,8 +191,8 @@ class ProductTable extends Component
         foreach ($this->items as $idx => $row) {
             if ((int)($row['product_id'] ?? 0) <= 0) {
                 $this->items[$idx]['product_id']     = $pid;
-                $this->items[$idx]['product_name']   = (string) data_get($product, 'product_name', '');
-                $this->items[$idx]['product_code']   = (string) data_get($product, 'product_code', '');
+                $this->items[$idx]['product_name']   = $productName;
+                $this->items[$idx]['product_code']   = $productCode;
                 $this->items[$idx]['original_price'] = $masterPrice;
                 $this->items[$idx]['price']          = $masterPrice;
                 $this->items[$idx]['quantity']       = 1;
@@ -181,8 +206,8 @@ class ProductTable extends Component
 
         $this->items[] = [
             'product_id'             => $pid,
-            'product_name'           => (string) data_get($product, 'product_name', ''),
-            'product_code'           => (string) data_get($product, 'product_code', ''),
+            'product_name'           => $productName,
+            'product_code'           => $productCode,
             'quantity'               => 1,
             'original_price'         => $masterPrice,
             'price'                  => $masterPrice,
@@ -204,19 +229,18 @@ class ProductTable extends Component
             return;
         }
 
-        $unitPrice = max(0, (int) ($row['original_price'] ?? 0));
-        $finalPrice = max(0, (int) ($row['price'] ?? $unitPrice));
-        $discountAmount = max(0, $unitPrice - $finalPrice);
+        $masterPrice = max(0, (int) ($row['original_price'] ?? 0));
+        $sellUnitPrice = max(0, (int) ($row['price'] ?? $masterPrice));
 
         $this->items[] = [
             'product_id'             => (int) $row['product_id'],
             'product_name'           => $row['product_name'] ?? null,
             'product_code'           => $row['product_code'] ?? null,
             'quantity'               => 1,
-            'price'                  => $finalPrice,
-            'original_price'         => $unitPrice,
+            'price'                  => $sellUnitPrice,
+            'original_price'         => $masterPrice,
             'product_discount_type'  => 'fixed',
-            'discount_value'         => $discountAmount,
+            'discount_value'         => 0,
             'installation_type'      => 'item_only',
             'customer_vehicle_id'    => null,
         ];
@@ -275,7 +299,6 @@ class ProductTable extends Component
 
     private function normalizeRow(int $index, string $field = ''): void
     {
-        $unitPrice = max(0, (int)($this->items[$index]['original_price'] ?? 0));
         $price = max(0, (int)($this->items[$index]['price'] ?? 0));
         $type = $this->normalizeDiscountType($this->items[$index]['product_discount_type'] ?? 'fixed');
 
@@ -292,87 +315,28 @@ class ProductTable extends Component
                 : null;
         }
 
-        if ($unitPrice <= 0) {
-            $this->items[$index]['discount_value'] = 0;
-            $this->items[$index]['price'] = 0;
-            return;
-        }
-
-        // Kalau user ubah langsung Net Price, sinkronkan discount_value sesuai mode aktif.
-        // Higher-than-master final prices are allowed and simply mean zero item discount.
         if ($field === 'price') {
-            $price = max(0, $price);
             $this->items[$index]['price'] = $price;
-
-            if ($type === 'percentage') {
-                $discountAmount = max(0, $unitPrice - $price);
-                $this->items[$index]['discount_value'] = $unitPrice > 0
-                    ? round(($discountAmount / $unitPrice) * 100, 2)
-                    : 0;
-            } else {
-                $this->items[$index]['discount_value'] = max(0, $unitPrice - $price);
-            }
-
+            $this->clampDiscountValue($index, $type, $price);
             return;
         }
 
-        // Kalau user ganti unit discount
         if ($field === 'product_discount_type') {
-            if ($type === 'percentage') {
-                // Dari fixed/net price -> ubah jadi discount %
-                $currentNetPrice = max(0, $price);
-                $discountAmount = max(0, $unitPrice - $currentNetPrice);
-
-                $this->items[$index]['discount_value'] = $unitPrice > 0
-                    ? round(($discountAmount / $unitPrice) * 100, 2)
-                    : 0;
-                return;
-            } else {
-                // Dari percentage -> ubah jadi nominal discount (Rp)
-                $currentPercentage = (float)($this->items[$index]['discount_value'] ?? 0);
-                $currentPercentage = max(0, min(100, $currentPercentage));
-                $discountAmount = (int) round($unitPrice * ($currentPercentage / 100));
-
-                $this->items[$index]['discount_value'] = max(0, $discountAmount);
-                $this->items[$index]['price'] = max(0, $unitPrice - $discountAmount);
-                return;
-            }
+            $this->items[$index]['discount_value'] = 0;
+            return;
         }
 
+        $this->clampDiscountValue($index, $type, $price);
+    }
+
+    private function clampDiscountValue(int $index, string $type, int $sellUnitPrice): void
+    {
         if ($type === 'percentage') {
-            // IMPORTANT:
-            // jika pilih %, yang diinput adalah persen DISCOUNT
-            // contoh: harga akhir 70% => discount = 30%
-            if ($price > $unitPrice) {
-                $this->items[$index]['discount_value'] = 0;
-                $this->items[$index]['price'] = $price;
-                return;
-            }
-
-            $percentage = (float)($this->items[$index]['discount_value'] ?? 0);
-            $percentage = max(0, min(100, $percentage));
-
-            $discountAmount = (int) round($unitPrice * ($percentage / 100));
-            $netPrice = max(0, $unitPrice - $discountAmount);
-
-            $this->items[$index]['discount_value'] = $percentage;
-            $this->items[$index]['price'] = $netPrice;
+            $this->items[$index]['discount_value'] = max(0, min(100, (float) ($this->items[$index]['discount_value'] ?? 0)));
             return;
         }
 
-        if ($field !== 'discount_value') {
-            $price = max(0, $price);
-            $this->items[$index]['price'] = $price;
-            $this->items[$index]['discount_value'] = max(0, $unitPrice - $price);
-            return;
-        }
-
-        // fixed = nilai input adalah DISCOUNT NOMINAL
-        $nominalDiscount = (int) round((float)($this->items[$index]['discount_value'] ?? 0));
-        $nominalDiscount = max(0, min($unitPrice, $nominalDiscount));
-
-        $this->items[$index]['discount_value'] = $nominalDiscount;
-        $this->items[$index]['price'] = max(0, $unitPrice - $nominalDiscount);
+        $this->items[$index]['discount_value'] = max(0, min($sellUnitPrice, (int) round((float) ($this->items[$index]['discount_value'] ?? 0))));
     }
 
     private function syncDiscountValue(int $index): void
