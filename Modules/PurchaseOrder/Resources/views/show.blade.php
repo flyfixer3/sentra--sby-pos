@@ -205,6 +205,11 @@
     $totalOrderedQty   = (int) ($totalOrderedQty ?? 0);
     $totalRemainingQty = (int) ($totalRemainingQty ?? 0);
 
+    $createdByName = optional($purchase_order->creator)->name ?? '-';
+    $updatedByName = optional($purchase_order->updater)->name ?? '-';
+    $createdAtText = $purchase_order->created_at ? \Carbon\Carbon::parse($purchase_order->created_at)->format('d M Y H:i') : '-';
+    $updatedAtText = $purchase_order->updated_at ? \Carbon\Carbon::parse($purchase_order->updated_at)->format('d M Y H:i') : '-';
+
     // progress % simple (hindari bagi 0)
     $progress = 0;
     if ($totalOrderedQty > 0) {
@@ -346,6 +351,32 @@
 
                         <div class="mt-3 po-label">Created By</div>
                         <div class="po-value">{{ optional($purchase_order->creator)->name ?? '-' }}</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="row g-3 mt-1">
+                <div class="col-lg-12">
+                    <div class="po-box">
+                        <div class="po-section-title">Audit Information</div>
+                        <div class="row">
+                            <div class="col-md-3 mb-2 mb-md-0">
+                                <div class="po-label">Created By</div>
+                                <div class="po-value">{{ $createdByName }}</div>
+                            </div>
+                            <div class="col-md-3 mb-2 mb-md-0">
+                                <div class="po-label">Created At</div>
+                                <div class="po-value">{{ $createdAtText }}</div>
+                            </div>
+                            <div class="col-md-3 mb-2 mb-md-0">
+                                <div class="po-label">Last Updated By</div>
+                                <div class="po-value">{{ $updatedByName }}</div>
+                            </div>
+                            <div class="col-md-3">
+                                <div class="po-label">Last Updated At</div>
+                                <div class="po-value">{{ $updatedAtText }}</div>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>

@@ -158,6 +158,7 @@ class PurchaseOrderController extends Controller
                 'tax_amount'           => (float) $totals['tax_amount'],
                 'discount_amount'      => (float) $totals['discount_amount'],
                 'created_by'           => auth()->id(),
+                'updated_by'           => auth()->id(),
             ]);
 
             // ==========================
@@ -236,6 +237,7 @@ class PurchaseOrderController extends Controller
             'purchaseDeliveries',
             'supplier',
             'creator',
+            'updater',
             'branch',
         ])->findOrFail($id);
 
@@ -359,6 +361,7 @@ class PurchaseOrderController extends Controller
                 'note' => $request->note,
                 'tax_amount' => $totals['tax_amount'],
                 'discount_amount' => $totals['discount_amount'],
+                    'updated_by' => auth()->id(),
             ]);
 
             foreach (Cart::instance('purchase_order')->content() as $cart_item) {

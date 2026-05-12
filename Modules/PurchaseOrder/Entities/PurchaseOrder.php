@@ -39,6 +39,11 @@ class PurchaseOrder extends BaseModel
         return $this->belongsTo(\App\Models\User::class, 'created_by');
     }
 
+    public function updater()
+    {
+        return $this->belongsTo(\App\Models\User::class, 'updated_by');
+    }
+
     public function branch()
     {
         return $this->belongsTo(\Modules\Branch\Entities\Branch::class, 'branch_id', 'id');
