@@ -40,7 +40,10 @@
                     @if($cart_items->isNotEmpty())
                         @foreach($cart_items as $cart_item)
                             @php
-                                $productCode = $cart_item->options->code ?? 'UNKNOWN';
+                                $productCode = trim((string) ($cart_item->options->code ?? ''));
+                                if ($productCode === '') {
+                                    $productCode = '-';
+                                }
 
                                 $displayGrossPrice = (float) ($cart_item->options->unit_price ?? 0);
                                 if ($displayGrossPrice <= 0) {
@@ -184,9 +187,30 @@
         <div class="col-md-4">
             <div class="table-responsive">
                 <table class="table table-striped">
+                    @php
+                        $itemsSubtotal = (float) $cart_items->sum(function ($row) {
+                            return (float) ($row->price ?? 0) * (int) ($row->qty ?? 0);
+                        });
+
+                        $discountInput = max(0, (float) ($global_discount ?? 0));
+                        $discountAmount = 0;
+                        if ($global_discount_type === 'fixed') {
+                            $discountAmount = min($discountInput, $itemsSubtotal);
+                        } else {
+                            $discountInput = min(100, $discountInput);
+                            $discountAmount = $itemsSubtotal * ($discountInput / 100);
+                        }
+                        $discountAmount = round($discountAmount, 2);
+
+                        $taxPercent = min(100, max(0, (float) ($global_tax ?? 0)));
+                        $taxBase = max(0, $itemsSubtotal - $discountAmount);
+                        $taxAmount = round($taxBase * ($taxPercent / 100), 2);
+
+                        $total_with_shipping = round($taxBase + $taxAmount + (float) ($shipping ?? 0), 2);
+                    @endphp
                     <tr>
                         <th>Order Tax ({{ $global_tax }}%)</th>
-                        <td>(+) {{ format_currency(Cart::instance($cart_instance)->tax()) }}</td>
+                        <td>(+) {{ format_currency($taxAmount) }}</td>
                     </tr>
                     <tr>
                         <th>
@@ -197,7 +221,7 @@
                                 ({{ $global_discount }}%)
                             @endif
                         </th>
-                        <td>(-) {{ format_currency(Cart::instance($cart_instance)->discount()) }}</td>
+                        <td>(-) {{ format_currency($discountAmount) }}</td>
                     </tr>
                     <tr>
                         <th>Shipping</th>
@@ -206,10 +230,6 @@
                     </tr>
                     <tr>
                         <th>Grand Total</th>
-                        @php
-                            $cartTotal = (float) str_replace(',', '', Cart::instance($cart_instance)->total());
-                            $total_with_shipping = $cartTotal + (float) $shipping;
-                        @endphp
                         <th>(=) {{ format_currency($total_with_shipping) }}</th>
                     </tr>
                 </table>
@@ -251,7 +271,7 @@
                     </div>
                 </div>
                 <input type="hidden" name="discount_percentage" value="{{ $global_discount_type === 'percentage' ? $global_discount : 0 }}">
-                <input type="hidden" name="discount_amount" value="{{ Cart::instance($cart_instance)->discount() }}">
+                <input type="hidden" name="discount_amount" value="{{ $discountAmount }}">
                 <input type="hidden" name="discount_type" value="{{ $global_discount_type }}">
             </div>
         </div>

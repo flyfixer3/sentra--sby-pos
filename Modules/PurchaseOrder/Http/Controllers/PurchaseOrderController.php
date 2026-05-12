@@ -115,7 +115,9 @@ class PurchaseOrderController extends Controller
                 ->with('error', 'Cart is empty. Please add products first.');
         }
 
-        DB::transaction(function () use ($request, $branchId, $cart) {
+        $totals = $this->calculateOrderTotals($request, $cart);
+
+        DB::transaction(function () use ($request, $branchId, $cart, $totals) {
 
             $supplier = Supplier::findOrFail((int) $request->supplier_id);
 
@@ -148,13 +150,13 @@ class PurchaseOrderController extends Controller
 
                 'tax_percentage'       => (float) $request->tax_percentage,
                 'discount_percentage'  => (float) $request->discount_percentage,
-                'shipping_amount'      => (float) $request->shipping_amount,
-                'total_amount'         => (float) $request->total_amount,
+                'shipping_amount'      => (float) $totals['shipping_amount'],
+                'total_amount'         => (float) $totals['total_amount'],
 
                 'status'               => 'Pending',
                 'note'                 => $request->note,
-                'tax_amount'           => (float) $cart->tax(),
-                'discount_amount'      => (float) ($request->discount_amount ?? $cart->discount()),
+                'tax_amount'           => (float) $totals['tax_amount'],
+                'discount_amount'      => (float) $totals['discount_amount'],
                 'created_by'           => auth()->id(),
             ]);
 
@@ -273,8 +275,12 @@ class PurchaseOrderController extends Controller
         $cart = Cart::instance('purchase_order');
 
         foreach ($purchase_order_details as $purchase_order_detail) {
-            $product = Product::select('id', 'product_unit')
+            $product = Product::withoutGlobalScopes()
+                ->select('id', 'product_unit', 'product_code', 'product_name')
                 ->find((int) $purchase_order_detail->product_id);
+
+            $productName = $purchase_order_detail->product_name ?: ($product?->product_name ?? null);
+            $productCode = $purchase_order_detail->product_code ?: ($product?->product_code ?? null);
 
             $total_stock = Mutation::with('warehouse')
                 ->where('product_id', (int) $purchase_order_detail->product_id)
@@ -286,7 +292,7 @@ class PurchaseOrderController extends Controller
 
             $cart->add([
                 'id'      => (int) $purchase_order_detail->product_id,
-                'name'    => (string) $purchase_order_detail->product_name,
+                'name'    => (string) ($productName ?? $purchase_order_detail->product_name),
                 'qty'     => (int) $purchase_order_detail->quantity,
                 'price'   => (float) $purchase_order_detail->price,
                 'weight'  => 1,
@@ -294,7 +300,7 @@ class PurchaseOrderController extends Controller
                     'product_discount'      => (float) $purchase_order_detail->product_discount_amount,
                     'product_discount_type' => (string) $purchase_order_detail->product_discount_type,
                     'sub_total'             => (float) $purchase_order_detail->sub_total,
-                    'code'                  => (string) $purchase_order_detail->product_code,
+                    'code'                  => (string) ($productCode ?? $purchase_order_detail->product_code),
                     'stock'                 => (int) $total_stock,
                     'unit'                  => $product?->product_unit,
                     'product_tax'           => (float) $purchase_order_detail->product_tax_amount,
@@ -325,7 +331,10 @@ class PurchaseOrderController extends Controller
         }
         $branchId = (int) $active;
 
-        DB::transaction(function () use ($request, $purchase_order, $branchId) {
+        $cart = Cart::instance('purchase_order');
+        $totals = $this->calculateOrderTotals($request, $cart);
+
+        DB::transaction(function () use ($request, $purchase_order, $branchId, $totals) {
 
             if ((int) $purchase_order->branch_id !== $branchId) {
                 abort(403, 'You can only edit Purchase Orders from the active branch.');
@@ -345,11 +354,11 @@ class PurchaseOrderController extends Controller
                 'supplier_name' => Supplier::findOrFail($request->supplier_id)->supplier_name,
                 'tax_percentage' => $request->tax_percentage,
                 'discount_percentage' => $request->discount_percentage,
-                'shipping_amount' => $request->shipping_amount * 1,
-                'total_amount' => $request->total_amount * 1,
+                'shipping_amount' => $totals['shipping_amount'],
+                'total_amount' => $totals['total_amount'],
                 'note' => $request->note,
-                'tax_amount' => Cart::instance('purchase_order')->tax() * 1,
-                'discount_amount' => (float) ($request->discount_amount ?? Cart::instance('purchase_order')->discount()),
+                'tax_amount' => $totals['tax_amount'],
+                'discount_amount' => $totals['discount_amount'],
             ]);
 
             foreach (Cart::instance('purchase_order')->content() as $cart_item) {
@@ -534,5 +543,39 @@ class PurchaseOrderController extends Controller
                 ->back()
                 ->with('error', $e->getMessage());
         }
+    }
+
+    private function calculateOrderTotals(Request $request, $cart): array
+    {
+        $itemsSubtotal = (float) $cart->content()->sum(function ($row) {
+            return (float) ($row->price ?? 0) * (int) ($row->qty ?? 0);
+        });
+
+        $discountType = $request->input('discount_type', 'percentage');
+        $discountType = $discountType === 'fixed' ? 'fixed' : 'percentage';
+
+        $discountAmount = 0.0;
+        if ($discountType === 'fixed') {
+            $inputAmount = max(0, (float) $request->input('discount_amount', 0));
+            $discountAmount = min($inputAmount, $itemsSubtotal);
+        } else {
+            $discountPercent = max(0, min(100, (float) $request->input('discount_percentage', 0)));
+            $discountAmount = $itemsSubtotal * ($discountPercent / 100);
+        }
+        $discountAmount = round($discountAmount, 2);
+
+        $taxPercent = max(0, min(100, (float) $request->input('tax_percentage', 0)));
+        $taxBase = max(0, $itemsSubtotal - $discountAmount);
+        $taxAmount = round($taxBase * ($taxPercent / 100), 2);
+
+        $shippingAmount = max(0, (float) $request->input('shipping_amount', 0));
+        $totalAmount = round($taxBase + $taxAmount + $shippingAmount, 2);
+
+        return [
+            'discount_amount' => $discountAmount,
+            'tax_amount' => $taxAmount,
+            'shipping_amount' => $shippingAmount,
+            'total_amount' => $totalAmount,
+        ];
     }
 }

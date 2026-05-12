@@ -343,6 +343,9 @@
                         <div class="po-value">
                             <span class="po-pill po-pill--warn">{{ $purchase_order->payment_status ?? '-' }}</span>
                         </div>
+
+                        <div class="mt-3 po-label">Created By</div>
+                        <div class="po-value">{{ optional($purchase_order->creator)->name ?? '-' }}</div>
                     </div>
                 </div>
             </div>

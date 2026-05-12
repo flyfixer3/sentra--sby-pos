@@ -179,14 +179,14 @@ class ProductCartPurchase extends Component
 
     private function getProductCode(int $productId): string
     {
-        $product = Product::select('product_code')->find($productId);
-        return $product?->product_code ?? 'UNKNOWN';
+        $product = Product::withoutGlobalScopes()->select('product_code')->find($productId);
+        return (string) ($product?->product_code ?? '');
     }
 
     private function getProductUnit(int $productId): string
     {
-        $product = Product::select('product_unit')->find($productId);
-        return $product?->product_unit ?? 'Unit';
+        $product = Product::withoutGlobalScopes()->select('product_unit')->find($productId);
+        return (string) ($product?->product_unit ?? 'Unit');
     }
 
     private function calculateStockContext(int $productId, ?int $warehouseId = null): array
