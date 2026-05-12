@@ -765,8 +765,10 @@ class SaleDeliveryConfirmController extends Controller
                             }
 
                             $row->update([
-                                'moved_out_at'  => now(),
-                                'moved_out_ref' => (string) $reference,
+                                'moved_out_at'             => now(),
+                                'moved_out_by'             => auth()->id(),
+                                'moved_out_reference_type' => SaleDelivery::class,
+                                'moved_out_reference_id'   => (int) $saleDelivery->id,
                             ]);
 
                             $this->mutationController->applyInOut(
@@ -825,8 +827,10 @@ class SaleDeliveryConfirmController extends Controller
                             }
 
                             $row->update([
-                                'moved_out_at'  => now(),
-                                'moved_out_ref' => (string) $reference,
+                                'moved_out_at'             => now(),
+                                'moved_out_by'             => auth()->id(),
+                                'moved_out_reference_type' => SaleDelivery::class,
+                                'moved_out_reference_id'   => (int) $saleDelivery->id,
                             ]);
 
                             $this->mutationController->applyInOut(

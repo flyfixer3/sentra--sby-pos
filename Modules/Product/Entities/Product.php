@@ -5,10 +5,12 @@ namespace Modules\Product\Entities;
 use Illuminate\Database\Eloquent\Model;
 use App\Models\BaseModel;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 use Modules\Product\Notifications\NotifyQuantityAlert;
 use Spatie\MediaLibrary\HasMedia;
 use Spatie\MediaLibrary\InteractsWithMedia;
 use Spatie\MediaLibrary\MediaCollections\Models\Media;
+use Modules\Inventory\Entities\StockRack;
 use Modules\Inventory\Traits\HasStocks;
 
 class Product extends BaseModel implements HasMedia
@@ -31,6 +33,11 @@ class Product extends BaseModel implements HasMedia
     {
         return $this->belongsToMany(Accessory::class, 'product_accessory')
             ->withTimestamps();
+    }
+
+    public function stockRacks(): HasMany
+    {
+        return $this->hasMany(StockRack::class, 'product_id');
     }
 
     public function brand()
@@ -63,6 +70,42 @@ class Product extends BaseModel implements HasMedia
 
     public function getProductPriceAttribute($value) {
         return ($value / 1);
+    }
+
+    public function setProductPriceItemOnlyAttribute($value): void
+    {
+        $this->attributes['product_price_item_only'] = ($value === null || $value === '')
+            ? null
+            : normalize_currency($value);
+    }
+
+    public function getProductPriceItemOnlyAttribute($value)
+    {
+        return $value === null ? null : ($value / 1);
+    }
+
+    public function setInstallationServicePriceAttribute($value): void
+    {
+        $this->attributes['installation_service_price'] = ($value === null || $value === '')
+            ? null
+            : normalize_currency($value);
+    }
+
+    public function getInstallationServicePriceAttribute($value)
+    {
+        return $value === null ? null : ($value / 1);
+    }
+
+    public function setProductPricePackageAttribute($value): void
+    {
+        $this->attributes['product_price_package'] = ($value === null || $value === '')
+            ? null
+            : normalize_currency($value);
+    }
+
+    public function getProductPricePackageAttribute($value)
+    {
+        return $value === null ? null : ($value / 1);
     }
 
     //fungsi with trait

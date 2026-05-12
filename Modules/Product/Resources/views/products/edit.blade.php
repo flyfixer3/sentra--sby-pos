@@ -55,25 +55,52 @@
                                 </div>
                                 <div class="col-md-6">
                                     <div class="form-group">
-                                        <label for="accessory_code">Accessory <span class="text-danger">*</span></label>
-                                        <select class="form-control" name="accessory_code" id="accessory_code" required>
-                                            @foreach(\Modules\Product\Entities\Accessory::all() as $accessory)
-                                                <option {{ $accessory->accessory_code == $product->accessory->accessory_code ? 'selected' : '' }} value="{{ $accessory->accessory_code }}">{{ $accessory->accessory_code }}</option>
-                                            @endforeach
-                                        </select>
+                                        <label>Accessories <span class="text-danger">*</span></label>
+                                        @php
+                                            $selectedAccessoryIds = collect(old('accessory_ids', $product->accessories->pluck('id')->all()))->map(fn ($id) => (string) $id)->all();
+                                        @endphp
+                                        <div class="border rounded p-3" style="max-height: 220px; overflow:auto;">
+                                            @forelse($accessories as $accessory)
+                                                <div class="form-check mb-2">
+                                                    <input class="form-check-input" type="checkbox" name="accessory_ids[]" value="{{ $accessory->id }}" id="accessory_{{ $accessory->id }}"
+                                                        {{ in_array((string) $accessory->id, $selectedAccessoryIds, true) ? 'checked' : '' }}>
+                                                    <label class="form-check-label" for="accessory_{{ $accessory->id }}">
+                                                        <strong>{{ $accessory->accessory_code }}</strong>
+                                                        <span class="text-muted">- {{ $accessory->accessory_name }}</span>
+                                                    </label>
+                                                </div>
+                                            @empty
+                                                <div class="text-muted small">No accessories available. Create accessories first.</div>
+                                            @endforelse
+                                        </div>
+                                        <small class="text-muted d-block mt-2">The first selected accessory is kept as the legacy primary ACC code for compatibility.</small>
                                     </div>
                                 </div>
-                                <div class="col-md-6">  
+                            </div>
+
+                            <div class="form-row">
+                                <div class="col-md-6">
                                     <div class="form-group">
-                                        <label for="barcode_symbology">Barcode Symbology <span class="text-danger">*</span></label>
-                                        <select class="form-control" name="product_barcode_symbology" id="barcode_symbology" required>
-                                            <option {{ $product->product_barcode_symbology == 'C128' ? 'selected' : '' }} value="C128">Code 128</option>
-                                            <option {{ $product->product_barcode_symbology == 'C39' ? 'selected' : '' }} value="C39">Code 39</option>
-                                            <option {{ $product->product_barcode_symbology == 'UPCA' ? 'selected' : '' }} value="UPCA">UPC-A</option>
-                                            <option {{ $product->product_barcode_symbology == 'UPCE' ? 'selected' : '' }} value="UPCE">UPC-E</option>
-                                            <option {{ $product->product_barcode_symbology == 'EAN13' ? 'selected' : '' }} value="EAN13">EAN-13</option>
-                                            <option {{ $product->product_barcode_symbology == 'EAN8' ? 'selected' : '' }} value="EAN8">EAN-8</option>
-                                        </select>
+                                        <label class="d-flex align-items-center justify-content-between" for="barcode_symbology">
+                                            <span>Barcode Setup <span class="text-danger">*</span></span>
+                                            <button class="btn btn-link btn-sm p-0" type="button" data-toggle="collapse" data-target="#barcodeAdvancedEdit" aria-expanded="false" aria-controls="barcodeAdvancedEdit">
+                                                Advanced
+                                            </button>
+                                        </label>
+                                        <div class="border rounded p-3">
+                                            <div class="font-weight-bold">Default Label Format: Code 128</div>
+                                            <div class="small text-muted">Change this only when a scanner or partner requires a different barcode symbology.</div>
+                                        </div>
+                                        <div class="collapse mt-2" id="barcodeAdvancedEdit">
+                                            <select class="form-control" name="product_barcode_symbology" id="barcode_symbology" required>
+                                                <option {{ $product->product_barcode_symbology == 'C128' ? 'selected' : '' }} value="C128">Code 128</option>
+                                                <option {{ $product->product_barcode_symbology == 'C39' ? 'selected' : '' }} value="C39">Code 39</option>
+                                                <option {{ $product->product_barcode_symbology == 'UPCA' ? 'selected' : '' }} value="UPCA">UPC-A</option>
+                                                <option {{ $product->product_barcode_symbology == 'UPCE' ? 'selected' : '' }} value="UPCE">UPC-E</option>
+                                                <option {{ $product->product_barcode_symbology == 'EAN13' ? 'selected' : '' }} value="EAN13">EAN-13</option>
+                                                <option {{ $product->product_barcode_symbology == 'EAN8' ? 'selected' : '' }} value="EAN8">EAN-8</option>
+                                            </select>
+                                        </div>
                                     </div>
                                 </div>
                             </div>
@@ -87,8 +114,29 @@
                                 </div>
                                 <div class="col-md-6">
                                     <div class="form-group">
-                                        <label for="product_price">Price <span class="text-danger">*</span></label>
+                                        <label for="product_price">Default Selling Price <span class="text-danger">*</span></label>
                                         <input id="product_price" type="text" class="form-control" min="0" name="product_price" required value="{{ $product->product_price }}">
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="form-row">
+                                <div class="col-md-4">
+                                    <div class="form-group">
+                                        <label for="product_price_item_only">Item-Only Price</label>
+                                        <input id="product_price_item_only" type="text" class="form-control" min="0" name="product_price_item_only" value="{{ old('product_price_item_only', $product->product_price_item_only) }}">
+                                    </div>
+                                </div>
+                                <div class="col-md-4">
+                                    <div class="form-group">
+                                        <label for="installation_service_price">Installation Service Price</label>
+                                        <input id="installation_service_price" type="text" class="form-control" min="0" name="installation_service_price" value="{{ old('installation_service_price', $product->installation_service_price) }}">
+                                    </div>
+                                </div>
+                                <div class="col-md-4">
+                                    <div class="form-group">
+                                        <label for="product_price_package">Glass + Installation Package Price</label>
+                                        <input id="product_price_package" type="text" class="form-control" min="0" name="product_price_package" value="{{ old('product_price_package', $product->product_price_package) }}">
                                     </div>
                                 </div>
                             </div>
@@ -120,7 +168,7 @@
                                         <label for="product_tax_type">Tax type</label>
                                         <select class="form-control" name="product_tax_type" id="product_tax_type">
                                             <option value="" selected>None</option>
-                                            <option {{ $product->product_tax_type == 1 ? 'selected' : '' }}  value="1">Exclusive</option>
+                                            <option {{ $product->product_tax_type == 1 ? 'selected' : '' }} value="1">Exclusive</option>
                                             <option {{ $product->product_tax_type == 2 ? 'selected' : '' }} value="2">Inclusive</option>
                                         </select>
                                     </div>
@@ -134,7 +182,7 @@
                             </div>
                             <div class="form-group">
                                 <label for="product_note">Note</label>
-                                <textarea name="product_note" id="product_note" rows="4 " class="form-control">{{ $product->product_note }}</textarea>
+                                <textarea name="product_note" id="product_note" rows="4" class="form-control">{{ $product->product_note }}</textarea>
                             </div>
                         </div>
                     </div>
@@ -208,32 +256,34 @@
     <script src="{{ asset('js/jquery-mask-money.js') }}"></script>
     <script>
         $(document).ready(function () {
-            $('#product_cost').maskMoney({
-                prefix:'{{ settings()->currency->symbol }}',
-                thousands:'{{ settings()->currency->thousand_separator }}',
-                decimal:'{{ settings()->currency->decimal_separator }}',
-                precision: 0
+            ['#product_cost', '#product_price', '#product_price_item_only', '#installation_service_price', '#product_price_package'].forEach(function (selector) {
+                $(selector).maskMoney({
+                    prefix:'{{ settings()->currency->symbol }}',
+                    thousands:'{{ settings()->currency->thousand_separator }}',
+                    decimal:'{{ settings()->currency->decimal_separator }}',
+                    precision: 0
+                });
             });
-            $('#product_price').maskMoney({
-                prefix:'{{ settings()->currency->symbol }}',
-                thousands:'{{ settings()->currency->thousand_separator }}',
-                decimal:'{{ settings()->currency->decimal_separator }}',
-                precision: 0
-            });
-           
-            $('#product_cost').maskMoney('mask', {{$product->product_cost}});
-            $('#product_price').maskMoney('mask', {{$product->product_price}});
-       
+
+            $('#product_cost').maskMoney('mask', {{ $product->product_cost }});
+            $('#product_price').maskMoney('mask', {{ $product->product_price }});
+            @if($product->product_price_item_only !== null)
+            $('#product_price_item_only').maskMoney('mask', {{ $product->product_price_item_only }});
+            @endif
+            @if($product->installation_service_price !== null)
+            $('#installation_service_price').maskMoney('mask', {{ $product->installation_service_price }});
+            @endif
+            @if($product->product_price_package !== null)
+            $('#product_price_package').maskMoney('mask', {{ $product->product_price_package }});
+            @endif
 
             $('#product-form').submit(function () {
-                var product_cost = $('#product_cost').maskMoney('destroy')[0];
-                var product_price = $('#product_price').maskMoney('destroy')[0];
-                var new_number_cost = parseInt((product_cost.value || "").toString().replace(/[^\d-]/g, ""), 10) || 0;
-                var new_number_price = parseInt((product_price.value || "").toString().replace(/[^\d-]/g, ""), 10) || 0;
-                $('#product_cost').val(new_number_cost);
-                $('#product_price').val(new_number_price);
+                ['#product_cost', '#product_price', '#product_price_item_only', '#installation_service_price', '#product_price_package'].forEach(function (selector) {
+                    var input = $(selector).maskMoney('destroy')[0];
+                    var newNumber = parseInt((input.value || "").toString().replace(/[^\d-]/g, ""), 10) || 0;
+                    $(selector).val(input.value === '' ? '' : newNumber);
+                });
             });
         });
     </script>
 @endpush
-

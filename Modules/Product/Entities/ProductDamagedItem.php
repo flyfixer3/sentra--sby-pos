@@ -35,6 +35,10 @@ class ProductDamagedItem extends BaseModel
         'mutation_out_id',
         'created_by',
         'updated_by',
+        'moved_out_at',
+        'moved_out_by',
+        'moved_out_reference_type',
+        'moved_out_reference_id',
     ];
 
     protected $casts = [
@@ -49,6 +53,8 @@ class ProductDamagedItem extends BaseModel
         'created_by'           => 'integer',
         'updated_by'           => 'integer',
         'responsible_user_id'  => 'integer',
+        'moved_out_by'         => 'integer',
+        'moved_out_reference_id' => 'integer',
     ];
 
     public function product()
@@ -59,6 +65,16 @@ class ProductDamagedItem extends BaseModel
     public function warehouse()
     {
         return $this->belongsTo(Warehouse::class, 'warehouse_id');
+    }
+
+    public function branch()
+    {
+        return $this->belongsTo(\Modules\Branch\Entities\Branch::class, 'branch_id');
+    }
+
+    public function rack()
+    {
+        return $this->belongsTo(\Modules\Inventory\Entities\Rack::class, 'rack_id');
     }
 
     public function mutationIn()

@@ -430,6 +430,7 @@ class StockController extends Controller
                 $types = is_array($types) ? array_values(array_filter(array_map('strval', $types))) : [];
                 $r->defect_types = $types;
                 $r->defect_types_text = !empty($types) ? implode(', ', $types) : '-';
+                $r->print_url = route('inventory.labels.defect', ['id' => (int) $r->id]);
                 return $r;
             });
 
@@ -482,6 +483,7 @@ class StockController extends Controller
 
         $rows = $q->get()->map(function ($r) use ($toPhotoUrl) {
             $r->photo_url = $toPhotoUrl($r->photo_path ?? null);
+            $r->print_url = route('inventory.labels.damaged', ['id' => (int) $r->id]);
             return $r;
         });
 

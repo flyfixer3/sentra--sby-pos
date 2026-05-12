@@ -6,8 +6,11 @@ use Illuminate\Contracts\Support\Renderable;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
 use Illuminate\Support\Facades\Gate;
+use Maatwebsite\Excel\Facades\Excel;
 use Modules\Product\Entities\Accessory;
 use Modules\Product\DataTables\ProductAccessoriesDataTable;
+use Modules\Product\Exports\AccessoryTemplateExport;
+use Modules\Product\Imports\AccessoriesImport;
 
 class AccessoriesController extends Controller
 {
@@ -16,6 +19,31 @@ class AccessoriesController extends Controller
         abort_if(Gate::denies('access_product_accessories'), 403);
 
         return $dataTable->render('product::accessories.index');
+    }
+
+    public function downloadTemplate()
+    {
+        abort_if(Gate::denies('access_product_accessories'), 403);
+
+        return Excel::download(new AccessoryTemplateExport(), 'accessories_import_template.xlsx');
+    }
+
+    public function import(Request $request)
+    {
+        abort_if(Gate::denies('access_product_accessories'), 403);
+
+        $request->validate([
+            'file' => 'required|file|mimes:xlsx,xls|max:10240',
+        ]);
+
+        try {
+            Excel::import(new AccessoriesImport(), $request->file('file'));
+            toast('Accessories imported successfully!', 'success');
+        } catch (\Throwable $e) {
+            toast('Accessory import failed: ' . $e->getMessage(), 'error');
+        }
+
+        return redirect()->route('product-accessories.index');
     }
 
 
@@ -52,12 +80,12 @@ class AccessoriesController extends Controller
         abort_if(Gate::denies('access_product_accessories'), 403);
 
         $request->validate([
-            'code' => 'required|unique:accessories,accessory_code,' . $id,
+            'accessory_code' => 'required|unique:accessories,accessory_code,' . $id,
             'accessory_name' => 'required'
         ]);
 
         Accessory::findOrFail($id)->update([
-            'code' => $request->accessory_code,
+            'accessory_code' => $request->accessory_code,
             'accessory_name' => $request->accessory_name,
         ]);
 
@@ -72,7 +100,7 @@ class AccessoriesController extends Controller
 
         $accessory = Accessory::findOrFail($id);
 
-        if ($accessory->products()->isNotEmpty()) {
+        if ($accessory->products()->exists() || $accessory->labeledProducts()->exists()) {
             return back()->withErrors('Can\'t delete beacuse there are products associated with this accessory.');
         }
 

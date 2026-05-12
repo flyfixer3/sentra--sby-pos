@@ -12,6 +12,9 @@ class WarehouseDataTable extends DataTable
     public function dataTable($query) {
         return datatables()
             ->eloquent($query)
+            ->addColumn('branch_name', function ($data) {
+                return optional($data->branch)->name ?? '-';
+            })
             ->editColumn('warehouse_name', function ($data) {
                 return $data->is_main
                     ? $data->warehouse_name . ' <span class="badge badge-success">Main</span>'
@@ -24,9 +27,11 @@ class WarehouseDataTable extends DataTable
     }
 
     public function query(Warehouse $model) {
-        return $model->newQuery()->select([
-            'id', 'warehouse_code', 'warehouse_name', 'is_main', 'created_at'
-        ]);
+        return $model->newQuery()
+            ->with('branch')
+            ->select([
+                'id', 'branch_id', 'warehouse_code', 'warehouse_name', 'is_main', 'created_at'
+            ]);
     }
 
     public function html() {
@@ -54,6 +59,10 @@ class WarehouseDataTable extends DataTable
 
             Column::computed('warehouse_name')
                 ->title('Warehouse Name')
+                ->className('text-center'),
+
+            Column::computed('branch_name')
+                ->title('Branch')
                 ->className('text-center'),
 
             Column::computed('action')

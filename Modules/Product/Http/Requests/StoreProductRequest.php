@@ -12,6 +12,9 @@ class StoreProductRequest extends FormRequest
         normalize_currency_request($this, [
             'product_cost',
             'product_price',
+            'product_price_item_only',
+            'installation_service_price',
+            'product_price_package',
         ]);
     }
 
@@ -27,17 +30,19 @@ class StoreProductRequest extends FormRequest
             'product_code' => ['required', 'string', 'max:255', 'unique:products,product_code'],
             'product_barcode_symbology' => ['required', 'string', 'max:255'],
             'product_unit' => ['required', 'string', 'max:255'],
-            // 'product_cost' => ['required', 'numeric', 'max:2147483647'],
-            // 'product_price' => ['required', 'numeric', 'max:2147483647'],
-            'product_cost' => [ 'numeric', 'max:2147483647'],
-            'product_price' => [ 'numeric', 'max:2147483647'],
-            // FIX: izinkan -1 untuk disable alert
+            'product_cost' => ['required', 'numeric', 'max:2147483647'],
+            'product_price' => ['required', 'numeric', 'max:2147483647'],
+            'product_price_item_only' => ['nullable', 'numeric', 'max:2147483647'],
+            'installation_service_price' => ['nullable', 'numeric', 'max:2147483647'],
+            'product_price_package' => ['nullable', 'numeric', 'max:2147483647'],
             'product_stock_alert' => ['required', 'integer', 'min:-1'],
             'product_order_tax' => ['nullable', 'integer', 'min:0', 'max:100'],
             'product_tax_type' => ['nullable', 'integer'],
             'product_note' => ['nullable', 'string', 'max:1000'],
             'category_id' => ['required', 'integer'],
-            'accessory_code' => ['required', 'string','max:255']
+            'accessory_ids' => ['nullable', 'array', 'min:1'],
+            'accessory_ids.*' => ['integer', 'exists:accessories,id'],
+            'accessory_code' => ['nullable', 'string','max:255']
         ];
     }
 

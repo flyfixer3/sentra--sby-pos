@@ -55,26 +55,49 @@
                                 </div>
                                 <div class="col-md-6">
                                     <div class="form-group">
-                                        <label for="accessory_code">Accessory <span class="text-danger">*</span></label>
-                                        <select class="form-control" name="accessory_code" id="accessory_code" required>
-                                            <option value="" selected disabled>Select Accessory</option>
-                                            @foreach(\Modules\Product\Entities\Accessory::all() as $accessory)
-                                                <option value="{{ $accessory->accessory_code }}">{{ $accessory->accessory_code }}</option>
-                                            @endforeach
-                                        </select>
+                                        <label>Accessories <span class="text-danger">*</span></label>
+                                        <div class="border rounded p-3" style="max-height: 220px; overflow:auto;">
+                                            @forelse($accessories as $accessory)
+                                                <div class="form-check mb-2">
+                                                    <input class="form-check-input" type="checkbox" name="accessory_ids[]" value="{{ $accessory->id }}" id="accessory_{{ $accessory->id }}"
+                                                        {{ in_array((string) $accessory->id, array_map('strval', old('accessory_ids', [])), true) ? 'checked' : '' }}>
+                                                    <label class="form-check-label" for="accessory_{{ $accessory->id }}">
+                                                        <strong>{{ $accessory->accessory_code }}</strong>
+                                                        <span class="text-muted">- {{ $accessory->accessory_name }}</span>
+                                                    </label>
+                                                </div>
+                                            @empty
+                                                <div class="text-muted small">No accessories available. Create accessories first.</div>
+                                            @endforelse
+                                        </div>
+                                        <small class="text-muted d-block mt-2">The first selected accessory is kept as the legacy primary ACC code for compatibility.</small>
                                     </div>
                                 </div>
+                            </div>
+
+                            <div class="form-row">
                                 <div class="col-md-6">
                                     <div class="form-group">
-                                        <label for="barcode_symbology">Barcode Symbology <span class="text-danger">*</span></label>
-                                        <select class="form-control" name="product_barcode_symbology" id="barcode_symbology" required>
-                                            <option value="" disabled>Select Symbology</option>
-                                            <option value="C128" selected>Code 128</option>
-                                            <option value="C39">Code 39</option>
-                                            <option value="UPCA">UPC-A</option>
-                                            <option value="UPCE">UPC-E</option>
-                                            <option value="EAN13">EAN-13</option><option value="EAN8">EAN-8</option>
-                                        </select>
+                                        <label class="d-flex align-items-center justify-content-between" for="barcode_symbology">
+                                            <span>Barcode Setup <span class="text-danger">*</span></span>
+                                            <button class="btn btn-link btn-sm p-0" type="button" data-toggle="collapse" data-target="#barcodeAdvancedCreate" aria-expanded="false" aria-controls="barcodeAdvancedCreate">
+                                                Advanced
+                                            </button>
+                                        </label>
+                                        <div class="border rounded p-3">
+                                            <div class="font-weight-bold">Default Label Format: Code 128</div>
+                                            <div class="small text-muted">Use the default unless a specific scanner or supplier format requires another symbology.</div>
+                                        </div>
+                                        <div class="collapse mt-2" id="barcodeAdvancedCreate">
+                                            <select class="form-control" name="product_barcode_symbology" id="barcode_symbology" required>
+                                                <option value="C128" {{ old('product_barcode_symbology', 'C128') === 'C128' ? 'selected' : '' }}>Code 128</option>
+                                                <option value="C39" {{ old('product_barcode_symbology') === 'C39' ? 'selected' : '' }}>Code 39</option>
+                                                <option value="UPCA" {{ old('product_barcode_symbology') === 'UPCA' ? 'selected' : '' }}>UPC-A</option>
+                                                <option value="UPCE" {{ old('product_barcode_symbology') === 'UPCE' ? 'selected' : '' }}>UPC-E</option>
+                                                <option value="EAN13" {{ old('product_barcode_symbology') === 'EAN13' ? 'selected' : '' }}>EAN-13</option>
+                                                <option value="EAN8" {{ old('product_barcode_symbology') === 'EAN8' ? 'selected' : '' }}>EAN-8</option>
+                                            </select>
+                                        </div>
                                     </div>
                                 </div>
                             </div>
@@ -88,8 +111,31 @@
                                 </div>
                                 <div class="col-md-6">
                                     <div class="form-group">
-                                        <label for="product_price">Price <span class="text-danger">*</span></label>
+                                        <label for="product_price">Default Selling Price <span class="text-danger">*</span></label>
                                         <input id="product_price" type="text" class="form-control" name="product_price" value="{{ old('product_price') }}">
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="form-row">
+                                <div class="col-md-4">
+                                    <div class="form-group">
+                                        <label for="product_price_item_only">Item-Only Price</label>
+                                        <input id="product_price_item_only" type="text" class="form-control" name="product_price_item_only" value="{{ old('product_price_item_only') }}">
+                                        <small class="text-muted">Defaults to the selling price when left blank.</small>
+                                    </div>
+                                </div>
+                                <div class="col-md-4">
+                                    <div class="form-group">
+                                        <label for="installation_service_price">Installation Service Price</label>
+                                        <input id="installation_service_price" type="text" class="form-control" name="installation_service_price" value="{{ old('installation_service_price') }}">
+                                    </div>
+                                </div>
+                                <div class="col-md-4">
+                                    <div class="form-group">
+                                        <label for="product_price_package">Glass + Installation Package Price</label>
+                                        <input id="product_price_package" type="text" class="form-control" name="product_price_package" value="{{ old('product_price_package') }}">
+                                        <small class="text-muted">Defaults to the selling price when left blank.</small>
                                     </div>
                                 </div>
                             </div>
@@ -104,7 +150,7 @@
                                 <div class="col-md-6">
                                     <div class="form-group">
                                         <label for="product_stock_alert">Alert Quantity <span class="text-danger">*</span></label>
-                                        <input type="number" class="form-control" name="product_stock_alert" required value="{{ old('product_stock_alert') }}" min="0" max="100">
+                                        <input type="number" class="form-control" name="product_stock_alert" required value="{{ old('product_stock_alert') }}" min="-1" max="100">
                                     </div>
                                 </div>
                             </div>
@@ -136,7 +182,7 @@
 
                             <div class="form-group">
                                 <label for="product_note">Note</label>
-                                <textarea name="product_note" id="product_note" rows="4 " class="form-control"></textarea>
+                                <textarea name="product_note" id="product_note" rows="4" class="form-control">{{ old('product_note') }}</textarea>
                             </div>
                         </div>
                     </div>
@@ -215,41 +261,18 @@
         }
     </script>
 
-    <!-- <script src="{{ asset('js/jquery-mask-money.js') }}"></script> -->
     <script>
         $(document).ready(function () {
-            // $('#product_cost').maskMoney({
-            //     prefix:'{{ settings()->currency->symbol }}',
-            //     thousands:'{{ settings()->currency->thousand_separator }}',
-            //     decimal:'{{ settings()->currency->decimal_separator }}',
-            //     precision: 0
-                
-            // });
-            // $('#product_price').maskMoney({
-            //     prefix:'{{ settings()->currency->symbol }}',
-            //     thousands:'{{ settings()->currency->thousand_separator }}',
-            //     decimal:'{{ settings()->currency->decimal_separator }}',
-            //     precision: 0
-            // });
-
-            // $('#product-form').submit(function () {
-            //     var product_cost = $('#product_cost').maskMoney('destroy')[0];
-            //     var product_price = $('#product_price').maskMoney('destroy')[0];
-            //     var new_number_cost = parseInt((product_cost.value || "").toString().replace(/[^\d-]/g, ""), 10) || 0;
-            //     var new_number_price = parseInt((product_price.value || "").toString().replace(/[^\d-]/g, ""), 10) || 0;
-            //     if(new_number_cost <= 0 || new_number_cost == NAN){
-            //         $('#product_cost').val(0);
-            //     }else{
-            //         $('#product_cost').val(new_number_cost);
-            //     }
-            //     if(new_number_price || new_number_price == NAN){
-            //         $('#product_price').val(0);
-            //     }else {
-
-            //         $('#product_price').val(new_number_price);
-            //     }
-            // });
+            $('#product-form').submit(function () {
+                ['#product_cost', '#product_price', '#product_price_item_only', '#installation_service_price', '#product_price_package'].forEach(function (selector) {
+                    var input = $(selector)[0];
+                    if (!input) {
+                        return;
+                    }
+                    var newNumber = parseInt((input.value || "").toString().replace(/[^\d-]/g, ""), 10) || 0;
+                    $(selector).val(input.value === '' ? '' : newNumber);
+                });
+            });
         });
     </script>
 @endpush
-
