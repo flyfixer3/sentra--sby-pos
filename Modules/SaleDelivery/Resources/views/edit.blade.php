@@ -14,11 +14,15 @@
 @section('content')
 @php
     $status = strtolower((string) ($saleDelivery->status ?? 'pending'));
-    $isSaleOrder = !empty($saleDelivery->sale_order_id);
-    $isWalkinSale = !$isSaleOrder && !empty($saleDelivery->sale_id);
-    $sourceRef = $isSaleOrder
+    $isPending = $status === 'pending';
+    $fromSaleOrder = !empty($saleDelivery->sale_order_id);
+    $fromWalkInSale = !$fromSaleOrder && !empty($saleDelivery->sale_id);
+    $isManualDelivery = !$fromSaleOrder && !$fromWalkInSale;
+    $canEditQuantities = $isPending && ($fromSaleOrder || $isManualDelivery);
+    $quantityLocked = $isPending && $fromWalkInSale;
+    $sourceRef = $fromSaleOrder
         ? ($saleDelivery->saleOrder?->reference ?? ('SO#' . (int) $saleDelivery->sale_order_id))
-        : ($isWalkinSale ? ($saleDelivery->sale?->reference ?? ('Sale#' . (int) $saleDelivery->sale_id)) : '-');
+        : ($fromWalkInSale ? ($saleDelivery->sale?->reference ?? ('Sale#' . (int) $saleDelivery->sale_id)) : 'Manual');
 @endphp
 
 <div class="container-fluid">
@@ -81,7 +85,19 @@
                 <div class="d-flex flex-wrap align-items-center justify-content-between mb-2" style="gap:8px;">
                     <div>
                         <h6 class="mb-0">Items</h6>
-                        <div class="text-muted small">Source context is locked. Set quantity to 0 to remove a pending row.</div>
+                        <div class="text-muted small">
+                            Source context is locked.
+                            @if($canEditQuantities)
+                                Set quantity to 0 to remove a pending row.
+                            @else
+                                Item quantities are read-only.
+                            @endif
+                        </div>
+                        @if($quantityLocked)
+                            <div class="text-warning small mt-1">
+                                Quantity is locked because this delivery was generated from a Sale/Invoice.
+                            </div>
+                        @endif
                     </div>
                 </div>
 
@@ -144,12 +160,28 @@
                                         </div>
                                     </td>
                                     <td>
-                                        <input type="number"
-                                               name="items[{{ $i }}][quantity]"
-                                               class="form-control text-end"
-                                               min="0"
-                                               value="{{ (int) old($oldBase . '.quantity', $item->quantity) }}"
-                                               required>
+                                        @if($canEditQuantities)
+                                            <input type="number"
+                                                   name="items[{{ $i }}][quantity]"
+                                                   class="form-control text-end"
+                                                   min="0"
+                                                   value="{{ (int) old($oldBase . '.quantity', $item->quantity) }}"
+                                                   required>
+                                        @else
+                                            <input type="number"
+                                                   class="form-control text-end"
+                                                   value="{{ (int) $item->quantity }}"
+                                                   disabled
+                                                   readonly>
+                                            <input type="hidden"
+                                                   name="items[{{ $i }}][quantity]"
+                                                   value="{{ (int) $item->quantity }}">
+                                            @if($quantityLocked)
+                                                <div class="small text-warning mt-1">
+                                                    Quantity is locked because this delivery was generated from a Sale/Invoice.
+                                                </div>
+                                            @endif
+                                        @endif
                                     </td>
                                 </tr>
                             @endforeach

@@ -45,66 +45,6 @@ class SaleDeliveryController extends Controller
             ->all();
     }
 
-    private function adjustReservedPoolStock(int $branchId, array $deltaByProduct, string $reference): void
-    {
-        if ($branchId <= 0) return;
-
-        foreach ($deltaByProduct as $productId => $delta) {
-            $productId = (int) $productId;
-            $delta = (int) $delta;
-
-            if ($productId <= 0 || $delta === 0) continue;
-
-            $row = DB::table('stocks')
-                ->where('branch_id', $branchId)
-                ->whereNull('warehouse_id')
-                ->where('product_id', $productId)
-                ->lockForUpdate()
-                ->first();
-
-            if (!$row) {
-                if ($delta < 0) {
-                    throw new \RuntimeException("Reserved stock cannot be reduced for product_id {$productId}. Pool row not found. Ref: {$reference}.");
-                }
-
-                DB::table('stocks')->insert([
-                    'product_id' => $productId,
-                    'branch_id' => $branchId,
-                    'warehouse_id' => null,
-                    'qty_total' => 0,
-                    'qty_reserved' => $delta,
-                    'qty_incoming' => 0,
-                    'min_stock' => 0,
-                    'note' => null,
-                    'created_by' => auth()->id(),
-                    'updated_by' => auth()->id(),
-                    'created_at' => now(),
-                    'updated_at' => now(),
-                ]);
-                continue;
-            }
-
-            $current = (int) ($row->qty_reserved ?? 0);
-            $next = $current + $delta;
-
-            if ($next < 0) {
-                throw new \RuntimeException(
-                    "Reserved stock cannot go negative for product_id {$productId}. Current {$current}, delta {$delta}. Ref: {$reference}."
-                );
-            }
-
-            DB::table('stocks')
-                ->where('branch_id', $branchId)
-                ->whereNull('warehouse_id')
-                ->where('product_id', $productId)
-                ->update([
-                    'qty_reserved' => $next,
-                    'updated_by' => auth()->id(),
-                    'updated_at' => now(),
-                ]);
-        }
-    }
-
     public function index(SaleDeliveriesDataTable $dataTable)
     {
         abort_if(Gate::denies('access_sale_deliveries'), 403);
@@ -640,6 +580,9 @@ class SaleDeliveryController extends Controller
                 $currentItems = $saleDelivery->items->keyBy('id');
                 $nextQtyByItem = [];
 
+                $fromSaleOrder = (int) ($saleDelivery->sale_order_id ?? 0) > 0;
+                $fromWalkInSale = !$fromSaleOrder && (int) ($saleDelivery->sale_id ?? 0) > 0;
+                $isManualDelivery = !$fromSaleOrder && !$fromWalkInSale;
                 $hasPositiveQty = false;
 
                 foreach ($currentItems as $itemId => $item) {
@@ -665,7 +608,15 @@ class SaleDeliveryController extends Controller
                         throw new \RuntimeException("Sale source item cannot be changed for Sale Delivery item ID {$itemId}.");
                     }
 
-                    if ($saleOrderItemId) {
+                    if ($fromWalkInSale && $qty !== (int) ($item->quantity ?? 0)) {
+                        throw new \RuntimeException('Quantity cannot be changed for Sale Delivery generated from Sale/Invoice.');
+                    }
+
+                    if ($fromSaleOrder) {
+                        if (!$saleOrderItemId) {
+                            throw new \RuntimeException("Sale Order source item is missing for Sale Delivery item ID {$itemId}.");
+                        }
+
                         $sourceItem = SaleOrderItem::query()
                             ->where('id', $saleOrderItemId)
                             ->where('sale_order_id', (int) $saleDelivery->sale_order_id)
@@ -693,7 +644,7 @@ class SaleDeliveryController extends Controller
                         if ($qty > $maxQty) {
                             throw new \RuntimeException("Qty exceeds remaining for SO Item #{$saleOrderItemId}. Maximum editable qty: {$maxQty}.");
                         }
-                    } elseif ($saleItemId) {
+                    } elseif ($fromWalkInSale && $saleItemId) {
                         $sourceItem = SaleDetails::query()
                             ->where('id', $saleItemId)
                             ->where('sale_id', (int) $saleDelivery->sale_id)
@@ -706,21 +657,8 @@ class SaleDeliveryController extends Controller
                         if ((int) $sourceItem->product_id !== $productId) {
                             throw new \RuntimeException("Product mismatch for Sale item ID {$saleItemId}.");
                         }
-
-                        $otherQty = (int) DB::table('sale_delivery_items as sdi')
-                            ->join('sale_deliveries as sd', 'sd.id', '=', 'sdi.sale_delivery_id')
-                            ->where('sd.sale_id', (int) $saleDelivery->sale_id)
-                            ->whereNull('sd.deleted_at')
-                            ->whereNull('sdi.deleted_at')
-                            ->where('sdi.sale_item_id', $saleItemId)
-                            ->where('sdi.id', '!=', (int) $item->id)
-                            ->whereRaw('LOWER(COALESCE(sd.status,"")) != ?', ['cancelled'])
-                            ->sum('sdi.quantity');
-
-                        $maxQty = max(0, (int) ($sourceItem->quantity ?? 0) - $otherQty);
-                        if ($qty > $maxQty) {
-                            throw new \RuntimeException("Qty exceeds remaining for Sale Item #{$saleItemId}. Maximum editable qty: {$maxQty}.");
-                        }
+                    } elseif (!$isManualDelivery && $saleItemId) {
+                        throw new \RuntimeException("Sale source item is not valid for Sale Delivery item ID {$itemId}.");
                     }
 
                     if ($qty > 0) {
@@ -734,29 +672,19 @@ class SaleDeliveryController extends Controller
                     throw new \RuntimeException('At least 1 item with quantity greater than 0 is required.');
                 }
 
-                $beforeByProduct = [];
-                $afterByProduct = [];
+                if (!$fromWalkInSale) {
+                    foreach ($currentItems as $item) {
+                        $qty = (int) ($nextQtyByItem[(int) $item->id] ?? 0);
 
-                foreach ($currentItems as $item) {
-                    $pid = (int) $item->product_id;
-                    if (!isset($beforeByProduct[$pid])) $beforeByProduct[$pid] = 0;
-                    if (!isset($afterByProduct[$pid])) $afterByProduct[$pid] = 0;
+                        if ($qty <= 0) {
+                            $item->delete();
+                            continue;
+                        }
 
-                    $beforeByProduct[$pid] += (int) ($item->quantity ?? 0);
-                    $afterByProduct[$pid] += (int) ($nextQtyByItem[(int) $item->id] ?? 0);
-                }
-
-                foreach ($currentItems as $item) {
-                    $qty = (int) ($nextQtyByItem[(int) $item->id] ?? 0);
-
-                    if ($qty <= 0) {
-                        $item->delete();
-                        continue;
+                        $item->update([
+                            'quantity' => $qty,
+                        ]);
                     }
-
-                    $item->update([
-                        'quantity' => $qty,
-                    ]);
                 }
 
                 $saleDelivery->update([
@@ -764,23 +692,6 @@ class SaleDeliveryController extends Controller
                     'note' => $request->note,
                     'updated_by' => auth()->id(),
                 ]);
-
-                $isPendingWalkin = empty($saleDelivery->sale_order_id) && !empty($saleDelivery->sale_id);
-                if ($isPendingWalkin) {
-                    $deltaByProduct = [];
-                    foreach (array_unique(array_merge(array_keys($beforeByProduct), array_keys($afterByProduct))) as $pid) {
-                        $delta = (int) ($afterByProduct[$pid] ?? 0) - (int) ($beforeByProduct[$pid] ?? 0);
-                        if ($delta !== 0) {
-                            $deltaByProduct[(int) $pid] = $delta;
-                        }
-                    }
-
-                    $this->adjustReservedPoolStock(
-                        (int) $branchId,
-                        $deltaByProduct,
-                        (string) ($saleDelivery->reference ?? ('SD#' . (int) $saleDelivery->id))
-                    );
-                }
             });
 
             toast('Sale Delivery Updated!', 'success');
