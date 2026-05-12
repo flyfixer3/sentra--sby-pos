@@ -44,6 +44,23 @@ class LeadsController extends Controller
             'leadProducts' => fn ($query) => $query->orderBy('id'),
             'assignedUser' => fn ($query) => $query->without('media')->select('id', 'name', 'email'),
             'assignees' => fn ($query) => $query->without('media')->select('users.id', 'users.name', 'users.email'),
+            'ctaClick' => fn ($query) => $query->select(
+                'id',
+                'lead_id',
+                'cta_type',
+                'cta_source',
+                'ref_code',
+                'utm_source',
+                'utm_medium',
+                'utm_campaign',
+                'utm_term',
+                'utm_content',
+                'landing_page_url',
+                'target_whatsapp_number',
+                'source',
+                'created_at',
+                'last_clicked_at'
+            ),
         ];
     }
 
@@ -200,6 +217,10 @@ class LeadsController extends Controller
             'sales_owner_user_ids' => ['nullable', 'array'],
             'sales_owner_user_ids.*' => ['integer', 'exists:users,id'],
             'next_follow_up_at' => ['nullable', 'date'],
+            'next_follow_up_date' => ['nullable', 'date'],
+            'next_follow_up_time' => ['nullable', 'date_format:H:i'],
+            'follow_up_note' => ['nullable', 'string', 'max:2000'],
+            'follow_up_status' => ['nullable', Rule::in(['pending', 'done'])],
             'notes' => ['nullable', 'string'],
         ]);
 
@@ -313,6 +334,10 @@ class LeadsController extends Controller
             'sales_owner_user_ids' => ['nullable', 'array'],
             'sales_owner_user_ids.*' => ['integer', 'exists:users,id'],
             'next_follow_up_at' => ['nullable', 'date'],
+            'next_follow_up_date' => ['nullable', 'date'],
+            'next_follow_up_time' => ['nullable', 'date_format:H:i'],
+            'follow_up_note' => ['nullable', 'string', 'max:2000'],
+            'follow_up_status' => ['nullable', Rule::in(['pending', 'done'])],
             'notes' => ['nullable', 'string'],
         ]);
 
@@ -507,6 +532,20 @@ class LeadsController extends Controller
         }
 
         unset($data['scheduled_date'], $data['scheduled_time']);
+
+        if (!isset($data['next_follow_up_at']) && !empty($data['next_follow_up_date'])) {
+            $time = $data['next_follow_up_time'] ?? '09:00';
+            $data['next_follow_up_at'] = trim($data['next_follow_up_date'] . ' ' . $time);
+        }
+
+        // Persist separate date/time columns so the frontend can read them without UTC conversion
+        if (!empty($data['next_follow_up_date'])) {
+            // keep as-is
+        } elseif (!empty($data['next_follow_up_at'])) {
+            $dt = \Carbon\Carbon::parse($data['next_follow_up_at']);
+            $data['next_follow_up_date'] = $dt->toDateString();
+            $data['next_follow_up_time'] = $dt->format('H:i');
+        }
 
         if (array_key_exists('glass_types', $data)) {
             $data['glass_types'] = collect($data['glass_types'] ?? [])
