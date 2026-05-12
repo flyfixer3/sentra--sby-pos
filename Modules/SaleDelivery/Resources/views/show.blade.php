@@ -208,6 +208,7 @@
                     <thead class="table-light">
                         <tr>
                             <th>Product</th>
+                            <th style="width:220px;">Source Context</th>
                             <th class="text-end" style="width:120px;">Expected</th>
                             <th class="text-end" style="width:120px;">Good</th>
                             <th class="text-end" style="width:120px;">Defect</th>
@@ -225,11 +226,42 @@
                                 $isFilled = $sum > 0;
 
                                 $isMismatch = ($st === 'confirmed' && $expected > 0 && $sum > 0 && $sum !== $expected);
+                                $sourceItem = $it->saleOrderItem ?: $it->saleItem;
+                                $sourceLabel = $it->sale_order_item_id
+                                    ? ('SO Item #' . (int) $it->sale_order_item_id)
+                                    : ($it->sale_item_id ? ('Sale Item #' . (int) $it->sale_item_id) : '-');
+                                $serviceType = $sourceItem?->installation_type ?? null;
+                                $sourcePrice = $sourceItem?->price ?? $it->price ?? null;
+                                $vehicle = $sourceItem?->customerVehicle ?? null;
                             @endphp
                             <tr @if($isMismatch) class="table-danger" @endif>
                                 <td>
                                     <div class="fw-semibold">{{ $it->product?->product_name ?? ($it->product_name ?? '-') }}</div>
                                     <span class="text-muted small">product_id: {{ (int)($it->product_id ?? 0) }}</span> <span class="text-muted small">| product_code: {{ $it->product?->product_code ?? '-' }}</span>
+                                </td>
+
+                                <td>
+                                    <div class="small fw-semibold">{{ $sourceLabel }}</div>
+                                    <div class="small text-muted">
+                                        Service: <strong>{{ $serviceType ? str_replace('_', ' ', $serviceType) : '-' }}</strong>
+                                    </div>
+                                    <div class="small text-muted">
+                                        Price: <strong>{{ $sourcePrice !== null ? number_format((float) $sourcePrice, 0, ',', '.') : '-' }}</strong>
+                                    </div>
+                                    <div class="small text-muted">
+                                        Vehicle:
+                                        <strong>
+                                            @if($vehicle)
+                                                {{ trim(implode(' ', array_filter([
+                                                    $vehicle->vehicle_name ?? null,
+                                                    $vehicle->license_number ?? null,
+                                                    $vehicle->car_plate ?? null,
+                                                ]))) ?: ('Vehicle #' . (int) $vehicle->id) }}
+                                            @else
+                                                -
+                                            @endif
+                                        </strong>
+                                    </div>
                                 </td>
 
                                 <td class="text-end">
@@ -256,7 +288,7 @@
                             </tr>
                         @empty
                             <tr>
-                                <td colspan="5" class="text-center text-muted py-4">No items.</td>
+                                <td colspan="6" class="text-center text-muted py-4">No items.</td>
                             </tr>
                         @endforelse
                     </tbody>
@@ -267,6 +299,76 @@
     </div>
 
     @if(strtolower((string)$saleDelivery->status) === 'confirmed')
+        @php
+            $pickedTables = [
+                'Picked Defect Items' => $pickedDefectItems ?? collect(),
+                'Picked Damaged Items' => $pickedDamagedItems ?? collect(),
+            ];
+        @endphp
+
+        @foreach($pickedTables as $pickedTitle => $pickedRows)
+            <div class="card mt-3">
+                <div class="card-header">
+                    <strong>{{ $pickedTitle }}</strong>
+                </div>
+                <div class="card-body">
+                    @if($pickedRows->count() > 0)
+                        <div class="table-responsive">
+                            <table class="table table-bordered mb-0">
+                                <thead>
+                                    <tr>
+                                        <th style="width:90px;">ID</th>
+                                        <th>Product</th>
+                                        <th>Warehouse / Rack</th>
+                                        <th>Type</th>
+                                        <th class="text-center" style="width:80px;">Qty</th>
+                                        <th>Description</th>
+                                        <th style="width:150px;">Moved Out</th>
+                                        <th style="width:140px;">By</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    @foreach($pickedRows as $row)
+                                        @php
+                                            $rackText = $row->rack_code ?? $row->rack_name ?? '-';
+                                            $typeText = $row->defect_type
+                                                ?? $row->damage_type
+                                                ?? $row->reason
+                                                ?? '-';
+                                            if (!empty($row->defect_types)) {
+                                                $decodedTypes = json_decode((string) $row->defect_types, true);
+                                                if (is_array($decodedTypes) && count($decodedTypes) > 0) {
+                                                    $typeText = implode(', ', $decodedTypes);
+                                                }
+                                            }
+                                        @endphp
+                                        <tr>
+                                            <td>#{{ (int) $row->id }}</td>
+                                            <td>
+                                                <div class="fw-semibold">{{ $row->product_name ?? ('Product#' . (int) $row->product_id) }}</div>
+                                                <div class="small text-muted">{{ $row->product_code ?? '-' }}</div>
+                                            </td>
+                                            <td>
+                                                <div>{{ $row->warehouse_name ?? ('WH#' . (int) $row->warehouse_id) }}</div>
+                                                <div class="small text-muted">Rack: {{ $rackText }}</div>
+                                            </td>
+                                            <td>{{ $typeText }}</td>
+                                            <td class="text-center">{{ (int) ($row->qty ?? 1) ?: 1 }}</td>
+                                            <td>{{ $row->description ?? '-' }}</td>
+                                            <td>{{ $row->moved_out_at ? \Carbon\Carbon::parse($row->moved_out_at)->format('d M Y H:i') : '-' }}</td>
+                                            <td>{{ $row->moved_out_by_name ?? ($row->moved_out_by ? ('User#' . (int) $row->moved_out_by) : '-') }}</td>
+                                        </tr>
+                                    @endforeach
+                                </tbody>
+                            </table>
+                        </div>
+                    @else
+                        <div class="text-muted">No {{ strtolower($pickedTitle) }} found.</div>
+                    @endif
+                </div>
+            </div>
+        @endforeach
+
         <div class="card mt-3">
             <div class="card-header">
                 <strong>Stock Out Log (Mutation)</strong>

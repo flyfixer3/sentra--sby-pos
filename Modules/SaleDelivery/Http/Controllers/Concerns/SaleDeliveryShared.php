@@ -4,6 +4,7 @@ namespace Modules\SaleDelivery\Http\Controllers\Concerns;
 
 use App\Support\BranchContext;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 use Modules\SaleOrder\Entities\SaleOrder;
 
 trait SaleDeliveryShared
@@ -31,36 +32,23 @@ trait SaleDeliveryShared
         }
     }
 
-    private function allocationTableExists(): bool
-    {
-        return DB::getSchemaBuilder()->hasTable('sale_delivery_item_allocations');
-    }
-
-    private function hasAllocationsForSaleOrder(int $saleOrderId): bool
-    {
-        if (!$this->allocationTableExists()) {
-            return false;
-        }
-
-        return DB::table('sale_delivery_item_allocations')
-            ->where('sale_order_id', (int) $saleOrderId)
-            ->exists();
-    }
-
     private function getDeliveredQtyBySaleOrderItem(int $saleOrderId): array
     {
-        if (!$this->allocationTableExists()) {
+        if (!Schema::hasColumn('sale_delivery_items', 'sale_order_item_id')) {
             return [];
         }
 
-        return DB::table('sale_delivery_item_allocations as sda')
-            ->join('sale_deliveries as sd', 'sd.id', '=', 'sda.sale_delivery_id')
+        $deliveredExpr = $this->deliveredQtyExpr('sdi');
+
+        return DB::table('sale_delivery_items as sdi')
+            ->join('sale_deliveries as sd', 'sd.id', '=', 'sdi.sale_delivery_id')
             ->where('sd.sale_order_id', (int) $saleOrderId)
             ->whereNull('sd.deleted_at')
+            ->whereNull('sdi.deleted_at')
             ->whereIn(DB::raw('LOWER(COALESCE(sd.status,""))'), ['confirmed', 'partial'])
-            ->whereNotNull('sda.sale_order_item_id')
-            ->select('sda.sale_order_item_id', DB::raw('SUM(COALESCE(sda.quantity,0)) as qty'))
-            ->groupBy('sda.sale_order_item_id')
+            ->whereNotNull('sdi.sale_order_item_id')
+            ->select('sdi.sale_order_item_id', DB::raw("SUM({$deliveredExpr}) as qty"))
+            ->groupBy('sdi.sale_order_item_id')
             ->pluck('qty', 'sale_order_item_id')
             ->map(fn ($qty) => max(0, (int) $qty))
             ->toArray();
@@ -68,18 +56,27 @@ trait SaleDeliveryShared
 
     private function getPlannedQtyBySaleOrderItem(int $saleOrderId): array
     {
-        if (!$this->allocationTableExists()) {
+        if (!Schema::hasColumn('sale_delivery_items', 'sale_order_item_id')) {
             return [];
         }
 
-        return DB::table('sale_delivery_item_allocations as sda')
-            ->join('sale_deliveries as sd', 'sd.id', '=', 'sda.sale_delivery_id')
+        $deliveredExpr = $this->deliveredQtyExpr('sdi');
+
+        return DB::table('sale_delivery_items as sdi')
+            ->join('sale_deliveries as sd', 'sd.id', '=', 'sdi.sale_delivery_id')
             ->where('sd.sale_order_id', (int) $saleOrderId)
             ->whereNull('sd.deleted_at')
+            ->whereNull('sdi.deleted_at')
             ->whereIn(DB::raw('LOWER(COALESCE(sd.status,""))'), ['pending', 'partial'])
-            ->whereNotNull('sda.sale_order_item_id')
-            ->select('sda.sale_order_item_id', DB::raw('SUM(COALESCE(sda.quantity,0)) as qty'))
-            ->groupBy('sda.sale_order_item_id')
+            ->whereNotNull('sdi.sale_order_item_id')
+            ->select(
+                'sdi.sale_order_item_id',
+                DB::raw("SUM(GREATEST(COALESCE(sdi.quantity,0) - CASE
+                    WHEN LOWER(COALESCE(sd.status,'')) = 'partial' THEN {$deliveredExpr}
+                    ELSE 0
+                END, 0)) as qty")
+            )
+            ->groupBy('sdi.sale_order_item_id')
             ->pluck('qty', 'sale_order_item_id')
             ->map(fn ($qty) => max(0, (int) $qty))
             ->toArray();
@@ -117,9 +114,9 @@ trait SaleDeliveryShared
 
     protected function getRemainingQtyBySaleOrderItem(int $saleOrderId): array
     {
-        if ($this->hasAllocationsForSaleOrder($saleOrderId)) {
-            $deliveredByItem = $this->getDeliveredQtyBySaleOrderItem($saleOrderId);
+        $deliveredByItem = $this->getDeliveredQtyBySaleOrderItem($saleOrderId);
 
+        if (!empty($deliveredByItem)) {
             $items = DB::table('sale_order_items')
                 ->where('sale_order_id', (int) $saleOrderId)
                 ->whereNull('deleted_at')
@@ -144,10 +141,10 @@ trait SaleDeliveryShared
 
     protected function getPlannedRemainingQtyBySaleOrderItem(int $saleOrderId): array
     {
-        if ($this->hasAllocationsForSaleOrder($saleOrderId)) {
-            $deliveredByItem = $this->getDeliveredQtyBySaleOrderItem($saleOrderId);
-            $plannedByItem = $this->getPlannedQtyBySaleOrderItem($saleOrderId);
+        $deliveredByItem = $this->getDeliveredQtyBySaleOrderItem($saleOrderId);
+        $plannedByItem = $this->getPlannedQtyBySaleOrderItem($saleOrderId);
 
+        if (!empty($deliveredByItem) || !empty($plannedByItem)) {
             $items = DB::table('sale_order_items')
                 ->where('sale_order_id', (int) $saleOrderId)
                 ->whereNull('deleted_at')
@@ -290,31 +287,53 @@ trait SaleDeliveryShared
         return $remaining;
     }
 
-    protected function getRemainingQtyBySaleOrder(int $saleOrderId): array
+    protected function getRemainingQtyBySaleItem(int $saleId): array
     {
-        if ($this->hasAllocationsForSaleOrder($saleOrderId)) {
-            $deliveredByItem = $this->getDeliveredQtyBySaleOrderItem($saleOrderId);
-
-            $items = DB::table('sale_order_items')
-                ->where('sale_order_id', (int) $saleOrderId)
-                ->whereNull('deleted_at')
-                ->get(['id', 'product_id', 'quantity']);
-
-            $remaining = [];
-
-            foreach ($items as $item) {
-                $pid = (int) ($item->product_id ?? 0);
-                $orderedQty = max(0, (int) ($item->quantity ?? 0));
-                $deliveredQty = max(0, (int) ($deliveredByItem[(int) $item->id] ?? 0));
-                $rem = max(0, $orderedQty - $deliveredQty);
-
-                if (!isset($remaining[$pid])) $remaining[$pid] = 0;
-                $remaining[$pid] += $rem;
-            }
-
-            return $remaining;
+        if (!Schema::hasColumn('sale_delivery_items', 'sale_item_id')) {
+            return [];
         }
 
+        $deliveredExpr = $this->deliveredQtyExpr('sdi');
+
+        $shipped = DB::table('sale_delivery_items as sdi')
+            ->join('sale_deliveries as sd', 'sd.id', '=', 'sdi.sale_delivery_id')
+            ->where('sd.sale_id', (int) $saleId)
+            ->whereNull('sd.deleted_at')
+            ->whereNull('sdi.deleted_at')
+            ->whereNotNull('sdi.sale_item_id')
+            ->where(function ($q) {
+                $q->whereNotNull('sd.confirmed_at')
+                    ->orWhereIn(DB::raw('LOWER(sd.status)'), ['confirmed', 'partial']);
+            })
+            ->select('sdi.sale_item_id', DB::raw("SUM({$deliveredExpr}) as qty"))
+            ->groupBy('sdi.sale_item_id')
+            ->pluck('qty', 'sale_item_id')
+            ->map(fn ($qty) => max(0, (int) $qty))
+            ->toArray();
+
+        if (empty($shipped)) {
+            return [];
+        }
+
+        $items = DB::table('sale_details')
+            ->where('sale_id', (int) $saleId)
+            ->whereNull('deleted_at')
+            ->orderBy('id')
+            ->get(['id', 'quantity']);
+
+        $remaining = [];
+        foreach ($items as $item) {
+            $itemId = (int) ($item->id ?? 0);
+            $ordered = max(0, (int) ($item->quantity ?? 0));
+            $delivered = max(0, (int) ($shipped[$itemId] ?? 0));
+            $remaining[$itemId] = max(0, $ordered - $delivered);
+        }
+
+        return $remaining;
+    }
+
+    protected function getRemainingQtyBySaleOrder(int $saleOrderId): array
+    {
         $deliveredExpr = $this->deliveredQtyExpr('sdi');
 
         $ordered = DB::table('sale_order_items')
@@ -359,32 +378,6 @@ trait SaleDeliveryShared
 
     protected function getPlannedRemainingQtyBySaleOrder(int $saleOrderId): array
     {
-        if ($this->hasAllocationsForSaleOrder($saleOrderId)) {
-            $deliveredByItem = $this->getDeliveredQtyBySaleOrderItem($saleOrderId);
-            $plannedByItem = $this->getPlannedQtyBySaleOrderItem($saleOrderId);
-
-            $items = DB::table('sale_order_items')
-                ->where('sale_order_id', (int) $saleOrderId)
-                ->whereNull('deleted_at')
-                ->get(['id', 'product_id', 'quantity']);
-
-            $remaining = [];
-
-            foreach ($items as $item) {
-                $pid = (int) ($item->product_id ?? 0);
-                $orderedQty = max(0, (int) ($item->quantity ?? 0));
-                $deliveredQty = max(0, (int) ($deliveredByItem[(int) $item->id] ?? 0));
-                $plannedQty = max(0, (int) ($plannedByItem[(int) $item->id] ?? 0));
-
-                $rem = max(0, $orderedQty - $deliveredQty - $plannedQty);
-
-                if (!isset($remaining[$pid])) $remaining[$pid] = 0;
-                $remaining[$pid] += $rem;
-            }
-
-            return $remaining;
-        }
-
         $deliveredExpr = $this->deliveredQtyExpr('sdi');
 
         $ordered = DB::table('sale_order_items')

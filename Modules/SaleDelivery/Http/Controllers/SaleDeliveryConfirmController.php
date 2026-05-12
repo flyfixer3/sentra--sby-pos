@@ -160,6 +160,41 @@ class SaleDeliveryConfirmController extends Controller
         return 'user';
     }
 
+    private function distributeQualityToDeliveryItems(\Illuminate\Support\Collection $items, int $good, int $defect, int $damaged): void
+    {
+        $remaining = [
+            'good' => max(0, $good),
+            'defect' => max(0, $defect),
+            'damaged' => max(0, $damaged),
+        ];
+
+        foreach ($items->sortBy('id') as $item) {
+            $need = max(0, (int) ($item->quantity ?? 0));
+
+            $itemGood = min($need, $remaining['good']);
+            $need -= $itemGood;
+            $remaining['good'] -= $itemGood;
+
+            $itemDefect = min($need, $remaining['defect']);
+            $need -= $itemDefect;
+            $remaining['defect'] -= $itemDefect;
+
+            $itemDamaged = min($need, $remaining['damaged']);
+            $need -= $itemDamaged;
+            $remaining['damaged'] -= $itemDamaged;
+
+            $item->update([
+                'qty_good' => $itemGood,
+                'qty_defect' => $itemDefect,
+                'qty_damaged' => $itemDamaged,
+            ]);
+        }
+
+        if ($remaining['good'] !== 0 || $remaining['defect'] !== 0 || $remaining['damaged'] !== 0) {
+            throw new \RuntimeException('Unable to distribute confirmed quality quantities to Sale Delivery items.');
+        }
+    }
+
     public function confirmForm(SaleDelivery $saleDelivery)
     {
         abort_if(Gate::denies('confirm_sale_deliveries'), 403);
@@ -176,7 +211,28 @@ class SaleDeliveryConfirmController extends Controller
                 throw new \RuntimeException('Wrong branch context.');
             }
 
-            $saleDelivery->load(['items.product', 'customer']);
+            $saleDelivery->load([
+                'items.product',
+                'items.saleOrderItem.customerVehicle',
+                'items.saleItem.customerVehicle',
+                'customer',
+            ]);
+
+            $productGroups = $saleDelivery->items
+                ->sortBy('id')
+                ->groupBy('product_id')
+                ->map(function ($items, $productId) {
+                    $first = $items->first();
+
+                    return [
+                        'product_id' => (int) $productId,
+                        'product' => $first?->product,
+                        'expected_qty' => (int) $items->sum(fn ($item) => (int) ($item->quantity ?? 0)),
+                        'delivery_item_ids' => $items->pluck('id')->map(fn ($id) => (int) $id)->values()->all(),
+                        'items' => $items->values(),
+                    ];
+                })
+                ->values();
 
             $warehouses = Warehouse::query()
                 ->where('branch_id', (int) $branchId)
@@ -297,7 +353,8 @@ class SaleDeliveryConfirmController extends Controller
                 'defectData',
                 'damagedData',
                 'racksByWarehouse',
-                'stockRackData'
+                'stockRackData',
+                'productGroups'
             ));
 
         } catch (\Throwable $e) {
@@ -318,7 +375,10 @@ class SaleDeliveryConfirmController extends Controller
                 'confirm_note' => 'nullable|string|max:5000',
 
                 'items' => 'required|array|min:1',
-                'items.*.id' => 'required|integer',
+                'items.*.product_id' => 'required|integer',
+                'items.*.expected_quantity' => 'required|integer|min:0',
+                'items.*.delivery_item_ids' => 'required|array|min:1',
+                'items.*.delivery_item_ids.*' => 'integer',
 
                 // hidden (auto from JS)
                 'items.*.good' => 'required|integer|min:0',
@@ -372,13 +432,13 @@ class SaleDeliveryConfirmController extends Controller
                 $mutationDate = (string) ($saleDelivery->getRawOriginal('date') ?? $saleDelivery->date ?? now()->toDateString());
 
                 // ------------------------------------------------------------------
-                // 1) Normalize input by item_id
+                // 1) Normalize input by product_id
                 // ------------------------------------------------------------------
-                $inputById = [];
+                $inputByProduct = [];
 
                 foreach ($request->items as $row) {
-                    $itemId = (int) ($row['id'] ?? 0);
-                    if ($itemId <= 0) continue;
+                    $productId = (int) ($row['product_id'] ?? 0);
+                    if ($productId <= 0) continue;
 
                     $selectedDefectIds = [];
                     if (isset($row['selected_defect_ids']) && is_array($row['selected_defect_ids'])) {
@@ -401,7 +461,14 @@ class SaleDeliveryConfirmController extends Controller
                         }
                     }
 
-                    $inputById[$itemId] = [
+                    $deliveryItemIds = [];
+                    if (isset($row['delivery_item_ids']) && is_array($row['delivery_item_ids'])) {
+                        $deliveryItemIds = array_values(array_unique(array_map('intval', $row['delivery_item_ids'])));
+                    }
+
+                    $inputByProduct[$productId] = [
+                        'expected_quantity'     => (int) ($row['expected_quantity'] ?? 0),
+                        'delivery_item_ids'     => $deliveryItemIds,
                         'good'                 => (int) ($row['good'] ?? 0),
                         'defect'               => (int) ($row['defect'] ?? 0),
                         'damaged'              => (int) ($row['damaged'] ?? 0),
@@ -411,18 +478,16 @@ class SaleDeliveryConfirmController extends Controller
                     ];
                 }
 
-                // Map item -> product_id (for validation)
-                $itemProductMap = [];
-                foreach ($saleDelivery->items as $it) {
-                    $itemProductMap[(int) $it->id] = (int) $it->product_id;
-                }
+                $deliveryItemsByProduct = $saleDelivery->items
+                    ->sortBy('id')
+                    ->groupBy(fn ($item) => (int) $item->product_id);
 
                 // ------------------------------------------------------------------
                 // 2) Derive rack -> warehouse mapping from GOOD allocations (rack is the source of truth)
                 //    + validate racks exist
                 // ------------------------------------------------------------------
                 $allRackIds = [];
-                foreach ($inputById as $itemId => $row) {
+                foreach ($inputByProduct as $productId => $row) {
                     foreach (($row['good_allocations'] ?? []) as $a) {
                         $rid = (int) ($a['from_rack_id'] ?? 0);
                         if ($rid > 0) $allRackIds[] = $rid;
@@ -485,32 +550,47 @@ class SaleDeliveryConfirmController extends Controller
                 // ------------------------------------------------------------------
                 $reservedReduceByProduct = [];
 
-                foreach ($saleDelivery->items as $it) {
-                    $itemId   = (int) $it->id;
-                    $productId= (int) $it->product_id;
-                    $expected = (int) ($it->quantity ?? 0);
+                foreach ($deliveryItemsByProduct as $productId => $items) {
+                    $productId = (int) $productId;
+                    $expected = (int) $items->sum(fn ($item) => (int) ($item->quantity ?? 0));
+                    $dbItemIds = $items->pluck('id')->map(fn ($id) => (int) $id)->sort()->values()->all();
 
-                    if (!isset($inputById[$itemId])) {
-                        throw new \RuntimeException("Missing input for item ID {$itemId}.");
+                    if (!isset($inputByProduct[$productId])) {
+                        throw new \RuntimeException("Missing input for product ID {$productId}.");
                     }
 
-                    $good   = (int) ($inputById[$itemId]['good'] ?? 0);
-                    $defect = (int) ($inputById[$itemId]['defect'] ?? 0);
-                    $damaged= (int) ($inputById[$itemId]['damaged'] ?? 0);
+                    $submittedItemIds = collect($inputByProduct[$productId]['delivery_item_ids'] ?? [])
+                        ->map(fn ($id) => (int) $id)
+                        ->sort()
+                        ->values()
+                        ->all();
+
+                    if ($submittedItemIds !== $dbItemIds) {
+                        throw new \RuntimeException("Delivery item list mismatch for product ID {$productId}.");
+                    }
+
+                    $submittedExpected = (int) ($inputByProduct[$productId]['expected_quantity'] ?? 0);
+                    if ($submittedExpected !== $expected) {
+                        throw new \RuntimeException("Expected quantity mismatch for product ID {$productId}. Expected {$expected}.");
+                    }
+
+                    $good   = (int) ($inputByProduct[$productId]['good'] ?? 0);
+                    $defect = (int) ($inputByProduct[$productId]['defect'] ?? 0);
+                    $damaged= (int) ($inputByProduct[$productId]['damaged'] ?? 0);
 
                     $confirmed = $good + $defect + $damaged;
 
                     if ($confirmed !== $expected) {
-                        throw new \RuntimeException("Qty mismatch for item ID {$itemId}. Total selected must equal {$expected}.");
+                        throw new \RuntimeException("Qty mismatch for product ID {$productId}. Total selected must equal {$expected}.");
                     }
 
                     // ---------------------------
                     // GOOD allocations validation
                     // ---------------------------
-                    $alloc = $inputById[$itemId]['good_allocations'] ?? [];
+                    $alloc = $inputByProduct[$productId]['good_allocations'] ?? [];
                     if ($good > 0) {
                         if (empty($alloc)) {
-                            throw new \RuntimeException("GOOD allocation is required when GOOD > 0 (item ID {$itemId}).");
+                            throw new \RuntimeException("GOOD allocation is required when GOOD > 0 (product ID {$productId}).");
                         }
 
                         $sumAlloc = 0;
@@ -522,7 +602,7 @@ class SaleDeliveryConfirmController extends Controller
                             $rid = (int) ($a['from_rack_id'] ?? 0);
                             $qty = (int) ($a['qty'] ?? 0);
                             if ($rid <= 0 || $qty <= 0) {
-                                throw new \RuntimeException("Invalid GOOD allocation row (item ID {$itemId}).");
+                                throw new \RuntimeException("Invalid GOOD allocation row (product ID {$productId}).");
                             }
 
                             if (!isset($rackInfo[$rid])) {
@@ -544,7 +624,7 @@ class SaleDeliveryConfirmController extends Controller
                         }
 
                         if ($sumAlloc !== $good) {
-                            throw new \RuntimeException("GOOD allocation total must equal GOOD qty (item ID {$itemId}).");
+                            throw new \RuntimeException("GOOD allocation total must equal GOOD qty (product ID {$productId}).");
                         }
 
                         // validate warehouses (derived from racks) belong to branch (per item)
@@ -558,7 +638,7 @@ class SaleDeliveryConfirmController extends Controller
                                 ->count();
 
                             if ($countValid !== count($wids)) {
-                                throw new \RuntimeException("Invalid warehouse derived from GOOD allocation (item ID {$itemId}).");
+                                throw new \RuntimeException("Invalid warehouse derived from GOOD allocation (product ID {$productId}).");
                             }
                         }
 
@@ -578,10 +658,10 @@ class SaleDeliveryConfirmController extends Controller
                     // DEFECT validation (1 id = 1 pc)
                     // warehouse is derived from the selected rows (NOT from saleDelivery item)
                     // ---------------------------
-                    $defIds = $inputById[$itemId]['selected_defect_ids'] ?? [];
+                    $defIds = $inputByProduct[$productId]['selected_defect_ids'] ?? [];
                     if ($defect > 0) {
                         if (count($defIds) !== $defect) {
-                            throw new \RuntimeException("DEFECT selection count must equal DEFECT qty (item ID {$itemId}).");
+                            throw new \RuntimeException("DEFECT selection count must equal DEFECT qty (product ID {$productId}).");
                         }
 
                         $rows = ProductDefectItem::query()
@@ -592,7 +672,7 @@ class SaleDeliveryConfirmController extends Controller
                             ->get(['id', 'warehouse_id', 'rack_id']);
 
                         if ($rows->count() !== count($defIds)) {
-                            throw new \RuntimeException("Some DEFECT IDs are invalid / already moved out (item ID {$itemId}).");
+                            throw new \RuntimeException("Some DEFECT IDs are invalid / already moved out (product ID {$productId}).");
                         }
 
                         foreach ($rows as $r) {
@@ -632,10 +712,10 @@ class SaleDeliveryConfirmController extends Controller
                     // DAMAGED validation (1 id = 1 pc)
                     // warehouse is derived from the selected rows (NOT from saleDelivery item)
                     // ---------------------------
-                    $damIds = $inputById[$itemId]['selected_damaged_ids'] ?? [];
+                    $damIds = $inputByProduct[$productId]['selected_damaged_ids'] ?? [];
                     if ($damaged > 0) {
                         if (count($damIds) !== $damaged) {
-                            throw new \RuntimeException("DAMAGED selection count must equal DAMAGED qty (item ID {$itemId}).");
+                            throw new \RuntimeException("DAMAGED selection count must equal DAMAGED qty (product ID {$productId}).");
                         }
 
                         $rows = ProductDamagedItem::query()
@@ -648,7 +728,7 @@ class SaleDeliveryConfirmController extends Controller
                             ->get(['id', 'warehouse_id', 'rack_id']);
 
                         if ($rows->count() !== count($damIds)) {
-                            throw new \RuntimeException("Some DAMAGED IDs are invalid / already moved out (item ID {$itemId}).");
+                            throw new \RuntimeException("Some DAMAGED IDs are invalid / already moved out (product ID {$productId}).");
                         }
 
                         foreach ($rows as $r) {
@@ -684,16 +764,9 @@ class SaleDeliveryConfirmController extends Controller
                         }
                     }
 
-                    $it->update([
-                        'qty_good' => $good,
-                        'qty_defect' => $defect,
-                        'qty_damaged' => $damaged,
-                    ]);
-
                     // reserved pool reduce by product (strict)
-                    $pid = (int) $it->product_id;
-                    if (!isset($reservedReduceByProduct[$pid])) $reservedReduceByProduct[$pid] = 0;
-                    $reservedReduceByProduct[$pid] += $confirmed;
+                    if (!isset($reservedReduceByProduct[$productId])) $reservedReduceByProduct[$productId] = 0;
+                    $reservedReduceByProduct[$productId] += $confirmed;
                 }
 
                 // final unique warehouses derived (optional, for sanity)
@@ -717,16 +790,15 @@ class SaleDeliveryConfirmController extends Controller
                 // ------------------------------------------------------------------
                 // 6) Create Mutations (OUT) based on derived warehouse per selection
                 // ------------------------------------------------------------------
-                foreach ($saleDelivery->items as $it) {
-                    $itemId   = (int) $it->id;
-                    $productId= (int) $it->product_id;
+                foreach ($deliveryItemsByProduct as $productId => $items) {
+                    $productId = (int) $productId;
 
-                    $good   = (int) ($inputById[$itemId]['good'] ?? 0);
-                    $defect = (int) ($inputById[$itemId]['defect'] ?? 0);
-                    $damaged= (int) ($inputById[$itemId]['damaged'] ?? 0);
+                    $good   = (int) ($inputByProduct[$productId]['good'] ?? 0);
+                    $defect = (int) ($inputByProduct[$productId]['defect'] ?? 0);
+                    $damaged= (int) ($inputByProduct[$productId]['damaged'] ?? 0);
 
                     // GOOD: OUT based on allocations; warehouse derived from rack
-                    $alloc = $inputById[$itemId]['good_allocations'] ?? [];
+                    $alloc = $inputByProduct[$productId]['good_allocations'] ?? [];
                     if ($good > 0 && !empty($alloc)) {
 
                         // group by warehouse
@@ -772,7 +844,7 @@ class SaleDeliveryConfirmController extends Controller
                     }
 
                     // DEFECT: 1 id = 1 pcs, derive warehouse & rack from row
-                    $defIds = $inputById[$itemId]['selected_defect_ids'] ?? [];
+                    $defIds = $inputByProduct[$productId]['selected_defect_ids'] ?? [];
                     if ($defect > 0 && !empty($defIds)) {
                         foreach ($defIds as $id) {
                             $id = (int) $id;
@@ -832,7 +904,7 @@ class SaleDeliveryConfirmController extends Controller
                     }
 
                     // DAMAGED: 1 id = 1 pcs, derive warehouse & rack from row
-                    $damIds = $inputById[$itemId]['selected_damaged_ids'] ?? [];
+                    $damIds = $inputByProduct[$productId]['selected_damaged_ids'] ?? [];
                     if ($damaged > 0 && !empty($damIds)) {
                         foreach ($damIds as $id) {
                             $id = (int) $id;
@@ -892,6 +964,8 @@ class SaleDeliveryConfirmController extends Controller
                             );
                         }
                     }
+
+                    $this->distributeQualityToDeliveryItems($items, $good, $defect, $damaged);
                 }
 
                 // ------------------------------------------------------------------

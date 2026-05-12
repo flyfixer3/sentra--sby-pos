@@ -14,6 +14,7 @@
 @php
     $source = request('source');
     $isSaleOrder = ($source === 'sale_order');
+    $isLockedSource = in_array($source, ['sale_order', 'sale'], true);
 
     // customer selected:
     $selectedCustomerId = $isSaleOrder
@@ -128,6 +129,11 @@
                                 @php
                                     $pid = is_array($row) ? ($row['product_id'] ?? null) : null;
                                     $qty = is_array($row) ? ($row['quantity'] ?? 1) : 1;
+                                    $saleOrderItemId = is_array($row) ? ($row['sale_order_item_id'] ?? null) : null;
+                                    $saleItemId = is_array($row) ? ($row['sale_item_id'] ?? null) : null;
+                                    $installationType = is_array($row) ? ($row['installation_type'] ?? null) : null;
+                                    $vehicleLabel = is_array($row) ? ($row['vehicle_label'] ?? null) : null;
+                                    $price = is_array($row) ? ($row['price'] ?? null) : null;
                                 @endphp
                                 <tr>
                                     <td>
@@ -144,7 +150,7 @@
                                             $productLabel = trim(($productName ?: ('Product #' . (int) $pid)) . ($productCode ? ' (' . $productCode . ')' : ''));
                                         @endphp
 
-                                        @if($isSaleOrder)
+                                        @if($isLockedSource)
                                             <div class="form-control bg-light" style="height:auto; min-height:38px;">
                                                 <div class="fw-bold">{{ $productName ?: ('Product #' . (int) $pid) }}</div>
                                                 <div class="small text-muted">
@@ -153,6 +159,26 @@
                                                         <span class="mx-1">•</span>
                                                     @endif
                                                     Product ID: <b>{{ (int) $pid }}</b>
+                                                    @if($saleOrderItemId)
+                                                        <span class="mx-1">â€¢</span>
+                                                        SO Item: <b>{{ (int) $saleOrderItemId }}</b>
+                                                    @endif
+                                                    @if($saleItemId)
+                                                        <span class="mx-1">â€¢</span>
+                                                        Sale Item: <b>{{ (int) $saleItemId }}</b>
+                                                    @endif
+                                                    @if($installationType)
+                                                        <span class="mx-1">â€¢</span>
+                                                        Service: <b>{{ str_replace('_', ' ', $installationType) }}</b>
+                                                    @endif
+                                                    @if($price !== null)
+                                                        <span class="mx-1">â€¢</span>
+                                                        Price: <b>{{ number_format((float) $price, 0, ',', '.') }}</b>
+                                                    @endif
+                                                    @if($vehicleLabel)
+                                                        <span class="mx-1">â€¢</span>
+                                                        Vehicle: <b>{{ $vehicleLabel }}</b>
+                                                    @endif
                                                 </div>
                                             </div>
 
@@ -170,6 +196,9 @@
                                                 @endforeach
                                             </select>
                                         @endif
+                                        <input type="hidden" name="items[{{ $i }}][sale_order_item_id]" value="{{ $saleOrderItemId ? (int) $saleOrderItemId : '' }}">
+                                        <input type="hidden" name="items[{{ $i }}][sale_item_id]" value="{{ $saleItemId ? (int) $saleItemId : '' }}">
+                                        <input type="hidden" name="items[{{ $i }}][price]" value="{{ $price !== null ? (int) $price : '' }}">
                                     </td>
 
                                     <td>

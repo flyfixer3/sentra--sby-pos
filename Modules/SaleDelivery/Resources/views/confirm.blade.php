@@ -242,19 +242,20 @@
 
         <div class="row">
             <div class="col-lg-8">
-                @forelse($saleDelivery->items as $i => $it)
+                @forelse(($productGroups ?? collect()) as $i => $group)
                     @php
-                        $itemId = (int) $it->id;
-                        $pid = (int) $it->product_id;
-                        $expected = (int) ($it->quantity ?? 0);
-                        $productName = $it->product?->product_name ?? ('Product #'.$pid);
-                        $productCode = $it->product?->product_code ?? '';
+                        $pid = (int) ($group['product_id'] ?? 0);
+                        $expected = (int) ($group['expected_qty'] ?? 0);
+                        $product = $group['product'] ?? null;
+                        $productName = $product?->product_name ?? ('Product #'.$pid);
+                        $productCode = $product?->product_code ?? '';
+                        $deliveryItemIds = $group['delivery_item_ids'] ?? [];
+                        $sourceItems = $group['items'] ?? collect();
                         $modalId = "pickModal_{$i}";
                     @endphp
 
                     <div class="card shadow-sm mb-3 confirm-card border"
                          data-idx="{{ $i }}"
-                         data-item-id="{{ $itemId }}"
                          data-product-id="{{ $pid }}"
                          data-expected="{{ $expected }}">
                         <div class="card-body">
@@ -264,7 +265,44 @@
                                     <div class="text-muted small">
                                         @if($productCode) <span class="mr-2">Code: <b>{{ $productCode }}</b></span> @endif
                                         <span class="mr-2">product_id: <b>{{ $pid }}</b></span>
-                                        <span>item_id: <b>{{ $itemId }}</b></span>
+                                        <span>delivery items: <b>{{ implode(', ', $deliveryItemIds) }}</b></span>
+                                    </div>
+                                    @if($sourceItems->count() > 1)
+                                        <div class="text-muted small mt-1">
+                                            Source lines:
+                                            @foreach($sourceItems as $sourceItem)
+                                                @php
+                                                    $source = $sourceItem->saleOrderItem ?: $sourceItem->saleItem;
+                                                    $sourceLabel = $sourceItem->sale_order_item_id
+                                                        ? ('SO#' . (int) $sourceItem->sale_order_item_id)
+                                                        : ($sourceItem->sale_item_id ? ('Sale#' . (int) $sourceItem->sale_item_id) : ('Item#' . (int) $sourceItem->id));
+                                                    $service = $source?->installation_type ? str_replace('_', ' ', $source->installation_type) : '-';
+                                                    $price = $source?->price ?? $sourceItem->price ?? null;
+                                                @endphp
+                                                <span class="badge badge-light border mr-1">
+                                                    {{ $sourceLabel }} / qty {{ (int) $sourceItem->quantity }} / {{ $service }}
+                                                    @if($price !== null) / {{ number_format((float) $price, 0, ',', '.') }} @endif
+                                                </span>
+                                            @endforeach
+                                        </div>
+                                    @else
+                                        @php
+                                            $sourceItem = $sourceItems->first();
+                                            $source = $sourceItem ? ($sourceItem->saleOrderItem ?: $sourceItem->saleItem) : null;
+                                        @endphp
+                                        @if($sourceItem)
+                                            <div class="text-muted small mt-1">
+                                                Source:
+                                                <b>
+                                                    {{ $sourceItem->sale_order_item_id
+                                                        ? ('SO Item #' . (int) $sourceItem->sale_order_item_id)
+                                                        : ($sourceItem->sale_item_id ? ('Sale Item #' . (int) $sourceItem->sale_item_id) : ('Item #' . (int) $sourceItem->id)) }}
+                                                </b>
+                                                <span class="mx-1">â€¢</span>
+                                                Service: <b>{{ $source?->installation_type ? str_replace('_', ' ', $source->installation_type) : '-' }}</b>
+                                            </div>
+                                        @endif
+                                    @endif
                                     </div>
                                 </div>
 
@@ -277,7 +315,11 @@
                             <hr class="my-3">
 
                             {{-- REQUIRED BASE --}}
-                            <input type="hidden" name="items[{{ $i }}][id]" value="{{ $itemId }}">
+                            <input type="hidden" name="items[{{ $i }}][product_id]" value="{{ $pid }}">
+                            <input type="hidden" name="items[{{ $i }}][expected_quantity]" value="{{ $expected }}">
+                            @foreach($deliveryItemIds as $deliveryItemId)
+                                <input type="hidden" name="items[{{ $i }}][delivery_item_ids][]" value="{{ (int) $deliveryItemId }}">
+                            @endforeach
 
                             {{-- NOTE:
                                  warehouse_id di form ini tidak dipakai lagi sebagai validasi / sumber data (karena backend ambil dari item->warehouse_id).

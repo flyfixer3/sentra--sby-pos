@@ -7,6 +7,8 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Modules\Product\Entities\Product;
 use Modules\Product\Entities\Warehouse;
+use Modules\Sale\Entities\SaleDetails;
+use Modules\SaleOrder\Entities\SaleOrderItem;
 
 class SaleDeliveryItem extends Model
 {
@@ -16,6 +18,8 @@ class SaleDeliveryItem extends Model
         'sale_delivery_id',
         'warehouse_id',
         'product_id',
+        'sale_order_item_id',
+        'sale_item_id',
         'quantity',
 
         'qty_good',
@@ -29,6 +33,8 @@ class SaleDeliveryItem extends Model
         'sale_delivery_id' => 'int',
         'warehouse_id' => 'int',
         'product_id' => 'int',
+        'sale_order_item_id' => 'int',
+        'sale_item_id' => 'int',
         'quantity' => 'int',
         'qty_good' => 'int',
         'qty_defect' => 'int',
@@ -49,5 +55,15 @@ class SaleDeliveryItem extends Model
     public function product()
     {
         return $this->belongsTo(Product::class, 'product_id')->withoutGlobalScopes();
+    }
+
+    public function saleOrderItem()
+    {
+        return $this->belongsTo(SaleOrderItem::class, 'sale_order_item_id');
+    }
+
+    public function saleItem()
+    {
+        return $this->belongsTo(SaleDetails::class, 'sale_item_id');
     }
 }

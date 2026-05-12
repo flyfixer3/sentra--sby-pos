@@ -7,7 +7,6 @@ use Illuminate\Routing\Controller;
 use App\Support\BranchContext;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
-use Illuminate\Support\Facades\Schema;
 
 use Modules\People\Entities\Customer;
 use Modules\Product\Entities\Warehouse;
@@ -18,6 +17,7 @@ use Modules\SaleDelivery\Entities\SaleDelivery;
 use Modules\SaleDelivery\Entities\SaleDeliveryItem;
 use Modules\SaleDelivery\Http\Controllers\Concerns\SaleDeliveryShared;
 use Modules\SaleOrder\Entities\SaleOrder;
+use Modules\SaleOrder\Entities\SaleOrderItem;
 
 class SaleDeliveryController extends Controller
 {
@@ -29,6 +29,8 @@ class SaleDeliveryController extends Controller
             ->map(function ($row) {
                 return [
                     'product_id' => (int) ($row['product_id'] ?? 0),
+                    'sale_order_item_id' => !empty($row['sale_order_item_id']) ? (int) $row['sale_order_item_id'] : null,
+                    'sale_item_id' => !empty($row['sale_item_id']) ? (int) $row['sale_item_id'] : null,
                     'quantity' => max(0, (int) ($row['quantity'] ?? 0)),
                     'price' => array_key_exists('price', $row) && $row['price'] !== null
                         ? (int) $row['price']
@@ -54,6 +56,8 @@ class SaleDeliveryController extends Controller
 
         $saleDelivery->load([
             'items.product',
+            'items.saleOrderItem.customerVehicle',
+            'items.saleItem.customerVehicle',
             'warehouse',
             'customer',
             'creator',
@@ -69,7 +73,43 @@ class SaleDeliveryController extends Controller
             ->orderBy('id', 'asc')
             ->get();
 
-        return view('saledelivery::show', compact('saleDelivery', 'mutations'));
+        $pickedDefectItems = DB::table('product_defect_items as pdi')
+            ->leftJoin('products as p', 'p.id', '=', 'pdi.product_id')
+            ->leftJoin('warehouses as w', 'w.id', '=', 'pdi.warehouse_id')
+            ->leftJoin('racks as r', 'r.id', '=', 'pdi.rack_id')
+            ->leftJoin('users as u', 'u.id', '=', 'pdi.moved_out_by')
+            ->where('pdi.moved_out_reference_type', SaleDelivery::class)
+            ->where('pdi.moved_out_reference_id', (int) $saleDelivery->id)
+            ->orderBy('pdi.id')
+            ->get([
+                'pdi.*',
+                'p.product_name',
+                'p.product_code',
+                'w.warehouse_name',
+                'r.code as rack_code',
+                'r.name as rack_name',
+                'u.name as moved_out_by_name',
+            ]);
+
+        $pickedDamagedItems = DB::table('product_damaged_items as pdi')
+            ->leftJoin('products as p', 'p.id', '=', 'pdi.product_id')
+            ->leftJoin('warehouses as w', 'w.id', '=', 'pdi.warehouse_id')
+            ->leftJoin('racks as r', 'r.id', '=', 'pdi.rack_id')
+            ->leftJoin('users as u', 'u.id', '=', 'pdi.moved_out_by')
+            ->where('pdi.moved_out_reference_type', SaleDelivery::class)
+            ->where('pdi.moved_out_reference_id', (int) $saleDelivery->id)
+            ->orderBy('pdi.id')
+            ->get([
+                'pdi.*',
+                'p.product_name',
+                'p.product_code',
+                'w.warehouse_name',
+                'r.code as rack_code',
+                'r.name as rack_name',
+                'u.name as moved_out_by_name',
+            ]);
+
+        return view('saledelivery::show', compact('saleDelivery', 'mutations', 'pickedDefectItems', 'pickedDamagedItems'));
     }
 
     public function create(Request $request)
@@ -112,13 +152,13 @@ class SaleDeliveryController extends Controller
                 $saleOrder = SaleOrder::query()
                     ->where('id', $saleOrderId)
                     ->where('branch_id', $branchId)
-                    ->with(['items.product'])
+                    ->with(['items.product', 'items.customerVehicle'])
                     ->firstOrFail();
 
                 $prefillSaleOrderRef = $saleOrder->reference ?? ('SO#' . $saleOrder->id);
                 $prefillCustomerId = (int) $saleOrder->customer_id;
 
-                $remainingMap = $this->getPlannedRemainingQtyBySaleOrder($saleOrderId);
+                $remainingMap = $this->getPlannedRemainingQtyBySaleOrderItem($saleOrderId);
 
                 $hasAny = false;
                 foreach ($remainingMap as $v) {
@@ -132,31 +172,32 @@ class SaleDeliveryController extends Controller
                     throw new \RuntimeException('All items are already planned in existing deliveries (pending/confirmed/partial).');
                 }
 
-                $firstRowByProduct = [];
                 foreach ($saleOrder->items as $it) {
-                    $pid = (int) $it->product_id;
-                    if ($pid <= 0) continue;
-                    if (!isset($firstRowByProduct[$pid])) {
-                        $firstRowByProduct[$pid] = $it;
-                    }
-                }
+                    $itemId = (int) $it->id;
+                    $pid = (int) ($it->product_id ?? 0);
+                    $rem = (int) ($remainingMap[$itemId] ?? 0);
 
-                foreach ($remainingMap as $pid => $rem) {
-                    $pid = (int) $pid;
-                    $rem = (int) $rem;
-
-                    if ($pid <= 0 || $rem <= 0) {
+                    if ($itemId <= 0 || $pid <= 0 || $rem <= 0) {
                         continue;
                     }
 
-                    $row = $firstRowByProduct[$pid] ?? null;
-
                     $prefillItems[] = [
                         'product_id' => $pid,
-                        'product_name' => $row?->product?->product_name,
-                        'product_code' => $row?->product?->product_code,
+                        'sale_order_item_id' => $itemId,
+                        'product_name' => $it->product?->product_name,
+                        'product_code' => $it->product?->product_code,
                         'quantity' => $rem,
-                        'price' => (int) ($row?->price ?? 0),
+                        'price' => (int) ($it->price ?? 0),
+                        'unit_price' => (int) ($it->unit_price ?? $it->price ?? 0),
+                        'installation_type' => (string) ($it->installation_type ?? 'item_only'),
+                        'customer_vehicle_id' => $it->customer_vehicle_id,
+                        'vehicle_label' => $it->customerVehicle
+                            ? trim(implode(' ', array_filter([
+                                $it->customerVehicle->vehicle_name ?? null,
+                                $it->customerVehicle->license_number ?? null,
+                                $it->customerVehicle->car_plate ?? null,
+                            ])))
+                            : null,
                     ];
                 }
             }
@@ -175,10 +216,12 @@ class SaleDeliveryController extends Controller
 
                 $prefillCustomerId = (int) ($sale->customer_id ?? 0);
 
-                $remainingMap = $this->getRemainingQtyBySale($saleId);
+                $remainingByItem = $this->getRemainingQtyBySaleItem($saleId);
 
                 $details = DB::table('sale_details')
                     ->where('sale_id', $saleId)
+                    ->whereNull('deleted_at')
+                    ->orderBy('id')
                     ->get();
 
                 $productIds = $details
@@ -194,32 +237,35 @@ class SaleDeliveryController extends Controller
                     ->get(['id', 'product_name', 'product_code'])
                     ->keyBy('id');
 
-                $detailFirstByProduct = [];
-                foreach ($details as $d) {
-                    $pid = (int) $d->product_id;
-                    if ($pid <= 0) continue;
-                    if (!isset($detailFirstByProduct[$pid])) {
-                        $detailFirstByProduct[$pid] = $d;
+                $remainingByProduct = $this->getRemainingQtyBySale($saleId);
+
+                foreach ($details as $detail) {
+                    $detailId = (int) ($detail->id ?? 0);
+                    $pid = (int) ($detail->product_id ?? 0);
+                    if (!empty($remainingByItem)) {
+                        $rem = (int) ($remainingByItem[$detailId] ?? 0);
+                    } else {
+                        $available = max(0, (int) ($remainingByProduct[$pid] ?? 0));
+                        $rem = min(max(0, (int) ($detail->quantity ?? 0)), $available);
+                        $remainingByProduct[$pid] = max(0, $available - $rem);
                     }
-                }
 
-                foreach ($remainingMap as $pid => $rem) {
-                    $pid = (int) $pid;
-                    $rem = (int) $rem;
-
-                    if ($pid <= 0 || $rem <= 0) {
+                    if ($detailId <= 0 || $pid <= 0 || $rem <= 0) {
                         continue;
                     }
 
                     $product = $productMap->get($pid);
-                    $detail = $detailFirstByProduct[$pid] ?? null;
 
                     $prefillItems[] = [
                         'product_id' => $pid,
+                        'sale_item_id' => $detailId,
                         'product_name' => $product?->product_name,
                         'product_code' => $product?->product_code,
                         'quantity' => $rem,
                         'price' => (int) ($detail->price ?? 0),
+                        'unit_price' => (int) ($detail->unit_price ?? $detail->price ?? 0),
+                        'installation_type' => (string) ($detail->installation_type ?? 'item_only'),
+                        'customer_vehicle_id' => $detail->customer_vehicle_id ?? null,
                     ];
                 }
             }
@@ -283,6 +329,8 @@ class SaleDeliveryController extends Controller
                 'note' => 'nullable|string|max:2000',
                 'items' => 'required|array|min:1',
                 'items.*.product_id' => 'required|integer',
+                'items.*.sale_order_item_id' => 'nullable|integer',
+                'items.*.sale_item_id' => 'nullable|integer',
                 'items.*.quantity' => 'required|integer|min:0',
                 'items.*.price' => 'nullable|integer|min:0',
             ];
@@ -315,15 +363,27 @@ class SaleDeliveryController extends Controller
 
                     $customerId = (int) $saleOrder->customer_id;
 
-                    $remainingMap = $this->getPlannedRemainingQtyBySaleOrder($saleOrderId);
+                    $saleOrderItems = $saleOrder->items->keyBy('id');
+                    $remainingMap = $this->getPlannedRemainingQtyBySaleOrderItem($saleOrderId);
 
                     foreach ($deliveryItems as $row) {
+                        $saleOrderItemId = (int) ($row['sale_order_item_id'] ?? 0);
                         $pid = (int) $row['product_id'];
                         $qty = (int) $row['quantity'];
-                        $rem = (int) ($remainingMap[$pid] ?? 0);
+
+                        if ($saleOrderItemId <= 0 || !$saleOrderItems->has($saleOrderItemId)) {
+                            throw new \RuntimeException('Submitted Sale Order item does not belong to the selected Sale Order.');
+                        }
+
+                        $saleOrderItem = $saleOrderItems->get($saleOrderItemId);
+                        if ((int) ($saleOrderItem->product_id ?? 0) !== $pid) {
+                            throw new \RuntimeException("Product mismatch for sale_order_item_id {$saleOrderItemId}.");
+                        }
+
+                        $rem = (int) ($remainingMap[$saleOrderItemId] ?? 0);
 
                         if ($qty > $rem) {
-                            throw new \RuntimeException("Qty exceeds PLANNED remaining for product_id {$pid}. Remaining: {$rem}.");
+                            throw new \RuntimeException("Qty exceeds PLANNED remaining for sale_order_item_id {$saleOrderItemId}. Remaining: {$rem}.");
                         }
                     }
                 }
@@ -338,15 +398,41 @@ class SaleDeliveryController extends Controller
 
                     if (!$sale) throw new \RuntimeException('Sale (invoice) not found in this branch.');
 
-                    $remainingMap = $this->getRemainingQtyBySale($saleId);
+                    $saleDetails = DB::table('sale_details')
+                        ->where('sale_id', $saleId)
+                        ->whereNull('deleted_at')
+                        ->get()
+                        ->keyBy('id');
+
+                    $remainingByItem = $this->getRemainingQtyBySaleItem($saleId);
+                    $remainingByProduct = $this->getRemainingQtyBySale($saleId);
 
                     foreach ($deliveryItems as $row) {
+                        $saleItemId = (int) ($row['sale_item_id'] ?? 0);
                         $pid = (int) $row['product_id'];
                         $qty = (int) $row['quantity'];
-                        $rem = (int) ($remainingMap[$pid] ?? 0);
+
+                        if ($saleItemId > 0) {
+                            if (!$saleDetails->has($saleItemId)) {
+                                throw new \RuntimeException('Submitted Sale item does not belong to the selected Sale.');
+                            }
+
+                            $saleItem = $saleDetails->get($saleItemId);
+                            if ((int) ($saleItem->product_id ?? 0) !== $pid) {
+                                throw new \RuntimeException("Product mismatch for sale_item_id {$saleItemId}.");
+                            }
+
+                            $rem = (int) ($remainingByItem[$saleItemId] ?? 0);
+                        } else {
+                            $rem = (int) ($remainingByProduct[$pid] ?? 0);
+                        }
 
                         if ($qty > $rem) {
                             throw new \RuntimeException("Qty exceeds remaining for product_id {$pid}. Remaining: {$rem}.");
+                        }
+
+                        if ($saleItemId <= 0) {
+                            $remainingByProduct[$pid] = max(0, $rem - $qty);
                         }
                     }
 
@@ -389,6 +475,8 @@ class SaleDeliveryController extends Controller
                     $createdItems[] = SaleDeliveryItem::create([
                         'sale_delivery_id' => (int) $saleDelivery->id,
                         'product_id'       => (int) $row['product_id'],
+                        'sale_order_item_id' => !empty($row['sale_order_item_id']) ? (int) $row['sale_order_item_id'] : null,
+                        'sale_item_id'     => !empty($row['sale_item_id']) ? (int) $row['sale_item_id'] : null,
                         'quantity'         => (int) $row['quantity'],
                         'price'            => $price,
                         'qty_good'         => 0,
@@ -397,71 +485,6 @@ class SaleDeliveryController extends Controller
                     ]);
                 }
 
-                if ($source === 'sale_order') {
-                    if (!Schema::hasTable('sale_delivery_item_allocations')) {
-                        throw new \RuntimeException('Missing allocation table. Please run the latest migrations first.');
-                    }
-
-                    $soItems = \Modules\SaleOrder\Entities\SaleOrderItem::query()
-                        ->where('sale_order_id', (int) $saleOrderId)
-                        ->orderBy('id')
-                        ->get();
-
-                    $remainingByItem = $this->getPlannedRemainingQtyBySaleOrderItem((int) $saleOrderId);
-
-                    $itemsByProduct = [];
-                    foreach ($soItems as $soItem) {
-                        $pid = (int) ($soItem->product_id ?? 0);
-                        if ($pid <= 0) continue;
-                        if (!isset($itemsByProduct[$pid])) $itemsByProduct[$pid] = [];
-                        $itemsByProduct[$pid][] = $soItem;
-                    }
-
-                    $allocRows = [];
-
-                    foreach ($createdItems as $deliveryItem) {
-                        $pid = (int) ($deliveryItem->product_id ?? 0);
-                        $qtyToAllocate = (int) ($deliveryItem->quantity ?? 0);
-
-                        if ($pid <= 0 || $qtyToAllocate <= 0) continue;
-
-                        $rows = $itemsByProduct[$pid] ?? [];
-                        foreach ($rows as $soItem) {
-                            if ($qtyToAllocate <= 0) break;
-
-                            $soItemId = (int) ($soItem->id ?? 0);
-                            if ($soItemId <= 0) continue;
-
-                            $remainingItem = (int) ($remainingByItem[$soItemId] ?? 0);
-                            if ($remainingItem <= 0) continue;
-
-                            $allocQty = min($qtyToAllocate, $remainingItem);
-                            if ($allocQty <= 0) continue;
-
-                            $allocRows[] = [
-                                'sale_delivery_id' => (int) $saleDelivery->id,
-                                'sale_delivery_item_id' => (int) $deliveryItem->id,
-                                'sale_order_id' => (int) $saleOrderId,
-                                'sale_order_item_id' => (int) $soItemId,
-                                'product_id' => (int) $pid,
-                                'quantity' => (int) $allocQty,
-                                'created_at' => now(),
-                                'updated_at' => now(),
-                            ];
-
-                            $remainingByItem[$soItemId] = (int) max(0, $remainingItem - $allocQty);
-                            $qtyToAllocate -= $allocQty;
-                        }
-
-                        if ($qtyToAllocate > 0) {
-                            throw new \RuntimeException("Unable to allocate delivery qty for product_id {$pid}. Remaining mismatch.");
-                        }
-                    }
-
-                    if (!empty($allocRows)) {
-                        DB::table('sale_delivery_item_allocations')->insert($allocRows);
-                    }
-                }
             });
 
             toast('Sale Delivery created successfully', 'success');

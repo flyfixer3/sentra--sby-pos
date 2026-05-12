@@ -350,25 +350,52 @@ class SaleController extends Controller
 
         if (!$so) return;
 
-        $allocationExists = DB::getSchemaBuilder()->hasTable('sale_delivery_item_allocations')
-            && DB::table('sale_delivery_item_allocations')
-                ->where('sale_order_id', (int) $saleOrderId)
-                ->exists();
+        $deliveredExpr = "CASE
+            WHEN (COALESCE(sdi.qty_good,0) + COALESCE(sdi.qty_defect,0) + COALESCE(sdi.qty_damaged,0)) > 0
+                THEN (COALESCE(sdi.qty_good,0) + COALESCE(sdi.qty_defect,0) + COALESCE(sdi.qty_damaged,0))
+            ELSE COALESCE(sdi.quantity,0)
+        END";
 
-        $deliveredByItem = [];
-
-        if ($allocationExists) {
-            $deliveredByItem = DB::table('sale_delivery_item_allocations as sda')
-                ->join('sale_deliveries as sd', 'sd.id', '=', 'sda.sale_delivery_id')
+        $deliveredByItem = Schema::hasColumn('sale_delivery_items', 'sale_order_item_id')
+            ? DB::table('sale_delivery_items as sdi')
+                ->join('sale_deliveries as sd', 'sd.id', '=', 'sdi.sale_delivery_id')
                 ->where('sd.sale_order_id', (int) $saleOrderId)
                 ->whereNull('sd.deleted_at')
+                ->whereNull('sdi.deleted_at')
                 ->whereIn(DB::raw('LOWER(COALESCE(sd.status,""))'), ['confirmed', 'partial'])
-                ->whereNotNull('sda.sale_order_item_id')
-                ->select('sda.sale_order_item_id', DB::raw('SUM(COALESCE(sda.quantity,0)) as qty'))
-                ->groupBy('sda.sale_order_item_id')
+                ->whereNotNull('sdi.sale_order_item_id')
+                ->select('sdi.sale_order_item_id', DB::raw("SUM({$deliveredExpr}) as qty"))
+                ->groupBy('sdi.sale_order_item_id')
                 ->pluck('qty', 'sale_order_item_id')
                 ->map(fn ($qty) => max(0, (int) $qty))
+                ->toArray()
+            : [];
+
+        $remainingByProduct = [];
+        if (empty($deliveredByItem)) {
+            $orderedByProduct = [];
+            foreach ($so->items as $item) {
+                $pid = (int) ($item->product_id ?? 0);
+                if ($pid <= 0) continue;
+                if (!isset($orderedByProduct[$pid])) $orderedByProduct[$pid] = 0;
+                $orderedByProduct[$pid] += max(0, (int) ($item->quantity ?? 0));
+            }
+
+            $deliveredByProduct = DB::table('sale_delivery_items as sdi')
+                ->join('sale_deliveries as sd', 'sd.id', '=', 'sdi.sale_delivery_id')
+                ->where('sd.sale_order_id', (int) $saleOrderId)
+                ->whereNull('sd.deleted_at')
+                ->whereNull('sdi.deleted_at')
+                ->whereIn(DB::raw('LOWER(COALESCE(sd.status,""))'), ['confirmed', 'partial'])
+                ->select('sdi.product_id', DB::raw("SUM({$deliveredExpr}) as qty"))
+                ->groupBy('sdi.product_id')
+                ->pluck('qty', 'product_id')
+                ->map(fn ($qty) => max(0, (int) $qty))
                 ->toArray();
+
+            foreach ($orderedByProduct as $pid => $orderedQty) {
+                $remainingByProduct[(int) $pid] = max(0, (int) $orderedQty - max(0, (int) ($deliveredByProduct[(int) $pid] ?? 0)));
+            }
         }
 
         $totalRemaining = 0;
@@ -378,9 +405,15 @@ class SaleController extends Controller
             $ordered = max(0, (int) ($it->quantity ?? 0));
             $totalOrdered += $ordered;
 
-            if ($allocationExists) {
+            if (!empty($deliveredByItem)) {
                 $delivered = max(0, (int) ($deliveredByItem[(int) $it->id] ?? 0));
                 $totalRemaining += max(0, $ordered - $delivered);
+            } else {
+                $pid = (int) ($it->product_id ?? 0);
+                $available = max(0, (int) ($remainingByProduct[$pid] ?? 0));
+                $rem = min($ordered, $available);
+                $remainingByProduct[$pid] = max(0, $available - $rem);
+                $totalRemaining += $rem;
             }
         }
 
@@ -391,13 +424,9 @@ class SaleController extends Controller
             return;
         }
 
-        if ($allocationExists) {
-            if ($totalRemaining <= 0) $newStatus = 'delivered';
-            elseif ($totalRemaining < $totalOrdered) $newStatus = 'partial_delivered';
-            else $newStatus = 'pending';
-        } else {
-            $newStatus = (string) ($so->status ?? 'pending');
-        }
+        if ($totalRemaining <= 0) $newStatus = 'delivered';
+        elseif ($totalRemaining < $totalOrdered) $newStatus = 'partial_delivered';
+        else $newStatus = 'pending';
 
         if ($newStatus === 'delivered') {
             $confirmedCount = (int) DB::table('sale_deliveries')
@@ -606,23 +635,6 @@ class SaleController extends Controller
                         ->get(['id', 'product_name', 'product_code', 'product_unit', 'product_price', 'product_cost'])
                         ->keyBy('id');
 
-                $allocationsByDeliveryItem = [];
-                if (Schema::hasTable('sale_delivery_item_allocations')) {
-                    $allocRows = DB::table('sale_delivery_item_allocations')
-                        ->where('sale_delivery_id', (int) $delivery->id)
-                        ->orderBy('id')
-                        ->get();
-
-                    foreach ($allocRows as $row) {
-                        $itemId = (int) ($row->sale_delivery_item_id ?? 0);
-                        if ($itemId <= 0) continue;
-                        if (!isset($allocationsByDeliveryItem[$itemId])) {
-                            $allocationsByDeliveryItem[$itemId] = [];
-                        }
-                        $allocationsByDeliveryItem[$itemId][] = $row;
-                    }
-                }
-
                 $remainingInvoiceableByProduct = [];
                 foreach (($invoiceableMap ?? []) as $pid => $mapRow) {
                     $remainingInvoiceableByProduct[(int) $pid] = (int) ($mapRow['remaining'] ?? 0);
@@ -639,10 +651,22 @@ class SaleController extends Controller
                     if ($remainingInvoiceableQty <= 0) continue;
 
                     $p = $productMap->get($productId);
-                    $allocRowsForItem = $allocationsByDeliveryItem[(int) $it->id] ?? [];
-                    $soRows = $soItemsByProduct[$productId] ?? [];
-                    if (empty($soRows)) {
-                        $soRows = [(object) [
+                    $sourceSaleItem = null;
+                    if (!empty($it->sale_item_id)) {
+                        $sourceSaleItem = \Modules\Sale\Entities\SaleDetails::query()
+                            ->where('id', (int) $it->sale_item_id)
+                            ->first();
+                    }
+
+                    $sourceRow = null;
+                    if (!empty($it->sale_order_item_id)) {
+                        $sourceRow = $soItemsById[(int) $it->sale_order_item_id] ?? null;
+                    } elseif ($sourceSaleItem) {
+                        $sourceRow = $sourceSaleItem;
+                    }
+
+                    if (!$sourceRow) {
+                        $sourceRow = (object) [
                             'id' => 0,
                             'product_id' => $productId,
                             'quantity' => $remainingInvoiceableQty,
@@ -650,162 +674,47 @@ class SaleController extends Controller
                             'price' => $it->price ?? ($it->unit_price ?? ($p->product_price ?? 0)),
                             'product_discount_amount' => $it->product_discount_amount ?? 0,
                             'product_discount_type' => $it->product_discount_type ?? 'fixed',
+                            'product_tax_amount' => $it->product_tax_amount ?? 0,
                             'installation_type' => 'item_only',
                             'customer_vehicle_id' => null,
-                        ]];
+                        ];
                     }
 
                     $qtyToSkip = max(0, (int) $alreadyInvoicedQty);
                     $qtyToAllocate = max(0, (int) $remainingInvoiceableQty);
 
-                    if (!empty($allocRowsForItem)) {
-                        foreach ($allocRowsForItem as $allocRow) {
-                            if ($qtyToAllocate <= 0) break;
+                    $sourceQty = max(0, (int) ($sourceRow->quantity ?? $remainingInvoiceableQty));
+                    if ($sourceQty <= 0) continue;
 
-                            $allocQty = max(0, (int) ($allocRow->quantity ?? 0));
-                            if ($allocQty <= 0) continue;
-
-                            if ($qtyToSkip >= $allocQty) {
-                                $qtyToSkip -= $allocQty;
-                                continue;
-                            }
-
-                            $allocAvailable = $allocQty - $qtyToSkip;
-                            $qtyToSkip = 0;
-
-                            $rowInvoiceQty = min($qtyToAllocate, $allocAvailable);
-                            if ($rowInvoiceQty <= 0) continue;
-
-                            $soItemId = (int) ($allocRow->sale_order_item_id ?? 0);
-                            $soRow = $soItemId > 0 ? ($soItemsById[$soItemId] ?? null) : null;
-
-                            $unitPrice = (float) (
-                                $soRow?->unit_price
-                                ?? $it->unit_price
-                                ?? ($p->product_price ?? 0)
-                            );
-
-                            $priceShown = (float) (
-                                $soRow?->price
-                                ?? $it->price
-                                ?? $unitPrice
-                            );
-
-                            $discAmt = (float) (
-                                $soRow?->product_discount_amount
-                                ?? $it->product_discount_amount
-                                ?? 0
-                            );
-                            $discType = strtolower((string) (
-                                $soRow?->product_discount_type
-                                ?? $it->product_discount_type
-                                ?? 'fixed'
-                            ));
-
-                            if ($discAmt <= 0 && $unitPrice > 0 && $unitPrice > $priceShown) {
-                                $discAmt = (float) ($unitPrice - $priceShown);
-                                $discType = 'fixed';
-                            }
-
-                            if ($discAmt > 0) {
-                                $deliveryDiscountInfoTotal += ($discType === 'fixed')
-                                    ? ($discAmt * $rowInvoiceQty)
-                                    : (($unitPrice * $rowInvoiceQty) * ($discAmt / 100));
-                            }
-
-                            $productTax = (float) ($it->product_tax_amount ?? 0);
-                            $branchStockSnapshot = $getBranchStockSnapshot($productId);
-                            $subTotal = (float) ($priceShown * $rowInvoiceQty);
-                            $invoiceItemsSubtotal += (int) round($subTotal);
-
-                            $installationType = (string) ($soRow?->installation_type ?? 'item_only') === 'with_installation'
-                                ? 'with_installation'
-                                : 'item_only';
-                            $customerVehicleId = $installationType === 'with_installation'
-                                ? ((int) ($soRow?->customer_vehicle_id ?? 0) ?: null)
-                                : null;
-
-                            $cart->add([
-                                'id'      => $productId,
-                                'name'    => (string) ($p?->product_name ?? '-'),
-                                'qty'     => $rowInvoiceQty,
-                                'price'   => $priceShown,
-                                'weight'  => 1,
-                                'options' => [
-                                    'sub_total'             => $subTotal,
-                                    'code'                  => (string) ($p?->product_code ?? 'UNKNOWN'),
-                                    'unit'                  => (string) ($p?->product_unit ?? ''),
-                                    'stock'                 => (int) ($branchStockSnapshot['sellable'] ?? 0),
-                                    'reserved_stock'        => (int) ($branchStockSnapshot['reserved'] ?? 0),
-                                    'sellable_stock'        => (int) ($branchStockSnapshot['sellable'] ?? 0),
-                                    'stock_scope'           => 'branch',
-                                    'warehouse_id'          => $deliveryWarehouseId,
-                                    'warehouse_name'        => $deliveryWarehouseName,
-                                    'invoice_source'        => 'sale_delivery',
-                                    'delivered_qty'         => (int) $deliveredQty,
-                                    'already_invoiced_qty'  => (int) $alreadyInvoicedQty,
-                                    'remaining_invoiceable_qty' => (int) $remainingInvoiceableQty,
-                                    'current_stock_qty'     => (int) ($branchStockSnapshot['sellable'] ?? 0),
-                                    'product_tax'           => $productTax,
-                                    'unit_price'            => $unitPrice,
-                                    'product_discount'      => $discAmt,
-                                    'product_discount_type' => $discType,
-                                    'line_key'              => $soItemId > 0
-                                        ? ('sale_order_item_' . $soItemId . '_delivery_item_' . (int) $it->id)
-                                        : ('sale_delivery_item_' . (int) $it->id),
-                                    'installation_type'     => $installationType,
-                                    'customer_vehicle_id'   => $customerVehicleId,
-                                    'product_cost'          => (float) (
-                                        $it->product_cost
-                                        ?? (($branchId > 0 && $productId > 0)
-                                            ? $hppService->getCurrentHpp((int) $branchId, (int) $productId)
-                                            : ($p->product_cost ?? 0))
-                                    ),
-                                ],
-                            ]);
-
-                            $qtyToAllocate -= $rowInvoiceQty;
-                            $remainingInvoiceableByProduct[$productId] = max(0, (int) $remainingInvoiceableByProduct[$productId] - $rowInvoiceQty);
-                        }
-
+                    if ($qtyToSkip >= $sourceQty) {
+                        $qtyToSkip -= $sourceQty;
                         continue;
                     }
 
-                    foreach ($soRows as $soRow) {
-                        if ($qtyToAllocate <= 0) break;
-
-                        $soQty = max(0, (int) ($soRow->quantity ?? 0));
-                        if ($soQty <= 0) continue;
-
-                        if ($qtyToSkip >= $soQty) {
-                            $qtyToSkip -= $soQty;
-                            continue;
-                        }
-
-                        $availableFromRow = $soQty - $qtyToSkip;
-                        $qtyToSkip = 0;
-                        $rowInvoiceQty = min($qtyToAllocate, $availableFromRow);
-                        if ($rowInvoiceQty <= 0) continue;
+                    $availableFromRow = $sourceQty - $qtyToSkip;
+                    $qtyToSkip = 0;
+                    $rowInvoiceQty = min($qtyToAllocate, $availableFromRow);
+                    if ($rowInvoiceQty <= 0) continue;
 
                         $unitPrice = (float) (
-                            $soRow->unit_price
+                            $sourceRow->unit_price
                             ?? $it->unit_price
                             ?? ($p->product_price ?? 0)
                         );
 
                         $priceShown = (float) (
-                            $soRow->price
+                            $sourceRow->price
                             ?? $it->price
                             ?? $unitPrice
                         );
 
                         $discAmt = (float) (
-                            $soRow->product_discount_amount
+                            $sourceRow->product_discount_amount
                             ?? $it->product_discount_amount
                             ?? 0
                         );
                         $discType = strtolower((string) (
-                            $soRow->product_discount_type
+                            $sourceRow->product_discount_type
                             ?? $it->product_discount_type
                             ?? 'fixed'
                         ));
@@ -821,18 +730,19 @@ class SaleController extends Controller
                                 : (($unitPrice * $rowInvoiceQty) * ($discAmt / 100));
                         }
 
-                        $productTax = (float) ($it->product_tax_amount ?? 0);
+                        $productTax = (float) ($sourceRow->product_tax_amount ?? $it->product_tax_amount ?? 0);
                         $branchStockSnapshot = $getBranchStockSnapshot($productId);
                         $subTotal = (float) ($priceShown * $rowInvoiceQty);
                         $invoiceItemsSubtotal += (int) round($subTotal);
 
-                        $installationType = (string) ($soRow->installation_type ?? 'item_only') === 'with_installation'
+                        $installationType = (string) ($sourceRow->installation_type ?? 'item_only') === 'with_installation'
                             ? 'with_installation'
                             : 'item_only';
                         $customerVehicleId = $installationType === 'with_installation'
-                            ? ((int) ($soRow->customer_vehicle_id ?? 0) ?: null)
+                            ? ((int) ($sourceRow->customer_vehicle_id ?? 0) ?: null)
                             : null;
-                        $soItemId = (int) ($soRow->id ?? 0);
+                        $soItemId = (int) ($it->sale_order_item_id ?? 0);
+                        $saleItemId = (int) ($it->sale_item_id ?? 0);
 
                         $cart->add([
                             'id'      => $productId,
@@ -861,7 +771,9 @@ class SaleController extends Controller
                                 'product_discount_type' => $discType,
                                 'line_key'              => $soItemId > 0
                                     ? ('sale_order_item_' . $soItemId . '_delivery_item_' . (int) $it->id)
-                                    : ('sale_delivery_item_' . (int) $it->id),
+                                    : ($saleItemId > 0
+                                        ? ('sale_item_' . $saleItemId . '_delivery_item_' . (int) $it->id)
+                                        : ('sale_delivery_item_' . (int) $it->id)),
                                 'installation_type'     => $installationType,
                                 'customer_vehicle_id'   => $customerVehicleId,
                                 'product_cost'          => (float) (
@@ -875,7 +787,6 @@ class SaleController extends Controller
 
                         $qtyToAllocate -= $rowInvoiceQty;
                         $remainingInvoiceableByProduct[$productId] = max(0, (int) $remainingInvoiceableByProduct[$productId] - $rowInvoiceQty);
-                    }
                 }
             }
         }
@@ -994,14 +905,16 @@ class SaleController extends Controller
                     $soItems = \Modules\SaleOrder\Entities\SaleOrderItem::query()
                         ->where('sale_order_id', (int)$lockedSaleOrder->id)
                         ->get()
-                        ->keyBy('product_id');
+                        ->keyBy('id');
 
                     foreach (($lockedDelivery->items ?? []) as $it) {
                         $pid = (int) ($it->product_id ?? 0);
                         $qty = $this->deliveredQtyFromDeliveryItem($it);
                         if ($pid <= 0 || $qty <= 0) continue;
 
-                        $soRow = $soItems->get($pid);
+                        $soRow = !empty($it->sale_order_item_id)
+                            ? $soItems->get((int) $it->sale_order_item_id)
+                            : null;
 
                         $unit  = (float) ($soRow?->unit_price ?? $it->unit_price ?? 0);
                         $price = (float) ($soRow?->price ?? $it->price ?? $unit);
@@ -1539,23 +1452,22 @@ class SaleController extends Controller
         $delivery = SaleDelivery::create($deliveryData);
 
         // ======================================================
-        // Create SaleDeliveryItems (grouped by product)
+        // Create SaleDeliveryItems from each SaleDetails row.
         // ======================================================
-        $grouped = $details->groupBy('product_id');
-
         // ✅ NEW: build qty map untuk reserved pool
         $reservedAddByProduct = [];
 
-        foreach ($grouped as $productId => $productRows) {
-            $pid = (int) $productId;
-            $qty = (int) $productRows->sum('quantity');
+        foreach ($details as $detail) {
+            $pid = (int) ($detail->product_id ?? 0);
+            $qty = (int) ($detail->quantity ?? 0);
             if ($pid <= 0 || $qty <= 0) continue;
 
-            $price = (int) ($productRows->first()->price ?? 0);
+            $price = (int) ($detail->price ?? 0);
 
             SaleDeliveryItem::create([
                 'sale_delivery_id' => (int) $delivery->id,
                 'product_id' => $pid,
+                'sale_item_id' => (int) $detail->id,
                 'quantity' => $qty,
                 'price' => $price > 0 ? $price : null,
             ]);

@@ -16,7 +16,7 @@
     $statusBadge = match($status) {
         'pending' => 'bg-warning text-dark',
         'partial_delivered' => 'bg-info text-dark',
-        'delivered' => 'bg-primary',
+        'delivered' => 'bg-secondary',
         'completed' => 'bg-success',
         'cancelled' => 'bg-danger',
         default => 'bg-secondary',
