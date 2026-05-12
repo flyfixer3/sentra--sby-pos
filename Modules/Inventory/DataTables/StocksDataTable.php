@@ -41,7 +41,6 @@ class StocksDataTable extends DataTable
                     . number_format($qty)
                     . '</span>';
             })
-            ->editColumn('outgoing_qty', fn ($row) => number_format((int) ($row->outgoing_qty ?? 0)))
 
             /**
              * ✅ Defect badge (kirim branch_id, bukan warehouse_id)
@@ -121,10 +120,6 @@ class StocksDataTable extends DataTable
             ->selectRaw('product_id, branch_id, SUM(quantity) AS damaged_qty')
             ->groupBy('product_id', 'branch_id');
 
-        $outgoingAgg = DB::table('mutations')
-            ->selectRaw('product_id, branch_id, SUM(stock_out) AS outgoing_qty')
-            ->groupBy('product_id', 'branch_id');
-
         // ===========================
         // ALL BRANCH MODE
         // ===========================
@@ -145,10 +140,6 @@ class StocksDataTable extends DataTable
                     $join->on('damaged.product_id', '=', 'stocks.product_id')
                         ->on('damaged.branch_id', '=', DB::raw($resolvedBranchExpr));
                 })
-                ->leftJoinSub($outgoingAgg, 'outgoing', function ($join) use ($resolvedBranchExpr) {
-                    $join->on('outgoing.product_id', '=', 'stocks.product_id')
-                        ->on('outgoing.branch_id', '=', DB::raw($resolvedBranchExpr));
-                })
                 ->select([
                     // rowId internal
                     DB::raw('MIN(stocks.id) as stock_id'),
@@ -167,8 +158,6 @@ class StocksDataTable extends DataTable
                     DB::raw('SUM(stocks.qty_total) as total_qty'),
                     DB::raw('SUM(stocks.qty_reserved) as reserved_qty'),
                     DB::raw('SUM(stocks.qty_incoming) as incoming_qty'),
-                    DB::raw('COALESCE(outgoing.outgoing_qty, 0) as outgoing_qty'),
-
                     DB::raw('COALESCE(defects.defect_qty, 0) as defect_qty'),
                     DB::raw('COALESCE(damaged.damaged_qty, 0) as damaged_qty'),
 
@@ -234,10 +223,6 @@ class StocksDataTable extends DataTable
                 $join->on('damaged.product_id', '=', 'stocks.product_id')
                     ->on('damaged.branch_id', '=', 'stocks.branch_id');
             })
-            ->leftJoinSub($outgoingAgg, 'outgoing', function ($join) {
-                $join->on('outgoing.product_id', '=', 'stocks.product_id')
-                    ->on('outgoing.branch_id', '=', 'stocks.branch_id');
-            })
             ->where('stocks.branch_id', $branchId)
             ->select([
                 DB::raw('MIN(stocks.id) as stock_id'),
@@ -255,8 +240,6 @@ class StocksDataTable extends DataTable
                 DB::raw('SUM(stocks.qty_total) as total_qty'),
                 DB::raw('SUM(stocks.qty_reserved) as reserved_qty'),
                 DB::raw('SUM(stocks.qty_incoming) as incoming_qty'),
-                DB::raw('COALESCE(outgoing.outgoing_qty, 0) as outgoing_qty'),
-
                 DB::raw('COALESCE(defects.defect_qty, 0) as defect_qty'),
                 DB::raw('COALESCE(damaged.damaged_qty, 0) as damaged_qty'),
 
@@ -354,7 +337,6 @@ class StocksDataTable extends DataTable
         $cols[] = ['data' => 'reserved_qty', 'name' => 'reserved_qty', 'title' => 'Reserved', 'class' => 'text-end'];
         $cols[] = ['data' => 'available_qty', 'name' => 'available_qty', 'title' => 'Available', 'class' => 'text-end'];
         $cols[] = ['data' => 'incoming_qty', 'name' => 'incoming_qty', 'title' => 'Incoming', 'class' => 'text-end'];
-        $cols[] = ['data' => 'outgoing_qty', 'name' => 'outgoing_qty', 'title' => 'Outgoing', 'class' => 'text-end'];
 
         $cols[] = ['data' => 'defect_qty', 'name' => 'defect_qty', 'title' => 'Defect', 'class' => 'text-end', 'orderable' => false];
         $cols[] = ['data' => 'damaged_qty', 'name' => 'damaged_qty', 'title' => 'Damaged', 'class' => 'text-end', 'orderable' => false];

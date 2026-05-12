@@ -120,43 +120,177 @@
         if (!window.jQuery) return;
 
         var activeDropdown = null;
+        var portalClass = 'dt-dropdown-portal';
+        var portalReadyClass = 'dt-dropdown-portal-ready';
+        var viewportMargin = 8;
+        var portalTimer = null;
+
+        function getDropdownContext(element) {
+            var $context = jQuery(element).closest('.dataTables_wrapper, .table-responsive, .table-wrap');
+
+            if (!$context.length) return null;
+
+            if ($context.hasClass('dataTables_wrapper') || $context.find('table.dataTable').length) {
+                return $context[0];
+            }
+
+            return null;
+        }
+
+        function getDropdownToggle(dropdown, event) {
+            if (event && event.relatedTarget && event.relatedTarget.matches && event.relatedTarget.matches('[data-toggle="dropdown"], [data-bs-toggle="dropdown"], .dropdown-toggle, button.dropdown')) {
+                return event.relatedTarget;
+            }
+
+            if (dropdown && dropdown.matches && dropdown.matches('[data-toggle="dropdown"], [data-bs-toggle="dropdown"], .dropdown-toggle, button.dropdown')) {
+                return dropdown;
+            }
+
+            return dropdown ? dropdown.querySelector('[data-toggle="dropdown"], [data-bs-toggle="dropdown"], .dropdown-toggle, button.dropdown') : null;
+        }
+
+        function getDropdownRoot(toggle, eventTarget) {
+            var root = null;
+
+            if (eventTarget && eventTarget.matches && eventTarget.matches('.dropdown, .btn-group, .dropleft, .dropright, .dropup')) {
+                root = eventTarget;
+            }
+
+            if (!root && toggle) {
+                root = toggle.closest('.dropdown, .btn-group, .dropleft, .dropright, .dropup');
+            }
+
+            return root;
+        }
+
+        function restorePortalDropdown() {
+            if (!activeDropdown) return;
+
+            var menu = activeDropdown.menu;
+            var placeholder = activeDropdown.placeholder;
+
+            menu.classList.remove(portalClass);
+            menu.classList.remove(portalReadyClass);
+            menu.style.removeProperty('position');
+            menu.style.removeProperty('inset');
+            menu.style.removeProperty('left');
+            menu.style.removeProperty('top');
+            menu.style.removeProperty('right');
+            menu.style.removeProperty('bottom');
+            menu.style.removeProperty('margin');
+            menu.style.removeProperty('transform');
+            menu.style.removeProperty('max-height');
+            menu.style.removeProperty('overflow-y');
+            menu.style.removeProperty('overflow-x');
+
+            if (placeholder && placeholder.parentNode) {
+                placeholder.parentNode.insertBefore(menu, placeholder);
+                placeholder.parentNode.removeChild(placeholder);
+            } else if (menu.parentNode === document.body) {
+                menu.parentNode.removeChild(menu);
+            }
+
+            activeDropdown = null;
+        }
+
+        function schedulePortal(toggle, eventTarget) {
+            window.clearTimeout(portalTimer);
+            portalTimer = window.setTimeout(function () {
+                openPortalDropdown(toggle, eventTarget);
+            }, 0);
+        }
+
+        function clamp(value, min, max) {
+            if (max < min) return min;
+            return Math.max(min, Math.min(value, max));
+        }
 
         function positionPortalDropdown() {
             if (!activeDropdown) return;
 
             var toggle = activeDropdown.toggle;
             var menu = activeDropdown.menu;
-            if (!toggle || !menu || !document.body.contains(menu)) return;
+            var dropdown = activeDropdown.dropdown;
+            if (!toggle || !menu || !dropdown || !document.body.contains(menu)) return;
 
             var rect = toggle.getBoundingClientRect();
-            var menuWidth = menu.offsetWidth || 220;
-            var menuHeight = menu.offsetHeight || 0;
-            var margin = 8;
-            var left = rect.left - menuWidth;
+            var menuRect = menu.getBoundingClientRect();
+            var menuWidth = menuRect.width || menu.offsetWidth || 220;
+            var menuHeight = menuRect.height || menu.offsetHeight || 0;
+            var availableHeight = Math.max(120, window.innerHeight - (viewportMargin * 2));
+            var isDropLeft = dropdown.classList.contains('dropleft');
+            var isDropRight = dropdown.classList.contains('dropright');
+            var isDropUp = dropdown.classList.contains('dropup');
+            var alignRight = menu.classList.contains('dropdown-menu-right');
+            var left;
+            var top;
 
-            if (left < margin) {
-                left = rect.right;
+            if (isDropLeft) {
+                left = rect.left - menuWidth - 2;
+                if (left < viewportMargin) {
+                    left = rect.right + 2;
+                }
+                top = rect.top;
+            } else if (isDropRight) {
+                left = rect.right + 2;
+                if (left + menuWidth > window.innerWidth - viewportMargin) {
+                    left = rect.left - menuWidth - 2;
+                }
+                top = rect.top;
+            } else {
+                left = alignRight ? rect.right - menuWidth : rect.left;
+                top = isDropUp ? rect.top - menuHeight - 2 : rect.bottom + 2;
             }
 
-            if (left + menuWidth > window.innerWidth - margin) {
-                left = Math.max(margin, window.innerWidth - menuWidth - margin);
+            if (!isDropUp && top + menuHeight > window.innerHeight - viewportMargin) {
+                top = Math.max(viewportMargin, rect.bottom - menuHeight);
             }
 
-            var top = rect.top;
-            if (top + menuHeight > window.innerHeight - margin) {
-                top = Math.max(margin, window.innerHeight - menuHeight - margin);
+            if (isDropUp && top < viewportMargin) {
+                top = rect.bottom + 2;
             }
 
-            menu.style.left = left + 'px';
-            menu.style.top = top + 'px';
+            if (menuHeight > availableHeight) {
+                menu.style.setProperty('max-height', availableHeight + 'px', 'important');
+                menu.style.setProperty('overflow-y', 'auto', 'important');
+                menu.style.setProperty('overflow-x', 'hidden', 'important');
+                menuHeight = availableHeight;
+            } else {
+                menu.style.removeProperty('max-height');
+                menu.style.removeProperty('overflow-y');
+                menu.style.removeProperty('overflow-x');
+            }
+
+            left = clamp(left, viewportMargin, window.innerWidth - menuWidth - viewportMargin);
+            top = clamp(top, viewportMargin, window.innerHeight - menuHeight - viewportMargin);
+
+            menu.style.setProperty('position', 'fixed', 'important');
+            menu.style.setProperty('inset', 'auto', 'important');
+            menu.style.setProperty('left', left + 'px', 'important');
+            menu.style.setProperty('top', top + 'px', 'important');
+            menu.style.setProperty('right', 'auto', 'important');
+            menu.style.setProperty('bottom', 'auto', 'important');
+            menu.style.setProperty('margin', '0', 'important');
+            menu.style.setProperty('transform', 'none', 'important');
+            menu.classList.add(portalReadyClass);
         }
 
-        jQuery(document).on('shown.bs.dropdown', '.dataTables_wrapper .dropdown, .dataTables_wrapper .btn-group', function () {
-            var dropdown = this;
-            var menu = dropdown.querySelector('.dropdown-menu');
-            var toggle = dropdown.querySelector('[data-toggle="dropdown"], [data-bs-toggle="dropdown"]');
+        function openPortalDropdown(toggle, eventTarget) {
+            var dropdown = getDropdownRoot(toggle, eventTarget);
+            if (!dropdown || !toggle || !getDropdownContext(dropdown)) return;
 
-            if (!menu || !toggle) return;
+            var menu = dropdown.querySelector('.dropdown-menu');
+            if (!menu) return;
+
+            var isOpen = dropdown.classList.contains('show') || menu.classList.contains('show') || window.getComputedStyle(menu).display !== 'none';
+            if (!isOpen) return;
+
+            if (activeDropdown && activeDropdown.menu === menu) {
+                positionPortalDropdown();
+                return;
+            }
+
+            restorePortalDropdown();
 
             var placeholder = document.createComment('datatable-dropdown-placeholder');
             menu.parentNode.insertBefore(placeholder, menu);
@@ -169,29 +303,80 @@
             };
 
             document.body.appendChild(menu);
-            menu.classList.add('dt-dropdown-portal');
+            menu.classList.add(portalClass);
             positionPortalDropdown();
-        });
 
-        jQuery(document).on('hide.bs.dropdown', function (event) {
-            if (!activeDropdown || activeDropdown.dropdown !== event.target) return;
+            window.setTimeout(positionPortalDropdown, 50);
+        }
 
-            var menu = activeDropdown.menu;
-            var placeholder = activeDropdown.placeholder;
+        function prepareDataTableDropdown(event) {
+            var target = event.target;
+            var toggle = getDropdownToggle(target, event);
 
-            menu.classList.remove('dt-dropdown-portal');
-            menu.style.left = '';
-            menu.style.top = '';
+            if (!toggle || !getDropdownContext(toggle)) return;
 
-            if (placeholder && placeholder.parentNode) {
-                placeholder.parentNode.insertBefore(menu, placeholder);
-                placeholder.parentNode.removeChild(placeholder);
+            toggle.setAttribute('data-boundary', 'viewport');
+            toggle.setAttribute('data-reference', 'toggle');
+            schedulePortal(toggle, target);
+        }
+
+        function handleShownDropdown(event) {
+            var toggle = getDropdownToggle(event.target, event);
+
+            if (!toggle && event.target && event.target.querySelector) {
+                toggle = event.target.querySelector('[data-toggle="dropdown"], [data-bs-toggle="dropdown"], .dropdown-toggle, button.dropdown');
             }
 
-            activeDropdown = null;
-        });
+            openPortalDropdown(toggle, event.target);
+        }
 
+        function handleHideDropdown(event) {
+            if (!activeDropdown) return;
+
+            var target = event.target;
+            var isActiveDropdownEvent = activeDropdown.dropdown === target
+                || activeDropdown.toggle === target
+                || (target && target.contains && target.contains(activeDropdown.toggle));
+
+            if (!isActiveDropdownEvent) return;
+
+            restorePortalDropdown();
+        }
+
+        function handleDocumentClick(event) {
+            if (!activeDropdown) return;
+
+            var target = event.target;
+            var clickedInsideMenu = activeDropdown.menu.contains(target);
+            var clickedToggle = activeDropdown.toggle === target || activeDropdown.toggle.contains(target);
+
+            if (clickedInsideMenu || clickedToggle) return;
+
+            window.setTimeout(function () {
+                if (!activeDropdown) return;
+
+                var dropdownIsOpen = activeDropdown.dropdown.classList.contains('show')
+                    || activeDropdown.menu.classList.contains('show');
+
+                if (!dropdownIsOpen) {
+                    restorePortalDropdown();
+                }
+            }, 0);
+        }
+
+        jQuery(document)
+            .on('click', '[data-toggle="dropdown"], [data-bs-toggle="dropdown"], .dropdown-toggle, button.dropdown', prepareDataTableDropdown)
+            .on('show.bs.dropdown show.coreui.dropdown', prepareDataTableDropdown)
+            .on('shown.bs.dropdown shown.coreui.dropdown', handleShownDropdown)
+            .on('hide.bs.dropdown hide.coreui.dropdown hidden.bs.dropdown hidden.coreui.dropdown', handleHideDropdown)
+            .on('click', handleDocumentClick);
+
+        jQuery(document).on('draw.dt page.dt length.dt search.dt order.dt', restorePortalDropdown);
         jQuery(window).on('scroll resize orientationchange', positionPortalDropdown);
-        jQuery(document).on('scroll', '.dataTables_scrollBody', positionPortalDropdown);
+        jQuery(document).on('scroll', '.dataTables_scrollBody, .table-responsive, .table-wrap', positionPortalDropdown);
+
+        if (document.addEventListener) {
+            document.addEventListener('scroll', positionPortalDropdown, true);
+        }
     })();
 </script>

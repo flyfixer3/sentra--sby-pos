@@ -36,41 +36,6 @@
     </div>
 @endsection
 
-@push('page_css')
-<style>
-    .purchase-orders-page .table-responsive {
-        overflow-x: auto;
-        overflow-y: visible;
-    }
-
-    .purchase-orders-page table.dataTable,
-    .purchase-orders-page table.dataTable td,
-    .purchase-orders-page table.dataTable th {
-        overflow: visible;
-    }
-
-    .purchase-orders-page .po-action-dropdown .dropdown-menu {
-        z-index: 2000;
-    }
-
-    .purchase-orders-page .po-dropdown-open {
-        position: relative;
-        z-index: 2000;
-    }
-</style>
-@endpush
-
 @push('page_scripts')
-    <script>
-        document.addEventListener('DOMContentLoaded', function () {
-            $(document).on('shown.bs.dropdown', '.purchase-orders-page .po-action-dropdown', function () {
-                $(this).closest('tr').addClass('po-dropdown-open');
-            });
-
-            $(document).on('hidden.bs.dropdown', '.purchase-orders-page .po-action-dropdown', function () {
-                $(this).closest('tr').removeClass('po-dropdown-open');
-            });
-        });
-    </script>
     {!! $dataTable->scripts() !!}
 @endpush

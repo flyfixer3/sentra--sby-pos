@@ -1,5 +1,5 @@
-<div class="btn-group dropleft po-action-dropdown">
-    <button type="button" class="btn btn-ghost-primary dropdown rounded" data-toggle="dropdown" data-boundary="window" aria-expanded="false">
+<div class="btn-group dropleft">
+    <button type="button" class="btn btn-ghost-primary dropdown rounded" data-toggle="dropdown" aria-expanded="false">
         <i class="bi bi-three-dots-vertical"></i>
     </button>
     <div class="dropdown-menu">
