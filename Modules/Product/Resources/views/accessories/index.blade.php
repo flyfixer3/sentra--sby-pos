@@ -21,10 +21,19 @@
                 @include('utils.alerts')
                 <div class="card">
                     <div class="card-body">
-                        <!-- Button trigger modal -->
-                        <button type="button" class="btn btn-primary" data-toggle="modal" data-target="#accessoryCreateModal">
-                            Add Accessory <i class="bi bi-plus"></i>
-                        </button>
+                        <div class="d-flex flex-wrap align-items-center" style="gap: .5rem;">
+                            <button type="button" class="btn btn-primary" data-toggle="modal" data-target="#accessoryCreateModal">
+                                Add Accessory <i class="bi bi-plus"></i>
+                            </button>
+                            <a href="{{ route('product-accessories.import.template') }}" class="btn btn-outline-secondary">
+                                Download Template <i class="bi bi-download"></i>
+                            </a>
+                            <form action="{{ route('product-accessories.import.store') }}" method="POST" enctype="multipart/form-data" class="d-flex flex-wrap align-items-center" style="gap: .5rem;">
+                                @csrf
+                                <input type="file" name="file" accept=".xlsx,.xls" class="form-control-file" required>
+                                <button type="submit" class="btn btn-outline-primary">Import ACC <i class="bi bi-upload"></i></button>
+                            </form>
+                        </div>
 
                         <hr>
 

@@ -315,10 +315,11 @@
                                 <th>Desc / Reason</th>
                                 <th style="width:140px;" class="text-center">Photo</th>
                                 <th style="width:170px;">Created</th>
+                                <th style="width:120px;" class="text-center">Action</th>
                             </tr>
                         </thead>
                         <tbody id="qualityBody">
-                            <tr><td colspan="9" class="text-center text-muted">Memuat data...</td></tr>
+                            <tr><td colspan="10" class="text-center text-muted">Memuat data...</td></tr>
                         </tbody>
                     </table>
                 </div>
@@ -543,7 +544,7 @@ function resetStockDetailUI(){
 
 function resetQualityUI(){
     document.getElementById('qualityBody').innerHTML =
-        '<tr><td colspan="9" class="text-center text-muted">Memuat data...</td></tr>';
+        '<tr><td colspan="10" class="text-center text-muted">Memuat data...</td></tr>';
     document.getElementById('qWarehouse').innerHTML = '<option value="">All Warehouses</option>';
     document.getElementById('qRack').innerHTML = '<option value="">All Racks</option>';
     qDefectTypeOptions = [];
@@ -796,7 +797,7 @@ function loadQualityOptionsAndData(){
 
 function reloadQualityTable(){
     var bodyEl = document.getElementById('qualityBody');
-    bodyEl.innerHTML = '<tr><td colspan="9" class="text-center text-muted">Memuat data...</td></tr>';
+    bodyEl.innerHTML = '<tr><td colspan="10" class="text-center text-muted">Memuat data...</td></tr>';
 
     var qs = new URLSearchParams();
     qs.set('branch_id', qBranchId);
@@ -819,7 +820,7 @@ function reloadQualityTable(){
         bodyEl.innerHTML = '';
 
         if (!res || !res.success || !Array.isArray(res.data) || res.data.length === 0) {
-            bodyEl.innerHTML = '<tr><td colspan="9" class="text-center text-muted">Tidak ada data.</td></tr>';
+            bodyEl.innerHTML = '<tr><td colspan="10" class="text-center text-muted">Tidak ada data.</td></tr>';
             return;
         }
 
@@ -854,6 +855,10 @@ function reloadQualityTable(){
                 : '<span class="text-muted">-</span>';
 
             var created = escapeHtml(row.created_at || '-');
+            var printUrl = row.print_url || '';
+            var action = printUrl
+                ? '<a href="' + escapeHtml(printUrl) + '" target="_blank" class="btn btn-sm btn-outline-primary">Print</a>'
+                : '<span class="text-muted">-</span>';
 
             bodyEl.innerHTML += ''
                 + '<tr>'
@@ -866,12 +871,13 @@ function reloadQualityTable(){
                 + '  <td>' + descText + '</td>'
                 + '  <td class="text-center">' + photo + '</td>'
                 + '  <td>' + created + '</td>'
+                + '  <td class="text-center">' + action + '</td>'
                 + '</tr>';
         });
     })
     .catch(function(e){
         console.error(e);
-        bodyEl.innerHTML = '<tr><td colspan="9" class="text-center text-danger">Gagal memuat data.</td></tr>';
+        bodyEl.innerHTML = '<tr><td colspan="10" class="text-center text-danger">Gagal memuat data.</td></tr>';
     });
 }
 </script>

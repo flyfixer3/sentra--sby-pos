@@ -40,7 +40,7 @@
                 </table>
             </div>
             <div class="mt-3">
-                <button wire:click="generateBarcodes({{ $product }}, {{ $quantity }})" type="button" class="btn btn-primary">
+                <button wire:click="generateBarcodes({{ !empty($product) ? $product->id : 0 }}, {{ $quantity }})" type="button" class="btn btn-primary" @if(empty($product)) disabled @endif>
                     <i class="bi bi-upc-scan"></i> Generate Barcodes
                 </button>
             </div>
@@ -55,7 +55,7 @@
         </div>
     </div>
 
-    @if(!empty($barcodes))
+    @if(!empty($labels))
         <div class="text-right mb-3">
             <button wire:click="getPdf" wire:loading.attr="disabled" type="button" class="btn btn-primary">
                 <span wire:loading wire:target="getPdf" class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>
@@ -65,17 +65,21 @@
         <div class="card">
             <div class="card-body">
                 <div class="row justify-content-center">
-                    @foreach($barcodes as $barcode)
-                        <div class="col-lg-3 col-md-4 col-sm-6" style="border: 1px solid #ffffff;border-style: dashed;background-color: #48FCFE;">
-                            <p class="mt-3 mb-1" style="font-size: 15px;color: #000;">
-                                {{ $product->product_name }}
-                            </p>
-                            <div>
-                                {!! $barcode !!}
+                    @foreach($labels as $label)
+                        <div class="col-lg-4 col-md-6 mb-3">
+                            <div class="border rounded p-3 h-100" style="background:#f8fafc;">
+                                <div class="d-flex justify-content-between align-items-center mb-2">
+                                    <strong>{{ $label['title'] }}</strong>
+                                    <span class="badge badge-primary">{{ $label['condition'] }}</span>
+                                </div>
+                                <div class="font-weight-bold">{{ $label['product_name'] }}</div>
+                                <div class="small text-muted mb-2">{{ $label['product_code'] }}</div>
+                                <div>{!! $label['barcode_svg'] !!}</div>
+                                <div class="small text-dark mt-2">Scan Key: {{ $label['encoded_value'] }}</div>
+                                @foreach($label['details'] as $detailLabel => $detailValue)
+                                    <div class="small"><strong>{{ $detailLabel }}:</strong> {{ $detailValue ?: '-' }}</div>
+                                @endforeach
                             </div>
-                            <p style="font-size: 15px;color: #000;">
-                                Price:: {{ format_currency($product->product_price) }}
-                            </p>
                         </div>
                     @endforeach
                 </div>

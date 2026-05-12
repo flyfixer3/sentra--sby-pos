@@ -105,11 +105,11 @@ class ProductDataTable extends DataTable
                 ->className('text-center align-middle'),
                 
             Column::make('category.category_code')
-                ->title('Rack')
+                ->title('Warehouse Hint')
                 ->className('text-center align-middle'),
 
             Column::make('accessory.accessory_code')
-            ->title('Accessory')
+            ->title('Primary ACC')
             ->className('text-center align-middle'),
 
             Column::computed('action')

@@ -6,6 +6,7 @@ use Illuminate\Contracts\Support\Renderable;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
 use Illuminate\Support\Facades\Gate;
+use Illuminate\Support\Facades\DB;
 use Modules\Product\Entities\Warehouse;
 use Modules\Product\DataTables\WarehouseDataTable;
 
@@ -26,6 +27,7 @@ class WarehousesController extends Controller
             'warehouse_code' => $warehouse->warehouse_code,
             'warehouse_name' => $warehouse->warehouse_name,
             'is_main' => $warehouse->is_main,
+            'branch_name' => optional($warehouse->branch)->name,
         ]);
     }
 
@@ -64,6 +66,7 @@ class WarehousesController extends Controller
         abort_if(Gate::denies('access_warehouses'), 403);
 
         $warehouse = Warehouse::findOrFail($id);
+        $warehouse->loadMissing('branch');
 
         return view('product::warehouses.edit', compact('warehouse'));
     }
@@ -102,8 +105,13 @@ class WarehousesController extends Controller
 
         $warehouse = Warehouse::findOrFail($id);
 
-        if ($warehouse->products()->isNotEmpty()) {
-            return back()->withErrors('Can\'t delete beacuse there are products associated with this warehouse.');
+        $hasDependencies = DB::table('racks')->where('warehouse_id', $warehouse->id)->exists()
+            || DB::table('stocks')->where('warehouse_id', $warehouse->id)->exists()
+            || DB::table('stock_racks')->where('warehouse_id', $warehouse->id)->exists()
+            || DB::table('mutations')->where('warehouse_id', $warehouse->id)->exists();
+
+        if ($hasDependencies) {
+            return back()->withErrors('Cannot delete warehouse because it is already used by stock, rack, or mutation records.');
         }
 
         $warehouse->delete();

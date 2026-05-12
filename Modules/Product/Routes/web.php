@@ -9,6 +9,8 @@ use Modules\Product\Http\Controllers\WarehousesController;
 use Modules\Product\Http\Controllers\HppLedgerController;
 use Modules\Product\Http\Controllers\ProductImportController;
 use Modules\Product\Http\Controllers\DefectTypeController;
+use Modules\Product\Http\Controllers\AccessoriesController;
+use Modules\Product\Http\Controllers\BarcodeController;
 use Modules\Product\Entities\Product;
 
 Route::bind('product', function ($value) {
@@ -29,11 +31,20 @@ Route::group(['middleware' => 'auth'], function () {
     Route::post('/products/import', [ProductImportController::class, 'import'])->name('products.import.store');
 
     //Print Barcode
-    Route::get('/products/print-barcode', 'BarcodeController@printBarcode')
+    Route::get('/products/print-barcode', [BarcodeController::class, 'printBarcode'])
         ->middleware('branch.selected')
         ->name('barcode.print');
+    Route::get('/products/{product}/labels/good', [BarcodeController::class, 'printGoodLabel'])->name('products.labels.good');
+    Route::get('/inventory/labels/defect/{id}', [BarcodeController::class, 'printDefectLabel'])
+        ->middleware('branch.selected')
+        ->name('inventory.labels.defect');
+    Route::get('/inventory/labels/damaged/{id}', [BarcodeController::class, 'printDamagedLabel'])
+        ->middleware('branch.selected')
+        ->name('inventory.labels.damaged');
     //Product
     Route::resource('products', 'ProductController');
+    Route::get('/product-accessories/import/template', [AccessoriesController::class, 'downloadTemplate'])->name('product-accessories.import.template');
+    Route::post('/product-accessories/import', [AccessoriesController::class, 'import'])->name('product-accessories.import.store');
     //Product Category
     Route::resource('product-accessories', 'AccessoriesController')->except('create', 'show');
     Route::resource('product-categories', 'CategoriesController')->except('create', 'show');
