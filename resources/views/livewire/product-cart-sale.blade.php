@@ -119,6 +119,10 @@
                             $alreadyInvoicedQty = (int) ($cart_item->options->already_invoiced_qty ?? 0);
                             $remainingInvoiceableQty = (int) ($cart_item->options->remaining_invoiceable_qty ?? ($cart_item->options->stock ?? 0));
                             $currentStockQty = (int) ($cart_item->options->current_stock_qty ?? 0);
+                            $unitLabel = trim((string) ($cart_item->options->unit ?? ''));
+                            if ($unitLabel === '') {
+                                $unitLabel = 'Unit';
+                            }
                             $lineKey = (string) ($cart_item->options->line_key ?? $cart_item->rowId);
                             $safeLineKey = preg_replace('/[^A-Za-z0-9_-]/', '_', $lineKey);
                             $scopeNote = $scope === 'branch'
@@ -159,17 +163,6 @@
                                             <small class="text-muted d-block mt-1">Select customer first to add vehicle.</small>
                                         @elseif(empty($customer_vehicles))
                                             <small class="text-warning d-block mt-1">No vehicle registered for this customer.</small>
-                                            @can('edit_customers')
-                                                <button
-                                                    type="button"
-                                                    class="btn btn-outline-primary btn-sm mt-1 sale-add-vehicle-btn"
-                                                    data-line-key="{{ $lineKey }}"
-                                                    data-toggle="modal"
-                                                    data-target="#saleAddVehicleModal"
-                                                >
-                                                    + Add Vehicle
-                                                </button>
-                                            @endcan
                                         @else
                                             <small class="text-muted d-block mt-2">Vehicle</small>
                                             <select
@@ -200,7 +193,7 @@
                                     <div class="d-inline-block text-center" style="min-width: 170px;">
                                         <div class="d-flex flex-wrap align-items-center mt-1" style="gap:6px; justify-content: space-evenly;">
                                             <span class="badge badge-light border text-dark">
-                                                Remaining to Invoice: {{ $remainingInvoiceableQty . ' ' . (string)($cart_item->options->unit ?? '') }}
+                                                Remaining to Invoice: {{ $remainingInvoiceableQty . ' ' . $unitLabel }}
                                             </span>
                                             <span class="badge badge-light border text-dark">
                                                 Delivered: {{ $deliveredQty }}
@@ -211,24 +204,24 @@
                                         </div>
 
                                         <div class="mt-1 small text-muted">
-                                            Stock now: {{ $currentStockQty . ' ' . (string)($cart_item->options->unit ?? '') }}
+                                            Stock now: {{ $currentStockQty . ' ' . $unitLabel }}
                                             <span class="ml-1">(reference only)</span>
                                         </div>
                                     </div>
                                 @elseif($scope === 'branch')
                                     <div>
                                         <span class="badge badge-warning">
-                                            Reserved: {{ $reservedStock . ' ' . (string)($cart_item->options->unit ?? '') }}
+                                            Reserved: {{ $reservedStock . ' ' . $unitLabel }}
                                         </span>
                                     </div>
                                     <div class="mt-1">
                                         <span class="badge badge-info">
-                                            Sellable: {{ $sellableStock . ' ' . (string)($cart_item->options->unit ?? '') }}
+                                            Sellable: {{ $sellableStock . ' ' . $unitLabel }}
                                         </span>
                                     </div>
                                 @else
                                     <span class="badge badge-info">
-                                        {{ (int)($cart_item->options->stock ?? 0) . ' ' . (string)($cart_item->options->unit ?? '') }}
+                                        {{ (int)($cart_item->options->stock ?? 0) . ' ' . $unitLabel }}
                                     </span>
                                 @endif
                                 <div class="mt-1">

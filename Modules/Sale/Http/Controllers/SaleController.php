@@ -190,9 +190,7 @@ class SaleController extends Controller
 
         $vehicleId = (int) ($cartItem->options->customer_vehicle_id ?? 0);
         if ($customerId <= 0 || $vehicleId <= 0) {
-            throw ValidationException::withMessages([
-                'customer_vehicle_id' => 'Vehicle is required for items with installation.',
-            ]);
+            return ['with_installation', null];
         }
 
         $vehicleExists = CustomerVehicle::query()
@@ -753,7 +751,9 @@ class SaleController extends Controller
                             'options' => [
                                 'sub_total'             => $subTotal,
                                 'code'                  => (string) ($p?->product_code ?? 'UNKNOWN'),
-                                'unit'                  => (string) ($p?->product_unit ?? ''),
+                                'unit'                  => trim((string) ($p?->product_unit ?? '')) !== ''
+                                    ? (string) $p->product_unit
+                                    : 'Unit',
                                 'stock'                 => (int) ($branchStockSnapshot['sellable'] ?? 0),
                                 'reserved_stock'        => (int) ($branchStockSnapshot['reserved'] ?? 0),
                                 'sellable_stock'        => (int) ($branchStockSnapshot['sellable'] ?? 0),

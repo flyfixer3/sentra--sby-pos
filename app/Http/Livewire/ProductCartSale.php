@@ -448,7 +448,9 @@ class ProductCartSale extends Component
                 // kalau ini kosong, blade kamu fallback ke 'warehouse' => "Stock shown is from warehouse..."
                 'stock_scope'           => 'branch',
 
-                'unit'                  => (string) ($product['product_unit'] ?? ''),
+                'unit'                  => trim((string) ($product['product_unit'] ?? '')) !== ''
+                    ? (string) $product['product_unit']
+                    : 'Unit',
 
                 // ✅ tetap null karena warehouse dipilih saat confirm delivery
                 'warehouse_id'          => null,
@@ -659,7 +661,9 @@ class ProductCartSale extends Component
         $sellableStock = (int) ($cart_item->options->sellable_stock ?? 0);
         $isDeliveryInvoice = $this->isSaleDeliveryInvoiceRow($cart_item);
         $code = $cart_item->options->code;
-        $unit = $cart_item->options->unit;
+        $unit = trim((string) ($cart_item->options->unit ?? '')) !== ''
+            ? (string) $cart_item->options->unit
+            : 'Unit';
         $productTax = $cart_item->options->product_tax;
         $productCost = $cart_item->options->product_cost;
         $unitPrice = $cart_item->options->unit_price;
@@ -798,13 +802,16 @@ class ProductCartSale extends Component
             return;
         }
 
-        $basePrice = (float) (($row->price ?? 0) + ($row->options->product_discount ?? 0));
+        $basePrice = (float) ($row->options->unit_price ?? 0);
+        if ($basePrice <= 0) {
+            $basePrice = (float) (($row->price ?? 0) + ($row->options->product_discount ?? 0));
+        }
         if ($basePrice < 0) {
             $basePrice = 0;
         }
 
         if ($value === 'fixed') {
-            $this->item_discount[$lineKey] = $basePrice;
+            $this->item_discount[$lineKey] = (float) ($row->price ?? $basePrice);
         } else {
             $this->item_discount[$lineKey] = 0;
         }
@@ -816,7 +823,10 @@ class ProductCartSale extends Component
         $row = Cart::instance($this->cart_instance)->get($row_id);
         $lineKey = (string) ($line_key ?: ($row ? $this->getLineKey($row) : ''));
         if ($row) {
-            $basePrice = (float) (($row->price ?? 0) + ($row->options->product_discount ?? 0));
+            $basePrice = (float) ($row->options->unit_price ?? 0);
+            if ($basePrice <= 0) {
+                $basePrice = (float) (($row->price ?? 0) + ($row->options->product_discount ?? 0));
+            }
             if (($this->discount_type[$lineKey] ?? 'fixed') === 'fixed') {
                 $this->item_discount[$lineKey] = (float) ($row->price ?? 0);
             } else {
@@ -843,7 +853,10 @@ class ProductCartSale extends Component
         $discountType = (string) ($this->discount_type[$lineKey] ?? 'fixed');
         $inputValue = (float) ($this->item_discount[$lineKey] ?? 0);
 
-        $basePrice = (float) (($cart_item->price ?? 0) + ($cart_item->options->product_discount ?? 0));
+        $basePrice = (float) ($cart_item->options->unit_price ?? 0);
+        if ($basePrice <= 0) {
+            $basePrice = (float) (($cart_item->price ?? 0) + ($cart_item->options->product_discount ?? 0));
+        }
         if ($basePrice < 0) {
             $basePrice = 0;
         }
@@ -922,7 +935,9 @@ class ProductCartSale extends Component
             'reserved_stock'        => (int) $reservedStock,
             'sellable_stock'        => (int) $sellableStock,
             'stock_scope'           => $stockScope,
-            'unit'                  => $cart_item->options->unit,
+            'unit'                  => trim((string) ($cart_item->options->unit ?? '')) !== ''
+                ? (string) $cart_item->options->unit
+                : 'Unit',
             'warehouse_id'          => $warehouseId ?: null,
             'warehouse_name'        => $warehouseName,
             'invoice_source'        => $cart_item->options->invoice_source ?? null,

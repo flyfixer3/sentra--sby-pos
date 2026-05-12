@@ -184,15 +184,6 @@
                                 <input type="hidden" form="soForm" name="items[{{ $i }}][customer_vehicle_id]" value="">
                             @elseif(empty($customerVehicles))
                                 <small class="text-warning d-block mt-1">No vehicle registered for this customer.</small>
-                                @can('edit_customers')
-                                    <button type="button"
-                                            class="btn btn-outline-primary btn-sm mt-1 so-add-vehicle-btn"
-                                            data-row-index="{{ $i }}"
-                                            data-toggle="modal"
-                                            data-target="#soAddVehicleModal">
-                                        + Add Vehicle
-                                    </button>
-                                @endcan
                                 <input type="hidden" form="soForm" name="items[{{ $i }}][customer_vehicle_id]" value="">
                             @else
                                 <select

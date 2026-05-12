@@ -136,7 +136,7 @@
                                 wire:model.defer="item_discount.{{ $lineKey }}"
                                 type="number"
                                 class="form-control"
-                                placeholder="{{ $isPurchaseCart ? $currentUnitPrice : max(($currentRowPrice - $currentDiscount), 0) }}"
+                                placeholder="{{ $isPurchaseCart ? $currentUnitPrice : $currentRowPrice }}"
                                 step="0.01"
                                 min="0"
                                 {{ $isPurchasePriceLocked ? 'disabled' : '' }}
