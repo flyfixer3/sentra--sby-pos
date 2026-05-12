@@ -2,170 +2,169 @@
 
 @section('title', 'Edit Sale Delivery')
 
-@push('page_css')
-<style>
-    .sd-header{
-        display:flex;align-items:center;justify-content:space-between;gap:12px;
-        padding:14px 16px;border-bottom:1px solid rgba(0,0,0,.06);
-    }
-    .sd-title{margin:0;font-weight:700;font-size:16px;}
-    .sd-sub{margin:2px 0 0;font-size:12px;color:#6c757d;}
-    .sd-badge{
-        display:inline-flex;align-items:center;gap:6px;padding:6px 10px;border-radius:999px;
-        font-size:12px;background:rgba(13,110,253,.08);color:#0d6efd;border:1px solid rgba(13,110,253,.18);
-        white-space:nowrap;
-    }
-    .sd-table thead th{white-space:nowrap;}
-    .sd-mini{font-size:12px;color:#6c757d;}
-</style>
-@endpush
-
 @section('breadcrumb')
 <ol class="breadcrumb border-0 m-0">
     <li class="breadcrumb-item"><a href="{{ route('home') }}">Home</a></li>
     <li class="breadcrumb-item"><a href="{{ route('sale-deliveries.index') }}">Sale Deliveries</a></li>
-    <li class="breadcrumb-item">
-        <a href="{{ route('sale-deliveries.show', $saleDelivery->id) }}">Details</a>
-    </li>
+    <li class="breadcrumb-item"><a href="{{ route('sale-deliveries.show', $saleDelivery->id) }}">Details</a></li>
     <li class="breadcrumb-item active">Edit</li>
 </ol>
 @endsection
 
 @section('content')
+@php
+    $status = strtolower((string) ($saleDelivery->status ?? 'pending'));
+    $isSaleOrder = !empty($saleDelivery->sale_order_id);
+    $isWalkinSale = !$isSaleOrder && !empty($saleDelivery->sale_id);
+    $sourceRef = $isSaleOrder
+        ? ($saleDelivery->saleOrder?->reference ?? ('SO#' . (int) $saleDelivery->sale_order_id))
+        : ($isWalkinSale ? ($saleDelivery->sale?->reference ?? ('Sale#' . (int) $saleDelivery->sale_id)) : '-');
+@endphp
+
 <div class="container-fluid">
-<form action="{{ route('sale-deliveries.update', $saleDelivery->id) }}" method="POST">
-@csrf
-@method('PUT')
+    @include('utils.alerts')
 
-<div class="card">
-    {{-- HEADER --}}
-    <div class="sd-header">
-        <div>
-            <h3 class="sd-title">Edit Sale Delivery</h3>
-            <p class="sd-sub mb-0">
-                <span class="sd-badge">
-                    <i class="bi bi-truck"></i> {{ $saleDelivery->reference }}
-                </span>
-                @if($saleDelivery->saleOrder)
-                    <span class="sd-badge">
-                        <i class="bi bi-file-earmark-text"></i>
-                        SO: {{ $saleDelivery->saleOrder->reference ?? ('SO#'.$saleDelivery->sale_order_id) }}
-                    </span>
-                @endif
-                <span class="sd-badge">
-                    <i class="bi bi-person"></i> {{ $saleDelivery->customer?->customer_name ?? '-' }}
-                </span>
-            </p>
-        </div>
+    <div class="card">
+        <div class="card-body">
+            <form action="{{ route('sale-deliveries.update', $saleDelivery->id) }}" method="POST">
+                @csrf
+                @method('PUT')
 
-        <div>
-            <span class="sd-badge">
-                <i class="bi bi-building"></i>
-                {{ $saleDelivery->branch?->name ?? 'Branch' }}
-            </span>
+                <div class="d-flex flex-wrap align-items-start justify-content-between mb-3" style="gap:12px;">
+                    <div>
+                        <h5 class="mb-1">Edit Sale Delivery</h5>
+                        <div class="text-muted small">
+                            Reference: <strong>{{ $saleDelivery->reference }}</strong>
+                            <span class="mx-1">|</span>
+                            Status: <strong>{{ strtoupper($status) }}</strong>
+                            <span class="mx-1">|</span>
+                            Source: <strong>{{ $sourceRef }}</strong>
+                        </div>
+                    </div>
+
+                    <a href="{{ route('sale-deliveries.show', $saleDelivery->id) }}" class="btn btn-light">
+                        Cancel
+                    </a>
+                </div>
+
+                <div class="row g-3">
+                    <div class="col-md-3">
+                        <label class="form-label">Date <span class="text-danger">*</span></label>
+                        <input type="date"
+                               name="date"
+                               class="form-control"
+                               value="{{ old('date', $saleDelivery->date ? $saleDelivery->date->format('Y-m-d') : now()->format('Y-m-d')) }}"
+                               required>
+                    </div>
+
+                    <div class="col-md-5">
+                        <label class="form-label">Customer</label>
+                        <input type="text"
+                               class="form-control"
+                               value="{{ $saleDelivery->customer?->customer_name ?? '-' }}"
+                               readonly>
+                    </div>
+
+                    <div class="col-md-4">
+                        <label class="form-label">Source</label>
+                        <input type="text" class="form-control" value="{{ $sourceRef }}" readonly>
+                    </div>
+
+                    <div class="col-12">
+                        <label class="form-label">Note</label>
+                        <textarea name="note" class="form-control" rows="3" maxlength="2000">{{ old('note', $saleDelivery->note) }}</textarea>
+                    </div>
+                </div>
+
+                <hr class="my-3">
+
+                <div class="d-flex flex-wrap align-items-center justify-content-between mb-2" style="gap:8px;">
+                    <div>
+                        <h6 class="mb-0">Items</h6>
+                        <div class="text-muted small">Source context is locked. Set quantity to 0 to remove a pending row.</div>
+                    </div>
+                </div>
+
+                <div class="table-responsive">
+                    <table class="table table-hover align-middle mb-0">
+                        <thead class="table-light">
+                            <tr>
+                                <th style="min-width:260px;">Product</th>
+                                <th style="min-width:260px;">Source Context</th>
+                                <th class="text-end" style="width:140px;">Quantity</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach($saleDelivery->items as $i => $item)
+                                @php
+                                    $sourceItem = $item->saleOrderItem ?: $item->saleItem;
+                                    $sourceLabel = $item->sale_order_item_id
+                                        ? ('SO Item #' . (int) $item->sale_order_item_id)
+                                        : ($item->sale_item_id ? ('Sale Item #' . (int) $item->sale_item_id) : '-');
+                                    $serviceType = $sourceItem?->installation_type ?? null;
+                                    $sourcePrice = $sourceItem?->price ?? $item->price ?? null;
+                                    $vehicle = $sourceItem?->customerVehicle ?? null;
+                                    $oldBase = "items.$i";
+                                @endphp
+                                <tr>
+                                    <td>
+                                        <div class="fw-semibold">{{ $item->product?->product_name ?? ('Product #' . (int) $item->product_id) }}</div>
+                                        <div class="small text-muted">
+                                            Code: <strong>{{ $item->product?->product_code ?? '-' }}</strong>
+                                            <span class="mx-1">|</span>
+                                            product_id: <strong>{{ (int) $item->product_id }}</strong>
+                                        </div>
+
+                                        <input type="hidden" name="items[{{ $i }}][id]" value="{{ (int) $item->id }}">
+                                        <input type="hidden" name="items[{{ $i }}][product_id]" value="{{ (int) $item->product_id }}">
+                                        <input type="hidden" name="items[{{ $i }}][sale_order_item_id]" value="{{ $item->sale_order_item_id ? (int) $item->sale_order_item_id : '' }}">
+                                        <input type="hidden" name="items[{{ $i }}][sale_item_id]" value="{{ $item->sale_item_id ? (int) $item->sale_item_id : '' }}">
+                                    </td>
+                                    <td>
+                                        <div class="small fw-semibold">{{ $sourceLabel }}</div>
+                                        <div class="small text-muted">
+                                            Service: <strong>{{ $serviceType ? str_replace('_', ' ', $serviceType) : '-' }}</strong>
+                                        </div>
+                                        <div class="small text-muted">
+                                            Price: <strong>{{ $sourcePrice !== null ? number_format((float) $sourcePrice, 0, ',', '.') : '-' }}</strong>
+                                        </div>
+                                        <div class="small text-muted">
+                                            Vehicle:
+                                            <strong>
+                                                @if($vehicle)
+                                                    {{ trim(implode(' ', array_filter([
+                                                        $vehicle->vehicle_name ?? null,
+                                                        $vehicle->license_number ?? null,
+                                                        $vehicle->car_plate ?? null,
+                                                    ]))) ?: ('Vehicle #' . (int) $vehicle->id) }}
+                                                @else
+                                                    -
+                                                @endif
+                                            </strong>
+                                        </div>
+                                    </td>
+                                    <td>
+                                        <input type="number"
+                                               name="items[{{ $i }}][quantity]"
+                                               class="form-control text-end"
+                                               min="0"
+                                               value="{{ (int) old($oldBase . '.quantity', $item->quantity) }}"
+                                               required>
+                                    </td>
+                                </tr>
+                            @endforeach
+                        </tbody>
+                    </table>
+                </div>
+
+                <div class="mt-3 text-right">
+                    <a href="{{ route('sale-deliveries.show', $saleDelivery->id) }}" class="btn btn-light">Cancel</a>
+                    <button type="submit" class="btn btn-primary">
+                        <i class="bi bi-save mr-1"></i> Update Delivery
+                    </button>
+                </div>
+            </form>
         </div>
     </div>
-
-    {{-- BODY --}}
-    <div class="card-body">
-        @include('utils.alerts')
-
-        {{-- TOP INFO --}}
-        <div class="row">
-            <div class="col-md-4">
-                <label class="mb-1">Customer</label>
-                <input type="text" class="form-control"
-                       value="{{ $saleDelivery->customer?->customer_name ?? '-' }}" readonly>
-            </div>
-
-            <div class="col-md-4">
-                <label class="mb-1">Reference</label>
-                <input type="text" class="form-control"
-                       value="{{ $saleDelivery->reference }}" readonly>
-            </div>
-
-            <div class="col-md-4">
-                <label class="mb-1">Status</label>
-                <input type="text" class="form-control"
-                       value="{{ ucfirst($saleDelivery->status) }}" readonly>
-                <small class="text-muted">Only pending delivery can be edited</small>
-            </div>
-        </div>
-
-        {{-- DATE & WAREHOUSE --}}
-        <div class="row mt-3">
-            <div class="col-md-4">
-                <label class="mb-1">Date <span class="text-danger">*</span></label>
-                <input type="date" class="form-control" name="date"
-                       value="{{ old('date', $saleDelivery->date?->format('Y-m-d')) }}" required>
-            </div>
-
-            <div class="col-md-4">
-                <label class="mb-1">Warehouse (Stock Out) <span class="text-danger">*</span></label>
-                <select name="warehouse_id" class="form-control" required>
-                    @foreach($warehouses as $wh)
-                        <option value="{{ $wh->id }}"
-                            {{ (int) old('warehouse_id', $saleDelivery->warehouse_id) === (int) $wh->id ? 'selected' : '' }}>
-                            {{ $wh->warehouse_name }} {{ $wh->is_main ? '(Main)' : '' }}
-                        </option>
-                    @endforeach
-                </select>
-            </div>
-        </div>
-
-        {{-- ITEMS (READONLY) --}}
-        <div class="d-flex align-items-center justify-content-between mt-4">
-            <h5 class="mb-0">Items in this Delivery</h5>
-            <div class="sd-mini">
-                Qty & items cannot be edited here
-            </div>
-        </div>
-
-        <div class="table-responsive mt-2">
-            <table class="table table-striped sd-table">
-                <thead>
-                    <tr>
-                        <th style="min-width:260px;">Product</th>
-                        <th style="width:160px;">Qty</th>
-                    </tr>
-                </thead>
-                <tbody>
-                @foreach($saleDelivery->items as $item)
-                    <tr>
-                        <td>
-                            <div class="fw-bold">{{ $item->product?->product_name ?? '-' }}</div>
-                            <span class="badge bg-secondary">{{ $item->product?->product_code ?? '-' }}</span>
-                        </td>
-                        <td>
-                            <input type="number" class="form-control"
-                                   value="{{ (int) $item->quantity }}" readonly>
-                        </td>
-                    </tr>
-                @endforeach
-                </tbody>
-            </table>
-        </div>
-
-        {{-- NOTE --}}
-        <div class="row mt-3">
-            <div class="col-md-6">
-                <label class="mb-1">Note</label>
-                <textarea name="note" class="form-control" rows="3"
-                          maxlength="2000">{{ old('note', $saleDelivery->note) }}</textarea>
-            </div>
-        </div>
-
-        {{-- ACTION --}}
-        <div class="mt-4 text-right">
-            <a href="{{ route('sale-deliveries.show', $saleDelivery->id) }}" class="btn btn-light">
-                Cancel
-            </a>
-            <button type="submit" class="btn btn-primary">
-                <i class="bi bi-save"></i> Save Changes
-            </button>
-        </div>
-    </div>
-</div>
-</form>
 </div>
 @endsection

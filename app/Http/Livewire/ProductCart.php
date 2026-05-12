@@ -632,7 +632,7 @@ class ProductCart extends Component
             $this->item_discount[$stateKey] = $percentage;
         }
 
-        session()->flash('discount_message' . $stateKey, 'Discount added to the product!');
+        session()->flash('discount_message' . $stateKey, 'Price for this item has been changed!');
     }
 
     public function calculate($product) {

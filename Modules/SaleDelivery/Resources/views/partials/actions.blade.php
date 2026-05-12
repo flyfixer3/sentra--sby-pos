@@ -18,4 +18,12 @@
             </a>
         @endif
     @endcan
+
+    @can('edit_sale_deliveries')
+        @if($isPending)
+            <a href="{{ route('sale-deliveries.edit', $data->id) }}" class="btn btn-sm btn-info">
+                <i class="bi bi-pencil-square"></i>
+            </a>
+        @endif
+    @endcan
 </div>

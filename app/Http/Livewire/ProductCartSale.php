@@ -886,7 +886,7 @@ class ProductCartSale extends Component
             $this->item_discount[$lineKey] = $inputValue;
         }
 
-        session()->flash('discount_message' . $lineKey, 'Discount added to the product!');
+        session()->flash('discount_message' . $lineKey, 'Price for this item has been changed!');
     }
 
     public function updateCartOptions($row_id, $product_id, $cart_item, $discount_amount, $line_key = null)

@@ -55,6 +55,25 @@
     .confirm-card.border-success{ border-width:2px !important; }
 
     .sticky-card{ position: sticky; top: 90px; }
+    .confirm-card .card-body{ padding:1rem; }
+    .confirm-card .source-badges{
+        display:flex;
+        flex-wrap:wrap;
+        gap:.25rem;
+        margin-top:.35rem;
+    }
+    .confirm-card .source-badges .badge{
+        white-space:normal;
+        text-align:left;
+        line-height:1.35;
+    }
+    .confirm-card .counter-row{
+        display:flex;
+        flex-wrap:wrap;
+        align-items:center;
+        justify-content:space-between;
+        gap:10px;
+    }
 
     .id-chip {
         display:inline-flex; align-items:center; gap:.35rem;
@@ -241,7 +260,7 @@
         @csrf
 
         <div class="row">
-            <div class="col-lg-8">
+            <div class="col-lg-8 mb-3">
                 @forelse(($productGroups ?? collect()) as $i => $group)
                     @php
                         $pid = (int) ($group['product_id'] ?? 0);
@@ -259,8 +278,8 @@
                          data-product-id="{{ $pid }}"
                          data-expected="{{ $expected }}">
                         <div class="card-body">
-                            <div class="d-flex flex-wrap align-items-start justify-content-between">
-                                <div class="mb-2">
+                            <div class="d-flex flex-wrap align-items-start justify-content-between" style="gap:12px;">
+                                <div class="mb-2 flex-grow-1" style="min-width:260px;">
                                     <div class="font-weight-bold">{{ $productName }}</div>
                                     <div class="text-muted small">
                                         @if($productCode) <span class="mr-2">Code: <b>{{ $productCode }}</b></span> @endif
@@ -268,8 +287,7 @@
                                         <span>delivery items: <b>{{ implode(', ', $deliveryItemIds) }}</b></span>
                                     </div>
                                     @if($sourceItems->count() > 1)
-                                        <div class="text-muted small mt-1">
-                                            Source lines:
+                                        <div class="source-badges text-muted small">
                                             @foreach($sourceItems as $sourceItem)
                                                 @php
                                                     $source = $sourceItem->saleOrderItem ?: $sourceItem->saleItem;
@@ -303,10 +321,9 @@
                                             </div>
                                         @endif
                                     @endif
-                                    </div>
                                 </div>
 
-                                <div class="text-right mb-2">
+                                <div class="text-right mb-2 ml-auto">
                                     <div class="small text-muted">Expected</div>
                                     <div class="badge badge-secondary px-3 py-2">{{ number_format($expected) }}</div>
                                 </div>
@@ -337,18 +354,18 @@
                             <div class="h-defect-ids"></div>
                             <div class="h-damaged-ids"></div>
 
-                            <div class="d-flex flex-wrap align-items-center justify-content-between" style="gap:10px;">
+                            <div class="counter-row">
                                 <div class="small">
-                                    <span class="badge badge-light border ml-1">
+                                    <span class="badge badge-light border mr-1 mb-1">
                                         Selected: <b class="t-total">0</b> / {{ $expected }}
                                     </span>
-                                    <span class="badge badge-light border ml-1">
+                                    <span class="badge badge-light border mr-1 mb-1">
                                         GOOD: <b class="t-good">0</b>
                                     </span>
-                                    <span class="badge badge-light border ml-1">
+                                    <span class="badge badge-light border mr-1 mb-1">
                                         DEFECT: <b class="t-defect">0</b> <span class="text-muted">(1 pc/ID)</span>
                                     </span>
-                                    <span class="badge badge-light border ml-1">
+                                    <span class="badge badge-light border mr-1 mb-1">
                                         DAMAGED: <b class="t-damaged">0</b> <span class="text-muted">(1 pc/ID)</span>
                                     </span>
                                 </div>
@@ -518,7 +535,7 @@
                 @endforelse
             </div>
 
-            <div class="col-lg-4">
+            <div class="col-lg-4 mb-3">
                 <div class="card shadow-sm sticky-card">
                     <div class="card-body">
                         <div class="d-flex justify-content-between align-items-center">

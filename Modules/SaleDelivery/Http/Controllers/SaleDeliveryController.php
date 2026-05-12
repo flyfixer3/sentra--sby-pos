@@ -12,6 +12,7 @@ use Modules\People\Entities\Customer;
 use Modules\Product\Entities\Warehouse;
 use Modules\Product\Entities\Product;
 use Modules\Mutation\Entities\Mutation;
+use Modules\Sale\Entities\SaleDetails;
 use Modules\SaleDelivery\DataTables\SaleDeliveriesDataTable;
 use Modules\SaleDelivery\Entities\SaleDelivery;
 use Modules\SaleDelivery\Entities\SaleDeliveryItem;
@@ -42,6 +43,66 @@ class SaleDeliveryController extends Controller
             })
             ->values()
             ->all();
+    }
+
+    private function adjustReservedPoolStock(int $branchId, array $deltaByProduct, string $reference): void
+    {
+        if ($branchId <= 0) return;
+
+        foreach ($deltaByProduct as $productId => $delta) {
+            $productId = (int) $productId;
+            $delta = (int) $delta;
+
+            if ($productId <= 0 || $delta === 0) continue;
+
+            $row = DB::table('stocks')
+                ->where('branch_id', $branchId)
+                ->whereNull('warehouse_id')
+                ->where('product_id', $productId)
+                ->lockForUpdate()
+                ->first();
+
+            if (!$row) {
+                if ($delta < 0) {
+                    throw new \RuntimeException("Reserved stock cannot be reduced for product_id {$productId}. Pool row not found. Ref: {$reference}.");
+                }
+
+                DB::table('stocks')->insert([
+                    'product_id' => $productId,
+                    'branch_id' => $branchId,
+                    'warehouse_id' => null,
+                    'qty_total' => 0,
+                    'qty_reserved' => $delta,
+                    'qty_incoming' => 0,
+                    'min_stock' => 0,
+                    'note' => null,
+                    'created_by' => auth()->id(),
+                    'updated_by' => auth()->id(),
+                    'created_at' => now(),
+                    'updated_at' => now(),
+                ]);
+                continue;
+            }
+
+            $current = (int) ($row->qty_reserved ?? 0);
+            $next = $current + $delta;
+
+            if ($next < 0) {
+                throw new \RuntimeException(
+                    "Reserved stock cannot go negative for product_id {$productId}. Current {$current}, delta {$delta}. Ref: {$reference}."
+                );
+            }
+
+            DB::table('stocks')
+                ->where('branch_id', $branchId)
+                ->whereNull('warehouse_id')
+                ->where('product_id', $productId)
+                ->update([
+                    'qty_reserved' => $next,
+                    'updated_by' => auth()->id(),
+                    'updated_at' => now(),
+                ]);
+        }
     }
 
     public function index(SaleDeliveriesDataTable $dataTable)
@@ -510,21 +571,17 @@ class SaleDeliveryController extends Controller
                 throw new \RuntimeException('Wrong branch context.');
             }
 
-            $saleDelivery->load(['items.product', 'warehouse', 'customer', 'saleOrder']);
+            $saleDelivery->load([
+                'items.product',
+                'items.saleOrderItem.customerVehicle',
+                'items.saleItem.customerVehicle',
+                'warehouse',
+                'customer',
+                'saleOrder',
+                'sale',
+            ]);
 
-            $warehouses = Warehouse::query()
-                ->where('branch_id', $branchId)
-                ->orderBy('warehouse_name')
-                ->get();
-
-            $customers = Customer::query()
-                ->forActiveBranch($branchId)
-                ->orderBy('customer_name')
-                ->get();
-
-            $products = Product::query()->orderBy('product_name')->limit(500)->get();
-
-            return view('saledelivery::edit', compact('saleDelivery', 'warehouses', 'customers', 'products'));
+            return view('saledelivery::edit', compact('saleDelivery'));
         } catch (\Throwable $e) {
             return $this->failBack($e->getMessage(), 422);
         }
@@ -549,8 +606,13 @@ class SaleDeliveryController extends Controller
 
             $request->validate([
                 'date' => 'required|date',
-                'warehouse_id' => 'nullable|integer',
                 'note' => 'nullable|string|max:2000',
+                'items' => 'required|array|min:1',
+                'items.*.id' => 'required|integer',
+                'items.*.product_id' => 'required|integer',
+                'items.*.sale_order_item_id' => 'nullable|integer',
+                'items.*.sale_item_id' => 'nullable|integer',
+                'items.*.quantity' => 'required|integer|min:0',
             ]);
 
             DB::transaction(function () use ($request, $saleDelivery, $branchId) {
@@ -569,29 +631,156 @@ class SaleDeliveryController extends Controller
                     throw new \RuntimeException('Wrong branch context.');
                 }
 
-                $warehouseId = null;
+                $inputRows = collect((array) $request->input('items', []))
+                    ->mapWithKeys(function ($row) {
+                        return [(int) ($row['id'] ?? 0) => $row];
+                    })
+                    ->filter(fn ($row, $id) => (int) $id > 0);
 
-                if (!empty($request->warehouse_id)) {
-                    $warehouse = Warehouse::query()
-                        ->where('branch_id', $branchId)
-                        ->where('id', (int) $request->warehouse_id)
-                        ->firstOrFail();
+                $currentItems = $saleDelivery->items->keyBy('id');
+                $nextQtyByItem = [];
 
-                    $warehouseId = (int) $warehouse->id;
+                $hasPositiveQty = false;
+
+                foreach ($currentItems as $itemId => $item) {
+                    if (!$inputRows->has((int) $itemId)) {
+                        throw new \RuntimeException("Missing item row for Sale Delivery item ID {$itemId}.");
+                    }
+
+                    $row = $inputRows->get((int) $itemId);
+                    $qty = max(0, (int) ($row['quantity'] ?? 0));
+                    $productId = (int) ($row['product_id'] ?? 0);
+                    $saleOrderItemId = !empty($row['sale_order_item_id']) ? (int) $row['sale_order_item_id'] : null;
+                    $saleItemId = !empty($row['sale_item_id']) ? (int) $row['sale_item_id'] : null;
+
+                    if ((int) $item->product_id !== $productId) {
+                        throw new \RuntimeException("Product cannot be changed for Sale Delivery item ID {$itemId}.");
+                    }
+
+                    if ((int) ($item->sale_order_item_id ?? 0) !== (int) ($saleOrderItemId ?? 0)) {
+                        throw new \RuntimeException("Sale Order source item cannot be changed for Sale Delivery item ID {$itemId}.");
+                    }
+
+                    if ((int) ($item->sale_item_id ?? 0) !== (int) ($saleItemId ?? 0)) {
+                        throw new \RuntimeException("Sale source item cannot be changed for Sale Delivery item ID {$itemId}.");
+                    }
+
+                    if ($saleOrderItemId) {
+                        $sourceItem = SaleOrderItem::query()
+                            ->where('id', $saleOrderItemId)
+                            ->where('sale_order_id', (int) $saleDelivery->sale_order_id)
+                            ->first();
+
+                        if (!$sourceItem) {
+                            throw new \RuntimeException("Sale Order item ID {$saleOrderItemId} does not belong to this Sale Order.");
+                        }
+
+                        if ((int) $sourceItem->product_id !== $productId) {
+                            throw new \RuntimeException("Product mismatch for Sale Order item ID {$saleOrderItemId}.");
+                        }
+
+                        $otherQty = (int) DB::table('sale_delivery_items as sdi')
+                            ->join('sale_deliveries as sd', 'sd.id', '=', 'sdi.sale_delivery_id')
+                            ->where('sd.sale_order_id', (int) $saleDelivery->sale_order_id)
+                            ->whereNull('sd.deleted_at')
+                            ->whereNull('sdi.deleted_at')
+                            ->where('sdi.sale_order_item_id', $saleOrderItemId)
+                            ->where('sdi.id', '!=', (int) $item->id)
+                            ->whereRaw('LOWER(COALESCE(sd.status,"")) != ?', ['cancelled'])
+                            ->sum('sdi.quantity');
+
+                        $maxQty = max(0, (int) ($sourceItem->quantity ?? 0) - $otherQty);
+                        if ($qty > $maxQty) {
+                            throw new \RuntimeException("Qty exceeds remaining for SO Item #{$saleOrderItemId}. Maximum editable qty: {$maxQty}.");
+                        }
+                    } elseif ($saleItemId) {
+                        $sourceItem = SaleDetails::query()
+                            ->where('id', $saleItemId)
+                            ->where('sale_id', (int) $saleDelivery->sale_id)
+                            ->first();
+
+                        if (!$sourceItem) {
+                            throw new \RuntimeException("Sale item ID {$saleItemId} does not belong to this Sale.");
+                        }
+
+                        if ((int) $sourceItem->product_id !== $productId) {
+                            throw new \RuntimeException("Product mismatch for Sale item ID {$saleItemId}.");
+                        }
+
+                        $otherQty = (int) DB::table('sale_delivery_items as sdi')
+                            ->join('sale_deliveries as sd', 'sd.id', '=', 'sdi.sale_delivery_id')
+                            ->where('sd.sale_id', (int) $saleDelivery->sale_id)
+                            ->whereNull('sd.deleted_at')
+                            ->whereNull('sdi.deleted_at')
+                            ->where('sdi.sale_item_id', $saleItemId)
+                            ->where('sdi.id', '!=', (int) $item->id)
+                            ->whereRaw('LOWER(COALESCE(sd.status,"")) != ?', ['cancelled'])
+                            ->sum('sdi.quantity');
+
+                        $maxQty = max(0, (int) ($sourceItem->quantity ?? 0) - $otherQty);
+                        if ($qty > $maxQty) {
+                            throw new \RuntimeException("Qty exceeds remaining for Sale Item #{$saleItemId}. Maximum editable qty: {$maxQty}.");
+                        }
+                    }
+
+                    if ($qty > 0) {
+                        $hasPositiveQty = true;
+                    }
+
+                    $nextQtyByItem[(int) $item->id] = $qty;
                 }
 
-                /*
-                * Penting:
-                * Edit Sale Delivery hanya mengubah header.
-                * Items tidak disentuh karena view edit menampilkan items readonly.
-                * Pengurangan stok tetap hanya terjadi saat Confirm.
-                */
+                if (!$hasPositiveQty) {
+                    throw new \RuntimeException('At least 1 item with quantity greater than 0 is required.');
+                }
+
+                $beforeByProduct = [];
+                $afterByProduct = [];
+
+                foreach ($currentItems as $item) {
+                    $pid = (int) $item->product_id;
+                    if (!isset($beforeByProduct[$pid])) $beforeByProduct[$pid] = 0;
+                    if (!isset($afterByProduct[$pid])) $afterByProduct[$pid] = 0;
+
+                    $beforeByProduct[$pid] += (int) ($item->quantity ?? 0);
+                    $afterByProduct[$pid] += (int) ($nextQtyByItem[(int) $item->id] ?? 0);
+                }
+
+                foreach ($currentItems as $item) {
+                    $qty = (int) ($nextQtyByItem[(int) $item->id] ?? 0);
+
+                    if ($qty <= 0) {
+                        $item->delete();
+                        continue;
+                    }
+
+                    $item->update([
+                        'quantity' => $qty,
+                    ]);
+                }
+
                 $saleDelivery->update([
                     'date' => $request->date,
-                    'warehouse_id' => $warehouseId,
                     'note' => $request->note,
                     'updated_by' => auth()->id(),
                 ]);
+
+                $isPendingWalkin = empty($saleDelivery->sale_order_id) && !empty($saleDelivery->sale_id);
+                if ($isPendingWalkin) {
+                    $deltaByProduct = [];
+                    foreach (array_unique(array_merge(array_keys($beforeByProduct), array_keys($afterByProduct))) as $pid) {
+                        $delta = (int) ($afterByProduct[$pid] ?? 0) - (int) ($beforeByProduct[$pid] ?? 0);
+                        if ($delta !== 0) {
+                            $deltaByProduct[(int) $pid] = $delta;
+                        }
+                    }
+
+                    $this->adjustReservedPoolStock(
+                        (int) $branchId,
+                        $deltaByProduct,
+                        (string) ($saleDelivery->reference ?? ('SD#' . (int) $saleDelivery->id))
+                    );
+                }
             });
 
             toast('Sale Delivery Updated!', 'success');

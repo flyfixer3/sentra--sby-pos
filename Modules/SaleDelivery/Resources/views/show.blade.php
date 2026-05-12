@@ -106,6 +106,15 @@
                         @endif
                     @endcan
 
+                    @can('edit_sale_deliveries')
+                        @if($st === 'pending')
+                            <a href="{{ route('sale-deliveries.edit', $saleDelivery->id) }}"
+                               class="btn btn-outline-primary">
+                                <i class="bi bi-pencil-square me-1"></i> Edit
+                            </a>
+                        @endif
+                    @endcan
+
                     @if($canCreateInvoice)
                         <form method="POST"
                               action="{{ route('sale-deliveries.create-invoice', $saleDelivery->id) }}"
