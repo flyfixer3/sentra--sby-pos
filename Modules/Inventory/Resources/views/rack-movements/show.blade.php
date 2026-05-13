@@ -81,6 +81,7 @@
                                 <th>Product</th>
                                 <th style="width:140px;" class="text-center">Condition</th>
                                 <th style="width:140px;" class="text-right">Qty</th>
+                                <th>Selected Unit Details</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -102,6 +103,65 @@
                                         @endif
                                     </td>
                                     <td class="text-right">{{ (int)$it->quantity }}</td>
+                                    <td>
+                                        @php
+                                            $ids = (array) ($it->display_unit_ids ?? []);
+                                            $details = $c === 'defect'
+                                                ? ($defectUnitDetails ?? collect())
+                                                : (($c === 'damaged') ? ($damagedUnitDetails ?? collect()) : collect());
+
+                                            $fromLocation = trim(($rackMovement->fromWarehouse->warehouse_name ?? '-') . ' / ' . ($fromRackLabel ?? '-'));
+                                            $toLocation = trim(($rackMovement->toWarehouse->warehouse_name ?? '-') . ' / ' . ($toRackLabel ?? '-'));
+                                        @endphp
+                                        @if($c === 'good')
+                                            <span class="text-muted small">-</span>
+                                        @elseif(count($ids) > 0)
+                                            <div class="table-responsive">
+                                                <table class="table table-bordered table-sm mb-0 unit-detail-table">
+                                                    <thead>
+                                                        <tr>
+                                                            <th style="width:80px;">Unit ID</th>
+                                                            <th>Type / Reason</th>
+                                                            <th>Description / Note</th>
+                                                            <th style="width:90px;" class="text-center">Photo</th>
+                                                            
+                                                        </tr>
+                                                    </thead>
+                                                    <tbody>
+                                                        @foreach($ids as $unitId)
+                                                            @php
+                                                                $unitId = (int) $unitId;
+                                                                $unit = $details->get($unitId);
+                                                            @endphp
+                                                            <tr>
+                                                                <td class="font-weight-bold">#{{ $unitId }}</td>
+                                                                
+                                                                @if($unit)
+                                                                    <td>{{ trim((string) ($unit['type_reason'] ?? '')) !== '' ? $unit['type_reason'] : '-' }}</td>
+                                                                    <td>{{ trim((string) ($unit['description'] ?? '')) !== '' ? $unit['description'] : '-' }}</td>
+                                                                    <td class="text-center">
+                                                                        @if(!empty($unit['photo_url']))
+                                                                            <a href="{{ $unit['photo_url'] }}" target="_blank" rel="noopener">
+                                                                                <img src="{{ $unit['photo_url'] }}" class="unit-thumb" alt="photo">
+                                                                            </a>
+                                                                        @else
+                                                                            <span class="text-muted small">-</span>
+                                                                        @endif
+                                                                    </td>
+                                                                @else
+                                                                    <td colspan="3">
+                                                                        <span class="text-muted small">Detail not available</span>
+                                                                    </td>
+                                                                @endif
+                                                            </tr>
+                                                        @endforeach
+                                                    </tbody>
+                                                </table>
+                                            </div>
+                                        @else
+                                            <span class="text-muted small">-</span>
+                                        @endif
+                                    </td>
                                 </tr>
                             @endforeach
                         </tbody>
@@ -146,6 +206,27 @@
         color: #334155;
         font-weight: 700;
         border-bottom: 1px solid #e2e8f0;
+    }
+    .unit-detail-table {
+        min-width: 760px;
+        background: #fff;
+    }
+    .unit-detail-table thead th {
+        background: #f8fafc;
+        color: #475569;
+        font-size: .78rem;
+        white-space: nowrap;
+    }
+    .unit-detail-table td {
+        vertical-align: middle;
+        font-size: .82rem;
+    }
+    .unit-thumb {
+        width: 44px;
+        height: 44px;
+        object-fit: cover;
+        border-radius: 6px;
+        border: 1px solid #e2e8f0;
     }
 </style>
 @endpush

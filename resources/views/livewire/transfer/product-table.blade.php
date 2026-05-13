@@ -44,7 +44,7 @@
                             $productId = $p['id'] ?? null;
                             $name      = $p['product_name'] ?? '-';
                             $code      = $p['product_code'] ?? '-';
-                            $unit      = $p['product_unit'] ?? '';
+                            $unit      = stock_unit_label($p['product_unit'] ?? '');
 
                             // stok dari WH (per condition)
                             $stockWh = (int)($p['stock_qty_wh'] ?? 0);

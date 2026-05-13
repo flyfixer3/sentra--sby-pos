@@ -210,7 +210,7 @@
 
             const json = await res.json();
             if (!json || json.success !== true) {
-                throw new Error(json?.message || 'Failed to load racks');
+                throw new Error((json && json.message) || 'Failed to load racks');
             }
             return json.racks || [];
         }
@@ -238,10 +238,30 @@
 
             if (!fromWarehouse || !toWarehouse || !fromRack || !toRack) return;
 
+            const form = fromWarehouse.closest('form');
+            if (form) {
+                form.addEventListener('submit', function (event) {
+                    const invalidQualityRow = Array.from(form.querySelectorAll('[data-rack-move-row]')).find(function (row) {
+                        const condition = row.getAttribute('data-condition');
+                        if (condition !== 'defect' && condition !== 'damaged') return false;
+                        const rowIndex = row.getAttribute('data-rack-move-row');
+                        const qtyInput = form.querySelector(`[data-quality-qty-hidden="${rowIndex}"]`);
+                        const qty = parseInt((qtyInput && qtyInput.value) || '0', 10);
+                        return qty <= 0;
+                    });
+
+                    if (invalidQualityRow) {
+                        event.preventDefault();
+                        alert('DEFECT/DAMAGED rack movement requires selected item IDs. Please use Pick Items before submitting.');
+                    }
+                });
+            }
+
             fromWarehouse.addEventListener('change', async function () {
                 const wid = fromWarehouse.value;
                 fromRack.disabled = true;
                 fillSelect(fromRack, [], 'Select Source Rack');
+                window.__rackMoveSelections = {};
 
                 // emit warehouse ke Livewire
                 emitToLivewire('rackMoveFromWarehouseSelected', { value: wid });
@@ -262,6 +282,7 @@
             });
 
             fromRack.addEventListener('change', function () {
+                window.__rackMoveSelections = {};
                 emitToLivewire('rackMoveFromRackSelected', { value: fromRack.value });
             });
 

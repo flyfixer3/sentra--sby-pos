@@ -168,3 +168,15 @@ if (!function_exists('array_merge_numeric_values')) {
         return $merged;
     }
 }
+
+if (!function_exists('stock_unit_label')) {
+    function stock_unit_label($unit, string $fallback = 'PCS'): string {
+        $label = strtoupper(trim((string) $unit));
+
+        if ($label === '' || $label === 'JOB' || $label === 'JOBS') {
+            return $fallback;
+        }
+
+        return trim((string) $unit);
+    }
+}

@@ -104,7 +104,7 @@
                                         $subtitleParts = array_values(array_filter([
                                             !empty(trim((string) ($product->product_code ?? ''))) ? trim((string) $product->product_code) : null,
                                             !empty(trim((string) ($product->category_name ?? ''))) ? trim((string) $product->category_name) : null,
-                                            !empty(trim((string) ($product->product_unit ?? ''))) ? 'Unit: ' . trim((string) $product->product_unit) : null,
+                                            'Unit: ' . stock_unit_label($product->product_unit ?? ''),
                                         ]));
                                     @endphp
                                     <div class="small text-muted">{{ !empty($subtitleParts) ? implode(' | ', $subtitleParts) : '-' }}</div>

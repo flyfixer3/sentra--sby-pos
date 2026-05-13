@@ -161,6 +161,10 @@ Route::middleware(['auth'])
             ->middleware('branch.selected')
             ->name('rack-movements.racks.by-warehouse');
 
+        Route::get('/rack-movements/picker-data', [RackMovementController::class, 'pickerData'])
+            ->middleware('branch.selected')
+            ->name('rack-movements.picker-data');
+
         Route::get('/rack-movements/{rackMovement}', [RackMovementController::class, 'show'])
             ->name('rack-movements.show');
     });

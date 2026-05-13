@@ -6,6 +6,7 @@ use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
+use App\Support\DefectTypeSupport;
 use App\Support\BranchContext;
 
 use Modules\Inventory\Entities\Rack;
@@ -13,6 +14,8 @@ use Modules\Inventory\Entities\RackMovement;
 use Modules\Inventory\Entities\RackMovementItem;
 use Modules\Product\Entities\Warehouse;
 use Modules\Product\Entities\Product;
+use Modules\Product\Entities\ProductDefectItem;
+use Modules\Product\Entities\ProductDamagedItem;
 
 use Modules\Mutation\Http\Controllers\MutationController;
 
@@ -112,7 +115,69 @@ class RackMovementController extends Controller
             'branch:id,name',
         ]);
 
-        return view('inventory::rack-movements.show', compact('rackMovement'));
+        $defectIds = [];
+        $damagedIds = [];
+
+        foreach ($rackMovement->items as $item) {
+            $condition = strtolower((string) ($item->condition ?? 'good'));
+            if ($condition === 'defect') {
+                $ids = $this->parseStoredUnitIds($item->defect_item_ids ?? null);
+                $item->setAttribute('display_unit_ids', $ids);
+                $defectIds = array_merge($defectIds, $ids);
+            } elseif ($condition === 'damaged') {
+                $ids = $this->parseStoredUnitIds($item->damaged_item_ids ?? null);
+                $item->setAttribute('display_unit_ids', $ids);
+                $damagedIds = array_merge($damagedIds, $ids);
+            } else {
+                $item->setAttribute('display_unit_ids', []);
+            }
+        }
+
+        $defectIds = array_values(array_unique(array_filter(array_map('intval', $defectIds))));
+        $damagedIds = array_values(array_unique(array_filter(array_map('intval', $damagedIds))));
+
+        $defectUnitDetails = collect();
+        if (!empty($defectIds)) {
+            $defectUnitDetails = ProductDefectItem::query()
+                ->whereIn('id', $defectIds)
+                ->get(['id', 'product_id', 'warehouse_id', 'rack_id', 'defect_types', 'description', 'photo_path', 'created_at', 'updated_at'])
+                ->mapWithKeys(function ($unit) {
+                    return [(int) $unit->id => [
+                        'id' => (int) $unit->id,
+                        'condition' => 'DEFECT',
+                        'type_reason' => DefectTypeSupport::text($unit->defect_types ?? [], '-'),
+                        'description' => (string) ($unit->description ?? ''),
+                        'photo_url' => $unit->photo_path ? asset('storage/' . $unit->photo_path) : null,
+                        'warehouse_id' => (int) ($unit->warehouse_id ?? 0),
+                        'rack_id' => (int) ($unit->rack_id ?? 0),
+                    ]];
+                });
+        }
+
+        $damagedUnitDetails = collect();
+        if (!empty($damagedIds)) {
+            $damagedUnitDetails = ProductDamagedItem::withoutGlobalScopes()
+                ->whereIn('id', $damagedIds)
+                ->get(['id', 'product_id', 'warehouse_id', 'rack_id', 'damage_type', 'reason', 'resolution_note', 'photo_path', 'created_at', 'updated_at'])
+                ->mapWithKeys(function ($unit) {
+                    $description = trim((string) ($unit->reason ?? ''));
+                    if ($description === '') {
+                        $description = trim((string) ($unit->resolution_note ?? ''));
+                    }
+
+                    return [(int) $unit->id => [
+                        'id' => (int) $unit->id,
+                        'condition' => 'DAMAGED',
+                        'type_reason' => (string) ($unit->damage_type ?? '-'),
+                        'description' => $description,
+                        'photo_url' => $unit->photo_path ? asset('storage/' . $unit->photo_path) : null,
+                        'warehouse_id' => (int) ($unit->warehouse_id ?? 0),
+                        'rack_id' => (int) ($unit->rack_id ?? 0),
+                    ]];
+                });
+        }
+
+        return view('inventory::rack-movements.show', compact('rackMovement', 'defectUnitDetails', 'damagedUnitDetails'));
     }
 
     /**
@@ -157,6 +222,115 @@ class RackMovementController extends Controller
         ]);
     }
 
+    public function pickerData(Request $request)
+    {
+        abort_if(Gate::denies('create_rack_movements'), 403);
+
+        $branchIdRaw = BranchContext::id();
+        $isAll = ($branchIdRaw === 'all' || $branchIdRaw === null || $branchIdRaw === '');
+        if ($isAll) {
+            return response()->json(['success' => false, 'message' => 'Please select a specific branch first.'], 422);
+        }
+
+        $branchId = (int) $branchIdRaw;
+        $warehouseId = (int) $request->query('warehouse_id');
+        $rackId = (int) $request->query('rack_id');
+        $productId = (int) $request->query('product_id');
+        $condition = strtolower(trim((string) $request->query('condition')));
+
+        if ($warehouseId <= 0 || $rackId <= 0 || $productId <= 0 || !in_array($condition, ['defect', 'damaged'], true)) {
+            return response()->json(['success' => false, 'message' => 'Invalid picker parameters.'], 422);
+        }
+
+        $warehouse = Warehouse::withoutGlobalScopes()->findOrFail($warehouseId);
+        abort_unless((int) $warehouse->branch_id === $branchId, 403);
+
+        $rack = Rack::withoutGlobalScopes()->findOrFail($rackId);
+        abort_unless((int) $rack->branch_id === $branchId, 403);
+        abort_unless((int) $rack->warehouse_id === $warehouseId, 422);
+
+        $product = Product::withoutGlobalScopes()->findOrFail($productId);
+
+        $rackLabel = trim((string) ($rack->code ?? '')) !== ''
+            ? (($rack->code ?? '-') . ' - ' . ($rack->name ?? '-'))
+            : (string) ($rack->name ?? ('Rack #' . $rackId));
+
+        $stockRow = DB::table('stock_racks')
+            ->where('branch_id', $branchId)
+            ->where('warehouse_id', $warehouseId)
+            ->where('rack_id', $rackId)
+            ->where('product_id', $productId)
+            ->first();
+
+        $stockSummary = [
+            'warehouse_id' => $warehouseId,
+            'warehouse_label' => (string) ($warehouse->warehouse_name ?? ('Warehouse #' . $warehouseId)),
+            'rack_id' => $rackId,
+            'rack_label' => $rackLabel,
+            'good' => (int) ($stockRow->qty_good ?? 0),
+            'defect' => (int) ($stockRow->qty_defect ?? 0),
+            'damaged' => (int) ($stockRow->qty_damaged ?? 0),
+        ];
+
+        if ($condition === 'defect') {
+            $items = ProductDefectItem::query()
+                ->where('branch_id', $branchId)
+                ->where('warehouse_id', $warehouseId)
+                ->where('rack_id', $rackId)
+                ->where('product_id', $productId)
+                ->whereNull('moved_out_at')
+                ->orderBy('id')
+                ->get(['id', 'defect_types', 'description', 'photo_path'])
+                ->map(function ($item) use ($product, $warehouse, $rackLabel) {
+                    return [
+                        'id' => (int) $item->id,
+                        'product_code' => (string) ($product->product_code ?? '-'),
+                        'product_name' => (string) ($product->product_name ?? '-'),
+                        'condition' => 'DEFECT',
+                        'quality_text' => DefectTypeSupport::text($item->defect_types ?? [], '-'),
+                        'description' => (string) ($item->description ?? ''),
+                        'photo_url' => $item->photo_path ? asset('storage/' . $item->photo_path) : null,
+                        'warehouse' => (string) ($warehouse->warehouse_name ?? '-'),
+                        'rack' => $rackLabel,
+                    ];
+                })
+                ->values();
+        } else {
+            $items = ProductDamagedItem::query()
+                ->where('branch_id', $branchId)
+                ->where('warehouse_id', $warehouseId)
+                ->where('rack_id', $rackId)
+                ->where('product_id', $productId)
+                ->whereNull('moved_out_at')
+                ->where(function ($q) {
+                    $q->whereNull('resolution_status')
+                        ->orWhere('resolution_status', 'pending');
+                })
+                ->orderBy('id')
+                ->get(['id', 'damage_type', 'reason', 'photo_path'])
+                ->map(function ($item) use ($product, $warehouse, $rackLabel) {
+                    return [
+                        'id' => (int) $item->id,
+                        'product_code' => (string) ($product->product_code ?? '-'),
+                        'product_name' => (string) ($product->product_name ?? '-'),
+                        'condition' => 'DAMAGED',
+                        'quality_text' => (string) ($item->damage_type ?? 'damaged'),
+                        'description' => (string) ($item->reason ?? ''),
+                        'photo_url' => $item->photo_path ? asset('storage/' . $item->photo_path) : null,
+                        'warehouse' => (string) ($warehouse->warehouse_name ?? '-'),
+                        'rack' => $rackLabel,
+                    ];
+                })
+                ->values();
+        }
+
+        return response()->json([
+            'success' => true,
+            'items' => $items,
+            'stock_summary' => $stockSummary,
+        ])->header('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
+    }
+
     public function store(Request $request)
     {
         abort_if(Gate::denies('create_rack_movements'), 403);
@@ -186,7 +360,11 @@ class RackMovementController extends Controller
             'conditions' => 'required|array|min:1',
             'conditions.*' => 'required|string',
             'quantities' => 'required|array|min:1',
-            'quantities.*' => 'required|integer|min:1',
+            'quantities.*' => 'nullable|integer|min:0',
+            'defect_item_ids' => 'nullable|array',
+            'defect_item_ids.*' => 'nullable|string',
+            'damaged_item_ids' => 'nullable|array',
+            'damaged_item_ids.*' => 'nullable|string',
         ]);
 
         $reference = trim((string) $request->reference);
@@ -224,10 +402,30 @@ class RackMovementController extends Controller
         $productIds = $request->product_ids;
         $conditions = $request->conditions;
         $quantities = $request->quantities;
+        $defectItemIds = $request->defect_item_ids ?? [];
+        $damagedItemIds = $request->damaged_item_ids ?? [];
 
         if (count($productIds) !== count($conditions) || count($productIds) !== count($quantities)) {
             return back()->withInput()->with('message', 'Items tidak valid (jumlah array tidak sama).');
         }
+
+        $decodeIds = function ($raw): array {
+            if (is_array($raw)) {
+                $arr = $raw;
+            } else {
+                $raw = trim((string) $raw);
+                if ($raw === '') return [];
+                $decoded = json_decode($raw, true);
+                $arr = is_array($decoded) ? $decoded : explode(',', $raw);
+            }
+
+            $ids = [];
+            foreach ($arr as $id) {
+                $id = (int) $id;
+                if ($id > 0) $ids[$id] = $id;
+            }
+            return array_values($ids);
+        };
 
         // Helper: resolve stock bucket column
         $bucketCol = function (string $cond): string {
@@ -256,7 +454,10 @@ class RackMovementController extends Controller
                 $productIds,
                 $conditions,
                 $quantities,
-                $bucketCol
+                $defectItemIds,
+                $damagedItemIds,
+                $bucketCol,
+                $decodeIds
             ) {
                 $mv = RackMovement::withoutGlobalScopes()->create([
                     'branch_id' => $branchId,
@@ -272,18 +473,51 @@ class RackMovementController extends Controller
                     'updated_by' => auth()->id(),
                 ]);
 
-                // validasi qty berdasarkan stock_racks source rack
-                // NOTE: karena ada kemungkinan user input item product yang sama berulang, kita group dulu
-                // agar cek stock = total qty per product+condition.
+                // validasi qty berdasarkan stock_racks source rack.
+                // GOOD tetap qty-based. DEFECT/DAMAGED wajib unit-id based.
                 $group = [];
+                $rowSelections = [];
                 foreach ($productIds as $i => $pidRaw) {
                     $pid = (int) $pidRaw;
                     $cond = strtolower(trim((string) ($conditions[$i] ?? 'good')));
-                    if (!in_array($cond, ['good', 'defect', 'damaged'], true)) $cond = 'good';
+                    if (!in_array($cond, ['good', 'defect', 'damaged'], true)) {
+                        throw new \RuntimeException("Condition tidak valid pada baris #" . ($i + 1) . ".");
+                    }
                     $qty = (int) ($quantities[$i] ?? 0);
-                    if ($pid <= 0 || $qty <= 0) continue;
+                    if ($pid <= 0) {
+                        throw new \RuntimeException("Product tidak valid pada baris #" . ($i + 1) . ".");
+                    }
 
                     Product::withoutGlobalScopes()->findOrFail($pid);
+
+                    $selectedDefectIds = $decodeIds($defectItemIds[$i] ?? null);
+                    $selectedDamagedIds = $decodeIds($damagedItemIds[$i] ?? null);
+
+                    if ($cond === 'good') {
+                        if ($qty <= 0) {
+                            throw new \RuntimeException("Quantity GOOD wajib lebih dari 0 pada baris #" . ($i + 1) . ".");
+                        }
+                        $selectedDefectIds = [];
+                        $selectedDamagedIds = [];
+                    } elseif ($cond === 'defect') {
+                        if (count($selectedDefectIds) <= 0) {
+                            throw new \RuntimeException("DEFECT wajib pilih item/unit ID pada baris #" . ($i + 1) . ".");
+                        }
+                        $selectedDamagedIds = [];
+                        $qty = count($selectedDefectIds);
+                    } elseif ($cond === 'damaged') {
+                        if (count($selectedDamagedIds) <= 0) {
+                            throw new \RuntimeException("DAMAGED wajib pilih item/unit ID pada baris #" . ($i + 1) . ".");
+                        }
+                        $selectedDefectIds = [];
+                        $qty = count($selectedDamagedIds);
+                    }
+
+                    $rowSelections[$i] = [
+                        'quantity' => $qty,
+                        'defect_ids' => $selectedDefectIds,
+                        'damaged_ids' => $selectedDamagedIds,
+                    ];
 
                     $key = $pid . ':' . $cond;
                     $group[$key] = ($group[$key] ?? 0) + $qty;
@@ -308,19 +542,75 @@ class RackMovementController extends Controller
                     }
                 }
 
+                $validateUniqueIds = function (array $ids, string $label): void {
+                    if (count($ids) !== count(array_unique($ids))) {
+                        throw new \RuntimeException("Selected {$label} item IDs tidak boleh duplikat.");
+                    }
+                };
+
+                foreach ($rowSelections as $i => $selection) {
+                    $pid = (int) $productIds[$i];
+                    $cond = strtolower(trim((string) ($conditions[$i] ?? 'good')));
+
+                    if ($cond === 'defect') {
+                        $ids = $selection['defect_ids'];
+                        $validateUniqueIds($ids, 'DEFECT');
+                        $items = ProductDefectItem::query()
+                            ->where('branch_id', $branchId)
+                            ->where('warehouse_id', $fromWarehouseId)
+                            ->where('rack_id', $fromRackId)
+                            ->where('product_id', $pid)
+                            ->whereNull('moved_out_at')
+                            ->whereIn('id', $ids)
+                            ->lockForUpdate()
+                            ->get(['id']);
+
+                        if ($items->count() !== count($ids)) {
+                            throw new \RuntimeException("DEFECT selection invalid pada baris #" . ($i + 1) . ". Pastikan item masih tersedia di source rack dan product/condition sesuai.");
+                        }
+                    }
+
+                    if ($cond === 'damaged') {
+                        $ids = $selection['damaged_ids'];
+                        $validateUniqueIds($ids, 'DAMAGED');
+                        $items = ProductDamagedItem::query()
+                            ->where('branch_id', $branchId)
+                            ->where('warehouse_id', $fromWarehouseId)
+                            ->where('rack_id', $fromRackId)
+                            ->where('product_id', $pid)
+                            ->whereNull('moved_out_at')
+                            ->where(function ($q) {
+                                $q->whereNull('resolution_status')
+                                    ->orWhere('resolution_status', 'pending');
+                            })
+                            ->whereIn('id', $ids)
+                            ->lockForUpdate()
+                            ->get(['id']);
+
+                        if ($items->count() !== count($ids)) {
+                            throw new \RuntimeException("DAMAGED selection invalid pada baris #" . ($i + 1) . ". Pastikan item masih pending/available di source rack dan product/condition sesuai.");
+                        }
+                    }
+                }
+
                 // insert items + mutations
                 foreach ($productIds as $i => $pidRaw) {
                     $pid = (int) $pidRaw;
                     $cond = strtolower(trim((string) ($conditions[$i] ?? 'good')));
                     if (!in_array($cond, ['good', 'defect', 'damaged'], true)) $cond = 'good';
-                    $qty = (int) ($quantities[$i] ?? 0);
+                    $qty = (int) ($rowSelections[$i]['quantity'] ?? ($quantities[$i] ?? 0));
                     if ($pid <= 0 || $qty <= 0) continue;
+
+                    $selectedDefectIds = (array) ($rowSelections[$i]['defect_ids'] ?? []);
+                    $selectedDamagedIds = (array) ($rowSelections[$i]['damaged_ids'] ?? []);
 
                     RackMovementItem::withoutGlobalScopes()->create([
                         'rack_movement_id' => (int) $mv->id,
                         'product_id' => $pid,
                         'condition' => $cond,
                         'quantity' => $qty,
+                        'defect_item_ids' => $cond === 'defect' ? $selectedDefectIds : null,
+                        'damaged_item_ids' => $cond === 'damaged' ? $selectedDamagedIds : null,
                         'created_by' => auth()->id(),
                         'updated_by' => auth()->id(),
                     ]);
@@ -331,6 +621,37 @@ class RackMovementController extends Controller
                     // =========================================================
                     $noteOut = trim("Rack Movement OUT (" . strtoupper($cond) . ") | From Rack #{$fromRackId} -> To Rack #{$toRackId}" . ($note ? " | {$note}" : ''));
                     $noteIn  = trim("Rack Movement IN (" . strtoupper($cond) . ") | From Rack #{$fromRackId} -> To Rack #{$toRackId}" . ($note ? " | {$note}" : ''));
+
+                    if ($cond === 'defect') {
+                        ProductDefectItem::query()
+                            ->where('branch_id', $branchId)
+                            ->where('warehouse_id', $fromWarehouseId)
+                            ->where('rack_id', $fromRackId)
+                            ->where('product_id', $pid)
+                            ->whereNull('moved_out_at')
+                            ->whereIn('id', $selectedDefectIds)
+                            ->update([
+                                'warehouse_id' => $toWarehouseId,
+                                'rack_id' => $toRackId,
+                                'updated_at' => now(),
+                            ]);
+                    }
+
+                    if ($cond === 'damaged') {
+                        ProductDamagedItem::query()
+                            ->where('branch_id', $branchId)
+                            ->where('warehouse_id', $fromWarehouseId)
+                            ->where('rack_id', $fromRackId)
+                            ->where('product_id', $pid)
+                            ->whereNull('moved_out_at')
+                            ->whereIn('id', $selectedDamagedIds)
+                            ->update([
+                                'warehouse_id' => $toWarehouseId,
+                                'rack_id' => $toRackId,
+                                'updated_by' => auth()->id(),
+                                'updated_at' => now(),
+                            ]);
+                    }
 
                     // OUT dari source rack
                     $this->mutationController->applyInOut(
@@ -394,5 +715,30 @@ class RackMovementController extends Controller
         }
 
         return $prefix . str_pad((string) $next, 4, '0', STR_PAD_LEFT);
+    }
+
+    private function parseStoredUnitIds($raw): array
+    {
+        if (is_array($raw)) {
+            $items = $raw;
+        } else {
+            $raw = trim((string) $raw);
+            if ($raw === '') {
+                return [];
+            }
+
+            $decoded = json_decode($raw, true);
+            $items = is_array($decoded) ? $decoded : explode(',', $raw);
+        }
+
+        $ids = [];
+        foreach ($items as $id) {
+            $id = (int) $id;
+            if ($id > 0) {
+                $ids[$id] = $id;
+            }
+        }
+
+        return array_values($ids);
     }
 }

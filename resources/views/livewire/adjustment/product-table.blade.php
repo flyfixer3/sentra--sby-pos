@@ -67,7 +67,7 @@
                                 $pname = (string) ($product['product_name'] ?? '-');
                                 $pcode = (string) ($product['product_code'] ?? '');
                                 $stockQty = (int) ($product['stock_qty'] ?? 0);
-                                $unit = (string) ($product['product_unit'] ?? '');
+                                $unit = stock_unit_label($product['product_unit'] ?? '');
 
                                 $oldGood = (int) old("items.$idx.qty_good", (int)($product['qty_good'] ?? 0));
                                 $oldDef  = (int) old("items.$idx.qty_defect", (int)($product['qty_defect'] ?? 0));

@@ -78,9 +78,12 @@ class RackMoveProductTable extends Component
             return;
         }
 
-        $cond = 'good';
+        $cond = strtolower(trim((string) ($payload['condition'] ?? 'good')));
+        if (!in_array($cond, ['good', 'defect', 'damaged'], true)) {
+            $cond = 'good';
+        }
         if ($this->existsSameProductCondition($productId, $cond)) {
-            session()->flash('message', 'Product already selected with GOOD condition. Use Split button to add another condition.');
+            session()->flash('message', 'Product already selected with ' . strtoupper($cond) . ' condition. Use Split button to add another condition.');
             return;
         }
 
@@ -146,10 +149,7 @@ class RackMoveProductTable extends Component
         ];
 
         $this->addProduct(array_merge($payload, ['condition' => $next]));
-
-        // addProduct default good, jadi kita override baris terakhir ke $next
         $newIdx = count($this->products) - 1;
-        $this->products[$newIdx]['condition'] = $next;
         $this->refreshRowStock($newIdx);
         $this->clampQtyToStock($newIdx);
     }

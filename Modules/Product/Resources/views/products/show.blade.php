@@ -94,7 +94,7 @@
                                             HPP:: {{ format_currency(((float) ($currentBranchHpp ?? 0)) * ((int) ($currentBranchStockOnHand ?? 0))) }} /
                                             PRICE:: {{ format_currency($product->product_price * ((int) ($currentBranchStockOnHand ?? 0))) }}
                                             <small class="text-muted d-block">
-                                                Based on active branch on-hand stock: {{ (int) ($currentBranchStockOnHand ?? 0) }} {{ $product->product_unit }}.
+                                                Based on active branch on-hand stock: {{ (int) ($currentBranchStockOnHand ?? 0) }} {{ stock_unit_label($product->product_unit) }}.
                                             </small>
                                         @else
                                             <span class="text-muted">Select a specific branch to view branch stock worth.</span>

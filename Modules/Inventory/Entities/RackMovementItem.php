@@ -15,8 +15,15 @@ class RackMovementItem extends BaseModel
         'product_id',
         'condition',
         'quantity',
+        'defect_item_ids',
+        'damaged_item_ids',
         'created_by',
         'updated_by',
+    ];
+
+    protected $casts = [
+        'defect_item_ids' => 'array',
+        'damaged_item_ids' => 'array',
     ];
 
     public function movement(): BelongsTo
