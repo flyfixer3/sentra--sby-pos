@@ -8,6 +8,8 @@
             $hasInvoice = ((int) ($data->invoice_count ?? 0)) > 0;
             $hasDeliveryFlow = ((int) ($data->delivery_count ?? 0)) > 0;
             $isPending = ($statusLower === 'pending');
+            $isCancelledOrDeleted = in_array($statusLower, ['cancelled', 'canceled', 'deleted'], true);
+            $canMarkSentToSupplier = empty($data->sent_to_supplier_at) && !$isCancelledOrDeleted;
 
             // ✅ Make Invoice: disable kalau invoice sudah ada atau PO sudah masuk delivery flow
             $disableInvoice = $hasInvoice || $hasDeliveryFlow;
@@ -39,6 +41,14 @@
                     <span class="ml-2 badge badge-light">No remaining</span>
                 @endif
             </a>
+        @endcan
+
+        @can('send_purchase_order_mails')
+            @if($canMarkSentToSupplier)
+                <button type="button" class="dropdown-item" data-toggle="modal" data-target="#markSentToSupplierModal{{ $data->id }}">
+                    <i class="bi bi-cursor mr-2 text-success" style="line-height: 1;"></i> Mark as Sent to Supplier
+                </button>
+            @endif
         @endcan
 
         @can('send_purchase_order_mails')
@@ -76,3 +86,12 @@
         @endcan
     </div>
 </div>
+
+@can('send_purchase_order_mails')
+    @if($canMarkSentToSupplier)
+        @include('purchase-orders::partials.mark-sent-modal', [
+            'purchaseOrderForModal' => $data,
+            'modalId' => 'markSentToSupplierModal' . $data->id,
+        ])
+    @endif
+@endcan

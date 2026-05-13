@@ -28,6 +28,8 @@
     $totalExpected = $details->sum(fn($d) => (int)($d->quantity ?? 0));
     $totalAlreadyConfirmed = $details->sum(fn($d) => (int)($d->qty_received ?? 0) + (int)($d->qty_defect ?? 0) + (int)($d->qty_damaged ?? 0));
     $totalRemaining = max(0, $totalExpected - $totalAlreadyConfirmed);
+    $requiresPoNotSentAcknowledgement = !empty($purchaseDelivery->purchase_order_id)
+        && empty(optional($purchaseDelivery->purchaseOrder)->sent_to_supplier_at);
 @endphp
 
 <div class="container-fluid mb-4">
@@ -147,6 +149,9 @@
         @csrf
         @if($warehouseSelected)
             <input type="hidden" name="warehouse_id" value="{{ (int) $purchaseDelivery->warehouse_id }}">
+        @endif
+        @if($requiresPoNotSentAcknowledgement)
+            <input type="hidden" name="acknowledge_po_not_sent" id="acknowledge_po_not_sent" value="{{ old('acknowledge_po_not_sent') ? '1' : '0' }}">
         @endif
 
         <div class="card">
@@ -498,6 +503,7 @@
 <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
 <script>
     const WAREHOUSE_READY = {{ $warehouseSelected ? 'true' : 'false' }};
+    const REQUIRES_PO_NOT_SENT_ACK = {{ $requiresPoNotSentAcknowledgement ? 'true' : 'false' }};
 
     function asInt(val){ const n = parseInt(val,10); return isNaN(n)?0:n; }
     function safeJsonParse(text){ try{ if(!text) return []; return JSON.parse(text);}catch(e){ return []; } }
@@ -1066,13 +1072,63 @@
             return;
         }
 
+        const baseText = 'Setelah dikunci, qty batch ini tidak dapat diubah. Jika masih ada remaining, kamu bisa confirm batch berikutnya nanti.';
+        const warningHtml = REQUIRES_PO_NOT_SENT_ACK
+            ? `
+                <div style="text-align:left;">
+                    <p>${baseText}</p>
+                    <div class="alert alert-warning mb-3" style="font-size:14px;">
+                        <strong>This Purchase Order has not been marked as Sent to Supplier.</strong><br>
+                        Are you sure you want to confirm this Purchase Delivery?
+                    </div>
+                    <div class="custom-control custom-checkbox text-left">
+                        <input type="checkbox" class="custom-control-input" id="swal-po-not-sent-ack">
+                        <label class="custom-control-label" for="swal-po-not-sent-ack">
+                            I understand this Purchase Order has not been marked as sent to supplier.
+                        </label>
+                    </div>
+                </div>
+            `
+            : null;
+
         Swal.fire({
             title: 'Lock batch confirm ini?',
-            text: "Setelah dikunci, qty batch ini tidak dapat diubah. Jika masih ada remaining, kamu bisa confirm batch berikutnya nanti.",
+            text: REQUIRES_PO_NOT_SENT_ACK ? undefined : baseText,
+            html: warningHtml,
             icon: 'warning',
             showCancelButton: true,
             confirmButtonText: 'Ya, lock batch',
-            cancelButtonText: 'Batal'
+            cancelButtonText: 'Batal',
+            didOpen: () => {
+                if (!REQUIRES_PO_NOT_SENT_ACK) return;
+
+                const confirmButton = Swal.getConfirmButton();
+                const checkbox = document.getElementById('swal-po-not-sent-ack');
+                if (confirmButton) {
+                    confirmButton.disabled = true;
+                }
+                if (checkbox && confirmButton) {
+                    checkbox.addEventListener('change', () => {
+                        confirmButton.disabled = !checkbox.checked;
+                    });
+                }
+            },
+            preConfirm: () => {
+                if (!REQUIRES_PO_NOT_SENT_ACK) return true;
+
+                const checkbox = document.getElementById('swal-po-not-sent-ack');
+                if (!checkbox || !checkbox.checked) {
+                    Swal.showValidationMessage('Please acknowledge that this Purchase Order has not been marked as Sent to Supplier.');
+                    return false;
+                }
+
+                const hiddenAck = document.getElementById('acknowledge_po_not_sent');
+                if (hiddenAck) {
+                    hiddenAck.value = '1';
+                }
+
+                return true;
+            }
         }).then((result) => {
             if (result.isConfirmed) {
                 document.getElementById('confirm-form').submit();

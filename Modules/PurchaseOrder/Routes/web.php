@@ -31,6 +31,8 @@ Route::middleware(['auth'])->group(function () {
             ->name('purchase-orders.edit');
         Route::match(['put', 'patch'], '/purchase-orders/{purchase_order}', 'PurchaseOrderController@update')
             ->name('purchase-orders.update');
+        Route::post('/purchase-orders/{purchase_order}/sent-to-supplier', 'PurchaseOrderController@markSentToSupplier')
+            ->name('purchase-orders.mark-sent-to-supplier');
         Route::delete('/purchase-orders/{purchase_order}', 'PurchaseOrderController@destroy')
             ->name('purchase-orders.destroy');
     });

@@ -50,6 +50,9 @@ class PurchaseOrdersDataTable extends DataTable
             ->addColumn('status', function ($data) {
                 return view('purchase-orders::partials.status', compact('data'));
             })
+            ->addColumn('supplier_communication', function ($data) {
+                return view('purchase-orders::partials.supplier-communication', compact('data'));
+            })
             ->addColumn('action', function ($data) {
                 return view('purchase-orders::partials.actions', compact('data'));
             });
@@ -58,6 +61,9 @@ class PurchaseOrdersDataTable extends DataTable
     public function query(PurchaseOrder $model)
     {
         return $model->newQuery()
+            ->with([
+                'sentToSupplierBy',
+            ])
             ->withCount([
                 // ✅ invoice_count = jumlah purchase (invoice) yang masih aktif (not deleted)
                 'purchases as invoice_count' => function ($q) {
@@ -78,7 +84,7 @@ class PurchaseOrdersDataTable extends DataTable
                 "tr" .
                 "<'row'<'col-md-5'i><'col-md-7 mt-2'p>>"
             )
-            ->orderBy(6)
+            ->orderBy(7)
             ->buttons(
                 Button::make('excel')->text('<i class="bi bi-file-earmark-excel-fill"></i> Excel'),
                 Button::make('print')->text('<i class="bi bi-printer-fill"></i> Print'),
@@ -102,6 +108,10 @@ class PurchaseOrdersDataTable extends DataTable
                 ->className('text-center align-middle'),
 
             Column::computed('status')
+                ->className('text-center align-middle'),
+
+            Column::computed('supplier_communication')
+                ->title('Supplier Status')
                 ->className('text-center align-middle'),
 
             Column::computed('total_amount')

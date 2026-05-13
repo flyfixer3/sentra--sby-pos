@@ -238,6 +238,7 @@ class PurchaseOrderController extends Controller
             'supplier',
             'creator',
             'updater',
+            'sentToSupplierBy',
             'branch',
         ])->findOrFail($id);
 
@@ -401,6 +402,62 @@ class PurchaseOrderController extends Controller
 
         toast('Purchase Order Updated!', 'info');
         return redirect()->route('purchase-orders.index');
+    }
+
+    public function markSentToSupplier(Request $request, PurchaseOrder $purchase_order)
+    {
+        abort_if(Gate::denies('send_purchase_order_mails'), 403);
+
+        $validated = $request->validate([
+            'sent_to_supplier_note' => 'nullable|string|max:1000',
+        ]);
+
+        $active = session('active_branch');
+        if ($active === 'all' || $active === null || $active === '') {
+            return redirect()
+                ->back()
+                ->with('error', "Please select a specific branch first (not 'All Branch') to mark a Purchase Order as sent to supplier.");
+        }
+        $branchId = (int) $active;
+
+        try {
+            DB::transaction(function () use ($purchase_order, $validated, $branchId) {
+                $po = PurchaseOrder::lockForUpdate()->findOrFail((int) $purchase_order->id);
+
+                if ((int) $po->branch_id !== $branchId) {
+                    abort(403, 'You can only mark Purchase Orders from the active branch as sent to supplier.');
+                }
+
+                $statusLower = strtolower(trim((string) ($po->status ?? '')));
+                if (in_array($statusLower, ['cancelled', 'canceled', 'deleted'], true)) {
+                    throw new \RuntimeException('Cancelled or deleted Purchase Orders cannot be marked as sent to supplier.');
+                }
+
+                if (!empty($po->sent_to_supplier_at)) {
+                    throw new \RuntimeException('This Purchase Order has already been marked as sent to supplier.');
+                }
+
+                $po->update([
+                    'sent_to_supplier_at' => now(),
+                    'sent_to_supplier_by' => Auth::id(),
+                    'sent_to_supplier_note' => $validated['sent_to_supplier_note'] ?? null,
+                ]);
+            });
+        } catch (\RuntimeException $e) {
+            return redirect()
+                ->back()
+                ->with('error', $e->getMessage());
+        } catch (\Throwable $e) {
+            report($e);
+
+            return redirect()
+                ->back()
+                ->with('error', $e->getMessage());
+        }
+
+        toast('Purchase Order marked as sent to supplier.', 'success');
+
+        return redirect()->back();
     }
 
     public function destroy(PurchaseOrder $purchase_order)

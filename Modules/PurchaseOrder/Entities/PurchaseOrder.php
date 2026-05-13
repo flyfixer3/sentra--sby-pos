@@ -8,6 +8,7 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Schema;
+use App\Models\User;
 use Modules\Purchase\Entities\Purchase;
 use Modules\People\Entities\Supplier;
 use Modules\PurchaseDelivery\Entities\PurchaseDelivery;
@@ -18,6 +19,10 @@ class PurchaseOrder extends BaseModel
     use HasFactory, SoftDeletes;
 
     protected $guarded = [];
+
+    protected $casts = [
+        'sent_to_supplier_at' => 'datetime',
+    ];
 
     public function purchases()
     {
@@ -42,6 +47,11 @@ class PurchaseOrder extends BaseModel
     public function updater()
     {
         return $this->belongsTo(\App\Models\User::class, 'updated_by');
+    }
+
+    public function sentToSupplierBy()
+    {
+        return $this->belongsTo(User::class, 'sent_to_supplier_by');
     }
 
     public function branch()

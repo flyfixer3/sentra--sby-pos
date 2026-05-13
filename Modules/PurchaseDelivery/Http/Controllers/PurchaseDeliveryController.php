@@ -529,6 +529,18 @@ class PurchaseDeliveryController extends Controller
         }
 
         // ✅ VALIDASI: tetap pakai format LAMA (sesuai UI kamu)
+        if (!empty($purchaseDelivery->purchase_order_id)) {
+            $relatedPurchaseOrder = PurchaseOrder::withoutGlobalScopes()
+                ->select('id', 'sent_to_supplier_at')
+                ->find((int) $purchaseDelivery->purchase_order_id);
+
+            if ($relatedPurchaseOrder && empty($relatedPurchaseOrder->sent_to_supplier_at) && !$request->boolean('acknowledge_po_not_sent')) {
+                throw \Illuminate\Validation\ValidationException::withMessages([
+                    'acknowledge_po_not_sent' => 'Please acknowledge that this Purchase Order has not been marked as Sent to Supplier.',
+                ]);
+            }
+        }
+
         $request->validate([
             'warehouse_id' => 'nullable|integer|exists:warehouses,id',
             'confirm_note' => 'nullable|string|max:1000',

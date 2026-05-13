@@ -207,6 +207,12 @@
 
     $createdByName = optional($purchase_order->creator)->name ?? '-';
     $updatedByName = optional($purchase_order->updater)->name ?? '-';
+    $sentToSupplierAt = $purchase_order->sent_to_supplier_at;
+    $sentToSupplierByName = optional($purchase_order->sentToSupplierBy)->name ?? '-';
+    $sentToSupplierAtText = $sentToSupplierAt ? \Carbon\Carbon::parse($sentToSupplierAt)->format('d M Y H:i') : '-';
+    $sentToSupplierNote = $purchase_order->sent_to_supplier_note ?? null;
+    $isCancelledOrDeleted = in_array($statusLower, ['cancelled', 'canceled', 'deleted'], true);
+    $canMarkSentToSupplier = empty($sentToSupplierAt) && !$isCancelledOrDeleted;
     $createdAtText = $purchase_order->created_at ? \Carbon\Carbon::parse($purchase_order->created_at)->format('d M Y H:i') : '-';
     $updatedAtText = $purchase_order->updated_at ? \Carbon\Carbon::parse($purchase_order->updated_at)->format('d M Y H:i') : '-';
 
@@ -279,6 +285,17 @@
                 @endif
 
                 {{-- Secondary actions --}}
+                @can('send_purchase_order_mails')
+                    @if($canMarkSentToSupplier)
+                        <button type="button"
+                                class="po-btn po-btn--primary d-print-none"
+                                data-toggle="modal"
+                                data-target="#markSentToSupplierDetailModal">
+                            <i class="bi bi-cursor"></i> Mark as Sent to Supplier
+                        </button>
+                    @endif
+                @endcan
+
                 <a target="_blank"
                    class="po-btn po-btn--ghost d-print-none"
                    href="{{ route('purchase-orders.pdf', $purchase_order->id) }}">
@@ -351,6 +368,51 @@
 
                         <div class="mt-3 po-label">Created By</div>
                         <div class="po-value">{{ optional($purchase_order->creator)->name ?? '-' }}</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="row g-3 mt-1">
+                <div class="col-lg-12">
+                    <div class="po-box">
+                        <div class="d-flex align-items-start justify-content-between flex-wrap gap-2">
+                            <div class="po-section-title">Supplier Status</div>
+                            @can('send_purchase_order_mails')
+                                @if($canMarkSentToSupplier)
+                                    <button type="button"
+                                            class="po-btn po-btn--primary d-print-none"
+                                            data-toggle="modal"
+                                            data-target="#markSentToSupplierDetailModal">
+                                        <i class="bi bi-cursor"></i> Mark as Sent to Supplier
+                                    </button>
+                                @endif
+                            @endcan
+                        </div>
+
+                        <div class="row">
+                            <div class="col-md-3 mb-2 mb-md-0">
+                                <div class="po-label">Status</div>
+                                <div class="po-value">
+                                    @if($sentToSupplierAt)
+                                        <span class="po-pill po-pill--ok">Sent to Supplier</span>
+                                    @else
+                                        <span class="po-pill po-pill--muted">Not Sent</span>
+                                    @endif
+                                </div>
+                            </div>
+                            <div class="col-md-3 mb-2 mb-md-0">
+                                <div class="po-label">Sent At</div>
+                                <div class="po-value">{{ $sentToSupplierAtText }}</div>
+                            </div>
+                            <div class="col-md-3 mb-2 mb-md-0">
+                                <div class="po-label">Sent By</div>
+                                <div class="po-value">{{ $sentToSupplierByName }}</div>
+                            </div>
+                            <div class="col-md-3">
+                                <div class="po-label">Note</div>
+                                <div class="po-value-muted">{{ $sentToSupplierNote ?: '-' }}</div>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -510,4 +572,13 @@
     </div>
 
 </div>
+
+@can('send_purchase_order_mails')
+    @if($canMarkSentToSupplier)
+        @include('purchase-orders::partials.mark-sent-modal', [
+            'purchaseOrderForModal' => $purchase_order,
+            'modalId' => 'markSentToSupplierDetailModal',
+        ])
+    @endif
+@endcan
 @endsection

@@ -18,7 +18,6 @@
     .pd-table thead th{white-space:nowrap;}
     .pd-qty-wrap{display:flex;align-items:center;gap:8px;}
     .pd-qty-wrap input{max-width:110px;}
-    .pd-apply-btn{white-space:nowrap;}
     .pd-mini{font-size:12px;color:#6c757d;}
     .pd-remaining{font-weight:600;}
 </style>
@@ -127,7 +126,6 @@
                             <th style="min-width:220px;">Description</th>
                             <th style="width:220px;">Qty</th>
                             <th style="width:120px;">Unit</th>
-                            <th style="width:140px;" class="text-center">Action</th>
                         </tr>
                         </thead>
                         <tbody>
@@ -139,7 +137,7 @@
                                 $productCode = $detail->product->product_code ?? $detail->product_code ?? '-';
                             @endphp
 
-                            <tr data-row="{{ $detail->id }}">
+                            <tr>
                                 <td>
                                     <div class="font-weight-bold">{{ $productName }}</div>
                                     <span class="badge bg-success">{{ $productCode }}</span>
@@ -179,18 +177,10 @@
                                 <td>
                                     <input type="text" class="form-control" value="{{ $detail->unit ?? 'Unit' }}" readonly>
                                 </td>
-
-                                <td class="text-center">
-                                    <button type="button"
-                                            class="btn btn-sm btn-primary pd-apply-btn btn-apply-row"
-                                            data-id="{{ $detail->id }}">
-                                        <i class="bi bi-check2"></i> Apply
-                                    </button>
-                                </td>
                             </tr>
                         @empty
                             <tr>
-                                <td colspan="5" class="text-center text-muted py-4">
+                                <td colspan="4" class="text-center text-muted py-4">
                                     No remaining quantities available for a new Purchase Delivery.
                                 </td>
                             </tr>
@@ -241,20 +231,6 @@ document.addEventListener("DOMContentLoaded", function () {
     qtyInputs.forEach((input) => {
         input.addEventListener("input", () => updateRemaining(input));
         updateRemaining(input);
-    });
-
-    document.querySelectorAll(".btn-apply-row").forEach((btn) => {
-        btn.addEventListener("click", () => {
-            const id = btn.dataset.id;
-            const row = document.querySelector(`tr[data-row="${id}"]`);
-            if (!row) return;
-
-            const input = row.querySelector(".qty-input");
-            if (input) updateRemaining(input);
-
-            row.classList.add("table-success");
-            setTimeout(() => row.classList.remove("table-success"), 600);
-        });
     });
 
     const applyAll = document.getElementById("btn-apply-all");
