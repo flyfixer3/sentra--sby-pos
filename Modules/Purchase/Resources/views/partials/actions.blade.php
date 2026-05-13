@@ -68,7 +68,7 @@
             @can('delete_purchases')
                 <button class="dropdown-item" onclick="
                     event.preventDefault();
-                    if (confirm('Soft delete this Purchase? You can restore it later.')) {
+                    if (confirm('Soft delete this Purchase Invoice? This is only allowed if it has no payments and no processed receiving.')) {
                         document.getElementById('destroy{{ $data->id }}').submit()
                     }">
                     <i class="bi bi-trash mr-2 text-danger" style="line-height: 1;"></i> Delete

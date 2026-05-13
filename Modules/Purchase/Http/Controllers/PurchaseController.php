@@ -1423,30 +1423,7 @@ class PurchaseController extends Controller
                     abort(403, 'Active branch mismatch for this Purchase.');
                 }
 
-                // ✅ status rule: pending only
-                $st = strtolower(trim((string) ($p->status ?? 'pending')));
-                if ($st !== 'pending') {
-                    throw new \RuntimeException('Only Pending Purchase (Invoice) can be deleted.');
-                }
-
-                // ✅ payment rule: harus unpaid
-                $paymentStatus = strtolower(trim((string) ($p->payment_status ?? 'unpaid')));
-                if ($paymentStatus !== 'unpaid') {
-                    throw new \RuntimeException('Cannot delete: Payment status must be Unpaid.');
-                }
-
-                $paidAmount = (float) ($p->paid_amount ?? 0);
-                if ($paidAmount > 0) {
-                    throw new \RuntimeException('Cannot delete: this Invoice already has payment amount (paid_amount > 0).');
-                }
-
-                $hasPayments = PurchasePayment::withoutGlobalScopes()
-                    ->where('purchase_id', (int) $p->id)
-                    ->exists();
-
-                if ($hasPayments) {
-                    throw new \RuntimeException('Cannot delete: this Invoice already has payment records.');
-                }
+                $eligibility = $this->assertPurchaseInvoiceUntouchedForDeleteOrRestore($p, $activeBranchId, 'delete');
 
                 // =========================
                 // ✅ LOCK purchase details (buat rollback incoming WALK-IN)
@@ -1463,17 +1440,16 @@ class PurchaseController extends Controller
                 $pdId = (int) ($p->purchase_delivery_id ?? 0);
 
                 // WALK-IN = invoice tidak terkait PO
-                $isWalkIn = ($poId <= 0);
+                $isWalkIn = (bool) $eligibility['is_walk_in'];
+                $linkedPd = $eligibility['linked_pd'];
 
                 // =========================
                 // ✅ If linked PD exists: guard PD (race safe)
                 // - WALK-IN: nanti PD di-delete bareng
                 // - NON WALK-IN: PD tidak dihapus, tapi tetap block delete invoice kalau PD sudah diproses
                 // =========================
-                $linkedPd = null;
-
                 if ($pdId > 0) {
-                    $linkedPd = PurchaseDelivery::withoutGlobalScopes()
+                    $linkedPd = $linkedPd ?: PurchaseDelivery::withoutGlobalScopes()
                         ->lockForUpdate()
                         ->find((int) $pdId);
 
@@ -1610,16 +1586,7 @@ class PurchaseController extends Controller
                     return;
                 }
 
-                // ✅ status/payment guard tetap (biar restore gak bikin aneh)
-                $st = strtolower(trim((string) ($p->status ?? 'pending')));
-                if ($st !== 'pending') {
-                    throw new \RuntimeException('Only Pending Purchase (Invoice) can be restored.');
-                }
-
-                $paymentStatus = strtolower(trim((string) ($p->payment_status ?? 'unpaid')));
-                if ($paymentStatus !== 'unpaid') {
-                    throw new \RuntimeException('Cannot restore: Payment status must be Unpaid.');
-                }
+                $eligibility = $this->assertPurchaseInvoiceUntouchedForDeleteOrRestore($p, $activeBranchId, 'restore');
 
                 // restore invoice
                 $p->restore();
@@ -1632,20 +1599,12 @@ class PurchaseController extends Controller
                 // resolve PD IDs yg harus ikut restore (kalau sebelumnya ikut di-delete oleh destroy)
                 $poId = (int) ($p->purchase_order_id ?? 0);
                 $pdId = (int) ($p->purchase_delivery_id ?? 0);
-                $isWalkIn = ($poId <= 0);
+                $isWalkIn = (bool) $eligibility['is_walk_in'];
 
                 $pdIdsToRestore = [];
 
                 if ($isWalkIn) {
                     if ($pdId > 0) $pdIdsToRestore = [$pdId];
-                } else {
-                    // restore semua PD pada PO tsb yang terhapus
-                    $pdIdsToRestore = PurchaseDelivery::withTrashed()
-                        ->where('purchase_order_id', $poId)
-                        ->whereNotNull('deleted_at')
-                        ->pluck('id')
-                        ->map(fn($x) => (int) $x)
-                        ->toArray();
                 }
 
                 if (!empty($pdIdsToRestore)) {
@@ -1748,12 +1707,6 @@ class PurchaseController extends Controller
 
                 if ($isWalkIn) {
                     if ($pdId > 0) $pdIdsToForce = [$pdId];
-                } else {
-                    $pdIdsToForce = PurchaseDelivery::withTrashed()
-                        ->where('purchase_order_id', $poId)
-                        ->pluck('id')
-                        ->map(fn($x) => (int) $x)
-                        ->toArray();
                 }
 
                 if (!empty($pdIdsToForce)) {
@@ -1782,6 +1735,110 @@ class PurchaseController extends Controller
             report($e);
             toast($e->getMessage(), 'error');
             return redirect()->route('purchases.index');
+        }
+    }
+
+    private function assertPurchaseInvoiceUntouchedForDeleteOrRestore(Purchase $purchase, int $activeBranchId, string $action): array
+    {
+        $action = $action === 'restore' ? 'restore' : 'delete';
+
+        if ((int) $purchase->branch_id !== (int) $activeBranchId) {
+            abort(403, 'Active branch mismatch for this Purchase.');
+        }
+
+        $purchaseDate = $purchase->getRawOriginal('date') ?: $purchase->date;
+        if ($purchaseDate && AccountingPeriodLockService::isLocked(Carbon::parse((string) $purchaseDate), (int) $purchase->branch_id)) {
+            throw new \RuntimeException("Cannot {$action}: the accounting period for this invoice is locked.");
+        }
+
+        $paymentStatus = strtolower(trim((string) ($purchase->payment_status ?? 'unpaid')));
+        if ($paymentStatus !== 'unpaid') {
+            throw new \RuntimeException("Cannot {$action}: this invoice already has payment.");
+        }
+
+        if ((float) ($purchase->paid_amount ?? 0) > 0) {
+            throw new \RuntimeException("Cannot {$action}: this invoice already has payment.");
+        }
+
+        $hasPayments = PurchasePayment::withoutGlobalScopes()
+            ->where('purchase_id', (int) $purchase->id)
+            ->exists();
+
+        if ($hasPayments) {
+            throw new \RuntimeException("Cannot {$action}: this invoice already has payment.");
+        }
+
+        $poId = (int) ($purchase->purchase_order_id ?? 0);
+        $pdId = (int) ($purchase->purchase_delivery_id ?? 0);
+        $isWalkIn = ($poId <= 0);
+
+        $linkedPd = null;
+        $relatedDeliveries = collect();
+
+        if ($pdId > 0) {
+            $linkedPd = PurchaseDelivery::withTrashed()
+                ->withoutGlobalScopes()
+                ->lockForUpdate()
+                ->find((int) $pdId);
+
+            if ($linkedPd) {
+                $relatedDeliveries->push($linkedPd);
+            }
+        }
+
+        if ($poId > 0 && $pdId <= 0) {
+            $relatedDeliveries = PurchaseDelivery::withTrashed()
+                ->withoutGlobalScopes()
+                ->where('purchase_order_id', (int) $poId)
+                ->lockForUpdate()
+                ->get();
+        }
+
+        foreach ($relatedDeliveries->unique('id') as $delivery) {
+            $this->assertPurchaseDeliveryUntouchedForInvoiceDeleteOrRestore($delivery, (int) $purchase->branch_id, $action);
+        }
+
+        return [
+            'is_walk_in' => $isWalkIn,
+            'linked_pd' => $linkedPd,
+        ];
+    }
+
+    private function assertPurchaseDeliveryUntouchedForInvoiceDeleteOrRestore(PurchaseDelivery $delivery, int $purchaseBranchId, string $action): void
+    {
+        if ((int) $delivery->branch_id !== (int) $purchaseBranchId) {
+            throw new \RuntimeException("Cannot {$action}: related Purchase Delivery belongs to different branch.");
+        }
+
+        $pdStatus = strtolower(trim((string) ($delivery->status ?? 'pending')));
+        if ($pdStatus !== 'pending') {
+            throw new \RuntimeException('Cannot ' . $action . ': related Purchase Delivery has already been processed.');
+        }
+
+        $details = PurchaseDeliveryDetails::withTrashed()
+            ->withoutGlobalScopes()
+            ->where('purchase_delivery_id', (int) $delivery->id)
+            ->lockForUpdate()
+            ->get(['qty_received', 'qty_defect', 'qty_damaged']);
+
+        foreach ($details as $detail) {
+            $confirmed = (int) ($detail->qty_received ?? 0)
+                + (int) ($detail->qty_defect ?? 0)
+                + (int) ($detail->qty_damaged ?? 0);
+
+            if ($confirmed > 0) {
+                throw new \RuntimeException('Cannot ' . $action . ': related Purchase Delivery already has confirmed quantities.');
+            }
+        }
+
+        $baseRef = 'PD-' . (int) $delivery->id;
+        $hasMutation = Mutation::withoutGlobalScopes()
+            ->where('branch_id', (int) $delivery->branch_id)
+            ->where('reference', 'like', $baseRef . '-B%')
+            ->exists();
+
+        if ($hasMutation) {
+            throw new \RuntimeException('Cannot ' . $action . ': stock mutation logs already exist for this Purchase Delivery.');
         }
     }
 
