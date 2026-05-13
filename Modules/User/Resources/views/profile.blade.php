@@ -66,7 +66,13 @@
             <div class="col-lg-6">
                 <div class="card">
                     <div class="card-body">
-                        <form action="{{ route('profile.update.password') }}" method="POST">
+                        <form action="{{ route('profile.update.password') }}" method="POST"
+                              data-confirm-submit="true"
+                              data-confirm-title="Confirm Update?"
+                              data-confirm-message="Please make sure the new password is correct before updating it."
+                              data-confirm-confirm-text="Yes, update"
+                              data-confirm-cancel-text="Cancel"
+                              data-confirm-icon="question">
                             @csrf
                             @method('patch')
                             <div class="form-group">

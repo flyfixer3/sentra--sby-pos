@@ -12,7 +12,13 @@
 
 @section('content')
     <div class="container-fluid">
-        <form action="{{ route('entities.update', $entity) }}" method="POST">
+        <form action="{{ route('entities.update', $entity) }}" method="POST"
+              data-confirm-submit="true"
+              data-confirm-title="Confirm Update?"
+              data-confirm-message="Please make sure all changes are correct before updating this entity."
+              data-confirm-confirm-text="Yes, update"
+              data-confirm-cancel-text="Cancel"
+              data-confirm-icon="question">
             @csrf
             @method('patch')
             <div class="row">

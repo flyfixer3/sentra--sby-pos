@@ -32,7 +32,13 @@
 
             <hr class="my-3">
 
-            <form method="POST" action="{{ route('inventory.racks.store') }}">
+            <form method="POST" action="{{ route('inventory.racks.store') }}"
+                  data-confirm-submit="true"
+                  data-confirm-title="Confirm Create?"
+                  data-confirm-message="Please make sure all data is correct before creating this rack."
+                  data-confirm-confirm-text="Yes, create"
+                  data-confirm-cancel-text="Cancel"
+                  data-confirm-icon="question">
                 @csrf
 
                 <div class="row">

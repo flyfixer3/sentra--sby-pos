@@ -12,7 +12,13 @@
 
 @section('content')
 <div class="container-fluid">
-    <form id="expense-form" action="{{ route('expenses.store') }}" method="POST">
+    <form id="expense-form" action="{{ route('expenses.store') }}" method="POST"
+          data-confirm-submit="true"
+          data-confirm-title="Confirm Submit?"
+          data-confirm-message="Please review the data carefully before submitting. This action may affect accounting records."
+          data-confirm-confirm-text="Yes, submit"
+          data-confirm-cancel-text="Cancel"
+          data-confirm-icon="question">
         @csrf
         <div class="row">
             <div class="col-lg-12">

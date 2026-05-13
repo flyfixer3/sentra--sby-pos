@@ -23,7 +23,13 @@
         <div class="row">
             <div class="col-md-12">
                 @include('utils.alerts')
-                <form action="{{ route('roles.store') }}" method="POST">
+                <form action="{{ route('roles.store') }}" method="POST"
+                      data-confirm-submit="true"
+                      data-confirm-title="Confirm Create?"
+                      data-confirm-message="Please make sure all permissions are correct before creating this role."
+                      data-confirm-confirm-text="Yes, create"
+                      data-confirm-cancel-text="Cancel"
+                      data-confirm-icon="question">
                     @csrf
                     <div class="form-group">
                         <button type="submit" class="btn btn-primary">Create Role <i class="bi bi-check"></i>

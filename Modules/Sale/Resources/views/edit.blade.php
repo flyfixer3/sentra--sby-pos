@@ -86,6 +86,13 @@
                         @include('utils.alerts')
 
                         <form id="sale-form" action="{{ route('sales.update', $sale) }}" method="POST"
+                            data-confirm-submit="true"
+                            data-confirm-title="Confirm Update?"
+                            data-confirm-message="Please review all changes carefully before updating. This action may affect inventory, delivery, payment, or accounting records."
+                            data-confirm-confirm-text="Yes, update"
+                            data-confirm-cancel-text="Cancel"
+                            data-confirm-icon="warning"
+                            data-confirm-require-items="true"
                             data-vehicles-url-template="{{ route('customers.vehicles.json', ['customer' => 'CUSTOMER_ID']) }}"
                             data-store-url-template="{{ route('customers.vehicles.store-ajax', ['customer' => 'CUSTOMER_ID']) }}">
                             @csrf
@@ -694,6 +701,10 @@
             });
 
             $('#sale-form').submit(function () {
+                if (this.getAttribute('data-confirm-submit') === 'true' && this.getAttribute('data-confirmed-submit') !== 'true') {
+                    return;
+                }
+
                 var paid_amount = $('#paid_amount').maskMoney('destroy')[0];
                 var new_number = parseInt((paid_amount.value || "").toString().replace(/[^\d-]/g, ""), 10) || 0;
                 $('#paid_amount').val(new_number);

@@ -12,6 +12,310 @@
 
 <script>
     (function () {
+        var lastSubmitter = null;
+
+        function isFormElement(element) {
+            return element && element.tagName && element.tagName.toLowerCase() === 'form';
+        }
+
+        function getSubmitButton(target) {
+            if (!target || !target.closest) return null;
+
+            var button = target.closest('button, input');
+            if (!button || !button.form) return null;
+
+            var tag = (button.tagName || '').toLowerCase();
+            var type = ((button.getAttribute('type') || button.type || 'submit') + '').toLowerCase();
+
+            if (tag === 'button' && (type === '' || type === 'submit')) return button;
+            if (tag === 'input' && ['submit', 'image'].indexOf(type) !== -1) return button;
+
+            return null;
+        }
+
+        function getValidSubmitter(form, submitter) {
+            if (!submitter || submitter.form !== form) return null;
+            if (!document.documentElement.contains(submitter)) return null;
+
+            var tag = (submitter.tagName || '').toLowerCase();
+            var type = ((submitter.getAttribute('type') || submitter.type || 'submit') + '').toLowerCase();
+
+            if (tag === 'button' && (type === '' || type === 'submit')) return submitter;
+            if (tag === 'input' && ['submit', 'image'].indexOf(type) !== -1) return submitter;
+
+            return null;
+        }
+
+        function clearPendingState(form) {
+            form.removeAttribute('data-confirm-submit-pending');
+        }
+
+        function isConfirmedSubmit(form) {
+            return form.getAttribute('data-confirmed-submit') === 'true';
+        }
+
+        function hasEnabledConfirm(form, submitter) {
+            if (!isFormElement(form)) return false;
+            if (form.getAttribute('data-confirm-submit') === 'false') return false;
+            if (form.getAttribute('data-no-confirm-submit') === 'true') return false;
+
+            return form.getAttribute('data-confirm-submit') === 'true'
+                || (submitter && submitter.getAttribute('data-confirm-submit-button') === 'true');
+        }
+
+        function getOption(form, name, fallback) {
+            var value = form.getAttribute(name);
+            return value === null || value === '' ? fallback : value;
+        }
+
+        function getSweetAlert() {
+            if (window.Swal && typeof window.Swal.fire === 'function') return window.Swal;
+            if (window.Sweetalert2 && typeof window.Sweetalert2.fire === 'function') return window.Sweetalert2;
+            if (window.swal && typeof window.swal.fire === 'function') return window.swal;
+            if (typeof window.swal === 'function') {
+                return {
+                    fire: function (options) {
+                        return window.swal({
+                            title: options.title,
+                            text: options.text,
+                            icon: options.icon,
+                            buttons: [options.cancelButtonText, options.confirmButtonText]
+                        }).then(function (confirmed) {
+                            return { isConfirmed: !!confirmed };
+                        });
+                    }
+                };
+            }
+
+            return null;
+        }
+
+        function appendSubmitterValue(form, submitter) {
+            if (!submitter || !submitter.name || submitter.disabled) return null;
+
+            var hidden = document.createElement('input');
+            hidden.type = 'hidden';
+            hidden.name = submitter.name;
+            hidden.value = submitter.value || '';
+            hidden.setAttribute('data-confirm-submit-generated', 'true');
+            form.appendChild(hidden);
+
+            return hidden;
+        }
+
+        function applySubmitterOverrides(form, submitter) {
+            if (!submitter) return;
+
+            if (submitter.hasAttribute('formaction')) {
+                form.action = submitter.formAction;
+            }
+
+            if (submitter.hasAttribute('formmethod')) {
+                form.method = submitter.formMethod;
+            }
+
+            if (submitter.hasAttribute('formenctype')) {
+                form.enctype = submitter.formEnctype;
+            }
+
+            if (submitter.hasAttribute('formtarget')) {
+                form.target = submitter.formTarget;
+            }
+        }
+
+        function setSubmitterLoading(submitter, form) {
+            if (!submitter || submitter.disabled) return;
+
+            submitter.disabled = true;
+
+            var loadingText = getOption(form, 'data-confirm-loading-text', 'Submitting...');
+            var tag = (submitter.tagName || '').toLowerCase();
+            var type = ((submitter.getAttribute('type') || submitter.type || '') + '').toLowerCase();
+
+            if (tag === 'button') {
+                submitter.setAttribute('data-confirm-original-html', submitter.innerHTML);
+                submitter.innerHTML = loadingText;
+            } else if (tag === 'input' && ['submit', 'button'].indexOf(type) !== -1) {
+                submitter.setAttribute('data-confirm-original-value', submitter.value || '');
+                submitter.value = loadingText;
+            }
+        }
+
+        function submitConfirmed(form, submitter) {
+            if (isConfirmedSubmit(form) && form.getAttribute('data-confirm-submit-resubmitting') === 'true') return;
+
+            form.setAttribute('data-confirmed-submit', 'true');
+            form.setAttribute('data-confirm-submit-resubmitting', 'true');
+            clearPendingState(form);
+
+            var validSubmitter = getValidSubmitter(form, submitter);
+
+            if (typeof form.requestSubmit === 'function') {
+                try {
+                    if (validSubmitter) {
+                        form.requestSubmit(validSubmitter);
+                    } else {
+                        form.requestSubmit();
+                    }
+                } catch (e) {
+                    try {
+                        form.requestSubmit();
+                    } catch (requestSubmitError) {
+                        appendSubmitterValue(form, validSubmitter);
+                        applySubmitterOverrides(form, validSubmitter);
+                        setSubmitterLoading(validSubmitter, form);
+                        HTMLFormElement.prototype.submit.call(form);
+                    }
+                }
+                return;
+            }
+
+            appendSubmitterValue(form, validSubmitter);
+            applySubmitterOverrides(form, validSubmitter);
+            setSubmitterLoading(validSubmitter, form);
+            HTMLFormElement.prototype.submit.call(form);
+        }
+
+        function hasRequiredItemRows(form) {
+            var quantityInput = form.querySelector('input[name="total_quantity"]');
+            if (quantityInput && parseInt(quantityInput.value || '0', 10) > 0) {
+                return true;
+            }
+
+            var itemSelectors = [
+                '[data-cart-sync-row]',
+                'input[name^="items"][name$="[product_id]"]',
+                'input[name="product_ids[]"]',
+                'input[name^="product_ids"]'
+            ];
+
+            return itemSelectors.some(function (selector) {
+                return Array.prototype.some.call(form.querySelectorAll(selector), function (element) {
+                    if (element.disabled) return false;
+                    if (element.matches && element.matches('input, select, textarea')) {
+                        return (element.value || '').trim() !== '' && (element.value || '0') !== '0';
+                    }
+                    return true;
+                });
+            });
+        }
+
+        function showRequiredItemsWarning(form) {
+            var title = getOption(form, 'data-confirm-items-title', 'Product Required');
+            var message = getOption(form, 'data-confirm-items-message', 'Please add at least one product before submitting this document.');
+            var buttonText = getOption(form, 'data-confirm-items-button-text', 'OK');
+            var Swal = getSweetAlert();
+
+            if (Swal) {
+                return Swal.fire({
+                    title: title,
+                    text: message,
+                    icon: 'warning',
+                    confirmButtonText: buttonText
+                });
+            }
+
+            window.alert(title + '\n\n' + message);
+        }
+
+        function showConfirmation(form, submitter) {
+            var title = getOption(form, 'data-confirm-title', 'Confirm Submit');
+            var message = getOption(form, 'data-confirm-message', 'Are you sure you want to submit this form?');
+            var confirmText = getOption(form, 'data-confirm-confirm-text', 'Yes, submit');
+            var cancelText = getOption(form, 'data-confirm-cancel-text', 'Cancel');
+            var icon = getOption(form, 'data-confirm-icon', 'question');
+
+            var Swal = getSweetAlert();
+
+            if (Swal) {
+                return Swal.fire({
+                    title: title,
+                    text: message,
+                    icon: icon,
+                    showCancelButton: true,
+                    confirmButtonText: confirmText,
+                    cancelButtonText: cancelText,
+                    reverseButtons: true,
+                    focusCancel: true
+                }).then(function (result) {
+                    if (result && result.isConfirmed) {
+                        submitConfirmed(form, submitter);
+                    } else {
+                        clearPendingState(form);
+                    }
+                }).catch(function () {
+                    clearPendingState(form);
+                });
+            }
+
+            if (window.confirm(title + '\n\n' + message)) {
+                submitConfirmed(form, submitter);
+            } else {
+                clearPendingState(form);
+            }
+        }
+
+        document.addEventListener('click', function (event) {
+            var submitter = getSubmitButton(event.target);
+            if (submitter) {
+                lastSubmitter = submitter;
+            }
+        }, true);
+
+        document.addEventListener('submit', function (event) {
+            var form = event.target;
+            var submitter = getValidSubmitter(form, event.submitter || lastSubmitter);
+
+            if (!hasEnabledConfirm(form, submitter)) return;
+            if (isConfirmedSubmit(form)) {
+                clearPendingState(form);
+                applySubmitterOverrides(form, submitter);
+
+                window.setTimeout(function () {
+                    if (!event.defaultPrevented) {
+                        form.removeAttribute('data-confirmed-submit');
+                        form.removeAttribute('data-confirm-submit-resubmitting');
+                        setSubmitterLoading(submitter, form);
+                    } else {
+                        form.removeAttribute('data-confirm-submit-resubmitting');
+                    }
+                }, 0);
+
+                return;
+            }
+
+            event.preventDefault();
+
+            if (form.getAttribute('data-confirm-submit-pending') === 'true') return;
+            form.setAttribute('data-confirm-submit-pending', 'true');
+
+            if (form.getAttribute('data-confirm-require-items') === 'true' && !hasRequiredItemRows(form)) {
+                showRequiredItemsWarning(form);
+                clearPendingState(form);
+                return;
+            }
+
+            var beforeEvent = new CustomEvent('confirm-submit:before', {
+                bubbles: true,
+                cancelable: true,
+                detail: {
+                    form: form,
+                    submitter: submitter
+                }
+            });
+
+            if (!form.dispatchEvent(beforeEvent)) {
+                clearPendingState(form);
+                return;
+            }
+
+            showConfirmation(form, submitter);
+        }, true);
+    })();
+</script>
+
+<script>
+    (function () {
         if (window.jQuery && jQuery.fn && jQuery.fn.dataTable) {
             jQuery.extend(true, jQuery.fn.dataTable.defaults, {
                 scrollX: true,

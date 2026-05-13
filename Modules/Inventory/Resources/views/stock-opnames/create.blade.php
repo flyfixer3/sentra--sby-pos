@@ -17,7 +17,13 @@
             <div class="page-title mb-1">Buat Draft Stock Opname Kaca</div>
             <div class="text-muted small mb-4">Draft akan menarik stok kaca cabang aktif. Template hasilnya bisa diisi tim lalu diimport balik.</div>
 
-            <form action="{{ route('inventory.stock-opnames.store') }}" method="POST">
+            <form action="{{ route('inventory.stock-opnames.store') }}" method="POST"
+                  data-confirm-submit="true"
+                  data-confirm-title="Confirm Submit?"
+                  data-confirm-message="Please review all data carefully before submitting. This action may affect inventory records."
+                  data-confirm-confirm-text="Yes, submit"
+                  data-confirm-cancel-text="Cancel"
+                  data-confirm-icon="warning">
                 @csrf
                 <div class="row">
                     <div class="col-md-4">

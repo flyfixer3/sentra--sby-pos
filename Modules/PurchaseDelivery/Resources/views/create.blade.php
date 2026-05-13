@@ -25,7 +25,14 @@
 
 @section('content')
 <div class="container-fluid">
-    <form action="{{ route('purchase-deliveries.store') }}" method="POST">
+    <form action="{{ route('purchase-deliveries.store') }}" method="POST"
+          data-confirm-submit="true"
+          data-confirm-title="Confirm Submit?"
+          data-confirm-message="Please review all data and item rows carefully before submitting. This action may affect inventory, delivery, payment, or accounting records."
+          data-confirm-confirm-text="Yes, submit"
+          data-confirm-cancel-text="Cancel"
+          data-confirm-icon="warning"
+          data-confirm-require-items="true">
         @csrf
         <input type="hidden" name="purchase_order_id" value="{{ $purchaseOrder->id }}">
 

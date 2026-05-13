@@ -19,7 +19,13 @@
                         <h5 class="mb-0">General Settings</h5>
                     </div>
                     <div class="card-body">
-                        <form action="{{ route('settings.update') }}" method="POST">
+                        <form action="{{ route('settings.update') }}" method="POST"
+                              data-confirm-submit="true"
+                              data-confirm-title="Confirm Update?"
+                              data-confirm-message="Please make sure all setting changes are correct before saving."
+                              data-confirm-confirm-text="Yes, update"
+                              data-confirm-cancel-text="Cancel"
+                              data-confirm-icon="question">
                             @csrf
                             @method('patch')
                             <div class="form-row">
@@ -110,7 +116,13 @@
                         <h5 class="mb-0">Mail Settings</h5>
                     </div>
                     <div class="card-body">
-                        <form action="{{ route('settings.smtp.update') }}" method="POST">
+                        <form action="{{ route('settings.smtp.update') }}" method="POST"
+                              data-confirm-submit="true"
+                              data-confirm-title="Confirm Update?"
+                              data-confirm-message="Please make sure all mail setting changes are correct before saving."
+                              data-confirm-confirm-text="Yes, update"
+                              data-confirm-cancel-text="Cancel"
+                              data-confirm-icon="question">
                             @csrf
                             @method('patch')
                             <div class="form-row">

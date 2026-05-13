@@ -12,7 +12,13 @@
 
 @section('content')
     <div class="container-fluid">
-        <form action="{{ route('suppliers.store') }}" method="POST">
+        <form action="{{ route('suppliers.store') }}" method="POST"
+              data-confirm-submit="true"
+              data-confirm-title="Confirm Create?"
+              data-confirm-message="Please make sure all data is correct before creating this supplier."
+              data-confirm-confirm-text="Yes, create"
+              data-confirm-cancel-text="Cancel"
+              data-confirm-icon="question">
             @csrf
             <div class="row">
                 <div class="col-lg-12">

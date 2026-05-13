@@ -85,7 +85,14 @@
                                 </div>
                             </div>
 
-                            <form action="{{ route('adjustments.store') }}" method="POST" id="adjustmentAddForm" enctype="multipart/form-data">
+                            <form action="{{ route('adjustments.store') }}" method="POST" id="adjustmentAddForm" enctype="multipart/form-data"
+                                  data-confirm-submit="true"
+                                  data-confirm-title="Confirm Submit?"
+                                  data-confirm-message="Please review all data and item rows carefully before submitting. This action may affect inventory, delivery, payment, or accounting records."
+                                  data-confirm-confirm-text="Yes, submit"
+                                  data-confirm-cancel-text="Cancel"
+                                  data-confirm-icon="warning"
+                                  data-confirm-require-items="true">
                                 @csrf
 
                                 <div class="form-row">
@@ -413,7 +420,12 @@
             }
         }
 
-        document.getElementById('adjustmentAddForm')?.submit();
+        const stockForm = document.getElementById('adjustmentAddForm');
+        if (stockForm && typeof stockForm.requestSubmit === 'function') {
+            stockForm.requestSubmit();
+        } else {
+            stockForm?.submit();
+        }
     }
     window.submitStockForm = submitStockForm;
 

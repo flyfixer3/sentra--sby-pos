@@ -17,7 +17,13 @@
                 @include('utils.alerts')
                 <div class="card">
                     <div class="card-body">
-                        <form action="{{ route('product-warehouses.update', $warehouse->id) }}" method="POST">
+                        <form action="{{ route('product-warehouses.update', $warehouse->id) }}" method="POST"
+                              data-confirm-submit="true"
+                              data-confirm-title="Confirm Update?"
+                              data-confirm-message="Please make sure all changes are correct before updating this warehouse."
+                              data-confirm-confirm-text="Yes, update"
+                              data-confirm-cancel-text="Cancel"
+                              data-confirm-icon="question">
                             @csrf
                             @method('patch')
                             <div class="form-group">

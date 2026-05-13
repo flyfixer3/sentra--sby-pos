@@ -23,7 +23,16 @@
                 <div class="card">
                     <div class="card-body">
                         @include('utils.alerts')
-                        <form id="purchase-order-form" action="{{ route('purchase-orders.store') }}" method="POST">
+                        <form id="purchase-order-form"
+                              action="{{ route('purchase-orders.store') }}"
+                              method="POST"
+                              data-confirm-submit="true"
+                              data-confirm-title="Create Purchase Order?"
+                              data-confirm-message="Please make sure all Purchase Order data is correct before submitting."
+                              data-confirm-confirm-text="Yes, create"
+                              data-confirm-cancel-text="Cancel"
+                              data-confirm-icon="question"
+                              data-confirm-require-items="true">
                             @csrf
 
                             <div class="form-row">
@@ -79,87 +88,14 @@
                             </div>
 
                             <div class="mt-3">
-                                <button type="button" class="btn btn-primary" data-toggle="modal" data-target="#purchase-order-confirm-modal">
+                                <button type="submit" class="btn btn-primary">
                                     Create Purchase Order <i class="bi bi-check"></i>
                                 </button>
                             </div>
                         </form>
-
-                        <div class="modal fade" id="purchase-order-confirm-modal" tabindex="-1" role="dialog" aria-labelledby="purchaseOrderConfirmLabel" aria-hidden="true">
-                            <div class="modal-dialog modal-dialog-centered" role="document">
-                                <div class="modal-content">
-                                    <div class="modal-header">
-                                        <h5 class="modal-title" id="purchaseOrderConfirmLabel">Confirm Save</h5>
-                                        <button type="button" class="close" data-dismiss="modal" aria-label="Close">
-                                            <span aria-hidden="true">&times;</span>
-                                        </button>
-                                    </div>
-                                    <div class="modal-body">
-                                        Are you sure you want to save this Purchase Order?
-                                    </div>
-                                    <div class="modal-footer">
-                                        <button type="button" class="btn btn-secondary" data-dismiss="modal">Cancel</button>
-                                        <button type="button" class="btn btn-primary" id="purchase-order-confirm-btn">Yes, Save</button>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
                     </div>
                 </div>
             </div>
         </div>
     </div>
 @endsection
-
-@push('page_scripts')
-<script>
-    document.addEventListener('DOMContentLoaded', function () {
-        const form = document.getElementById('purchase-order-form');
-        if (!form) return;
-
-        let confirmed = false;
-        const modal = $('#purchase-order-confirm-modal');
-        const confirmBtn = document.getElementById('purchase-order-confirm-btn');
-
-        form.addEventListener('submit', function (event) {
-            if (confirmed) {
-                return;
-            }
-            event.preventDefault();
-            if (modal.length) {
-                modal.modal('show');
-            }
-        });
-
-        form.addEventListener('keydown', function (event) {
-            if (event.key !== 'Enter') return;
-            const tag = (event.target.tagName || '').toLowerCase();
-            const type = (event.target.type || '').toLowerCase();
-            if (tag === 'textarea' || type === 'submit' || type === 'button') {
-                return;
-            }
-            event.preventDefault();
-            if (modal.length) {
-                modal.modal('show');
-            }
-        });
-
-        if (confirmBtn) {
-            confirmBtn.addEventListener('click', function () {
-                if (confirmed) return;
-                confirmed = true;
-                confirmBtn.setAttribute('disabled', 'disabled');
-                form.submit();
-            });
-        }
-
-        if (modal.length) {
-            modal.on('hidden.bs.modal', function () {
-                if (!confirmed && confirmBtn) {
-                    confirmBtn.removeAttribute('disabled');
-                }
-            });
-        }
-    });
-</script>
-@endpush

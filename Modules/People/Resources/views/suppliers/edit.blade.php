@@ -12,7 +12,13 @@
 
 @section('content')
     <div class="container-fluid">
-        <form action="{{ route('suppliers.update', $supplier) }}" method="POST">
+        <form action="{{ route('suppliers.update', $supplier) }}" method="POST"
+              data-confirm-submit="true"
+              data-confirm-title="Confirm Update?"
+              data-confirm-message="Please make sure all changes are correct before updating this supplier."
+              data-confirm-confirm-text="Yes, update"
+              data-confirm-cancel-text="Cancel"
+              data-confirm-icon="question">
             @csrf
             @method('patch')
             <div class="row">

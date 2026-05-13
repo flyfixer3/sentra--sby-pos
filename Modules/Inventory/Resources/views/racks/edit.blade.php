@@ -32,7 +32,13 @@
 
             <hr class="my-3">
 
-            <form method="POST" action="{{ route('inventory.racks.update', $rack->id) }}">
+            <form method="POST" action="{{ route('inventory.racks.update', $rack->id) }}"
+                  data-confirm-submit="true"
+                  data-confirm-title="Confirm Update?"
+                  data-confirm-message="Please make sure all changes are correct before updating this rack."
+                  data-confirm-confirm-text="Yes, update"
+                  data-confirm-cancel-text="Cancel"
+                  data-confirm-icon="question">
                 @csrf
                 @method('PUT')
 

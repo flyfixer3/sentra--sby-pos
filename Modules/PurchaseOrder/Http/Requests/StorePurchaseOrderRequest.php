@@ -2,8 +2,10 @@
 
 namespace Modules\PurchaseOrder\Http\Requests;
 
+use Gloudemans\Shoppingcart\Facades\Cart;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Support\Facades\Gate;
+use Illuminate\Validation\Validator;
 
 class StorePurchaseOrderRequest extends FormRequest
 {
@@ -43,5 +45,18 @@ class StorePurchaseOrderRequest extends FormRequest
     public function authorize()
     {
         return Gate::allows('create_purchase_orders');
+    }
+
+    public function withValidator(Validator $validator): void
+    {
+        $validator->after(function (Validator $validator) {
+            if (Cart::instance('purchase_order')->content()->contains(function ($item) {
+                return (int) ($item->id ?? 0) > 0 && (int) ($item->qty ?? 0) > 0;
+            })) {
+                return;
+            }
+
+            $validator->errors()->add('products', 'Please add at least one product before submitting this purchase order.');
+        });
     }
 }

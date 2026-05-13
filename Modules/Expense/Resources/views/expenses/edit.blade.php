@@ -12,7 +12,13 @@
 
 @section('content')
 <div class="container-fluid">
-    <form id="expense-form" action="{{ route('expenses.update', $expense) }}" method="POST">
+    <form id="expense-form" action="{{ route('expenses.update', $expense) }}" method="POST"
+          data-confirm-submit="true"
+          data-confirm-title="Confirm Update?"
+          data-confirm-message="Please review the data carefully before updating. This action may affect accounting records."
+          data-confirm-confirm-text="Yes, update"
+          data-confirm-cancel-text="Cancel"
+          data-confirm-icon="question">
         @csrf
         @method('patch')
 

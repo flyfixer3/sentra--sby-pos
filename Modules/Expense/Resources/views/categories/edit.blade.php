@@ -18,7 +18,13 @@
             @include('utils.alerts')
             <div class="card">
                 <div class="card-body">
-                    <form action="{{ route('expense-categories.update', $expenseCategory) }}" method="POST">
+                    <form action="{{ route('expense-categories.update', $expenseCategory) }}" method="POST"
+                          data-confirm-submit="true"
+                          data-confirm-title="Confirm Update?"
+                          data-confirm-message="Please make sure all changes are correct before updating this expense category."
+                          data-confirm-confirm-text="Yes, update"
+                          data-confirm-cancel-text="Cancel"
+                          data-confirm-icon="question">
                         @csrf
                         @method('patch')
 

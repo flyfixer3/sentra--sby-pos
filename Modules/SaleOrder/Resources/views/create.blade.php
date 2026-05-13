@@ -94,6 +94,10 @@
 </style>
 @endpush
 
+@section('third_party_scripts')
+    <script src="{{ asset('vendor/sweetalert/sweetalert.all.js') }}"></script>
+@endsection
+
 @section('content')
 @php
     $items = old('items', $prefillItems ?? []);
@@ -160,6 +164,13 @@
                     @include('utils.alerts')
 
                       <form action="{{ route('sale-orders.store') }}" method="POST" id="soForm" novalidate
+                          data-confirm-submit="true"
+                          data-confirm-title="Confirm Submit?"
+                          data-confirm-message="Please review all data and item rows carefully before submitting. This action may affect inventory, delivery, payment, or accounting records."
+                          data-confirm-confirm-text="Yes, submit"
+                          data-confirm-cancel-text="Cancel"
+                          data-confirm-icon="warning"
+                          data-confirm-require-items="true"
                           data-vehicles-url-template="{{ route('customers.vehicles.json', ['customer' => 'CUSTOMER_ID']) }}"
                           data-store-url-template="{{ route('customers.vehicles.store-ajax', ['customer' => 'CUSTOMER_ID']) }}">
                         @csrf
@@ -949,6 +960,10 @@
         soSyncItemsJsonFallback(form);
         soRecalc();
 
+        if (form.getAttribute('data-confirmed-submit') === 'true') {
+            return true;
+        }
+
         const validRows = soGetRows();
         const requiredFieldsValid = soValidateRequiredBeforeSubmit();
         soSetItemsError(validRows.length === 0);
@@ -967,7 +982,22 @@
             return true;
         }
 
-        return true;
+        const component = window.Livewire.find(componentId);
+        if (!component || typeof component.call !== 'function') {
+            return true;
+        }
+
+        form.dataset.soSyncing = '1';
+        soSetSubmitState(form, true);
+        const syncResult = component.call('syncAllRowsBeforeSubmit');
+        if (syncResult && typeof syncResult.catch === 'function') {
+            syncResult.catch(function () {
+                form.dataset.soSyncing = '0';
+                soSetSubmitState(form, false);
+            });
+        }
+
+        return false;
     }
 
     document.addEventListener('DOMContentLoaded', function () {
@@ -1326,6 +1356,13 @@
         });
 
         form?.addEventListener('submit', function (event) {
+            window.__soSubmitAttempted = true;
+            if (!soPrepareBeforeSubmit(form)) {
+                event.preventDefault();
+            }
+        });
+
+        form?.addEventListener('confirm-submit:before', function (event) {
             window.__soSubmitAttempted = true;
             if (!soPrepareBeforeSubmit(form)) {
                 event.preventDefault();

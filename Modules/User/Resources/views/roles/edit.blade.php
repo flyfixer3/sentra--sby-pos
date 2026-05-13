@@ -23,7 +23,13 @@
         <div class="row">
             <div class="col-md-12">
                 @include('utils.alerts')
-                <form action="{{ route('roles.update', $role->id) }}" method="POST">
+                <form action="{{ route('roles.update', $role->id) }}" method="POST"
+                      data-confirm-submit="true"
+                      data-confirm-title="Confirm Update?"
+                      data-confirm-message="Please make sure all permission changes are correct before updating this role."
+                      data-confirm-confirm-text="Yes, update"
+                      data-confirm-cancel-text="Cancel"
+                      data-confirm-icon="question">
                     @csrf
                     @method('patch')
                     <div class="form-group">

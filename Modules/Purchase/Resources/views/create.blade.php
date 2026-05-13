@@ -46,7 +46,14 @@
                     <div class="card-body">
                         @include('utils.alerts')
 
-                        <form id="purchase-form" action="{{ route('purchases.store') }}" method="POST">
+                        <form id="purchase-form" action="{{ route('purchases.store') }}" method="POST"
+                              data-confirm-submit="true"
+                              data-confirm-title="Confirm Purchase Submit?"
+                              data-confirm-message="Please review the purchase data and product items carefully before submitting. This action may affect inventory and accounting records."
+                              data-confirm-confirm-text="Yes, submit"
+                              data-confirm-cancel-text="Cancel"
+                              data-confirm-icon="warning"
+                              data-confirm-require-items="true">
                             @csrf
 
                             @if(!empty($prefillPurchaseOrderId))
@@ -199,6 +206,44 @@
 <script src="{{ asset('js/jquery-mask-money.js') }}"></script>
 <script>
 $(function () {
+    function purchaseSwal() {
+        if (window.Swal && typeof window.Swal.fire === 'function') return window.Swal;
+        if (window.Sweetalert2 && typeof window.Sweetalert2.fire === 'function') return window.Sweetalert2;
+        if (window.swal && typeof window.swal.fire === 'function') return window.swal;
+        return null;
+    }
+
+    function showProductRequiredWarning() {
+        var Swal = purchaseSwal();
+        if (Swal) {
+            Swal.fire({
+                title: 'Product Required',
+                text: 'Please add at least one product before submitting this purchase.',
+                icon: 'warning',
+                confirmButtonText: 'OK'
+            });
+            return;
+        }
+
+        alert('Please add at least one product before submitting this purchase.');
+    }
+
+    function hasPurchaseProducts(form) {
+        var totalQuantityInput = form.querySelector('input[name="total_quantity"]');
+        var totalQuantity = totalQuantityInput ? parseInt(totalQuantityInput.value || '0', 10) : 0;
+        return totalQuantity > 0 || form.querySelectorAll('[data-cart-sync-row]').length > 0;
+    }
+
+    var purchaseForm = document.getElementById('purchase-form');
+    if (purchaseForm) {
+        purchaseForm.addEventListener('confirm-submit:before', function (event) {
+            if (!hasPurchaseProducts(this)) {
+                event.preventDefault();
+                showProductRequiredWarning();
+            }
+        });
+    }
+
     $('#paid_amount').maskMoney({
         prefix:'{{ settings()->currency->symbol }}',
         thousands:'{{ settings()->currency->thousand_separator }}',
@@ -221,6 +266,10 @@ $(function () {
     });
 
     $('#purchase-form').on('submit', function () {
+        if (this.getAttribute('data-confirm-submit') === 'true' && this.getAttribute('data-confirmed-submit') !== 'true') {
+            return;
+        }
+
         var paid_amount = $('#paid_amount').maskMoney('destroy')[0];
         var digits = (paid_amount.value || '').toString().replace(/[^\d-]/g, '');
         var new_number = parseInt(digits || '0', 10) || 0;

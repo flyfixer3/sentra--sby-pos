@@ -2,8 +2,10 @@
 
 namespace Modules\Quotation\Http\Requests;
 
+use Gloudemans\Shoppingcart\Facades\Cart;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Support\Facades\Gate;
+use Illuminate\Validation\Validator;
 
 class UpdateQuotationRequest extends FormRequest
 {
@@ -53,5 +55,18 @@ class UpdateQuotationRequest extends FormRequest
     public function authorize()
     {
         return Gate::allows('edit_quotations');
+    }
+
+    public function withValidator(Validator $validator): void
+    {
+        $validator->after(function (Validator $validator) {
+            if (Cart::instance('quotation')->content()->contains(function ($item) {
+                return (int) ($item->id ?? 0) > 0 && (int) ($item->qty ?? 0) > 0;
+            })) {
+                return;
+            }
+
+            $validator->errors()->add('products', 'Please add at least one product before submitting this quotation.');
+        });
     }
 }

@@ -159,6 +159,13 @@
                     @endif
 
                       <form id="sale-form" action="{{ route('sales.store') }}" method="POST"
+                          data-confirm-submit="true"
+                          data-confirm-title="Confirm Submit?"
+                          data-confirm-message="Please review all data and item rows carefully before submitting. This action may affect inventory, delivery, payment, or accounting records."
+                          data-confirm-confirm-text="Yes, submit"
+                          data-confirm-cancel-text="Cancel"
+                          data-confirm-icon="warning"
+                          data-confirm-require-items="true"
                           data-vehicles-url-template="{{ route('customers.vehicles.json', ['customer' => 'CUSTOMER_ID']) }}"
                           data-store-url-template="{{ route('customers.vehicles.store-ajax', ['customer' => 'CUSTOMER_ID']) }}">
                         @csrf
@@ -925,6 +932,10 @@
         });
 
         $('#sale-form').submit(function () {
+            if (this.getAttribute('data-confirm-submit') === 'true' && this.getAttribute('data-confirmed-submit') !== 'true') {
+                return;
+            }
+
             var raw = $('#paid_amount').val();
             $('#paid_amount').val(parseMoneyToInt(raw));
         });

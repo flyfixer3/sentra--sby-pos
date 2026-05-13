@@ -23,7 +23,14 @@
                 <div class="card">
                     <div class="card-body">
                         @include('utils.alerts')
-                        <form id="quotation-form" action="{{ route('quotations.update', $quotation) }}" method="POST">
+                        <form id="quotation-form" action="{{ route('quotations.update', $quotation) }}" method="POST"
+                              data-confirm-submit="true"
+                              data-confirm-title="Confirm Update?"
+                              data-confirm-message="Please review all changes carefully before updating. This action may affect inventory, delivery, payment, or accounting records."
+                              data-confirm-confirm-text="Yes, update"
+                              data-confirm-cancel-text="Cancel"
+                              data-confirm-icon="warning"
+                              data-confirm-require-items="true">
                             @csrf
                             @method('put')
                             <div class="form-row">
