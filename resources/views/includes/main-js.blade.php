@@ -13,6 +13,7 @@
 <script>
     (function () {
         var lastSubmitter = null;
+        var deliveryPendingForm = null;
 
         function isFormElement(element) {
             return element && element.tagName && element.tagName.toLowerCase() === 'form';
@@ -177,6 +178,10 @@
         }
 
         function hasRequiredItemRows(form) {
+            if (form.getAttribute('data-item-validation') === 'purchase-delivery') {
+                return hasPurchaseDeliveryQuantity(form);
+            }
+
             var quantityInput = form.querySelector('input[name="total_quantity"]');
             if (quantityInput && parseInt(quantityInput.value || '0', 10) > 0) {
                 return true;
@@ -197,6 +202,17 @@
                     }
                     return true;
                 });
+            });
+        }
+
+        function hasPurchaseDeliveryQuantity(form) {
+            var quantityInputs = form.querySelectorAll('input[name^="quantity["], .qty-input');
+
+            return Array.prototype.some.call(quantityInputs, function (input) {
+                if (input.disabled) return false;
+
+                var value = parseFloat(input.value || '0');
+                return !Number.isNaN(value) && value > 0;
             });
         }
 
@@ -254,6 +270,210 @@
                 clearPendingState(form);
             }
         }
+
+        function ensureDeliveryConfirmModal() {
+            var existing = document.getElementById('deliveryConfirmModal');
+            if (existing) return existing;
+
+            var modal = document.createElement('div');
+            modal.className = 'modal fade';
+            modal.id = 'deliveryConfirmModal';
+            modal.tabIndex = -1;
+            modal.setAttribute('role', 'dialog');
+            modal.setAttribute('aria-hidden', 'true');
+            modal.innerHTML = '' +
+                '<div class="modal-dialog modal-dialog-centered" role="document">' +
+                    '<div class="modal-content">' +
+                        '<div class="modal-header">' +
+                            '<h5 class="modal-title" id="deliveryConfirmTitle">Confirm Submit</h5>' +
+                            '<button type="button" class="close" data-dismiss="modal" data-bs-dismiss="modal" aria-label="Close">' +
+                                '<span aria-hidden="true">&times;</span>' +
+                            '</button>' +
+                        '</div>' +
+                        '<div class="modal-body">' +
+                            '<p class="mb-0" id="deliveryConfirmMessage">Please review before submitting.</p>' +
+                        '</div>' +
+                        '<div class="modal-footer">' +
+                            '<button type="button" class="btn btn-light" data-dismiss="modal" data-bs-dismiss="modal" id="deliveryConfirmCancel">Cancel</button>' +
+                            '<button type="button" class="btn btn-primary" id="deliveryConfirmOk">Submit</button>' +
+                        '</div>' +
+                    '</div>' +
+                '</div>';
+
+            document.body.appendChild(modal);
+            return modal;
+        }
+
+        function openDeliveryModal(modal) {
+            if (window.jQuery && typeof window.jQuery(modal).modal === 'function') {
+                window.jQuery(modal).modal('show');
+                return;
+            }
+
+            modal.classList.add('show');
+            modal.style.display = 'block';
+            modal.removeAttribute('aria-hidden');
+            document.body.classList.add('modal-open');
+        }
+
+        function closeDeliveryModal(modal) {
+            if (window.jQuery && typeof window.jQuery(modal).modal === 'function') {
+                window.jQuery(modal).modal('hide');
+                return;
+            }
+
+            modal.classList.remove('show');
+            modal.style.display = 'none';
+            modal.setAttribute('aria-hidden', 'true');
+            document.body.classList.remove('modal-open');
+        }
+
+        function showDeliveryNotice(form, title, message) {
+            var modal = ensureDeliveryConfirmModal();
+            modal.querySelector('#deliveryConfirmTitle').textContent = title;
+            modal.querySelector('#deliveryConfirmMessage').textContent = message;
+            modal.querySelector('#deliveryConfirmCancel').classList.add('d-none');
+
+            var ok = modal.querySelector('#deliveryConfirmOk');
+            ok.textContent = getOption(form, 'data-confirm-items-button-text', 'OK');
+            ok.className = 'btn btn-primary';
+            ok.onclick = function () {
+                closeDeliveryModal(modal);
+                clearPendingState(form);
+                modal.querySelector('#deliveryConfirmCancel').classList.remove('d-none');
+            };
+
+            openDeliveryModal(modal);
+        }
+
+        function hasSaleDeliveryQuantity(form) {
+            var rows = form.querySelectorAll('input[name^="items"][name$="[product_id]"], select[name^="items"][name$="[product_id]"]');
+
+            return Array.prototype.some.call(rows, function (productInput) {
+                if (productInput.disabled) return false;
+
+                var match = String(productInput.name || '').match(/^items\[(.+?)\]\[product_id\]$/);
+                if (!match) return false;
+
+                var quantityInput = form.querySelector('[name="items[' + match[1] + '][quantity]"]');
+                if (!quantityInput || quantityInput.disabled) return false;
+
+                var productId = parseInt(productInput.value || '0', 10);
+                var quantity = parseFloat(quantityInput.value || '0');
+
+                return productId > 0 && !Number.isNaN(quantity) && quantity > 0;
+            });
+        }
+
+        function deliveryFormHasRequiredItems(form) {
+            var mode = form.getAttribute('data-item-validation');
+
+            if (mode === 'purchase-delivery') {
+                return hasPurchaseDeliveryQuantity(form);
+            }
+
+            if (mode === 'sale-delivery') {
+                return hasSaleDeliveryQuantity(form);
+            }
+
+            return true;
+        }
+
+        function saleDeliveryConfirmIsValid(form) {
+            if (form.getAttribute('data-delivery-validation') !== 'sale-delivery-confirm') {
+                return true;
+            }
+
+            if (typeof window.refreshSaleDeliveryConfirmValidation === 'function') {
+                window.refreshSaleDeliveryConfirmValidation();
+            }
+
+            return !Array.prototype.some.call(document.querySelectorAll('.confirm-card'), function (card) {
+                return typeof window.updateSaleDeliveryConfirmCard === 'function'
+                    ? !window.updateSaleDeliveryConfirmCard(card)
+                    : card.classList.contains('border-danger');
+            });
+        }
+
+        function showDeliveryConfirmation(form, submitter) {
+            var modal = ensureDeliveryConfirmModal();
+            modal.querySelector('#deliveryConfirmTitle').textContent = getOption(form, 'data-confirm-title', 'Confirm Submit');
+            modal.querySelector('#deliveryConfirmMessage').textContent = getOption(form, 'data-confirm-message', 'Please review before submitting.');
+            modal.querySelector('#deliveryConfirmCancel').classList.remove('d-none');
+
+            var ok = modal.querySelector('#deliveryConfirmOk');
+            ok.textContent = getOption(form, 'data-confirm-confirm-text', 'Submit');
+            ok.className = 'btn btn-primary';
+            deliveryPendingForm = form;
+            ok.onclick = function () {
+                closeDeliveryModal(modal);
+
+                form.setAttribute('data-delivery-confirmed-submit', 'true');
+                clearPendingState(form);
+                appendSubmitterValue(form, getValidSubmitter(form, submitter));
+                applySubmitterOverrides(form, getValidSubmitter(form, submitter));
+                setSubmitterLoading(getValidSubmitter(form, submitter), form);
+                HTMLFormElement.prototype.submit.call(form);
+            };
+
+            var cancel = modal.querySelector('#deliveryConfirmCancel');
+            cancel.onclick = function () {
+                clearPendingState(form);
+                deliveryPendingForm = null;
+            };
+
+            openDeliveryModal(modal);
+        }
+
+        document.addEventListener('hidden.bs.modal', function (event) {
+            if (event.target && event.target.id === 'deliveryConfirmModal' && deliveryPendingForm) {
+                clearPendingState(deliveryPendingForm);
+                deliveryPendingForm = null;
+            }
+        });
+
+        document.addEventListener('submit', function (event) {
+            var form = event.target;
+            if (!isFormElement(form) || form.getAttribute('data-delivery-confirm-submit') !== 'true') {
+                return;
+            }
+
+            if (form.getAttribute('data-delivery-confirmed-submit') === 'true') {
+                return;
+            }
+
+            event.preventDefault();
+            event.stopImmediatePropagation();
+
+            if (form.getAttribute('data-confirm-submit-pending') === 'true') return;
+            form.setAttribute('data-confirm-submit-pending', 'true');
+
+            if (!form.checkValidity()) {
+                clearPendingState(form);
+                form.reportValidity();
+                return;
+            }
+
+            if (form.getAttribute('data-confirm-require-items') === 'true' && !deliveryFormHasRequiredItems(form)) {
+                showDeliveryNotice(
+                    form,
+                    getOption(form, 'data-confirm-items-title', 'Item Quantity Required'),
+                    getOption(form, 'data-confirm-items-message', 'Please input at least one item quantity before submitting this delivery.')
+                );
+                clearPendingState(form);
+                return;
+            }
+
+            if (!saleDeliveryConfirmIsValid(form)) {
+                clearPendingState(form);
+                var box = document.getElementById('rowErrorBox');
+                if (box) box.classList.remove('d-none');
+                window.scrollTo({ top: 0, behavior: 'smooth' });
+                return;
+            }
+
+            showDeliveryConfirmation(form, getValidSubmitter(form, event.submitter || lastSubmitter));
+        }, true);
 
         document.addEventListener('click', function (event) {
             var submitter = getSubmitButton(event.target);

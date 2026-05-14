@@ -34,12 +34,15 @@
 <div class="container-fluid">
     <form action="{{ route('purchase-deliveries.update', $purchaseDelivery->id) }}" method="POST"
           data-confirm-submit="true"
-          data-confirm-title="Confirm Update?"
-          data-confirm-message="Please review all changes carefully before updating. This action may affect inventory, delivery, payment, or accounting records."
-          data-confirm-confirm-text="Yes, update"
+          data-delivery-confirm-submit="true"
+          data-confirm-title="Update Purchase Delivery?"
+          data-confirm-message="Please confirm these Purchase Delivery changes before saving."
+          data-confirm-confirm-text="Update Delivery"
           data-confirm-cancel-text="Cancel"
           data-confirm-icon="warning"
-          data-confirm-require-items="true">
+          data-confirm-require-items="true"
+          data-item-validation="purchase-delivery"
+          data-confirm-items-message="Please input at least one item quantity before submitting this Purchase Delivery.">
         @csrf
         @method('PUT')
 
@@ -177,7 +180,7 @@
                                     </td>
 
                                     <td>
-                                        <input type="number" class="form-control"
+                                        <input type="number" class="form-control qty-input"
                                                value="{{ (int) ($d->quantity ?? 0) }}"
                                                readonly>
                                     </td>

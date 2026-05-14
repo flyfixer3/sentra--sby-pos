@@ -20,6 +20,19 @@
         $prefillRefSupplier = $prefill['reference_supplier'] ?? '';
         $prefillPurchaseOrderId = $prefill['purchase_order_id'] ?? null;
         $prefillPurchaseDeliveryId = $prefill['purchase_delivery_id'] ?? null;
+        $financialPrefill = $prefill['financial'] ?? null;
+
+        if (old()) {
+            $financialPrefill = [
+                'tax_percentage'      => old('tax_percentage', 0),
+                'discount_percentage' => old('discount_percentage', 0),
+                'discount_amount'     => old('discount_amount', 0),
+                'discount_type'       => old('discount_type', 'percentage'),
+                'shipping_amount'     => old('shipping_amount', 0),
+                'total_amount'        => old('total_amount', 0),
+                'fee_amount'          => 0,
+            ];
+        }
 
         $defaultWarehouse = \Modules\Product\Entities\Warehouse::query()
             ->when($activeBranchId && $activeBranchId !== 'all', fn($q) => $q->where('branch_id', (int)$activeBranchId))
@@ -127,7 +140,7 @@
 
                             <livewire:product-cart-purchase
                                 :cartInstance="'purchase'"
-                                :data="null"
+                                :data="$financialPrefill"
                                 :loading_warehouse="$defaultWarehouseId"
                                 :stock_mode="'{{ $stock_mode }}'"
                             />

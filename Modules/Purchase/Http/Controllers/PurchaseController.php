@@ -121,6 +121,129 @@ class PurchaseController extends Controller
             ->values();
     }
 
+    private function buildPurchaseInvoiceFinancialPrefillFromPurchaseDelivery(PurchaseDelivery $purchaseDelivery, ?PurchaseOrder $purchaseOrder): ?array
+    {
+        if (!$purchaseOrder) {
+            return null;
+        }
+
+        $purchaseOrder->loadMissing(['purchaseOrderDetails']);
+        $purchaseDelivery->loadMissing(['purchaseDeliveryDetails']);
+
+        $poSubtotal = $this->calculatePurchaseOrderBaseSubtotal($purchaseOrder);
+        $deliverySubtotal = $this->calculatePurchaseDeliveryInvoiceBaseSubtotal($purchaseDelivery, $purchaseOrder);
+        $ratio = $poSubtotal > 0 ? min(1, max(0, $deliverySubtotal / $poSubtotal)) : 0;
+
+        $poDiscountType = ((float) ($purchaseOrder->discount_percentage ?? 0) > 0 || (float) ($purchaseOrder->discount_amount ?? 0) <= 0)
+            ? 'percentage'
+            : 'fixed';
+
+        $shippingAmount = round((float) ($purchaseOrder->shipping_amount ?? 0) * $ratio, 2);
+        $discountAmount = $poDiscountType === 'fixed'
+            ? round((float) ($purchaseOrder->discount_amount ?? 0) * $ratio, 2)
+            : round($deliverySubtotal * ((float) ($purchaseOrder->discount_percentage ?? 0) / 100), 2);
+
+        // Last delivery receives remaining fixed header amounts to avoid cumulative rounding drift.
+        // Percentage discount and tax keep the PO percentages so Livewire recalculates them from this PD's rows.
+        if ($this->shouldUseRemainingHeaderAllocation($purchaseDelivery, $purchaseOrder)) {
+            $shippingAmount = $this->remainingPurchaseOrderHeaderAmount($purchaseOrder, 'shipping_amount');
+
+            if ($poDiscountType === 'fixed') {
+                $discountAmount = $this->remainingPurchaseOrderHeaderAmount($purchaseOrder, 'discount_amount');
+            }
+        }
+
+        $discountBase = $poDiscountType === 'fixed'
+            ? min($discountAmount, $deliverySubtotal)
+            : round($deliverySubtotal * ((float) ($purchaseOrder->discount_percentage ?? 0) / 100), 2);
+        $taxBase = max(0, $deliverySubtotal - $discountBase);
+        $taxAmount = round($taxBase * ((float) ($purchaseOrder->tax_percentage ?? 0) / 100), 2);
+
+        return [
+            'tax_percentage'      => (float) ($purchaseOrder->tax_percentage ?? 0),
+            'discount_percentage' => $poDiscountType === 'percentage' ? (float) ($purchaseOrder->discount_percentage ?? 0) : 0,
+            'discount_amount'     => $poDiscountType === 'fixed' ? (float) $discountAmount : (float) $discountBase,
+            'discount_type'       => $poDiscountType,
+            'shipping_amount'     => (float) $shippingAmount,
+            'total_amount'        => round($taxBase + $taxAmount + $shippingAmount, 2),
+            'fee_amount'          => 0,
+        ];
+    }
+
+    private function calculatePurchaseOrderBaseSubtotal(PurchaseOrder $purchaseOrder): float
+    {
+        return round((float) $purchaseOrder->purchaseOrderDetails->sum(function ($detail) {
+            return (float) ($detail->price ?? 0) * (int) ($detail->quantity ?? 0);
+        }), 2);
+    }
+
+    private function calculatePurchaseDeliveryInvoiceBaseSubtotal(PurchaseDelivery $purchaseDelivery, PurchaseOrder $purchaseOrder): float
+    {
+        $poDetailMap = [];
+        foreach ($purchaseOrder->purchaseOrderDetails as $detail) {
+            $poDetailMap[(int) $detail->product_id] = $detail;
+        }
+
+        return round((float) $purchaseDelivery->purchaseDeliveryDetails->sum(function ($detail) use ($poDetailMap) {
+            $productId = (int) ($detail->product_id ?? 0);
+            $poDetail = $poDetailMap[$productId] ?? null;
+
+            $netPrice = $poDetail ? (float) ($poDetail->price ?? 0) : 0;
+            if ($netPrice <= 0) {
+                $netPrice = (float) ($detail->unit_price ?? 0);
+            }
+
+            return $netPrice * (int) ($detail->quantity ?? 0);
+        }), 2);
+    }
+
+    private function shouldUseRemainingHeaderAllocation(PurchaseDelivery $purchaseDelivery, PurchaseOrder $purchaseOrder): bool
+    {
+        $deliveryIds = PurchaseDelivery::query()
+            ->where('purchase_order_id', (int) $purchaseOrder->id)
+            ->pluck('id')
+            ->map(function ($id) {
+                return (int) $id;
+            })
+            ->all();
+
+        if (empty($deliveryIds)) {
+            return false;
+        }
+
+        $invoicedDeliveryIds = Purchase::query()
+            ->where('purchase_order_id', (int) $purchaseOrder->id)
+            ->whereNotNull('purchase_delivery_id')
+            ->whereNull('deleted_at')
+            ->where('purchase_delivery_id', '!=', (int) $purchaseDelivery->id)
+            ->pluck('purchase_delivery_id')
+            ->map(function ($id) {
+                return (int) $id;
+            })
+            ->all();
+
+        if (empty($invoicedDeliveryIds)) {
+            return false;
+        }
+
+        $uninvoicedDeliveryIds = array_values(array_diff($deliveryIds, $invoicedDeliveryIds));
+
+        return count($uninvoicedDeliveryIds) === 1
+            && (int) $uninvoicedDeliveryIds[0] === (int) $purchaseDelivery->id;
+    }
+
+    private function remainingPurchaseOrderHeaderAmount(PurchaseOrder $purchaseOrder, string $column): float
+    {
+        $sourceAmount = (float) ($purchaseOrder->{$column} ?? 0);
+        $usedAmount = (float) Purchase::query()
+            ->where('purchase_order_id', (int) $purchaseOrder->id)
+            ->whereNotNull('purchase_delivery_id')
+            ->whereNull('deleted_at')
+            ->sum($column);
+
+        return round(max(0, $sourceAmount - $usedAmount), 2);
+    }
+
 
     public function index(PurchaseDataTable $dataTable) {
         abort_if(Gate::denies('access_purchases'), 403);
@@ -281,6 +404,7 @@ class PurchaseController extends Controller
         }
 
         $prefillDate = (string) ($purchaseDelivery->getRawOriginal('date') ?? now()->format('Y-m-d'));
+        $financialPrefill = $this->buildPurchaseInvoiceFinancialPrefillFromPurchaseDelivery($purchaseDelivery, $purchaseOrder);
 
         return view('purchase::create', [
             'activeBranchId'     => $branchId,
@@ -293,6 +417,7 @@ class PurchaseController extends Controller
                 'supplier_id'          => $prefillSupplierId > 0 ? $prefillSupplierId : null,
                 'date'                 => $prefillDate,
                 'reference_supplier'   => (string) ($purchaseOrder->reference_supplier ?? ''),
+                'financial'            => $financialPrefill,
             ],
         ]);
     }
@@ -843,27 +968,11 @@ class PurchaseController extends Controller
          * ✅ NEW: related deliveries (multi PD)
          * ======================================================
          */
-        $poId = (int) ($purchase->purchase_order_id ?? 0);
-
-        // fallback: kalau invoice tidak nyimpen PO tapi nyimpen PD
-        if ($poId <= 0 && !empty($purchase->purchase_delivery_id)) {
-            $poId = (int) PurchaseDelivery::query()
-                ->where('id', (int) $purchase->purchase_delivery_id)
-                ->value('purchase_order_id');
-        }
-
+        // Show only the delivery directly linked to this invoice.
+        // Do not fall back to purchase_order_id; one PO can have many deliveries.
         $relatedDeliveries = collect();
 
-        if ($poId > 0) {
-            // ambil semua PD untuk PO tsb
-            $relatedDeliveries = PurchaseDelivery::query()
-                ->with(['purchaseDeliveryDetails'])
-                ->where('purchase_order_id', $poId)
-                ->orderByDesc('date')
-                ->orderByDesc('id')
-                ->get();
-        } elseif (!empty($purchase->purchase_delivery_id)) {
-            // fallback terakhir: tampilkan PD tunggal
+        if (!empty($purchase->purchase_delivery_id)) {
             $relatedDeliveries = PurchaseDelivery::query()
                 ->with(['purchaseDeliveryDetails'])
                 ->where('id', (int) $purchase->purchase_delivery_id)

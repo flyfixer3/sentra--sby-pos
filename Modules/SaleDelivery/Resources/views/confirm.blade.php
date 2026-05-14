@@ -256,7 +256,15 @@
         </div>
     </div>
 
-    <form method="POST" action="{{ route('sale-deliveries.confirm.store', $saleDelivery->id) }}" id="confirmForm">
+    <form method="POST"
+          action="{{ route('sale-deliveries.confirm.store', $saleDelivery->id) }}"
+          id="confirmForm"
+          data-delivery-confirm-submit="true"
+          data-delivery-validation="sale-delivery-confirm"
+          data-confirm-title="Confirm Sale Delivery?"
+          data-confirm-message="Please confirm this delivery carefully. Stock, delivery status, and related records may be affected after confirmation."
+          data-confirm-confirm-text="Confirm Delivery"
+          data-confirm-cancel-text="Cancel">
         @csrf
 
         <div class="row">
@@ -316,7 +324,7 @@
                                                         ? ('SO Item #' . (int) $sourceItem->sale_order_item_id)
                                                         : ($sourceItem->sale_item_id ? ('Sale Item #' . (int) $sourceItem->sale_item_id) : ('Item #' . (int) $sourceItem->id)) }}
                                                 </b>
-                                                <span class="mx-1">â€¢</span>
+                                                <span class="mx-1">|</span>
                                                 Service: <b>{{ $source?->installation_type ? str_replace('_', ' ', $source->installation_type) : '-' }}</b>
                                             </div>
                                         @endif
@@ -802,6 +810,9 @@
             stat.className = 'badge ' + (hasErr ? 'badge-danger' : 'badge-success');
         }
     }
+
+    window.updateSaleDeliveryConfirmCard = updateCard;
+    window.refreshSaleDeliveryConfirmValidation = refreshGlobal;
 
     function mountModal(card, modalEl){
         const idx = toInt(card.dataset.idx);

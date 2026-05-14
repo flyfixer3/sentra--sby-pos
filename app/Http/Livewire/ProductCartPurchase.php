@@ -33,7 +33,7 @@ class ProductCartPurchase extends Component
     public $item_discount;
     public $gross_price;
     public $item_cost_konsyinasi;
-    public $data;
+    public $data = [];
     public $lock_purchase_price_edit = false;
 
     public $stock_mode = 'branch_all';
@@ -41,6 +41,11 @@ class ProductCartPurchase extends Component
     public function mount($cartInstance, $data = null, $loading_warehouse = null, $stock_mode = 'branch_all')
     {
         $this->cart_instance = $cartInstance;
+        $data = $this->normalizeLivewirePayload($data);
+        if (!is_array($data)) {
+            $data = [];
+        }
+        $this->data = $data;
 
         $this->stock_mode = in_array($stock_mode, ['branch_all', 'warehouse'], true)
             ? $stock_mode
@@ -74,19 +79,20 @@ class ProductCartPurchase extends Component
             $this->loading_warehouse = $warehouse;
         }
 
-        if ($data) {
-            $this->data = $data;
-
-            $this->global_discount_type = ((float) ($data->discount_percentage ?? 0) > 0 || (float) ($data->discount_amount ?? 0) <= 0)
-                ? 'percentage'
-                : 'fixed';
+        if (!empty($data)) {
+            $prefillDiscountType = data_get($data, 'discount_type');
+            $this->global_discount_type = in_array($prefillDiscountType, ['fixed', 'percentage'], true)
+                ? $prefillDiscountType
+                : (((float) data_get($data, 'discount_percentage', 0) > 0 || (float) data_get($data, 'discount_amount', 0) <= 0)
+                    ? 'percentage'
+                    : 'fixed');
             $this->global_discount = $this->global_discount_type === 'fixed'
-                ? (float) ($data->discount_amount ?? 0)
-                : (float) ($data->discount_percentage ?? 0);
-            $this->global_tax = $data->tax_percentage;
+                ? (float) data_get($data, 'discount_amount', 0)
+                : (float) data_get($data, 'discount_percentage', 0);
+            $this->global_tax = (float) data_get($data, 'tax_percentage', 0);
             $this->global_qty = Cart::instance($this->cart_instance)->count();
-            $this->shipping = $data->shipping_amount;
-            $this->platform_fee = $data->fee_amount;
+            $this->shipping = (float) data_get($data, 'shipping_amount', 0);
+            $this->platform_fee = (float) data_get($data, 'fee_amount', 0);
 
             $this->updatedGlobalTax();
             $this->updatedGlobalDiscount();
@@ -155,6 +161,40 @@ class ProductCartPurchase extends Component
         $this->global_qty = Cart::instance($this->cart_instance)->count();
         $this->syncQuantityDefaults();
         $this->syncGlobalDiscount();
+    }
+
+    private function normalizeLivewirePayload($value)
+    {
+        if ($value === null) {
+            return [];
+        }
+
+        if ($value instanceof \Illuminate\Support\Collection) {
+            $value = $value->toArray();
+        }
+
+        if ($value instanceof \Illuminate\Database\Eloquent\Model) {
+            $value = $value->toArray();
+        }
+
+        if ($value instanceof \DateTimeInterface) {
+            return $value->format('Y-m-d H:i:s');
+        }
+
+        if (is_object($value)) {
+            $value = (array) $value;
+        }
+
+        if (!is_array($value)) {
+            return is_scalar($value) || is_bool($value) ? $value : null;
+        }
+
+        $normalized = [];
+        foreach ($value as $key => $item) {
+            $normalized[$key] = $this->normalizeLivewirePayload($item);
+        }
+
+        return $normalized;
     }
 
     private function resolveActiveBranchIdFromSessionOrCart()

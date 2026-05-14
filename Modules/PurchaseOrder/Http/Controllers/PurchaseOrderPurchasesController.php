@@ -135,6 +135,17 @@ class PurchaseOrderPurchasesController extends Controller
             'purchaseOrder'     => $purchaseorder,
             'purchase_order_id' => $purchaseorder->id,
             'purchaseDelivery'  => null,
+            'financialPrefill'  => [
+                'tax_percentage'      => (float) ($purchaseorder->tax_percentage ?? 0),
+                'discount_percentage' => (float) ($purchaseorder->discount_percentage ?? 0),
+                'discount_amount'     => (float) ($purchaseorder->discount_amount ?? 0),
+                'discount_type'       => ((float) ($purchaseorder->discount_percentage ?? 0) > 0 || (float) ($purchaseorder->discount_amount ?? 0) <= 0)
+                    ? 'percentage'
+                    : 'fixed',
+                'shipping_amount'     => (float) ($purchaseorder->shipping_amount ?? 0),
+                'total_amount'        => (float) ($purchaseorder->total_amount ?? 0),
+                'fee_amount'          => 0,
+            ],
         ]);
     }
 }

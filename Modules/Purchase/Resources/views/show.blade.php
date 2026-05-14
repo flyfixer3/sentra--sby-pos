@@ -335,7 +335,7 @@
                                             @endforeach
                                         </div>
                                     @else
-                                        <div class="text-muted" style="font-size:12px;">None</div>
+                                        <div class="text-muted" style="font-size:12px;">No delivery linked to this invoice yet.</div>
                                     @endif
                                 </div>
 

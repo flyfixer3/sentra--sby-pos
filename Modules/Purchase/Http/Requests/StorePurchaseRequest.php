@@ -27,6 +27,8 @@ class StorePurchaseRequest extends FormRequest
 
             'tax_percentage' => 'required|numeric|min:0|max:100',
             'discount_percentage' => 'required|numeric|min:0|max:100',
+            'discount_amount' => 'nullable|numeric|min:0',
+            'discount_type' => 'nullable|in:fixed,percentage',
             'shipping_amount' => 'required|numeric|min:0',
             'total_amount' => 'required|numeric|min:0',
             'total_quantity'=> 'required|numeric|min:1',

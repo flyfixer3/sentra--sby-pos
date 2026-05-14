@@ -32,12 +32,15 @@
         <div class="card-body">
             <form action="{{ route('sale-deliveries.update', $saleDelivery->id) }}" method="POST"
                   data-confirm-submit="true"
-                  data-confirm-title="Confirm Update?"
-                  data-confirm-message="Please review all changes carefully before updating. This action may affect inventory, delivery, payment, or accounting records."
-                  data-confirm-confirm-text="Yes, update"
+                  data-delivery-confirm-submit="true"
+                  data-confirm-title="Update Sale Delivery?"
+                  data-confirm-message="Please confirm these Sale Delivery changes before saving."
+                  data-confirm-confirm-text="Update Delivery"
                   data-confirm-cancel-text="Cancel"
                   data-confirm-icon="warning"
-                  data-confirm-require-items="true">
+                  data-confirm-require-items="true"
+                  data-item-validation="sale-delivery"
+                  data-confirm-items-message="Please input at least one item quantity before submitting this Sale Delivery.">
                 @csrf
                 @method('PUT')
 

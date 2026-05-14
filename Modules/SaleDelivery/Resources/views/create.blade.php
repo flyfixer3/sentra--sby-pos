@@ -44,12 +44,15 @@
         <div class="card-body">
             <form action="{{ route('sale-deliveries.store') }}" method="POST"
                   data-confirm-submit="true"
-                  data-confirm-title="Confirm Submit?"
-                  data-confirm-message="Please review all data and item rows carefully before submitting. This action may affect inventory, delivery, payment, or accounting records."
-                  data-confirm-confirm-text="Yes, submit"
+                  data-delivery-confirm-submit="true"
+                  data-confirm-title="Create Sale Delivery?"
+                  data-confirm-message="Please confirm the item quantities before creating this Sale Delivery."
+                  data-confirm-confirm-text="Create Delivery"
                   data-confirm-cancel-text="Cancel"
                   data-confirm-icon="warning"
-                  data-confirm-require-items="true">
+                  data-confirm-require-items="true"
+                  data-item-validation="sale-delivery"
+                  data-confirm-items-message="Please input at least one item quantity before submitting this Sale Delivery.">
                 @csrf
 
                 {{-- source --}}

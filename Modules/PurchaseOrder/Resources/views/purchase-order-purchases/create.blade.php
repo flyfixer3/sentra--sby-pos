@@ -59,6 +59,22 @@
 @endsection
 
 @section('content')
+    @php
+        $financialPrefill = $financialPrefill ?? null;
+
+        if (old()) {
+            $financialPrefill = [
+                'tax_percentage'      => old('tax_percentage', 0),
+                'discount_percentage' => old('discount_percentage', 0),
+                'discount_amount'     => old('discount_amount', 0),
+                'discount_type'       => old('discount_type', 'percentage'),
+                'shipping_amount'     => old('shipping_amount', 0),
+                'total_amount'        => old('total_amount', 0),
+                'fee_amount'          => 0,
+            ];
+        }
+    @endphp
+
     <div class="container-fluid sa-page mb-4">
 
         <div class="row">
@@ -146,7 +162,7 @@
                                 <p class="sa-help">Items are taken from cart instance <b>purchase</b>. You can add/remove items using the search above.</p>
 
                                 {{-- ✅ pakai komponen yang benar --}}
-                                <livewire:product-cart-purchase :cartInstance="'purchase'" :data="null" />
+                                <livewire:product-cart-purchase :cartInstance="'purchase'" :data="$financialPrefill" />
                             </div>
 
                             <div class="sa-section">
@@ -237,7 +253,8 @@
 
     $(document).on('click', '#getTotalAmount', function () {
         const raw = $('input[name="total_amount"]').val() || '0';
-        const num = parseInt(raw.toString().replace(/[^\d-]/g, ''), 10) || 0;
+        let num = Number(raw);
+        if (Number.isNaN(num)) num = 0;
         $('#paid_amount').maskMoney('mask', num);
     });
 
