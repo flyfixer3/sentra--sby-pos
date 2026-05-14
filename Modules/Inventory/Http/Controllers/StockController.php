@@ -238,20 +238,8 @@ class StockController extends Controller
         // warehouses & racks dari item quality table
         $table = ($type === 'defect') ? 'product_defect_items' : 'product_damaged_items';
 
-        /**
-         * ✅ FIX UTAMA:
-         * Anggap "BELUM moved out" hanya jika moved_out_at:
-         * - NULL, atau
-         * - '', atau
-         * - '0000-00-00 00:00:00'
-         */
         $applyNotMovedOut = function ($q) {
-            $q->where(function ($qq) {
-                $qq->whereNull('i.moved_out_at')
-                    ->orWhere('i.moved_out_at', '=', '')
-                    ->orWhere('i.moved_out_at', '=', '0000-00-00 00:00:00');
-            });
-            return $q;
+            return $this->applyNotMovedOutFilter($q, 'i');
         };
 
         $baseFilter = function ($q) use ($productId, $branchId, $type, $applyNotMovedOut) {
@@ -341,6 +329,7 @@ class StockController extends Controller
 
         $activeBranch = session('active_branch');
         $isAllBranchMode = ($activeBranch === 'all');
+        $branchId = (int) $request->get('branch_id');
 
         $warehouseId = $request->filled('warehouse_id') ? (int) $request->warehouse_id : null;
         $rackId = $request->filled('rack_id') ? (int) $request->rack_id : null;
@@ -366,19 +355,12 @@ class StockController extends Controller
             return asset('storage/' . $photoPath);
         };
 
-        /**
-         * ✅ FIX UTAMA:
-         * Anggap "BELUM moved out" hanya jika moved_out_at:
-         * - NULL, atau
-         * - '', atau
-         * - '0000-00-00 00:00:00'
-         */
+        if (!$isAllBranchMode && is_numeric($activeBranch)) {
+            $branchId = (int) $activeBranch;
+        }
+
         $applyNotMovedOutFilter = function ($q) {
-            return $q->where(function ($qq) {
-                $qq->whereNull('i.moved_out_at')
-                    ->orWhere('i.moved_out_at', '=', '')
-                    ->orWhere('i.moved_out_at', '=', '0000-00-00 00:00:00');
-            });
+            return $this->applyNotMovedOutFilter($q, 'i');
         };
 
         // ======================
@@ -411,9 +393,7 @@ class StockController extends Controller
                 ])
                 ->orderByDesc('i.id');
 
-            if (!$isAllBranchMode && is_numeric($activeBranch)) {
-                $q->where('i.branch_id', (int) $activeBranch);
-            }
+            if ($branchId > 0) $q->where('i.branch_id', $branchId);
             if (!empty($warehouseId)) $q->where('i.warehouse_id', $warehouseId);
             if (!empty($rackId)) $q->where('i.rack_id', $rackId);
             if (!empty($selectedDefectTypes)) {
@@ -475,9 +455,7 @@ class StockController extends Controller
             ])
             ->orderByDesc('i.id');
 
-        if (!$isAllBranchMode && is_numeric($activeBranch)) {
-            $q->where('i.branch_id', (int) $activeBranch);
-        }
+        if ($branchId > 0) $q->where('i.branch_id', $branchId);
         if (!empty($warehouseId)) $q->where('i.warehouse_id', $warehouseId);
         if (!empty($rackId)) $q->where('i.rack_id', $rackId);
 
@@ -492,6 +470,16 @@ class StockController extends Controller
             'type' => 'damaged',
             'data' => $rows,
         ]);
+    }
+
+    /**
+     * Product quality items are active only while moved_out_at is NULL.
+     * Avoid comparing timestamp columns to '' or zero dates; strict SQL mode
+     * can reject those literals before returning any modal data.
+     */
+    private function applyNotMovedOutFilter($q, string $alias = 'i')
+    {
+        return $q->whereNull($alias . '.moved_out_at');
     }
 
 }
