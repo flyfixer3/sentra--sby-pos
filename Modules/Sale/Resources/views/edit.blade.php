@@ -189,12 +189,13 @@
                             <div class="form-row">
                                 <div class="col-lg-4">
                                     <div class="form-group">
-                                        <label for="status">Status <span class="text-danger">*</span></label>
-                                        <select class="form-control" name="status" id="status" required>
-                                            <option {{ $sale->status == 'Pending' ? 'selected' : '' }} value="Pending">Pending</option>
-                                            <option {{ $sale->status == 'Shipped' ? 'selected' : '' }} value="Shipped">Shipped</option>
-                                            <option {{ $sale->status == 'Completed' ? 'selected' : '' }} value="Completed">Completed</option>
+                                        <label for="status_display">Status <span class="text-danger">*</span></label>
+                                        <select class="form-control" id="status_display" disabled>
+                                            <option value="{{ $sale->status }}" selected>{{ $sale->status }}</option>
                                         </select>
+                                        <small class="text-muted">
+                                            Status is calculated from delivery confirmation and payment settlement.
+                                        </small>
                                     </div>
                                 </div>
 

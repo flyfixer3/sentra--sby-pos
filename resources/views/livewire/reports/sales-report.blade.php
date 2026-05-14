@@ -42,7 +42,6 @@
                                     <select wire:model.defer="sale_status" class="form-control" name="sale_status">
                                         <option value="">Select Status</option>
                                         <option value="Pending">Pending</option>
-                                        <option value="Shipped">Shipped</option>
                                         <option value="Completed">Completed</option>
                                     </select>
                                 </div>
@@ -102,16 +101,16 @@
                                 <td>{{ $sale->customer_name }}</td>
                                 <td>
                                     @if ($sale->status == 'Pending')
-                                        <span class="badge badge-info">
+                                        <span class="badge badge-warning">
                                     {{ $sale->status }}
                                 </span>
-                                    @elseif ($sale->status == 'Shipped')
-                                        <span class="badge badge-primary">
+                                    @elseif ($sale->status == 'Completed')
+                                        <span class="badge badge-success">
                                     {{ $sale->status }}
                                 </span>
                                     @else
-                                        <span class="badge badge-success">
-                                    {{ $sale->status }}
+                                        <span class="badge badge-secondary">
+                                    {{ $sale->status ?? '-' }}
                                 </span>
                                     @endif
                                 </td>

@@ -105,6 +105,10 @@ class SalePaymentsController extends Controller
                 'due_amount' => $due_amount * 1,
                 'payment_status' => $payment_status
             ]);
+            $sale->refresh();
+            $sale->loadMissing(['saleDeliveries']);
+            $sale->syncBusinessStatus();
+
             Helper::addNewTransaction([
                 'branch_id' => $branchId ?: null,
                 'date' =>  $request->date,
@@ -182,6 +186,9 @@ class SalePaymentsController extends Controller
                 'due_amount' => $due_amount * 1,
                 'payment_status' => $payment_status
             ]);
+            $sale->refresh();
+            $sale->loadMissing(['saleDeliveries']);
+            $sale->syncBusinessStatus();
 
             $salePayment->update([
                 'date' => $request->date,
@@ -202,7 +209,37 @@ class SalePaymentsController extends Controller
     public function destroy(SalePayment $salePayment) {
         abort_if(Gate::denies('access_sale_payments'), 403);
 
-        $salePayment->delete();
+        DB::transaction(function () use ($salePayment) {
+            $sale = $salePayment->sale;
+
+            if ($sale) {
+                $newPaidAmount = max(((float) $sale->paid_amount - (float) $salePayment->amount), 0) * 1;
+                $newDueAmount = (($sale->due_amount + $salePayment->amount)) * 1;
+
+                if ($newDueAmount == $sale->total_amount) {
+                    $paymentStatus = 'Unpaid';
+                } elseif ($newDueAmount > 0) {
+                    $paymentStatus = 'Partial';
+                } else {
+                    $paymentStatus = 'Paid';
+                    $newDueAmount = 0;
+                }
+
+                $sale->update([
+                    'paid_amount' => $newPaidAmount,
+                    'due_amount' => $newDueAmount,
+                    'payment_status' => $paymentStatus,
+                ]);
+            }
+
+            $salePayment->delete();
+
+            if ($sale) {
+                $sale->refresh();
+                $sale->loadMissing(['saleDeliveries']);
+                $sale->syncBusinessStatus();
+            }
+        });
 
         toast('Sale Payment Deleted!', 'warning');
 

@@ -2,10 +2,10 @@
 
 namespace Modules\Purchase\Entities;
 
-use Illuminate\Database\Eloquent\Model;
 use App\Models\BaseModel;
 use App\Support\LegacyImport\ReferenceCodeGenerator;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Database\Eloquent\Builder;
 use Modules\PurchaseOrder\Entities\PurchaseOrder;
 use Illuminate\Database\Eloquent\SoftDeletes;
 
@@ -47,6 +47,8 @@ class Purchase extends BaseModel
                     $model->date ?? now()
                 );
             }
+
+            $model->status = 'Pending';
         });
     }
 
@@ -56,7 +58,13 @@ class Purchase extends BaseModel
     }
 
     public function scopeCompleted($query) {
-        return $query->where('status', 'Completed');
+        return $query
+            ->whereNotNull('purchase_delivery_id')
+            ->whereHas('purchaseDelivery', function (Builder $query) {
+                $query->whereRaw('LOWER(TRIM(status)) = ?', ['received']);
+            })
+            ->whereRaw('COALESCE(paid_amount, 0) > 0')
+            ->whereRaw('COALESCE(paid_amount, 0) >= COALESCE(total_amount, 0)');
     }
 
     public static function resolvePaymentSnapshot($totalAmount, $paidAmount): array
@@ -113,6 +121,46 @@ class Purchase extends BaseModel
     public function getEffectivePaymentStatusAttribute()
     {
         return static::resolvePaymentSnapshot($this->total_amount, $this->paid_amount)['payment_status'];
+    }
+
+    public function isDeliveryReceived(): bool
+    {
+        if (empty($this->purchase_delivery_id)) {
+            return false;
+        }
+
+        $delivery = $this->relationLoaded('purchaseDelivery')
+            ? $this->purchaseDelivery
+            : $this->purchaseDelivery()->first();
+
+        if (!$delivery) {
+            return false;
+        }
+
+        return strtolower(trim((string) ($delivery->status ?? ''))) === 'received';
+    }
+
+    public function isPaymentSettled(): bool
+    {
+        return in_array($this->effective_payment_status, ['Paid', 'Overpaid'], true);
+    }
+
+    public function resolveBusinessStatus(): string
+    {
+        return ($this->isDeliveryReceived() && $this->isPaymentSettled())
+            ? 'Completed'
+            : 'Pending';
+    }
+
+    public function syncBusinessStatus(): bool
+    {
+        $resolvedStatus = $this->resolveBusinessStatus();
+
+        if ((string) ($this->status ?? '') === $resolvedStatus) {
+            return false;
+        }
+
+        return $this->forceFill(['status' => $resolvedStatus])->save();
     }
 
     public function getTaxAmountAttribute($value) {

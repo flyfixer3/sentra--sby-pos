@@ -978,6 +978,17 @@ class SaleDeliveryConfirmController extends Controller
                     'confirmed_at' => now(),
                 ]);
 
+                if ((int) ($saleDelivery->sale_id ?? 0) > 0) {
+                    $sale = \Modules\Sale\Entities\Sale::withoutGlobalScopes()
+                        ->lockForUpdate()
+                        ->find((int) $saleDelivery->sale_id);
+
+                    if ($sale) {
+                        $sale->loadMissing(['saleDeliveries']);
+                        $sale->syncBusinessStatus();
+                    }
+                }
+
                 if ((int) ($saleDelivery->sale_order_id ?? 0) > 0) {
                     $this->updateSaleOrderFulfillmentStatus((int) $saleDelivery->sale_order_id);
                 }

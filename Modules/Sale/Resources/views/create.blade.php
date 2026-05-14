@@ -281,18 +281,6 @@
                         />
 
                         <div class="form-row">
-                            <!-- meskipun ada kolom status (bukan yg payment) di table, itu lgi g dipake jdi kita gausah pake itu dlu aja -->
-                            <!-- <div class="col-lg-3">
-                                <div class="form-group">
-                                    <label for="status">Status <span class="text-danger">*</span></label>
-                                    <select class="form-control" name="status" id="status" required>
-                                        <option value="Pending">Pending</option>
-                                        <option value="Shipped">Shipped</option>
-                                        <option value="Completed">Completed</option>
-                                    </select>
-                                </div>
-                            </div> -->
-
                             @php
                                 $soDepositCode = trim((string) ($lockedFinancial['deposit_code'] ?? ''));
                                 $lockDepositTo = $isLockedBySO && $soDepositCode !== '' && $soDepositCode !== '-';

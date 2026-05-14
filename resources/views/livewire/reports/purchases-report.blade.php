@@ -42,7 +42,6 @@
                                     <select wire:model.defer="purchase_status" class="form-control" name="purchase_status">
                                         <option value="">Select Status</option>
                                         <option value="Pending">Pending</option>
-                                        <option value="Ordered">Ordered</option>
                                         <option value="Completed">Completed</option>
                                     </select>
                                 </div>
@@ -53,6 +52,7 @@
                                     <select wire:model.defer="payment_status" class="form-control" name="payment_status">
                                         <option value="">Select Payment Status</option>
                                         <option value="Paid">Paid</option>
+                                        <option value="Overpaid">Overpaid</option>
                                         <option value="Unpaid">Unpaid</option>
                                         <option value="Partial">Partial</option>
                                     </select>
@@ -105,31 +105,36 @@
                                         <span class="badge badge-info">
                                     {{ $purchase->status }}
                                 </span>
-                                    @elseif ($purchase->status == 'Ordered')
-                                        <span class="badge badge-primary">
+                                    @elseif ($purchase->status == 'Completed')
+                                        <span class="badge badge-success">
                                     {{ $purchase->status }}
                                 </span>
                                     @else
-                                        <span class="badge badge-success">
+                                        <span class="badge badge-secondary">
                                     {{ $purchase->status }}
                                 </span>
                                     @endif
                                 </td>
                                 <td>{{ format_currency($purchase->total_amount) }}</td>
                                 <td>{{ format_currency($purchase->paid_amount) }}</td>
-                                <td>{{ format_currency($purchase->due_amount) }}</td>
+                                <td>{{ format_currency($purchase->effective_due_amount ?? $purchase->due_amount) }}</td>
                                 <td>
-                                    @if ($purchase->payment_status == 'Partial')
+                                    @php($effectivePaymentStatus = $purchase->effective_payment_status ?? $purchase->payment_status)
+                                    @if ($effectivePaymentStatus == 'Partial')
                                         <span class="badge badge-warning">
-                                    {{ $purchase->payment_status }}
+                                    {{ $effectivePaymentStatus }}
                                 </span>
-                                    @elseif ($purchase->payment_status == 'Paid')
+                                    @elseif ($effectivePaymentStatus == 'Paid')
                                         <span class="badge badge-success">
-                                    {{ $purchase->payment_status }}
+                                    {{ $effectivePaymentStatus }}
+                                </span>
+                                    @elseif ($effectivePaymentStatus == 'Overpaid')
+                                        <span class="badge badge-info">
+                                    {{ $effectivePaymentStatus }}
                                 </span>
                                     @else
                                         <span class="badge badge-danger">
-                                    {{ $purchase->payment_status }}
+                                    {{ $effectivePaymentStatus }}
                                 </span>
                                     @endif
 

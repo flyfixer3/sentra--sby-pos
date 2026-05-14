@@ -544,8 +544,6 @@ class PurchaseController extends Controller
                 }
             }
 
-            $finalStatus = $request->status ?: 'Pending';
-
             $purchase = Purchase::create([
                 'purchase_order_id'    => $purchase_order ? (int) $purchase_order->id : ($request->purchase_order_id ?? null),
                 'purchase_delivery_id' => $fromDelivery ? $purchaseDeliveryId : null,
@@ -562,7 +560,7 @@ class PurchaseController extends Controller
                 'total_amount' => $request->total_amount * 1,
                 'due_amount' => $paymentSnapshot['due_amount'] * 1,
 
-                'status' => $finalStatus,
+                'status' => 'Pending',
 
                 'total_quantity' => $request->total_quantity,
                 'payment_status' => $paymentSnapshot['payment_status'],
@@ -694,6 +692,10 @@ class PurchaseController extends Controller
 
                 $autoDeliveryRedirectUrl = route('purchase-deliveries.confirm', (int) $autoPD->id);
             }
+
+            $purchase->refresh();
+            $purchase->loadMissing(['purchaseDelivery']);
+            $purchase->syncBusinessStatus();
 
             Cart::instance('purchase')->destroy();
 
@@ -1307,7 +1309,7 @@ class PurchaseController extends Controller
                     'total_amount' => $request->total_amount * 1,
                     'total_quantity' => $request->total_quantity,
                     'due_amount' => $paymentSnapshot['due_amount'] * 1,
-                    'status' => $request->status,
+                    'status' => 'Pending',
                     'payment_status' => $paymentSnapshot['payment_status'],
                     'payment_method' => $request->payment_method,
                     'note' => $request->note,
@@ -1324,6 +1326,10 @@ class PurchaseController extends Controller
                 } else {
                     $purchase->update($purchaseUpdatePayload);
                 }
+
+                $purchase->refresh();
+                $purchase->loadMissing(['purchaseDelivery']);
+                $purchase->syncBusinessStatus();
 
                 // =========================================================
                 // Update exact purchase detail row, jangan delete-all + recreate

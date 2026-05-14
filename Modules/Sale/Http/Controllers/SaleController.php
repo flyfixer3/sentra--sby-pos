@@ -1170,6 +1170,7 @@ class SaleController extends Controller
                     'dp_allocated_amount' => (int) $dpAllocatedForThisInvoice,
 
                     'due_amount' => (int) $due_amount,
+                    'status' => 'Pending',
                     'payment_status' => $payment_status,
                     'payment_method' => $request->payment_method,
 
@@ -1279,6 +1280,10 @@ class SaleController extends Controller
                         $autoDeliveryRedirectUrl = route('sale-deliveries.confirm.form', (int) $autoDelivery->id);
                     }
                 }
+
+                $sale->refresh();
+                $sale->loadMissing(['saleDeliveries']);
+                $sale->syncBusinessStatus();
 
                 Cart::instance('sale')->destroy();
 
@@ -1799,6 +1804,7 @@ class SaleController extends Controller
                 'total_amount' => (int) $computedGrandTotal,
                 'total_quantity' => (int) $totalQty,
                 'due_amount' => $due_amount * 1,
+                'status' => 'Pending',
                 'payment_status' => $payment_status,
                 'payment_method' => $request->payment_method,
                 'note' => $request->note,
@@ -1811,6 +1817,9 @@ class SaleController extends Controller
             }
 
             $sale->update($saleUpdateData);
+            $sale->refresh();
+            $sale->loadMissing(['saleDeliveries']);
+            $sale->syncBusinessStatus();
 
             foreach (Cart::instance('sale')->content() as $cart_item) {
                 [$installationType, $customerVehicleId] = $this->resolveSaleDetailInstallationMetadata(

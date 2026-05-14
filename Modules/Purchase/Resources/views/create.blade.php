@@ -151,10 +151,10 @@
                                         <label>Status <span class="text-danger">*</span></label>
 
                                         <select class="form-control" id="status_display" disabled>
-                                            <option value="Completed" selected>Completed</option>
+                                            <option value="Pending" selected>Pending</option>
                                         </select>
 
-                                        <input type="hidden" name="status" value="Completed">
+                                        <input type="hidden" name="status" value="Pending">
                                         <small class="text-muted">
                                             Walk-in purchase will create PD (Pending). Stock akan masuk saat Confirm Purchase Delivery.
                                         </small>

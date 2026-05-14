@@ -27,6 +27,10 @@ class PurchaseDataTable extends DataTable
                 return format_currency($data->total_amount);
             })
 
+            ->editColumn('status', function ($data) {
+                return view('purchase::partials.status', compact('data'));
+            })
+
             ->editColumn('due_date', function ($data) {
 
                 // kalau sudah soft deleted → biar jelas
@@ -136,19 +140,20 @@ class PurchaseDataTable extends DataTable
              * 0 reference
              * 1 reference_supplier
              * 2 supplier_name
-             * 3 total_amount
-             * 4 due_amount
-             * 5 due_date
-             * 6 payment_status
-             * 7 deleted_datetime
-             * 8 created_datetime
-             * 9 created_by_name
-             * 10 updated_by_name
-             * 11 action
-             * 12 created_at (hidden, untuk sorting)
-             * 13 deleted_at (hidden, untuk logic/filter)
+             * 3 status
+             * 4 total_amount
+             * 5 due_amount
+             * 6 due_date
+             * 7 payment_status
+             * 8 deleted_datetime
+             * 9 created_datetime
+             * 10 created_by_name
+             * 11 updated_by_name
+             * 12 action
+             * 13 created_at (hidden, untuk sorting)
+             * 14 deleted_at (hidden, untuk logic/filter)
              */
-            ->orderBy(12, 'desc')
+            ->orderBy(13, 'desc')
             ->buttons(
                 Button::make('excel')->text('<i class="bi bi-file-earmark-excel-fill"></i> Excel'),
                 Button::make('print')->text('<i class="bi bi-printer-fill"></i> Print'),
@@ -169,6 +174,10 @@ class PurchaseDataTable extends DataTable
 
             Column::make('supplier_name')
                 ->title('Supplier')
+                ->className('text-center align-middle'),
+
+            Column::make('status')
+                ->title('Status')
                 ->className('text-center align-middle'),
 
             Column::computed('total_amount')

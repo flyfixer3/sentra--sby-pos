@@ -180,6 +180,7 @@
     // ========= Invoice numbers =========
     $invoiceNo = 'INV/' . ($sale->reference ?? $sale->id);
     $invoiceDate = !empty($sale->date) ? \Carbon\Carbon::parse($sale->date)->format('d M, Y') : '-';
+    $businessStatus = strtoupper($sale->status ?? 'PENDING');
 
     // ========= Payment status badge =========
     $ps = strtolower((string)($sale->payment_status ?? 'unpaid'));
@@ -247,6 +248,7 @@
                 <div class="info-title">Invoice Info</div>
                 <div class="info-line">Invoice: <span class="fw-semibold">{{ $invoiceNo }}</span></div>
                 <div class="info-line">Date: {{ $invoiceDate }}</div>
+                <div class="info-line">Status: <span class="fw-semibold">{{ $businessStatus }}</span></div>
                 <div class="info-line">
                     Payment Status:
                     <span class="badge {{ $psBadge }}">{{ strtoupper($sale->payment_status ?? 'UNPAID') }}</span>

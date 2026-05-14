@@ -49,7 +49,7 @@ class HomeController extends Controller
         $currentMonthSales = Sale::completed()->whereMonth('date', date('m'))
                 ->whereYear('date', date('Y'))
                 ->sum('total_amount') / 1;
-        $currentMonthPurchases = Purchase::where('status', 'Completed')->whereMonth('date', date('m'))
+        $currentMonthPurchases = Purchase::completed()->whereMonth('date', date('m'))
                 ->whereYear('date', date('Y'))
                 ->sum('total_amount') / 1;
         $currentMonthExpenses = Expense::whereMonth('date', date('m'))
@@ -194,7 +194,7 @@ class HomeController extends Controller
 
         $date_range = Carbon::today()->subDays(6);
 
-        $purchases = Purchase::where('status', 'Completed')
+        $purchases = Purchase::completed()
             ->where('date', '>=', $date_range)
             ->groupBy(DB::raw("DATE_FORMAT(date,'%d-%m-%y')"))
             ->orderBy('date')

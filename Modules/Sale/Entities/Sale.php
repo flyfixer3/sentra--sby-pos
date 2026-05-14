@@ -2,7 +2,6 @@
 
 namespace Modules\Sale\Entities;
 
-use Illuminate\Database\Eloquent\Model;
 use App\Models\BaseModel;
 use App\Models\User;
 use App\Support\LegacyImport\ReferenceCodeGenerator;
@@ -167,6 +166,8 @@ class Sale extends BaseModel
                     $model->date ?? now()
                 );
             }
+
+            $model->status = 'Pending';
         });
     }
 
@@ -185,7 +186,50 @@ class Sale extends BaseModel
     }
 
     public function scopeCompleted($query) {
-        return $query->where('payment_status', 'Paid');
+        return $query->where('status', 'Completed');
+    }
+
+    public function isDeliveryConfirmed(): bool
+    {
+        $deliveries = $this->relationLoaded('saleDeliveries')
+            ? $this->saleDeliveries
+            : $this->saleDeliveries()->get();
+
+        $activeDeliveries = $deliveries->filter(function ($delivery) {
+            $status = strtolower(trim((string) ($delivery->status ?? 'pending')));
+            return !in_array($status, ['cancelled', 'canceled'], true);
+        });
+
+        if ($activeDeliveries->isEmpty()) {
+            return false;
+        }
+
+        return $activeDeliveries->every(function ($delivery) {
+            return strtolower(trim((string) ($delivery->status ?? 'pending'))) === 'confirmed';
+        });
+    }
+
+    public function isPaymentSettled(): bool
+    {
+        return strtolower(trim((string) ($this->payment_status ?? ''))) === 'paid';
+    }
+
+    public function resolveBusinessStatus(): string
+    {
+        return ($this->isDeliveryConfirmed() && $this->isPaymentSettled())
+            ? 'Completed'
+            : 'Pending';
+    }
+
+    public function syncBusinessStatus(): bool
+    {
+        $resolvedStatus = $this->resolveBusinessStatus();
+
+        if ((string) ($this->status ?? '') === $resolvedStatus) {
+            return false;
+        }
+
+        return $this->forceFill(['status' => $resolvedStatus])->save();
     }
 
     public function getShippingAmountAttribute($value) {

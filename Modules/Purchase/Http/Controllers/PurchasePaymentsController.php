@@ -84,6 +84,10 @@ class PurchasePaymentsController extends Controller
                 'due_amount' => $paymentSnapshot['due_amount'] * 1,
                 'payment_status' => $paymentSnapshot['payment_status']
             ]);
+            $purchase->refresh();
+            $purchase->loadMissing(['purchaseDelivery']);
+            $purchase->syncBusinessStatus();
+
             Helper::addNewTransaction([
                 'branch_id' => $branchId ?: null,
                 'date' => $request->date,
@@ -152,6 +156,9 @@ class PurchasePaymentsController extends Controller
                 'due_amount' => $paymentSnapshot['due_amount'] * 1,
                 'payment_status' => $paymentSnapshot['payment_status']
             ]);
+            $purchase->refresh();
+            $purchase->loadMissing(['purchaseDelivery']);
+            $purchase->syncBusinessStatus();
 
             $purchasePayment->update([
                 'date' => $request->date,
@@ -172,7 +179,28 @@ class PurchasePaymentsController extends Controller
     public function destroy(PurchasePayment $purchasePayment) {
         abort_if(Gate::denies('access_purchase_payments'), 403);
 
-        $purchasePayment->delete();
+        DB::transaction(function () use ($purchasePayment) {
+            $purchase = $purchasePayment->purchase;
+
+            if ($purchase) {
+                $newPaidAmount = max(((float) $purchase->paid_amount - (float) $purchasePayment->amount), 0) * 1;
+                $paymentSnapshot = Purchase::resolvePaymentSnapshot($purchase->total_amount, $newPaidAmount);
+
+                $purchase->update([
+                    'paid_amount' => $newPaidAmount,
+                    'due_amount' => $paymentSnapshot['due_amount'] * 1,
+                    'payment_status' => $paymentSnapshot['payment_status'],
+                ]);
+            }
+
+            $purchasePayment->delete();
+
+            if ($purchase) {
+                $purchase->refresh();
+                $purchase->loadMissing(['purchaseDelivery']);
+                $purchase->syncBusinessStatus();
+            }
+        });
 
         toast('Purchase Payment Deleted!', 'warning');
 

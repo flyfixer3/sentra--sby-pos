@@ -486,6 +486,17 @@ class SaleDeliveryController extends Controller
                     ]);
                 }
 
+                if ($source === 'sale' && $saleId) {
+                    $linkedSale = \Modules\Sale\Entities\Sale::withoutGlobalScopes()
+                        ->lockForUpdate()
+                        ->find((int) $saleId);
+
+                    if ($linkedSale) {
+                        $linkedSale->loadMissing(['saleDeliveries']);
+                        $linkedSale->syncBusinessStatus();
+                    }
+                }
+
             });
 
             toast('Sale Delivery created successfully', 'success');

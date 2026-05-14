@@ -557,7 +557,7 @@ class ImportLegacyExcelCommand extends Command
                     'total_amount' => $totalAmount,
                     'paid_amount' => $isPaid ? $totalAmount : 0,
                     'due_amount' => $isPaid ? 0 : $totalAmount,
-                    'status' => 'Completed',
+                    'status' => 'Pending',
                     'payment_status' => $isPaid ? 'Paid' : 'Unpaid',
                     'payment_method' => $isPaid ? 'Bank Transfer' : 'Other',
                     'note' => $isPaid ? 'LEGACY IMPORT X' : 'LEGACY IMPORT X | REVIEW MANUAL: payment status',
@@ -826,7 +826,7 @@ class ImportLegacyExcelCommand extends Command
                     $saleData['automated'] = false;
                 }
                 if (Schema::hasColumn('sales', 'status')) {
-                    $saleData['status'] = 'Completed';
+                    $saleData['status'] = 'Pending';
                 }
                 if (Schema::hasColumn('sales', 'total_quantity')) {
                     $saleData['total_quantity'] = $totalQty;

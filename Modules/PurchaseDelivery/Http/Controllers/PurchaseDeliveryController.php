@@ -1189,6 +1189,16 @@ class PurchaseDeliveryController extends Controller
                 'confirm_note_updated_at'   => $confirmNote ? now() : null,
             ]);
 
+            $purchase = \Modules\Purchase\Entities\Purchase::withoutGlobalScopes()
+                ->where('purchase_delivery_id', (int) $purchaseDelivery->id)
+                ->lockForUpdate()
+                ->first();
+
+            if ($purchase) {
+                $purchase->loadMissing(['purchaseDelivery']);
+                $purchase->syncBusinessStatus();
+            }
+
             if (!empty($purchaseDelivery->purchase_order_id)) {
                 $po = PurchaseOrder::lockForUpdate()->findOrFail((int) $purchaseDelivery->purchase_order_id);
                 $po->refreshStatus();

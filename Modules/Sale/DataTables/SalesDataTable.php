@@ -84,16 +84,15 @@ class SalesDataTable extends DataTable
             ->addColumn('payment_status', function ($data) {
                 return view('sale::partials.payment-status', compact('data'));
             })
-            ->addColumn('delivery_status', function ($row) {
-                return '<span class="badge ' . e($row->derived_delivery_status_class) . '">' . e($row->derived_delivery_status_label) . '</span>';
+            ->editColumn('status', function ($data) {
+                return view('sale::partials.status', compact('data'));
             })
             ->addColumn('source', function ($row) {
                 return e($row->derived_source_label);
             })
             ->addColumn('action', function ($data) {
                 return view('sale::partials.actions', compact('data'));
-            })
-            ->rawColumns(['delivery_status']);
+            });
     }
 
     public function query(Sale $model)
@@ -162,11 +161,9 @@ class SalesDataTable extends DataTable
             Column::computed('payment_status')
                 ->className('text-center align-middle'),
 
-            Column::computed('delivery_status')
-                ->title('Delivery Status')
-                ->className('text-center align-middle')
-                ->orderable(false)
-                ->searchable(false),
+            Column::make('status')
+                ->title('Status')
+                ->className('text-center align-middle'),
 
             Column::computed('source')
                 ->title('Source')

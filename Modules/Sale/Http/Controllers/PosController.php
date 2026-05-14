@@ -63,13 +63,15 @@ class PosController extends Controller
                 'paid_amount' => $request->paid_amount * 1,
                 'total_amount' => $request->total_amount * 1,
                 'due_amount' => $due_amount * 1,
-                'status' => 'Completed',
+                'status' => 'Pending',
                 'payment_status' => $payment_status,
                 'payment_method' => $request->payment_method,
                 'note' => $request->note,
                 'tax_amount' => Cart::instance('sale')->tax() * 1,
                 'discount_amount' => Cart::instance('sale')->discount() * 1,
             ]);
+            $sale->loadMissing(['saleDeliveries']);
+            $sale->syncBusinessStatus();
 
             $hppService = new HppService();
             $saleHppAt = $sale->created_at ?? now();
