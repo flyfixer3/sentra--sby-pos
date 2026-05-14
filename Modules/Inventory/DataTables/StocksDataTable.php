@@ -41,6 +41,12 @@ class StocksDataTable extends DataTable
                     . number_format($qty)
                     . '</span>';
             })
+            ->orderColumn('defect_qty', function ($query, $order) {
+                return $this->orderByNumericAlias($query, 'defect_qty', $order);
+            })
+            ->orderColumn('damaged_qty', function ($query, $order) {
+                return $this->orderByNumericAlias($query, 'damaged_qty', $order);
+            })
 
             /**
              * ✅ Defect badge (kirim branch_id, bukan warehouse_id)
@@ -338,8 +344,8 @@ class StocksDataTable extends DataTable
         $cols[] = ['data' => 'available_qty', 'name' => 'available_qty', 'title' => 'Available', 'class' => 'text-end'];
         $cols[] = ['data' => 'incoming_qty', 'name' => 'incoming_qty', 'title' => 'Incoming', 'class' => 'text-end'];
 
-        $cols[] = ['data' => 'defect_qty', 'name' => 'defect_qty', 'title' => 'Defect', 'class' => 'text-end', 'orderable' => false];
-        $cols[] = ['data' => 'damaged_qty', 'name' => 'damaged_qty', 'title' => 'Damaged', 'class' => 'text-end', 'orderable' => false];
+        $cols[] = ['data' => 'defect_qty', 'name' => 'defect_qty', 'title' => 'Defect', 'class' => 'text-end'];
+        $cols[] = ['data' => 'damaged_qty', 'name' => 'damaged_qty', 'title' => 'Damaged', 'class' => 'text-end'];
 
         $cols[] = [
             'data' => 'action',
@@ -358,5 +364,17 @@ class StocksDataTable extends DataTable
     protected function filename(): string
     {
         return 'Stocks_' . date('YmdHis');
+    }
+
+    private function orderByNumericAlias($query, string $alias, string $order)
+    {
+        $allowedAliases = ['defect_qty', 'damaged_qty'];
+        if (!in_array($alias, $allowedAliases, true)) {
+            return $query;
+        }
+
+        $direction = strtolower($order) === 'desc' ? 'desc' : 'asc';
+
+        return $query->orderByRaw($alias . ' ' . $direction);
     }
 }
