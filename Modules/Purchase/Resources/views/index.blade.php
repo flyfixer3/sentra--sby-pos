@@ -93,6 +93,25 @@
                             </div>
                         </div>
 
+                        @include('includes.status-legend', [
+                            'id' => 'purchaseInvoiceStatusLegend',
+                            'title' => 'Purchase Invoice Status Meaning',
+                            'items' => [
+                                [
+                                    'status' => 'Pending',
+                                    'badge_class' => 'badge badge-warning',
+                                    'meaning' => 'Purchase Invoice is not fully completed yet.',
+                                    'trigger' => 'Default status, or related Purchase Delivery is not received and/or payment is not settled.',
+                                ],
+                                [
+                                    'status' => 'Completed',
+                                    'badge_class' => 'badge badge-success',
+                                    'meaning' => 'Purchase Invoice is fully completed.',
+                                    'trigger' => 'Related Purchase Delivery is received and payment is Paid or valid Overpaid.',
+                                ],
+                            ],
+                        ])
+
                         <div class="table-responsive">
                             {!! $dataTable->table(['class' => 'table table-striped table-bordered w-100'], true) !!}
                         </div>

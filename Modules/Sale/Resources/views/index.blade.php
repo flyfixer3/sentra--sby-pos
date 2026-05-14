@@ -93,6 +93,25 @@
                             </div>
                         </div>
 
+                        @include('includes.status-legend', [
+                            'id' => 'salesInvoiceStatusLegend',
+                            'title' => 'Sales Invoice Status Meaning',
+                            'items' => [
+                                [
+                                    'status' => 'Pending',
+                                    'badge_class' => 'badge badge-warning',
+                                    'meaning' => 'Sales Invoice is not fully completed yet.',
+                                    'trigger' => 'Default status, or payment is not Paid and/or related active Sale Delivery is not confirmed.',
+                                ],
+                                [
+                                    'status' => 'Completed',
+                                    'badge_class' => 'badge badge-success',
+                                    'meaning' => 'Sales Invoice is fully completed.',
+                                    'trigger' => 'All active related Sale Deliveries are confirmed and payment status is Paid.',
+                                ],
+                            ],
+                        ])
+
                         <div class="table-responsive">
                             {!! $dataTable->table(['class' => 'table table-striped table-bordered w-100'], true) !!}
                         </div>
