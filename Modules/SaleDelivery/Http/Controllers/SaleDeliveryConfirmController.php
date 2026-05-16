@@ -216,6 +216,7 @@ class SaleDeliveryConfirmController extends Controller
                 'items.saleOrderItem.customerVehicle',
                 'items.saleItem.customerVehicle',
                 'customer',
+                'printedBy',
             ]);
 
             $productGroups = $saleDelivery->items
@@ -372,6 +373,7 @@ class SaleDeliveryConfirmController extends Controller
             $branchId = (int) BranchContext::id();
 
             $request->validate([
+                'delivery_code' => 'required|string|size:6',
                 'confirm_note' => 'nullable|string|max:5000',
 
                 'items' => 'required|array|min:1',
@@ -410,6 +412,14 @@ class SaleDeliveryConfirmController extends Controller
 
                 if ((int) $saleDelivery->branch_id !== (int) $branchId) {
                     throw new \RuntimeException('Wrong branch context.');
+                }
+
+                if (empty($saleDelivery->delivery_code) || empty($saleDelivery->printed_at)) {
+                    throw new \RuntimeException('Please print the Sale Delivery delivery note before confirming this delivery.');
+                }
+
+                if (strtoupper(trim((string) $request->input('delivery_code'))) !== strtoupper((string) $saleDelivery->delivery_code)) {
+                    throw new \RuntimeException('Invalid delivery note confirmation code.');
                 }
 
                 if (empty($saleDelivery->reference)) {

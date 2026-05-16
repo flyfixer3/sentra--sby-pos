@@ -115,6 +115,25 @@
         .col-qty   { width: 13%; text-align: center; }
         .col-unit  { width: 15%; text-align: center; }
 
+        .footer-info {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 12px;
+        }
+
+        .footer-info td {
+            border: 1px solid #000;
+            padding: 10px 12px;
+            vertical-align: top;
+            font-size: 13px;
+        }
+
+        .footer-info .box-label {
+            font-weight: 800;
+            display: inline-block;
+            min-width: 170px;
+        }
+
         /* =========================
            SIGNATURE
         ========================= */
@@ -183,6 +202,7 @@
 
     $warehouseName = $saleDelivery->warehouse->warehouse_name ?? '-';
     $saleOrderRef  = $saleDelivery->saleOrder->reference ?? null;
+    $saleRef = !empty($saleDelivery->sale_id) ? ('Sale #' . (int) $saleDelivery->sale_id) : null;
 @endphp
 
 <div class="watermark">COPY #{{ $copyNo }}</div>
@@ -247,6 +267,13 @@
                     <strong>{{ $saleOrderRef }}</strong>
                 </td>
             </tr>
+        @elseif(!empty($saleRef))
+            <tr>
+                <td colspan="2">
+                    <span class="info-label">Sale</span>:
+                    <strong>{{ $saleRef }}</strong>
+                </td>
+            </tr>
         @endif
     </table>
 
@@ -280,6 +307,22 @@
                 </tr>
             @endforeach
         </tbody>
+    </table>
+
+    <table class="footer-info">
+        <tr>
+            <td style="width: 40%;">
+                <span class="box-label">No. Referensi</span>:
+                <strong>{{ $ref }}</strong>
+            </td>
+            <td style="width: 60%;">
+                <span class="box-label">Kode Konfirmasi Surat Jalan</span>:
+                <strong>{{ $saleDelivery->delivery_code ?? '-' }}</strong>
+                <div class="small" style="margin-top:4px;">
+                    This code is required to confirm the Sale Delivery.
+                </div>
+            </td>
+        </tr>
     </table>
 
     {{-- SIGNATURE --}}

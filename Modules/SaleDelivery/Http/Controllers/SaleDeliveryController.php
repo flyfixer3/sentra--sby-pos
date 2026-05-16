@@ -63,6 +63,8 @@ class SaleDeliveryController extends Controller
             'customer',
             'creator',
             'confirmer',
+            'printedBy',
+            'printLogs',
             'saleOrder',
         ]);
 

@@ -31,7 +31,11 @@
     $soRef = $saleDelivery->saleOrder?->reference ?? null;
 
     $canConfirm = ($st === 'pending');
-    $canPrint = ($st === 'confirmed');
+    $canPrint = in_array($st, ['pending', 'confirmed'], true);
+    $printCount = method_exists($saleDelivery, 'printLogs') ? (int) $saleDelivery->printLogs->count() : 0;
+    $printedAt = $saleDelivery->printed_at ? $saleDelivery->printed_at->format('d M Y H:i') : '-';
+    $printedBy = $saleDelivery->printed_at ? ($saleDelivery->printedBy?->name ?? '-') : '-';
+    $hasPrintedDeliveryNote = !empty($saleDelivery->delivery_code) && !empty($saleDelivery->printed_at);
 
     $canCreateInvoice = ($st === 'confirmed' && empty($saleDelivery->sale_id));
 
@@ -54,6 +58,9 @@
                     <div class="d-flex align-items-center gap-2 flex-wrap">
                         <h4 class="mb-0">{{ $saleDelivery->reference }}</h4>
                         <span class="badge {{ $badgeClass }}">{{ strtoupper($st) }}</span>
+                        <span class="badge {{ $hasPrintedDeliveryNote ? 'bg-success' : 'bg-secondary' }}">
+                            {{ $hasPrintedDeliveryNote ? 'PRINTED' : 'NOT PRINTED' }}
+                        </span>
                     </div>
 
                     <div class="text-muted small mt-1">
@@ -194,6 +201,23 @@
                             <div class="mt-1">
                                 Confirmation Note: <strong>{{ $saleDelivery->confirm_note ?: '-' }}</strong>
                             </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="col-lg-6 mt-3">
+                    <div class="p-3 border rounded-3 bg-light h-100">
+                        <div class="d-flex align-items-center justify-content-between">
+                            <div class="fw-semibold">Delivery Note</div>
+                            <span class="badge {{ $hasPrintedDeliveryNote ? 'bg-success' : 'bg-secondary' }}">
+                                {{ $hasPrintedDeliveryNote ? 'Printed' : 'Not Printed' }}
+                            </span>
+                        </div>
+                        <hr class="my-2">
+                        <div class="small">
+                            <div>Print count: <strong>{{ number_format($printCount) }}</strong></div>
+                            <div class="mt-1">First printed at: <strong>{{ $printedAt }}</strong></div>
+                            <div class="mt-1">First printed by: <strong>{{ $printedBy }}</strong></div>
                         </div>
                     </div>
                 </div>

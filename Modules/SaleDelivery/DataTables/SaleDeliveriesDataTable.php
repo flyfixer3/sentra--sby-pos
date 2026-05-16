@@ -48,12 +48,23 @@ class SaleDeliveriesDataTable extends DataTable
                 return view('saledelivery::partials.status', ['data' => $row]);
             })
 
+            ->addColumn('print_status', function ($row) {
+                $printed = !empty($row->delivery_code) && !empty($row->printed_at);
+                $count = (int) ($row->print_logs_count ?? 0);
+                $class = $printed ? 'badge-success' : 'badge-secondary';
+                $label = $printed ? 'Printed' : 'Not Printed';
+
+                return '<span class="badge ' . $class . '" title="Print count: ' . $count . '">' . $label . '</span>' .
+                    '<div class="small text-muted">' . $count . ' print(s)</div>';
+            })
+
             ->editColumn('created_by_name', fn($row) => $row->created_by_name ?? '-')
             ->editColumn('confirmed_by_name', fn($row) => $row->confirmed_by_name ?? '-')
 
             ->addColumn('action', function ($row) {
                 return view('saledelivery::partials.actions', ['data' => $row]);
-            });
+            })
+            ->rawColumns(['status', 'print_status', 'action']);
     }
 
     public function query(SaleDelivery $model)
@@ -75,7 +86,7 @@ class SaleDeliveriesDataTable extends DataTable
             ->leftJoin('customers', 'customers.id', '=', 'sale_deliveries.customer_id')
             ->leftJoin('users as u_created', 'u_created.id', '=', 'sale_deliveries.created_by')
             ->leftJoin('users as u_confirmed', 'u_confirmed.id', '=', 'sale_deliveries.confirmed_by')
-            ->withCount('items');
+            ->withCount(['items', 'printLogs']);
     }
 
     public function html()
@@ -125,6 +136,12 @@ class SaleDeliveriesDataTable extends DataTable
                 ->className('text-center align-middle'),
 
             Column::make('status')
+                ->className('text-center align-middle'),
+
+            Column::computed('print_status')
+                ->title('Delivery Note')
+                ->orderable(false)
+                ->searchable(false)
                 ->className('text-center align-middle'),
 
             Column::make('created_by_name')

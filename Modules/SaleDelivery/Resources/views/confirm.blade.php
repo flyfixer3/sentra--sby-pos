@@ -25,6 +25,8 @@
             'is_main' => (bool) $w->is_main,
         ];
     })->values();
+
+    $hasPrintedDeliveryNote = !empty($saleDelivery->delivery_code) && !empty($saleDelivery->printed_at);
 @endphp
 
 <style>
@@ -269,6 +271,37 @@
 
         <div class="row">
             <div class="col-lg-8 mb-3">
+                <div class="card shadow-sm mb-3">
+                    <div class="card-body">
+                        @if(!$hasPrintedDeliveryNote)
+                            <div class="alert alert-warning mb-3">
+                                <strong>This Sale Delivery has not been printed yet.</strong>
+                                Please print the delivery note before confirmation.
+                            </div>
+                        @endif
+
+                        <div class="form-group mb-0">
+                            <label for="delivery_code" class="font-weight-bold">
+                                Delivery Note Code <span class="text-danger">*</span>
+                            </label>
+                            <input type="text"
+                                   id="delivery_code"
+                                   name="delivery_code"
+                                   class="form-control @error('delivery_code') is-invalid @enderror"
+                                   maxlength="6"
+                                   required
+                                   value="{{ old('delivery_code') }}"
+                                   placeholder="Enter code from printed delivery note">
+                            <small class="form-text text-muted">
+                                You must print the Sale Delivery delivery note first. Enter the code shown on the printed document to confirm this delivery.
+                            </small>
+                            @error('delivery_code')
+                                <div class="invalid-feedback d-block">{{ $message }}</div>
+                            @enderror
+                        </div>
+                    </div>
+                </div>
+
                 @forelse(($productGroups ?? collect()) as $i => $group)
                     @php
                         $pid = (int) ($group['product_id'] ?? 0);

@@ -39,13 +39,28 @@ class SaleDeliveryPrintController extends Controller
             }
 
             $status = strtolower(trim((string) ($saleDelivery->getRawOriginal('status') ?? $saleDelivery->status ?? 'pending')));
-            if (!in_array($status, ['confirmed'], true)) {
-                abort(422, "Sale Delivery can be printed only when status is CONFIRMED.");
+            if (in_array($status, ['cancelled'], true)) {
+                abort(422, "Sale Delivery is cancelled.");
             }
 
             DB::transaction(function () use ($saleDelivery) {
+                $locked = SaleDelivery::withoutGlobalScopes()
+                    ->lockForUpdate()
+                    ->findOrFail((int) $saleDelivery->id);
+
+                if (empty($locked->delivery_code)) {
+                    $locked->delivery_code = $this->generateUniqueDeliveryCode();
+                }
+
+                if (empty($locked->printed_at)) {
+                    $locked->printed_at = now();
+                    $locked->printed_by = auth()->id();
+                }
+
+                $locked->save();
+
                 SaleDeliveryPrintLog::create([
-                    'sale_delivery_id' => (int) $saleDelivery->id,
+                    'sale_delivery_id' => (int) $locked->id,
                     'user_id'          => (int) auth()->id(),
                     'printed_at'       => now(),
                     'ip_address'       => request()->ip(),
@@ -58,9 +73,11 @@ class SaleDeliveryPrintController extends Controller
 
             if ($copyNumber <= 0) $copyNumber = 1;
 
+            $saleDelivery->refresh();
+
             return response()->json([
                 'ok'          => true,
-                'status'      => $status,
+                'status'      => strtolower(trim((string) ($saleDelivery->getRawOriginal('status') ?? $saleDelivery->status ?? 'pending'))),
                 'copy_number' => $copyNumber,
                 'pdf_url'     => route('sale-deliveries.print.pdf', [
                     'saleDelivery' => $saleDelivery->id,
@@ -91,9 +108,8 @@ class SaleDeliveryPrintController extends Controller
                 throw new \RuntimeException('Wrong branch context.');
             }
 
-            $status = strtolower(trim((string) ($saleDelivery->getRawOriginal('status') ?? $saleDelivery->status ?? 'pending')));
-            if (!in_array($status, ['confirmed'], true)) {
-                throw new \RuntimeException("Sale Delivery can be printed only when status is CONFIRMED.");
+            if (empty($saleDelivery->delivery_code) || empty($saleDelivery->printed_at)) {
+                throw new \RuntimeException("Please prepare/print the Sale Delivery delivery note first.");
             }
 
             $setting = Setting::first();
@@ -196,5 +212,18 @@ class SaleDeliveryPrintController extends Controller
         } catch (\Throwable $e) {
             return $this->failBack($e->getMessage(), 422);
         }
+    }
+
+    private function generateUniqueDeliveryCode(): string
+    {
+        do {
+            $code = strtoupper(substr(bin2hex(random_bytes(4)), 0, 6));
+        } while (
+            SaleDelivery::withoutGlobalScopes()
+                ->where('delivery_code', $code)
+                ->exists()
+        );
+
+        return $code;
     }
 }

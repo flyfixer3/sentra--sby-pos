@@ -55,4 +55,48 @@
 
 @push('page_scripts')
 {!! $dataTable->scripts() !!}
+<script>
+document.addEventListener('click', async function (event) {
+    const button = event.target.closest('.js-print-sale-delivery');
+    if (!button) return;
+
+    event.preventDefault();
+    event.stopPropagation();
+
+    const id = button.getAttribute('data-id');
+    if (!id) return;
+
+    button.disabled = true;
+
+    try {
+        const res = await fetch(`{{ url('/') }}/sale-deliveries/${id}/prepare-print`, {
+            method: 'POST',
+            headers: {
+                'X-Requested-With': 'XMLHttpRequest',
+                'X-CSRF-TOKEN': document
+                    .querySelector('meta[name="csrf-token"]')
+                    .getAttribute('content'),
+                'Accept': 'application/json',
+            }
+        });
+
+        const data = await res.json();
+
+        if (!res.ok || !data.ok) {
+            alert(data.message || 'Cannot print sale delivery.');
+            return;
+        }
+
+        window.open(data.pdf_url, '_blank');
+
+        if (window.LaravelDataTables && window.LaravelDataTables['sale-deliveries-table']) {
+            window.LaravelDataTables['sale-deliveries-table'].ajax.reload(null, false);
+        }
+    } catch (e) {
+        alert('Unexpected error. Please try again.');
+    } finally {
+        button.disabled = false;
+    }
+});
+</script>
 @endpush

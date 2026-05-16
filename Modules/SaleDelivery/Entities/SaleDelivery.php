@@ -29,6 +29,10 @@ class SaleDelivery extends BaseModel
         'status',
         'note',
 
+        'delivery_code',
+        'printed_at',
+        'printed_by',
+
         'confirm_note',
         'confirm_note_updated_by',
         'confirm_note_updated_role',
@@ -41,6 +45,7 @@ class SaleDelivery extends BaseModel
 
     protected $casts = [
         'date' => 'date',
+        'printed_at' => 'datetime',
         'confirmed_at' => 'datetime',
         'confirm_note_updated_at' => 'datetime',
     ];
@@ -73,6 +78,11 @@ class SaleDelivery extends BaseModel
     public function confirmer()
     {
         return $this->belongsTo(User::class, 'confirmed_by');
+    }
+
+    public function printedBy()
+    {
+        return $this->belongsTo(User::class, 'printed_by');
     }
 
     public function saleOrder()
