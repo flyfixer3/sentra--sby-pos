@@ -17,6 +17,8 @@ class SaleOrderItem extends BaseModel
         'sale_order_id',
         'product_id',
         'quantity',
+        'sellable_stock_at_order',
+        'shortage_quantity',
         'unit_price',
         'price',
         'product_discount_amount',
@@ -24,6 +26,11 @@ class SaleOrderItem extends BaseModel
         'sub_total',
         'installation_type',
         'customer_vehicle_id',
+    ];
+
+    protected $casts = [
+        'sellable_stock_at_order' => 'integer',
+        'shortage_quantity' => 'integer',
     ];
 
     public function saleOrder(): BelongsTo

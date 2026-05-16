@@ -75,23 +75,44 @@ class SaleOrderController extends Controller
         return $sellable;
     }
 
-    private function hasSaleOrderShortage(int $branchId, array $qtyByProduct, array $reservedCreditByProduct = []): bool
+    private function buildSaleOrderShortageSnapshot(int $branchId, array $items, array $reservedCreditByProduct = []): array
     {
-        $sellableMap = $this->getBranchSellableStockMap($branchId, array_keys($qtyByProduct), $reservedCreditByProduct);
+        $productIds = collect($items)
+            ->pluck('product_id')
+            ->map(fn ($id) => (int) $id)
+            ->filter(fn ($id) => $id > 0)
+            ->unique()
+            ->values()
+            ->all();
 
-        foreach ($qtyByProduct as $productId => $orderedQty) {
-            $productId = (int) $productId;
-            $orderedQty = max(0, (int) $orderedQty);
-            if ($productId <= 0 || $orderedQty <= 0) {
-                continue;
+        $remainingSellable = $this->getBranchSellableStockMap($branchId, $productIds, $reservedCreditByProduct);
+        $itemsWithShortage = [];
+        $totalShortage = 0;
+
+        foreach ($items as $index => $row) {
+            $productId = (int) ($row['product_id'] ?? 0);
+            $orderedQty = max(0, (int) ($row['quantity'] ?? 0));
+            $availableForLine = max(0, (int) ($remainingSellable[$productId] ?? 0));
+            $sellableForLine = min($orderedQty, $availableForLine);
+            $itemShortage = max(0, $orderedQty - $sellableForLine);
+
+            $itemsWithShortage[$index] = [
+                'sellable_stock_at_order' => $sellableForLine,
+                'shortage_quantity' => $itemShortage,
+            ];
+
+            if ($productId > 0) {
+                $remainingSellable[$productId] = max(0, $availableForLine - $orderedQty);
             }
 
-            if ($orderedQty > (int) ($sellableMap[$productId] ?? 0)) {
-                return true;
-            }
+            $totalShortage += $itemShortage;
         }
 
-        return false;
+        return [
+            'items' => $itemsWithShortage,
+            'total_shortage' => (int) $totalShortage,
+            'has_shortage' => $totalShortage > 0,
+        ];
     }
 
     private function buildEstimatedArrivalDate(?string $date, $days): ?string
@@ -1142,7 +1163,9 @@ class SaleOrderController extends Controller
                 $normalizedItems = $itemSnapshot['items'];
                 $qtyByProduct = $itemSnapshot['qty_by_product'];
                 $sellSubtotal = (int) $itemSnapshot['sell_subtotal'];
-                $hasShortage = $this->hasSaleOrderShortage((int) $branchId, $qtyByProduct);
+                $shortageSnapshot = $this->buildSaleOrderShortageSnapshot((int) $branchId, $normalizedItems);
+                $hasShortage = (bool) $shortageSnapshot['has_shortage'];
+                $totalShortageQuantity = (int) $shortageSnapshot['total_shortage'];
                 $estimatedArrivalDays = $request->filled('estimated_arrival_days') ? (int) $request->estimated_arrival_days : null;
                 $estimatedArrivalDate = $this->buildEstimatedArrivalDate((string) $request->date, $estimatedArrivalDays);
 
@@ -1258,6 +1281,7 @@ class SaleOrderController extends Controller
                     // ✅ dp received
                     'deposit_received_amount' => (int) $depositReceived,
                     'has_shortage' => $hasShortage,
+                    'shortage_quantity' => $totalShortageQuantity,
                     'shortage_detected_at' => $hasShortage ? now() : null,
                     'shortage_resolved_at' => null,
                     'estimated_arrival_days' => $estimatedArrivalDays,
@@ -1266,11 +1290,18 @@ class SaleOrderController extends Controller
 
                 $saleOrderId = (int) $so->id;
 
-                foreach ($normalizedItems as $row) {
+                foreach ($normalizedItems as $index => $row) {
+                    $itemShortage = $shortageSnapshot['items'][$index] ?? [
+                        'sellable_stock_at_order' => null,
+                        'shortage_quantity' => null,
+                    ];
+
                     SaleOrderItem::create([
                         'sale_order_id' => $so->id,
                         'product_id' => (int) $row['product_id'],
                         'quantity' => (int) $row['quantity'],
+                        'sellable_stock_at_order' => $itemShortage['sellable_stock_at_order'],
+                        'shortage_quantity' => $itemShortage['shortage_quantity'],
                         'unit_price' => (int) $row['unit_price'],
                         'price' => (int) $row['price'],
                         'product_discount_amount' => (int) $row['product_discount_amount'],
@@ -1759,7 +1790,9 @@ class SaleOrderController extends Controller
                 $normalizedItems = $itemSnapshot['items'];
                 $qtyByProduct = $itemSnapshot['qty_by_product'];
                 $sellSubtotal = (int) $itemSnapshot['sell_subtotal'];
-                $hasShortage = $this->hasSaleOrderShortage((int) $branchId, $qtyByProduct, $oldQtyByProduct);
+                $shortageSnapshot = $this->buildSaleOrderShortageSnapshot((int) $branchId, $normalizedItems, $oldQtyByProduct);
+                $hasShortage = (bool) $shortageSnapshot['has_shortage'];
+                $totalShortageQuantity = (int) $shortageSnapshot['total_shortage'];
                 $estimatedArrivalDays = $request->filled('estimated_arrival_days') ? (int) $request->estimated_arrival_days : null;
                 $estimatedArrivalDate = $this->buildEstimatedArrivalDate((string) $request->date, $estimatedArrivalDays);
 
@@ -1813,6 +1846,7 @@ class SaleOrderController extends Controller
                     'deposit_code' => $saleOrder->deposit_code,
                     'deposit_received_amount' => (int) ($saleOrder->deposit_received_amount ?? 0),
                     'has_shortage' => $hasShortage,
+                    'shortage_quantity' => $totalShortageQuantity,
                     'shortage_detected_at' => $hasShortage ? ($saleOrder->shortage_detected_at ?: now()) : null,
                     'shortage_resolved_at' => null,
                     'estimated_arrival_days' => $estimatedArrivalDays,
@@ -1824,11 +1858,18 @@ class SaleOrderController extends Controller
                     ->where('sale_order_id', (int) $saleOrder->id)
                     ->delete();
 
-                foreach ($normalizedItems as $row) {
+                foreach ($normalizedItems as $index => $row) {
+                    $itemShortage = $shortageSnapshot['items'][$index] ?? [
+                        'sellable_stock_at_order' => null,
+                        'shortage_quantity' => null,
+                    ];
+
                     SaleOrderItem::create([
                         'sale_order_id' => (int) $saleOrder->id,
                         'product_id' => (int) $row['product_id'],
                         'quantity' => (int) $row['quantity'],
+                        'sellable_stock_at_order' => $itemShortage['sellable_stock_at_order'],
+                        'shortage_quantity' => $itemShortage['shortage_quantity'],
                         'unit_price' => (int) $row['unit_price'],
                         'price' => (int) $row['price'],
                         'product_discount_amount' => (int) $row['product_discount_amount'],

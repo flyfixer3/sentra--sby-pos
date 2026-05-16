@@ -246,6 +246,9 @@ trait SaleDeliveryShared
         if (Schema::hasColumn('sale_orders', 'has_shortage') && (bool) ($so->has_shortage ?? false)) {
             if ($totalRemaining <= 0) {
                 $updates['has_shortage'] = false;
+                if (Schema::hasColumn('sale_orders', 'shortage_quantity')) {
+                    $updates['shortage_quantity'] = 0;
+                }
                 $updates['shortage_resolved_at'] = now();
             } else {
                 $updates['has_shortage'] = true;

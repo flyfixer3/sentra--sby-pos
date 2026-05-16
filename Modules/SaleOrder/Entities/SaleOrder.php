@@ -46,6 +46,7 @@ class SaleOrder extends BaseModel
         'deposit_code',
 
         'has_shortage',
+        'shortage_quantity',
         'shortage_detected_at',
         'shortage_resolved_at',
         'estimated_arrival_days',
@@ -58,6 +59,7 @@ class SaleOrder extends BaseModel
     protected $casts = [
         'date' => 'date',
         'has_shortage' => 'boolean',
+        'shortage_quantity' => 'integer',
         'shortage_detected_at' => 'datetime',
         'shortage_resolved_at' => 'datetime',
         'estimated_arrival_days' => 'integer',

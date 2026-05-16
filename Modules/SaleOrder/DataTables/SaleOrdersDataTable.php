@@ -102,10 +102,15 @@ class SaleOrdersDataTable extends DataTable
             })
             ->addColumn('shortage_status', function ($row) {
                 if ((bool) ($row->has_shortage ?? false)) {
-                    return '<span class="badge badge-danger">Pending Stock</span>';
+                    $qty = $row->shortage_quantity;
+                    $qtyText = is_null($qty)
+                        ? '<div class="small text-muted mt-1">Shortage: Not recorded</div>'
+                        : '<div class="small text-danger mt-1">Shortage: ' . number_format((int) $qty) . ' qty</div>';
+
+                    return '<span class="badge badge-danger">Pending Stock</span>' . $qtyText;
                 }
 
-                return '<span class="badge badge-success">Available</span>';
+                return '<span class="badge badge-success">Available</span><div class="small text-muted mt-1">Shortage: 0 qty</div>';
             })
             ->editColumn('estimated_arrival_date', function ($row) {
                 return $this->formatEstimatedArrival($row);

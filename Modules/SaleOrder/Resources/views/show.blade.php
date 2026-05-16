@@ -26,6 +26,10 @@
     $hasShortage = (bool)($saleOrder->has_shortage ?? false);
     $shortageBadgeClass = $hasShortage ? 'bg-danger' : 'bg-success';
     $shortageText = $hasShortage ? 'PENDING STOCK' : 'AVAILABLE';
+    $activeShortageQuantity = $saleOrder->shortage_quantity;
+    $shortageQuantityText = is_null($activeShortageQuantity)
+        ? ($hasShortage ? 'Not recorded' : '0 qty')
+        : number_format((int) $activeShortageQuantity).' qty';
     $shortageDetectedText = $saleOrder->shortage_detected_at ? \Carbon\Carbon::parse($saleOrder->shortage_detected_at)->format('d M Y H:i') : '-';
     $shortageResolvedText = $saleOrder->shortage_resolved_at ? \Carbon\Carbon::parse($saleOrder->shortage_resolved_at)->format('d M Y H:i') : '-';
 
@@ -295,6 +299,16 @@
                     <div class="fw-semibold">{{ $shortageDetectedText }}</div>
                 </div>
                 <div class="col-md-3 mb-2">
+                    <div class="text-muted small">{{ $hasShortage ? 'Current Shortage Qty' : 'Active Shortage Qty' }}</div>
+                    <div class="fw-semibold">
+                        @if($hasShortage)
+                            <span class="badge bg-danger">{{ $shortageQuantityText }}</span>
+                        @else
+                            <span class="badge bg-secondary">{{ $shortageQuantityText }}</span>
+                        @endif
+                    </div>
+                </div>
+                <div class="col-md-3 mb-2">
                     <div class="text-muted small">Shortage Resolved At</div>
                     <div class="fw-semibold">{{ $shortageResolvedText }}</div>
                 </div>
@@ -408,6 +422,8 @@
                         <tr>
                             <th>Product</th>
                             <th class="text-end" style="width:120px;">Ordered</th>
+                            <th class="text-end" style="width:150px;">Sellable at Order</th>
+                            <th class="text-end" style="width:140px;">Shortage at Order</th>
                             <th style="width:180px;">Service Type</th>
                             <th class="text-end" style="width:120px;">Delivered</th>
                             <th class="text-end" style="width:120px;">Planned Rem.</th>
@@ -419,6 +435,8 @@
                         @php
                             $pid = (int) $it->product_id;
                             $ordered = (int) ($it->quantity ?? 0);
+                            $sellableAtOrder = $it->sellable_stock_at_order;
+                            $itemShortageQty = $it->shortage_quantity;
                             $unitPrice = (int) ($it->unit_price ?? ($it->price ?? 0));
                             $netPrice = (int) ($it->price ?? $unitPrice);
                             $itemDiscount = (int) ($it->product_discount_amount ?? max(0, $unitPrice - $netPrice));
@@ -471,6 +489,24 @@
 
                             <td class="text-end">
                                 <span class="badge bg-secondary">{{ number_format($ordered) }}</span>
+                            </td>
+
+                            <td class="text-end">
+                                @if(is_null($sellableAtOrder))
+                                    <span class="badge bg-light text-dark border">Not recorded</span>
+                                @else
+                                    <span class="badge bg-light text-dark border">{{ number_format((int) $sellableAtOrder) }}</span>
+                                @endif
+                            </td>
+
+                            <td class="text-end">
+                                @if(is_null($itemShortageQty))
+                                    <span class="badge bg-light text-dark border">Not recorded</span>
+                                @elseif((int) $itemShortageQty > 0)
+                                    <span class="badge bg-danger">{{ number_format((int) $itemShortageQty) }}</span>
+                                @else
+                                    <span class="badge bg-success">0</span>
+                                @endif
                             </td>
 
                             <td>
