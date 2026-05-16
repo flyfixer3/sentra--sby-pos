@@ -108,13 +108,32 @@ class StocksDataTable extends DataTable
         $isAllBranchMode = ($activeBranch === 'all');
 
         $productTerm = request()->filled('product') ? trim((string) request()->product) : null;
+        $productTerm = $productTerm !== '' ? $productTerm : null;
 
         // kalau all-branch mode, filter branch dari dropdown page (optional)
         $branchFilterId = request()->filled('branch_id') ? (int) request()->branch_id : null;
 
-        // ===========================
-        // DEFECT/DAMAGED AGG (by branch)
-        // ===========================
+        $targetBranchId = $isAllBranchMode ? $branchFilterId : (int) $activeBranch;
+        $canFallbackToProducts = !empty($productTerm) && !empty($targetBranchId);
+        $resolvedStockBranchExpr = 'COALESCE(stocks.branch_id, warehouses.branch_id)';
+
+        $stockAgg = DB::table('stocks')
+            ->leftJoin('warehouses', 'warehouses.id', '=', 'stocks.warehouse_id')
+            ->whereRaw($resolvedStockBranchExpr . ' IS NOT NULL')
+            ->select([
+                'stocks.product_id',
+                DB::raw($resolvedStockBranchExpr . ' as branch_id'),
+                DB::raw('MIN(stocks.id) as stock_id'),
+                DB::raw('COALESCE(SUM(stocks.qty_total), 0) as total_qty'),
+                DB::raw('COALESCE(SUM(stocks.qty_reserved), 0) as reserved_qty'),
+                DB::raw('COALESCE(SUM(stocks.qty_incoming), 0) as incoming_qty'),
+            ])
+            ->groupBy('stocks.product_id', DB::raw($resolvedStockBranchExpr));
+
+        if (!empty($targetBranchId)) {
+            $stockAgg->whereRaw($resolvedStockBranchExpr . ' = ?', [$targetBranchId]);
+        }
+
         $defectAgg = DB::table('product_defect_items')
             ->whereNull('moved_out_at')
             ->selectRaw('product_id, branch_id, SUM(quantity) AS defect_qty')
@@ -126,151 +145,60 @@ class StocksDataTable extends DataTable
             ->selectRaw('product_id, branch_id, SUM(quantity) AS damaged_qty')
             ->groupBy('product_id', 'branch_id');
 
-        // ===========================
-        // ALL BRANCH MODE
-        // ===========================
-        if ($isAllBranchMode) {
+        $branchJoinExpr = !empty($targetBranchId)
+            ? DB::raw((string) $targetBranchId)
+            : DB::raw('stock_agg.branch_id');
 
-            // resolve branch_id legacy: banyak stocks.branch_id NULL
-            $resolvedBranchExpr = 'COALESCE(stocks.branch_id, warehouses.branch_id)';
-
-            $q = DB::table('stocks')
-                ->leftJoin('warehouses', 'warehouses.id', '=', 'stocks.warehouse_id')
-                ->leftJoin('branches', 'branches.id', '=', DB::raw($resolvedBranchExpr))
-                ->leftJoin('products', 'products.id', '=', 'stocks.product_id')
-                ->leftJoinSub($defectAgg, 'defects', function ($join) use ($resolvedBranchExpr) {
-                    $join->on('defects.product_id', '=', 'stocks.product_id')
-                        ->on('defects.branch_id', '=', DB::raw($resolvedBranchExpr));
-                })
-                ->leftJoinSub($damagedAgg, 'damaged', function ($join) use ($resolvedBranchExpr) {
-                    $join->on('damaged.product_id', '=', 'stocks.product_id')
-                        ->on('damaged.branch_id', '=', DB::raw($resolvedBranchExpr));
-                })
-                ->select([
-                    // rowId internal
-                    DB::raw('MIN(stocks.id) as stock_id'),
-
-                    // ✅ yang kita tampilkan
-                    'stocks.product_id',
-                    DB::raw($resolvedBranchExpr . ' as branch_id'),
-                    DB::raw('1 as is_all_branch_mode'),
-
-                    DB::raw('MAX(branches.name) as branch_name'),
-                    DB::raw('MAX(products.product_code) as product_code'),
-                    DB::raw('MAX(products.product_name) as product_name'),
-
-                    DB::raw("'All Warehouses' as warehouse_name"),
-
-                    DB::raw('SUM(stocks.qty_total) as total_qty'),
-                    DB::raw('SUM(stocks.qty_reserved) as reserved_qty'),
-                    DB::raw('SUM(stocks.qty_incoming) as incoming_qty'),
-                    DB::raw('COALESCE(defects.defect_qty, 0) as defect_qty'),
-                    DB::raw('COALESCE(damaged.damaged_qty, 0) as damaged_qty'),
-
-                    DB::raw('
-                        GREATEST(
-                            SUM(stocks.qty_total)
-                            - COALESCE(defects.defect_qty,0)
-                            - COALESCE(damaged.damaged_qty,0),
-                            0
-                        ) as good_qty
-                    '),
-
-                    DB::raw('
-                        GREATEST(
-                            (
-                                GREATEST(
-                                    SUM(stocks.qty_total) - COALESCE(damaged.damaged_qty,0),
-                                    0
-                                )
-                            ) - SUM(stocks.qty_reserved),
-                            0
-                        ) as available_qty
-                    '),
-                ])
-                // penting: branch resolved harus ada
-                ->whereRaw($resolvedBranchExpr . ' IS NOT NULL')
-                ->groupBy('stocks.product_id', DB::raw($resolvedBranchExpr));
-
-            /**
-             * ✅ FIX DATATABLES ERROR:
-             * jangan pakai havingRaw(stocks.branch_id ...)
-             * pakai WHERE RAW COALESCE sebelum GROUP BY
-             */
-            if (!empty($branchFilterId)) {
-                $q->whereRaw($resolvedBranchExpr . ' = ?', [$branchFilterId]);
-            }
-
-            if (!empty($productTerm)) {
-                $term = '%' . $productTerm . '%';
-                $q->where(function ($w) use ($term) {
-                    $w->where('products.product_name', 'like', $term)
-                        ->orWhere('products.product_code', 'like', $term);
-                });
-            }
-
-            return $q;
-        }
-
-        // ===========================
-        // SPECIFIC BRANCH MODE
-        // (tetap "All Warehouses row only")
-        // ===========================
-        $branchId = (int) $activeBranch;
-
-        $q = DB::table('stocks')
-            ->leftJoin('products', 'products.id', '=', 'stocks.product_id')
-            ->leftJoin('branches', 'branches.id', '=', 'stocks.branch_id')
-            ->leftJoinSub($defectAgg, 'defects', function ($join) {
-                $join->on('defects.product_id', '=', 'stocks.product_id')
-                    ->on('defects.branch_id', '=', 'stocks.branch_id');
+        $q = DB::table('products')
+            ->leftJoinSub($stockAgg, 'stock_agg', function ($join) {
+                $join->on('stock_agg.product_id', '=', 'products.id');
             })
-            ->leftJoinSub($damagedAgg, 'damaged', function ($join) {
-                $join->on('damaged.product_id', '=', 'stocks.product_id')
-                    ->on('damaged.branch_id', '=', 'stocks.branch_id');
+            ->leftJoin('branches', 'branches.id', '=', $branchJoinExpr)
+            ->leftJoinSub($defectAgg, 'defects', function ($join) use ($branchJoinExpr) {
+                $join->on('defects.product_id', '=', 'products.id')
+                    ->on('defects.branch_id', '=', $branchJoinExpr);
             })
-            ->where('stocks.branch_id', $branchId)
+            ->leftJoinSub($damagedAgg, 'damaged', function ($join) use ($branchJoinExpr) {
+                $join->on('damaged.product_id', '=', 'products.id')
+                    ->on('damaged.branch_id', '=', $branchJoinExpr);
+            })
             ->select([
-                DB::raw('MIN(stocks.id) as stock_id'),
-
-                // ✅ tampil
-                'stocks.product_id',
-                'stocks.branch_id',
-                DB::raw('0 as is_all_branch_mode'),
-
-                DB::raw('MAX(branches.name) as branch_name'),
-                DB::raw('MAX(products.product_code) as product_code'),
-                DB::raw('MAX(products.product_name) as product_name'),
+                DB::raw(!empty($targetBranchId)
+                    ? "COALESCE(stock_agg.stock_id, CONCAT('product-', products.id, '-branch-', " . (int) $targetBranchId . ')) as stock_id'
+                    : 'stock_agg.stock_id as stock_id'),
+                DB::raw('products.id as product_id'),
+                DB::raw(!empty($targetBranchId) ? ((int) $targetBranchId . ' as branch_id') : 'stock_agg.branch_id as branch_id'),
+                DB::raw($isAllBranchMode ? '1 as is_all_branch_mode' : '0 as is_all_branch_mode'),
+                DB::raw('branches.name as branch_name'),
+                DB::raw('products.product_code as product_code'),
+                DB::raw('products.product_name as product_name'),
                 DB::raw("'All Warehouses' as warehouse_name"),
-
-                DB::raw('SUM(stocks.qty_total) as total_qty'),
-                DB::raw('SUM(stocks.qty_reserved) as reserved_qty'),
-                DB::raw('SUM(stocks.qty_incoming) as incoming_qty'),
+                DB::raw('COALESCE(stock_agg.total_qty, 0) as total_qty'),
+                DB::raw('COALESCE(stock_agg.reserved_qty, 0) as reserved_qty'),
+                DB::raw('COALESCE(stock_agg.incoming_qty, 0) as incoming_qty'),
+                DB::raw('0 as outgoing_qty'),
                 DB::raw('COALESCE(defects.defect_qty, 0) as defect_qty'),
                 DB::raw('COALESCE(damaged.damaged_qty, 0) as damaged_qty'),
-
                 DB::raw('
                     GREATEST(
-                        SUM(stocks.qty_total)
+                        COALESCE(stock_agg.total_qty, 0)
                         - COALESCE(defects.defect_qty,0)
                         - COALESCE(damaged.damaged_qty,0),
                         0
                     ) as good_qty
                 '),
-
                 DB::raw('
                     GREATEST(
                         (
                             GREATEST(
-                                SUM(stocks.qty_total) - COALESCE(damaged.damaged_qty,0),
+                                COALESCE(stock_agg.total_qty, 0) - COALESCE(damaged.damaged_qty,0),
                                 0
                             )
-                        ) - SUM(stocks.qty_reserved),
+                        ) - COALESCE(stock_agg.reserved_qty, 0),
                         0
                     ) as available_qty
                 '),
-            ])
-            ->groupBy('stocks.product_id', 'stocks.branch_id');
+            ]);
 
         if (!empty($productTerm)) {
             $term = '%' . $productTerm . '%';
@@ -278,6 +206,10 @@ class StocksDataTable extends DataTable
                 $w->where('products.product_name', 'like', $term)
                     ->orWhere('products.product_code', 'like', $term);
             });
+        }
+
+        if (!$canFallbackToProducts) {
+            $q->whereNotNull('stock_agg.stock_id');
         }
 
         return $q;

@@ -161,6 +161,8 @@ class SaleOrdersDataTable extends DataTable
 
                 return $html;
             })
+            ->orderColumn('shortage_status', 'COALESCE(sale_orders.shortage_quantity, 0) $1')
+            ->orderColumn('estimated_arrival_date', 'CASE WHEN sale_orders.estimated_arrival_date IS NULL THEN 1 ELSE 0 END ASC, sale_orders.estimated_arrival_date $1')
             ->rawColumns(['status', 'shortage_status', 'estimated_arrival_date', 'action']);
     }
 
@@ -224,7 +226,7 @@ class SaleOrdersDataTable extends DataTable
             Column::make('date')->title('Date'),
             Column::computed('customer')->title('Customer')->orderable(false)->searchable(false),
             Column::make('status')->title('Status'),
-            Column::computed('shortage_status')->title('Stock')->orderable(false)->searchable(false),
+            Column::computed('shortage_status')->title('Stock')->orderable(true)->searchable(false),
             Column::make('estimated_arrival_date')->title('Estimated Arrival')->searchable(false),
             Column::computed('action')->exportable(false)->printable(false)->width(120)->addClass('text-center'),
             Column::make('created_at')->visible(false),

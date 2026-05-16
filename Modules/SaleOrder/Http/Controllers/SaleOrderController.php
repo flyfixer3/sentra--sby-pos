@@ -127,6 +127,19 @@ class SaleOrderController extends Controller
             ->toDateString();
     }
 
+    private function validateEstimatedArrivalForShortage(bool $hasShortage, $estimatedArrivalDays): void
+    {
+        if (!$hasShortage) {
+            return;
+        }
+
+        if (!is_numeric($estimatedArrivalDays) || (int) $estimatedArrivalDays <= 0) {
+            throw ValidationException::withMessages([
+                'estimated_arrival_days' => 'Estimated Arrival is required when Sale Order has pending stock / shortage.',
+            ]);
+        }
+    }
+
     private function deliveredQtyExpr(string $alias = 'sdi'): string
     {
         return "CASE
@@ -1167,6 +1180,7 @@ class SaleOrderController extends Controller
                 $hasShortage = (bool) $shortageSnapshot['has_shortage'];
                 $totalShortageQuantity = (int) $shortageSnapshot['total_shortage'];
                 $estimatedArrivalDays = $request->filled('estimated_arrival_days') ? (int) $request->estimated_arrival_days : null;
+                $this->validateEstimatedArrivalForShortage($hasShortage, $estimatedArrivalDays);
                 $estimatedArrivalDate = $this->buildEstimatedArrivalDate((string) $request->date, $estimatedArrivalDays);
 
                 if (empty($qtyByProduct)) {
@@ -1794,6 +1808,7 @@ class SaleOrderController extends Controller
                 $hasShortage = (bool) $shortageSnapshot['has_shortage'];
                 $totalShortageQuantity = (int) $shortageSnapshot['total_shortage'];
                 $estimatedArrivalDays = $request->filled('estimated_arrival_days') ? (int) $request->estimated_arrival_days : null;
+                $this->validateEstimatedArrivalForShortage($hasShortage, $estimatedArrivalDays);
                 $estimatedArrivalDate = $this->buildEstimatedArrivalDate((string) $request->date, $estimatedArrivalDays);
 
                 if (empty($qtyByProduct)) {

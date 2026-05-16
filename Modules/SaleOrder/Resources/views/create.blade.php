@@ -215,6 +215,9 @@
                                 @error('estimated_arrival_days')
                                     <div class="invalid-feedback d-block">{{ $message }}</div>
                                 @enderror
+                                <div class="small text-muted mt-1">
+                                    Required only when this Sale Order has pending stock / shortage. Leave empty for ready-stock orders.
+                                </div>
                             </div>
 
                             <div class="col-md-6 mb-3">
