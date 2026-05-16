@@ -130,10 +130,11 @@ class SaleController extends Controller
         return max(0, $prev);
     }
 
-    private function resolveHeaderDiscount($request, int $itemsSubtotal, int $taxAmount, int $fee, int $shipping): array
+    private function resolveHeaderDiscount($request, int $itemsSubtotal, float $taxPercentage, int $fee, int $shipping): array
     {
         $discountType = (string) ($request->discount_type ?? 'percentage');
         $discountType = $discountType === 'fixed' ? 'fixed' : 'percentage';
+        $taxPercentage = max(0, min(100, round((float) $taxPercentage, 2)));
 
         $rawValue = $request->header_discount_value ?? $request->discount_percentage ?? 0;
         $discountValue = is_numeric($rawValue) ? (float) $rawValue : 0.0;
@@ -146,14 +147,8 @@ class SaleController extends Controller
             throw new \RuntimeException('Discount percentage cannot exceed 100%.');
         }
 
-        $baseBeforeDiscount = max(0, $itemsSubtotal + $taxAmount + $fee + $shipping);
-
         if ($discountType === 'fixed') {
-            $discountAmount = (int) round($discountValue);
-
-            if ($discountAmount > $baseBeforeDiscount) {
-                throw new \RuntimeException('Discount amount cannot be greater than total before discount.');
-            }
+            $discountAmount = min((int) round($discountValue), max(0, $itemsSubtotal));
 
             $discountPercentage = $itemsSubtotal > 0
                 ? round(($discountAmount / $itemsSubtotal) * 100, 2)
@@ -163,7 +158,9 @@ class SaleController extends Controller
             $discountAmount = (int) floor($itemsSubtotal * ($discountPercentage / 100));
         }
 
-        $grandTotal = $itemsSubtotal + $taxAmount + $fee + $shipping - $discountAmount;
+        $taxBase = max(0, $itemsSubtotal - $discountAmount);
+        $taxAmount = (int) floor($taxBase * ($taxPercentage / 100));
+        $grandTotal = $taxBase + $taxAmount + $fee + $shipping;
         if ($grandTotal < 0) {
             throw new \RuntimeException('Grand Total cannot be negative.');
         }
@@ -171,7 +168,52 @@ class SaleController extends Controller
         return [
             'percentage' => (float) $discountPercentage,
             'amount' => (int) $discountAmount,
+            'tax_amount' => (int) $taxAmount,
+            'tax_base' => (int) $taxBase,
             'grand_total' => (int) $grandTotal,
+        ];
+    }
+
+    private function getInventoryAvailableStockSnapshot(int $branchId, int $productId): array
+    {
+        if ($branchId <= 0 || $productId <= 0) {
+            return [
+                'total' => 0,
+                'good' => 0,
+                'reserved' => 0,
+                'damaged' => 0,
+                'sellable' => 0,
+            ];
+        }
+
+        $stockRow = DB::table('stocks')
+            ->where('branch_id', $branchId)
+            ->where('product_id', $productId)
+            ->selectRaw('COALESCE(SUM(qty_total), 0) as total_qty, COALESCE(SUM(qty_reserved), 0) as reserved_qty')
+            ->first();
+
+        $total = max(0, (int) ($stockRow->total_qty ?? 0));
+        $reserved = max(0, (int) ($stockRow->reserved_qty ?? 0));
+
+        $defect = max(0, (int) DB::table('product_defect_items')
+            ->where('branch_id', $branchId)
+            ->where('product_id', $productId)
+            ->whereNull('moved_out_at')
+            ->sum('quantity'));
+
+        $damaged = max(0, (int) DB::table('product_damaged_items')
+            ->where('branch_id', $branchId)
+            ->where('product_id', $productId)
+            ->where('resolution_status', 'pending')
+            ->whereNull('moved_out_at')
+            ->sum('quantity'));
+
+        return [
+            'total' => (int) $total,
+            'good' => (int) max(0, $total - $defect - $damaged),
+            'reserved' => (int) $reserved,
+            'damaged' => (int) $damaged,
+            'sellable' => (int) max(0, max(0, $total - $damaged) - $reserved),
         ];
     }
 
@@ -480,35 +522,6 @@ class SaleController extends Controller
         Cart::instance('sale')->destroy();
         $cart = Cart::instance('sale');
 
-        $getStockLastByWarehouse = function (int $productId, int $warehouseId): int {
-            $mutation = \Modules\Mutation\Entities\Mutation::where('product_id', $productId)
-                ->where('warehouse_id', $warehouseId)
-                ->latest()
-                ->first();
-
-            return $mutation ? (int) $mutation->stock_last : 0;
-        };
-
-        $getStockLastAllWarehousesInActiveBranch = function (int $productId) use ($getStockLastByWarehouse): int {
-            $branchId = session('active_branch');
-
-            if (empty($branchId) || $branchId === 'all') {
-                return 0;
-            }
-
-            $warehouseIds = \Modules\Product\Entities\Warehouse::where('branch_id', (int) $branchId)
-                ->pluck('id')
-                ->toArray();
-
-            if (empty($warehouseIds)) return 0;
-
-            $sum = 0;
-            foreach ($warehouseIds as $wid) {
-                $sum += $getStockLastByWarehouse($productId, (int) $wid);
-            }
-            return (int) $sum;
-        };
-
         // invoice items subtotal (qty * shown price)  => NOTE: shown price kita pakai NET (SO price)
         $invoiceItemsSubtotal = 0;
         $saleOrderGrandTotal = 0;
@@ -598,22 +611,8 @@ class SaleController extends Controller
                     $deliveryWarehouseName = $wh?->warehouse_name;
                 }
 
-                $getBranchStockSnapshot = function (int $productId) use ($branchId, $getStockLastAllWarehousesInActiveBranch) {
-                    $good = (int) $getStockLastAllWarehousesInActiveBranch($productId);
-
-                    $reserved = (int) \DB::table('stocks')
-                        ->where('branch_id', (int) $branchId)
-                        ->whereNull('warehouse_id')
-                        ->where('product_id', (int) $productId)
-                        ->value('qty_reserved');
-
-                    $reserved = max(0, $reserved);
-
-                    return [
-                        'good' => (int) max(0, $good),
-                        'reserved' => (int) $reserved,
-                        'sellable' => (int) max(0, $good - $reserved),
-                    ];
+                $getBranchStockSnapshot = function (int $productId) use ($branchId) {
+                    return $this->getInventoryAvailableStockSnapshot((int) $branchId, (int) $productId);
                 };
 
                 $invoiceableMap = $this->getInvoiceableQtyMapByDelivery($delivery);
@@ -991,48 +990,19 @@ class SaleController extends Controller
                     }
 
                     if (!empty($needByProduct)) {
-                        // active branch warehouses (untuk baca GOOD stock dari mutations)
-                        $warehouseIds = \Modules\Product\Entities\Warehouse::query()
-                            ->where('branch_id', $branchId)
-                            ->pluck('id')
-                            ->map(fn($v) => (int) $v)
-                            ->toArray();
-
-                        $getStockLastByWarehouse = function (int $productId, int $warehouseId): int {
-                            $m = \Modules\Mutation\Entities\Mutation::query()
-                                ->where('product_id', $productId)
-                                ->where('warehouse_id', $warehouseId)
-                                ->latest()
-                                ->first();
-
-                            return $m ? (int) $m->stock_last : 0;
-                        };
-
                         foreach ($needByProduct as $pid => $qtyNeed) {
                             $pid = (int) $pid;
                             $qtyNeed = (int) $qtyNeed;
                             if ($pid <= 0 || $qtyNeed <= 0) continue;
 
-                            // 1) hitung GOOD stock real di branch (sum stock_last terakhir per warehouse)
-                            $good = 0;
-                            foreach ($warehouseIds as $wid) {
-                                $good += $getStockLastByWarehouse($pid, (int) $wid);
-                            }
-                            $good = max(0, (int) $good);
-
-                            // 2) ambil reserved pool saat ini (lock row biar aman)
-                            $row = DB::table('stocks')
+                            DB::table('stocks')
                                 ->where('branch_id', (int) $branchId)
-                                ->whereNull('warehouse_id') // POOL row
                                 ->where('product_id', (int) $pid)
                                 ->lockForUpdate()
-                                ->first();
+                                ->get();
 
-                            $reservedNow = $row ? max(0, (int) ($row->qty_reserved ?? 0)) : 0;
-
-                            // available yang boleh di-reserve sekarang = GOOD - reserved existing
-                            $availableToReserve = $good - $reservedNow;
-                            if ($availableToReserve < 0) $availableToReserve = 0;
+                            $snapshot = $this->getInventoryAvailableStockSnapshot((int) $branchId, (int) $pid);
+                            $availableToReserve = (int) ($snapshot['sellable'] ?? 0);
 
                             if ($qtyNeed > $availableToReserve) {
                                 // bikin message yang jelas supaya admin ngerti
@@ -1043,7 +1013,7 @@ class SaleController extends Controller
                                 throw new \RuntimeException(
                                     "Stock tidak cukup untuk {$code} {$name}. " .
                                     "Requested: {$qtyNeed}, Available (after reserved): {$availableToReserve}, " .
-                                    "Good: {$good}, Reserved: {$reservedNow}. " .
+                                    "Good: " . (int) ($snapshot['good'] ?? 0) . ", Reserved: " . (int) ($snapshot['reserved'] ?? 0) . ". " .
                                     "Silakan kurangi qty / selesaikan dulu Sale Delivery pending yang masih reserve stock."
                                 );
                             }
@@ -1077,16 +1047,16 @@ class SaleController extends Controller
                 $effectiveShipping = (int) ($request->shipping_amount ?? 0);
                 $effectiveFee      = (int) ($request->fee_amount ?? 0);
 
-                $taxAmount      = (int) floor($itemsSubtotal * ($effectiveTaxPct / 100));
                 $headerDiscount = $this->resolveHeaderDiscount(
                     $request,
                     (int) $itemsSubtotal,
-                    (int) $taxAmount,
+                    (float) $effectiveTaxPct,
                     (int) $effectiveFee,
                     (int) $effectiveShipping
                 );
                 $effectiveDiscPct = (float) $headerDiscount['percentage'];
                 $discountAmount = (int) $headerDiscount['amount'];
+                $taxAmount = (int) $headerDiscount['tax_amount'];
                 $computedGrandTotal = (int) $headerDiscount['grand_total'];
 
                 // ======================================================
@@ -1763,18 +1733,17 @@ class SaleController extends Controller
             $taxPct = max(0, min(100, round((float) ($request->tax_percentage ?? 0), 2)));
             $shipping = max(0, (int) ($request->shipping_amount ?? 0));
             $fee = max(0, (int) ($request->fee_amount ?? 0));
-            $taxAmount = (int) floor($itemsSubtotal * ($taxPct / 100));
-
             $headerDiscount = $this->resolveHeaderDiscount(
                 $request,
                 (int) $itemsSubtotal,
-                (int) $taxAmount,
+                (float) $taxPct,
                 (int) $fee,
                 (int) $shipping
             );
 
             $discountPercentage = (float) $headerDiscount['percentage'];
             $discountAmount = (int) $headerDiscount['amount'];
+            $taxAmount = (int) $headerDiscount['tax_amount'];
             $computedGrandTotal = (int) $headerDiscount['grand_total'];
 
             $due_amount = $computedGrandTotal - (int) $request->paid_amount;
@@ -1785,6 +1754,7 @@ class SaleController extends Controller
                 $payment_status = 'Partial';
             } else {
                 $payment_status = 'Paid';
+                $due_amount = 0;
             }
 
             foreach ($sale->saleDetails as $sale_detail) {

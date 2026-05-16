@@ -8,13 +8,12 @@ use Illuminate\Support\Str;
 use Livewire\Component;
 use Modules\People\Entities\Customer;
 use Modules\People\Entities\CustomerVehicle;
-use Modules\Product\Entities\Warehouse;
 use Modules\Mutation\Entities\Mutation;
 use Modules\Product\Services\HppService;
 
 class ProductCartSale extends Component
 {
-    public $listeners = ['productSelected', 'discountModalRefresh', 'saleCustomerChanged' => 'setCustomerId'];
+    public $listeners = ['productSelected', 'saleCustomerChanged' => 'setCustomerId'];
 
     public $cart_instance;
     public $global_discount;
@@ -34,6 +33,7 @@ class ProductCartSale extends Component
 
     public $discount_type;
     public $item_discount;
+    public $sell_unit_price;
     public $item_cost_konsyinasi;
     public $installation_type;
     public $customer_vehicle_id;
@@ -66,6 +66,7 @@ class ProductCartSale extends Component
         $this->quantity = [];
         $this->discount_type = [];
         $this->item_discount = [];
+        $this->sell_unit_price = [];
         $this->item_cost_konsyinasi = [];
         $this->installation_type = [];
         $this->customer_vehicle_id = [];
@@ -105,6 +106,7 @@ class ProductCartSale extends Component
                 $this->quantity[$lineKey] = (int) $cart_item->qty;
 
                 $this->discount_type[$lineKey] = (string) ($cart_item->options->product_discount_type ?? 'fixed');
+                $this->sell_unit_price[$lineKey] = max(0, (float) ($cart_item->options->unit_price ?? (($cart_item->price ?? 0) + ($cart_item->options->product_discount ?? 0))));
                 $this->item_cost_konsyinasi[$lineKey] = (float) ($cart_item->options->product_cost ?? 0);
                 $this->installation_type[$lineKey] = $this->normalizeInstallationType($cart_item->options->installation_type ?? 'item_only');
                 $this->customer_vehicle_id[$lineKey] = $this->installation_type[$lineKey] === 'with_installation'
@@ -112,7 +114,7 @@ class ProductCartSale extends Component
                     : null;
 
                 if (($cart_item->options->product_discount_type ?? 'fixed') === 'fixed') {
-                    $this->item_discount[$lineKey] = (float) ($cart_item->price ?? 0);
+                    $this->item_discount[$lineKey] = (float) ($cart_item->options->product_discount ?? 0);
                 } else {
                     $priceBase = ((float) ($cart_item->price + ($cart_item->options->product_discount ?? 0)) > 0)
                         ? (float) ($cart_item->price + ($cart_item->options->product_discount ?? 0))
@@ -161,41 +163,46 @@ class ProductCartSale extends Component
         $branchId = (int) BranchContext::id();
         if ($branchId <= 0 || $productId <= 0) {
             return [
+                'total' => 0,
                 'good' => 0,
                 'reserved' => 0,
+                'damaged' => 0,
                 'sellable' => 0,
             ];
         }
 
-        $warehouseIds = Warehouse::query()
+        $stockRow = \DB::table('stocks')
             ->where('branch_id', $branchId)
-            ->pluck('id')
-            ->map(fn ($id) => (int) $id)
-            ->toArray();
-
-        $good = 0;
-        foreach ($warehouseIds as $warehouseId) {
-            $last = Mutation::query()
-                ->where('product_id', $productId)
-                ->where('warehouse_id', (int) $warehouseId)
-                ->latest()
-                ->value('stock_last');
-
-            $good += max(0, (int) ($last ?? 0));
-        }
-
-        $reserved = (int) \DB::table('stocks')
-            ->where('branch_id', $branchId)
-            ->whereNull('warehouse_id')
             ->where('product_id', $productId)
-            ->value('qty_reserved');
+            ->selectRaw('COALESCE(SUM(qty_total), 0) as total_qty, COALESCE(SUM(qty_reserved), 0) as reserved_qty')
+            ->first();
 
-        $reserved = max(0, $reserved);
-        $sellable = max(0, $good - $reserved);
+        $total = max(0, (int) ($stockRow->total_qty ?? 0));
+        $reserved = max(0, (int) ($stockRow->reserved_qty ?? 0));
+
+        $defect = (int) \DB::table('product_defect_items')
+            ->where('branch_id', $branchId)
+            ->where('product_id', $productId)
+            ->whereNull('moved_out_at')
+            ->sum('quantity');
+
+        $damaged = (int) \DB::table('product_damaged_items')
+            ->where('branch_id', $branchId)
+            ->where('product_id', $productId)
+            ->where('resolution_status', 'pending')
+            ->whereNull('moved_out_at')
+            ->sum('quantity');
+
+        $defect = max(0, $defect);
+        $damaged = max(0, $damaged);
+        $good = max(0, $total - $defect - $damaged);
+        $sellable = max(0, max(0, $total - $damaged) - $reserved);
 
         return [
+            'total' => (int) $total,
             'good' => (int) $good,
             'reserved' => (int) $reserved,
+            'damaged' => (int) $damaged,
             'sellable' => (int) $sellable,
         ];
     }
@@ -473,7 +480,8 @@ class ProductCartSale extends Component
         $this->check_quantity[$lineKey] = (int) $stockTotal;
         $this->quantity[$lineKey] = (int) $cartItem->qty;
         $this->discount_type[$lineKey] = 'fixed';
-        $this->item_discount[$lineKey] = null;
+        $this->item_discount[$lineKey] = 0;
+        $this->sell_unit_price[$lineKey] = (float) ($calc['unit_price'] ?? 0);
         $this->item_cost_konsyinasi[$lineKey] = 0;
         $this->installation_type[$lineKey] = 'item_only';
         $this->customer_vehicle_id[$lineKey] = null;
@@ -512,6 +520,7 @@ class ProductCartSale extends Component
                 $this->quantity[$lineKey],
                 $this->discount_type[$lineKey],
                 $this->item_discount[$lineKey],
+                $this->sell_unit_price[$lineKey],
                 $this->item_cost_konsyinasi[$lineKey],
                 $this->installation_type[$lineKey],
                 $this->customer_vehicle_id[$lineKey]
@@ -540,8 +549,6 @@ class ProductCartSale extends Component
         $productId = (int) $sourceRow->id;
         $newLineKey = $this->makeDuplicateLineKey($productId);
         $newOptions = $sourceRow->options->toArray();
-        $newOptions['product_discount'] = 0;
-        $newOptions['product_discount_type'] = 'fixed';
         $newOptions['sub_total'] = (float) $sourceRow->price;
         $newOptions['line_key'] = $newLineKey;
         $newOptions['installation_type'] = 'item_only';
@@ -559,8 +566,14 @@ class ProductCartSale extends Component
         $newLineKey = $this->getLineKey($newRow);
         $this->quantity[$newLineKey] = 1;
         $this->check_quantity[$newLineKey] = (int) ($newRow->options->stock ?? 0);
-        $this->discount_type[$newLineKey] = 'fixed';
-        $this->item_discount[$newLineKey] = (float) ($newRow->price ?? 0);
+        $this->discount_type[$newLineKey] = $this->normalizeDiscountType($newRow->options->product_discount_type ?? 'fixed');
+        $sourceUnitPrice = (float) ($sourceRow->options->unit_price ?? 0);
+        $this->item_discount[$newLineKey] = $this->discount_type[$newLineKey] === 'percentage'
+            ? ($sourceUnitPrice > 0
+                ? round(((float) ($sourceRow->options->product_discount ?? 0) / $sourceUnitPrice) * 100, 2)
+                : 0)
+            : (float) ($newRow->options->product_discount ?? 0);
+        $this->sell_unit_price[$newLineKey] = (float) ($newRow->options->unit_price ?? (($newRow->price ?? 0) + ($newRow->options->product_discount ?? 0)));
         $this->item_cost_konsyinasi[$newLineKey] = (float) ($newRow->options->product_cost ?? 0);
         $this->installation_type[$newLineKey] = 'item_only';
         $this->customer_vehicle_id[$newLineKey] = null;
@@ -697,7 +710,7 @@ class ProductCartSale extends Component
                     'message',
                     $isDeliveryInvoice
                         ? 'The requested quantity exceeds the remaining quantity that can be invoiced from this delivery.'
-                        : 'The requested quantity is not available in stock.'
+                        : 'The requested quantity is not available in stock. Sellable stock: ' . (int) $stock . '.'
                 );
                 return;
             }
@@ -773,6 +786,18 @@ class ProductCartSale extends Component
             $lineKey = $lineKey !== '' ? $lineKey : $this->getLineKey($cartRow);
             $this->quantity[$lineKey] = $quantity > 0 ? $quantity : 1;
 
+            if (array_key_exists('sell_unit_price', $row)) {
+                $this->sell_unit_price[$lineKey] = max(0, (float) ($row['sell_unit_price'] ?? 0));
+            }
+
+            if (array_key_exists('discount_type', $row)) {
+                $this->discount_type[$lineKey] = $this->normalizeDiscountType($row['discount_type'] ?? 'fixed');
+            }
+
+            if (array_key_exists('item_discount', $row)) {
+                $this->item_discount[$lineKey] = max(0, (float) ($row['item_discount'] ?? 0));
+            }
+
             if (array_key_exists('installation_type', $row)) {
                 $this->installation_type[$lineKey] = $this->normalizeInstallationType($row['installation_type'] ?? 'item_only');
             }
@@ -785,6 +810,7 @@ class ProductCartSale extends Component
             }
 
             $this->updateQuantity($cartRow->rowId, $productId, $lineKey);
+            $this->syncLinePricing($lineKey);
         }
 
         $this->syncQuantityDefaults();
@@ -792,117 +818,71 @@ class ProductCartSale extends Component
         $this->syncInstallationMetadataToCart();
     }
 
-    public function updatedDiscountType($value, $name)
+    public function updatedSellUnitPrice($value, $name): void
+    {
+        $this->syncLinePricing((string) $name);
+    }
+
+    public function updatedItemDiscount($value, $name): void
+    {
+        $this->syncLinePricing((string) $name);
+    }
+
+    public function updatedDiscountType($value, $name): void
     {
         $lineKey = (string) $name;
+        $this->discount_type[$lineKey] = $this->normalizeDiscountType($value);
+        $this->syncLinePricing($lineKey, true);
+    }
+
+    private function normalizeDiscountType($value): string
+    {
+        return (string) $value === 'percentage' ? 'percentage' : 'fixed';
+    }
+
+    private function isPricingLocked($cartItem): bool
+    {
+        return !empty($this->is_locked_by_so) || $this->isSaleDeliveryInvoiceRow($cartItem);
+    }
+
+    private function syncLinePricing(string $lineKey, bool $resetDiscountOnTypeChange = false): void
+    {
         $row = $this->findCartRowByLineKey($lineKey);
-
-        if (!$row) {
-            $this->item_discount[$lineKey] = 0;
+        if (!$row || $this->isPricingLocked($row)) {
             return;
         }
 
-        $basePrice = (float) ($row->options->unit_price ?? 0);
-        if ($basePrice <= 0) {
-            $basePrice = (float) (($row->price ?? 0) + ($row->options->product_discount ?? 0));
-        }
-        if ($basePrice < 0) {
-            $basePrice = 0;
-        }
+        $basePrice = max(0, (float) ($this->sell_unit_price[$lineKey] ?? $row->options->unit_price ?? (($row->price ?? 0) + ($row->options->product_discount ?? 0))));
+        $discountType = $this->normalizeDiscountType($this->discount_type[$lineKey] ?? $row->options->product_discount_type ?? 'fixed');
+        $discountValue = $resetDiscountOnTypeChange ? 0 : (float) ($this->item_discount[$lineKey] ?? 0);
 
-        if ($value === 'fixed') {
-            $this->item_discount[$lineKey] = (float) ($row->price ?? $basePrice);
+        if ($discountType === 'percentage') {
+            $discountValue = max(0, min(100, round($discountValue, 2)));
+            $discountAmount = round($basePrice * ($discountValue / 100), 2);
         } else {
-            $this->item_discount[$lineKey] = 0;
-        }
-    }
-
-    public function discountModalRefresh($product_id, $row_id, $line_key = null)
-    {
-        $product_id = (int) $product_id;
-        $row = Cart::instance($this->cart_instance)->get($row_id);
-        $lineKey = (string) ($line_key ?: ($row ? $this->getLineKey($row) : ''));
-        if ($row) {
-            $basePrice = (float) ($row->options->unit_price ?? 0);
-            if ($basePrice <= 0) {
-                $basePrice = (float) (($row->price ?? 0) + ($row->options->product_discount ?? 0));
-            }
-            if (($this->discount_type[$lineKey] ?? 'fixed') === 'fixed') {
-                $this->item_discount[$lineKey] = (float) ($row->price ?? 0);
-            } else {
-                $this->item_discount[$lineKey] = $basePrice > 0
-                    ? round((float) ($row->options->product_discount ?? 0) / $basePrice * 100, 2)
-                    : 0;
-            }
+            $discountValue = max(0, min($basePrice, round($discountValue, 0)));
+            $discountAmount = $discountValue;
         }
 
-        $this->updateQuantity($row_id, $product_id, $lineKey);
-    }
+        $netPrice = max(0, round($basePrice - $discountAmount, 2));
 
-    public function setProductDiscount($row_id, $product_id, $line_key = null)
-    {
-        $product_id = (int) $product_id;
-        $cart_item = Cart::instance($this->cart_instance)->get($row_id);
-        $lineKey = (string) ($line_key ?: ($cart_item ? $this->getLineKey($cart_item) : ''));
+        $this->sell_unit_price[$lineKey] = $basePrice;
+        $this->discount_type[$lineKey] = $discountType;
+        $this->item_discount[$lineKey] = $discountValue;
 
-        if (!$cart_item) {
-            session()->flash('discount_message' . $lineKey, 'Cart item not found.');
-            return;
-        }
-
-        $discountType = (string) ($this->discount_type[$lineKey] ?? 'fixed');
-        $inputValue = (float) ($this->item_discount[$lineKey] ?? 0);
-
-        $basePrice = (float) ($cart_item->options->unit_price ?? 0);
-        if ($basePrice <= 0) {
-            $basePrice = (float) (($cart_item->price ?? 0) + ($cart_item->options->product_discount ?? 0));
-        }
-        if ($basePrice < 0) {
-            $basePrice = 0;
-        }
-
-        if ($discountType === 'fixed') {
-            if ($inputValue < 0) {
-                $inputValue = 0;
-            }
-
-            $newRowPrice = (float) $inputValue;
-            $discountAmount = max(0, $basePrice - $newRowPrice);
-        } else {
-            if ($inputValue < 0 || $inputValue > 100) {
-                session()->flash('discount_message' . $lineKey, 'Percentage must be between 0 and 100.');
-                return;
-            }
-
-            $discountAmount = round($basePrice * ($inputValue / 100), 2);
-            $newRowPrice = round($basePrice - $discountAmount, 2);
-        }
-
-        if ($newRowPrice < 0) {
-            $newRowPrice = 0;
-        }
-
-        Cart::instance($this->cart_instance)->update($row_id, [
-            'price' => $newRowPrice,
+        Cart::instance($this->cart_instance)->update($row->rowId, [
+            'price' => $netPrice,
         ]);
 
-        $updatedItem = Cart::instance($this->cart_instance)->get($row_id);
+        $updatedItem = Cart::instance($this->cart_instance)->get($row->rowId);
         if (!$updatedItem) {
             return;
         }
 
-        $this->updateCartOptions($row_id, $product_id, $updatedItem, $discountAmount, $lineKey);
-
-        if ($discountType === 'fixed') {
-            $this->item_discount[$lineKey] = $newRowPrice;
-        } else {
-            $this->item_discount[$lineKey] = $inputValue;
-        }
-
-        session()->flash('discount_message' . $lineKey, 'Price for this item has been changed!');
+        $this->updateCartOptions($row->rowId, (int) $updatedItem->id, $updatedItem, $discountAmount, $lineKey, $basePrice, $discountType);
     }
 
-    public function updateCartOptions($row_id, $product_id, $cart_item, $discount_amount, $line_key = null)
+    public function updateCartOptions($row_id, $product_id, $cart_item, $discount_amount, $line_key = null, $unit_price = null, $discount_type = null)
     {
         $lineKey = (string) ($line_key ?: $this->getLineKey($cart_item));
         $warehouseId   = (int) ($cart_item->options->warehouse_id ?? 0);
@@ -947,9 +927,9 @@ class ProductCartSale extends Component
             'current_stock_qty'     => (int) ($cart_item->options->current_stock_qty ?? 0),
             'product_tax'           => $cart_item->options->product_tax,
             'product_cost'          => $cart_item->options->product_cost,
-            'unit_price'            => $cart_item->options->unit_price,
+            'unit_price'            => max(0, (float) ($unit_price ?? $cart_item->options->unit_price ?? 0)),
             'product_discount'      => (float) $discount_amount,
-            'product_discount_type' => $this->discount_type[$lineKey] ?? 'fixed',
+            'product_discount_type' => $this->normalizeDiscountType($discount_type ?? $this->discount_type[$lineKey] ?? 'fixed'),
             'line_key'              => $lineKey,
             'installation_type'     => $installationType,
             'customer_vehicle_id'   => $customerVehicleId,
@@ -1021,12 +1001,16 @@ class ProductCartSale extends Component
 
             // safety: discount type
             if (!isset($this->discount_type[$lineKey]) || !$this->discount_type[$lineKey]) {
-                $this->discount_type[$lineKey] = (string) ($row->options->product_discount_type ?? 'fixed');
+                $this->discount_type[$lineKey] = $this->normalizeDiscountType($row->options->product_discount_type ?? 'fixed');
+            }
+
+            if (!isset($this->sell_unit_price[$lineKey])) {
+                $this->sell_unit_price[$lineKey] = max(0, (float) ($row->options->unit_price ?? (($row->price ?? 0) + ($row->options->product_discount ?? 0))));
             }
 
             if (!isset($this->item_discount[$lineKey])) {
                 if (($row->options->product_discount_type ?? 'fixed') === 'fixed') {
-                    $this->item_discount[$lineKey] = (float) ($row->price ?? 0);
+                    $this->item_discount[$lineKey] = (float) ($row->options->product_discount ?? 0);
                 } else {
                     $priceBase = ((float)($row->price + ($row->options->product_discount ?? 0)) > 0)
                         ? (float)($row->price + ($row->options->product_discount ?? 0))

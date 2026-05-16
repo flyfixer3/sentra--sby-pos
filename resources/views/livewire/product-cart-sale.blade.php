@@ -72,6 +72,50 @@
                 line-height: 1 !important;
                 font-weight: 700 !important;
             }
+
+            .sentra-cart-table td {
+                vertical-align: middle !important;
+            }
+
+            .sentra-cart-table td input.form-control,
+            .sentra-cart-table td select.form-control,
+            .sentra-cart-table .sentra-cart-control {
+                height: 38px !important;
+                min-height: 38px !important;
+                line-height: 1.5 !important;
+                padding-top: 0.375rem !important;
+                padding-bottom: 0.375rem !important;
+                box-sizing: border-box !important;
+            }
+
+            .sentra-cart-table .sentra-cart-price-input {
+                min-width: 155px;
+            }
+
+            .sentra-cart-table .sentra-cart-discount-group {
+                min-width: 170px;
+                align-items: stretch;
+                flex-wrap: nowrap;
+            }
+
+            .sentra-cart-table .sentra-cart-discount-group .form-control {
+                height: 38px !important;
+                min-height: 38px !important;
+            }
+
+            .sentra-cart-table .sentra-cart-discount-group .input-group-append {
+                display: flex;
+                align-items: stretch;
+            }
+
+            .sentra-cart-table .sentra-cart-discount-type {
+                width: 56px !important;
+                min-width: 56px !important;
+                max-width: 56px !important;
+                padding-left: 0.5rem !important;
+                padding-right: 0.5rem !important;
+                text-align: center;
+            }
         </style>
 
         <div class="table-responsive position-relative">
@@ -89,7 +133,7 @@
                 <h6>Total Quantity: {{ (int)($global_qty ?? 0) }} Unit</h6>
             </div>
 
-            <table class="table table-bordered">
+            <table class="table table-bordered sentra-cart-table">
                 <thead class="thead-dark">
                 <tr>
                     <th class="align-middle">Product</th>
@@ -100,7 +144,6 @@
                     <th class="align-middle">Stock</th>
                     <th class="align-middle">Quantity</th>
                     <th class="align-middle">Discount</th>
-                    <th class="align-middle">Tax</th>
                     <th class="align-middle">Sub Total</th>
                     <th class="align-middle">Action</th>
                 </tr>
@@ -119,12 +162,14 @@
                             $alreadyInvoicedQty = (int) ($cart_item->options->already_invoiced_qty ?? 0);
                             $remainingInvoiceableQty = (int) ($cart_item->options->remaining_invoiceable_qty ?? ($cart_item->options->stock ?? 0));
                             $currentStockQty = (int) ($cart_item->options->current_stock_qty ?? 0);
-                            $unitLabel = trim((string) ($cart_item->options->unit ?? ''));
-                            if ($unitLabel === '') {
-                                $unitLabel = 'Unit';
-                            }
                             $lineKey = (string) ($cart_item->options->line_key ?? $cart_item->rowId);
-                            $safeLineKey = preg_replace('/[^A-Za-z0-9_-]/', '_', $lineKey);
+                            $isRowPricingLocked = !empty($is_locked_by_so) || $invoiceSource === 'sale_delivery';
+                            $displayUnitPrice = (float) ($sell_unit_price[$lineKey] ?? $cart_item->options->unit_price ?? (($cart_item->price ?? 0) + ($cart_item->options->product_discount ?? 0)));
+                            $displayDiscountType = (string) ($discount_type[$lineKey] ?? $cart_item->options->product_discount_type ?? 'fixed') === 'percentage'
+                                ? 'percentage'
+                                : 'fixed';
+                            $displayDiscountAmount = (float) ($cart_item->options->product_discount ?? 0);
+                            $displayNetPrice = max(0, (float) ($cart_item->price ?? 0));
                             $scopeNote = $scope === 'branch'
                                 ? 'Stock shown is total from ALL warehouses (active branch).'
                                 : ('Stock shown is from warehouse' . ($whName ? (': ' . $whName) : '.') );
@@ -136,7 +181,6 @@
                                 <span class="badge badge-success">
                                     {{ $cart_item->options->code ?? '-' }}
                                 </span>
-                                @include('livewire.includes.product-cart-modal-sale')
                             </td>
 
                             @if(!empty($enable_installation_metadata))
@@ -185,7 +229,19 @@
                             @endif
 
                             <td class="align-middle">
-                                {{ format_currency((float)($cart_item->price ?? 0)) }}
+                                <input
+                                    type="number"
+                                    class="form-control sentra-cart-control sentra-cart-price-input"
+                                    min="0"
+                                    step="1"
+                                    wire:model.lazy="sell_unit_price.{{ $lineKey }}"
+                                    data-cart-sync-row
+                                    data-cart-sync-field="sell_unit_price"
+                                    data-cart-row-id="{{ $cart_item->rowId }}"
+                                    data-cart-product-id="{{ $cart_item->id }}"
+                                    data-cart-line-key="{{ $lineKey }}"
+                                    @if($isRowPricingLocked) readonly @endif
+                                >
                             </td>
 
                             <td class="align-middle text-center">
@@ -193,7 +249,7 @@
                                     <div class="d-inline-block text-center" style="min-width: 170px;">
                                         <div class="d-flex flex-wrap align-items-center mt-1" style="gap:6px; justify-content: space-evenly;">
                                             <span class="badge badge-light border text-dark">
-                                                Remaining to Invoice: {{ $remainingInvoiceableQty . ' ' . $unitLabel }}
+                                                Remaining to Invoice: {{ $remainingInvoiceableQty }}
                                             </span>
                                             <span class="badge badge-light border text-dark">
                                                 Delivered: {{ $deliveredQty }}
@@ -204,24 +260,24 @@
                                         </div>
 
                                         <div class="mt-1 small text-muted">
-                                            Stock now: {{ $currentStockQty . ' ' . $unitLabel }}
+                                            Stock now: {{ $currentStockQty }}
                                             <span class="ml-1">(reference only)</span>
                                         </div>
                                     </div>
                                 @elseif($scope === 'branch')
                                     <div>
                                         <span class="badge badge-warning">
-                                            Reserved: {{ $reservedStock . ' ' . $unitLabel }}
+                                            Reserved: {{ $reservedStock }}
                                         </span>
                                     </div>
                                     <div class="mt-1">
                                         <span class="badge badge-info">
-                                            Sellable: {{ $sellableStock . ' ' . $unitLabel }}
+                                            Sellable: {{ $sellableStock }}
                                         </span>
                                     </div>
                                 @else
                                     <span class="badge badge-info">
-                                        {{ (int)($cart_item->options->stock ?? 0) . ' ' . $unitLabel }}
+                                        {{ (int)($cart_item->options->stock ?? 0) }}
                                     </span>
                                 @endif
                                 <div class="mt-1">
@@ -237,11 +293,40 @@
                             </td>
 
                             <td class="align-middle">
-                                {{ format_currency((float)($cart_item->options->product_discount ?? 0)) }}
-                            </td>
-
-                            <td class="align-middle">
-                                {{ format_currency((float)($cart_item->options->product_tax ?? 0)) }}
+                                <div class="input-group sentra-cart-discount-group">
+                                    <input
+                                        type="number"
+                                        class="form-control sentra-cart-control"
+                                        min="0"
+                                        step="{{ $displayDiscountType === 'percentage' ? '0.01' : '1' }}"
+                                        @if($displayDiscountType === 'percentage') max="100" @endif
+                                        wire:model.lazy="item_discount.{{ $lineKey }}"
+                                        data-cart-sync-row
+                                        data-cart-sync-field="item_discount"
+                                        data-cart-row-id="{{ $cart_item->rowId }}"
+                                        data-cart-product-id="{{ $cart_item->id }}"
+                                        data-cart-line-key="{{ $lineKey }}"
+                                        @if($isRowPricingLocked) readonly @endif
+                                    >
+                                    <div class="input-group-append">
+                                        <select
+                                            class="form-control sentra-cart-control sentra-cart-discount-type"
+                                            wire:model.lazy="discount_type.{{ $lineKey }}"
+                                            data-cart-sync-row
+                                            data-cart-sync-field="discount_type"
+                                            data-cart-row-id="{{ $cart_item->rowId }}"
+                                            data-cart-product-id="{{ $cart_item->id }}"
+                                            data-cart-line-key="{{ $lineKey }}"
+                                            @if($isRowPricingLocked) disabled @endif
+                                        >
+                                            <option value="fixed">Rp</option>
+                                            <option value="percentage">%</option>
+                                        </select>
+                                    </div>
+                                </div>
+                                <small class="text-muted d-block mt-1">
+                                    Discount: <strong>{{ format_currency($displayDiscountAmount) }}/unit</strong>
+                                </small>
                             </td>
 
                             <td class="align-middle">
@@ -277,7 +362,7 @@
                     @endforeach
                 @else
                     <tr>
-                        <td colspan="{{ !empty($enable_installation_metadata) ? 9 : 8 }}" class="text-center">
+                        <td colspan="{{ !empty($enable_installation_metadata) ? 8 : 7 }}" class="text-center">
                             <span class="text-danger">
                                 Please search &amp; select products!
                             </span>
@@ -296,8 +381,9 @@
                     @php
                         $isLockedBySO = !empty(data_get($data, 'sale_order_id'));
 
-                        $cartSubtotalRaw = (string) Cart::instance($cart_instance)->subtotal(0, '.', '');
-                        $itemsSubtotal = (int) $cartSubtotalRaw;
+                        $itemsSubtotal = (float) $cart_items->sum(function ($row) {
+                            return (float) ($row->price ?? 0) * (int) ($row->qty ?? 0);
+                        });
 
                         // ===== locked numbers from controller =====
                         $lockedGrand = (int) data_get($data, 'invoice_estimated_grand_total', 0);
@@ -316,13 +402,6 @@
                         $discInfoPct   = (float) data_get($data, 'discount_info_percentage', 0);
                         $depositPct    = (float) data_get($data, 'deposit_percentage', 0);
 
-                        // non-locked fallback
-                        $cartTaxRaw  = (string) Cart::instance($cart_instance)->tax(0, '.', '');
-                        $cartDiscRaw = (string) Cart::instance($cart_instance)->discount(0, '.', '');
-
-                        $taxAmount  = (int) $cartTaxRaw;
-                        $discAmount = (int) $cartDiscRaw;
-
                         $shipInputTotal = (int) ($shipping ?? 0);
                         $feeInputTotal  = (int) ($cart_instance === 'sale' ? ($platform_fee ?? 0) : 0);
 
@@ -336,17 +415,20 @@
                             $grandTotal = max(0, $lockedGrand);
                             $payNow     = max(0, $suggested);
                         } else {
-                            $summaryTax  = max(0, $taxAmount);
                             $summaryShip = max(0, $shipInputTotal);
                             $summaryFee  = max(0, $feeInputTotal);
                             if (($header_discount_type ?? 'percentage') === 'fixed') {
-                                $maxFixedDiscount = $itemsSubtotal + $summaryTax + $summaryShip + $summaryFee;
+                                $maxFixedDiscount = $itemsSubtotal;
                                 $summaryDisc = min(max(0, (int) round((float) ($header_discount_value ?? 0))), max(0, $maxFixedDiscount));
                             } else {
-                                $summaryDisc = max(0, $discAmount);
+                                $discountPercent = min(100, max(0, (float) ($global_discount ?? 0)));
+                                $summaryDisc = (int) floor($itemsSubtotal * ($discountPercent / 100));
                             }
 
-                            $grandTotal = max(0, ($itemsSubtotal + $summaryTax - $summaryDisc + $summaryShip + $summaryFee));
+                            $taxBase = max(0, $itemsSubtotal - $summaryDisc);
+                            $taxPercent = min(100, max(0, (float) ($global_tax ?? 0)));
+                            $summaryTax = (int) floor($taxBase * ($taxPercent / 100));
+                            $grandTotal = max(0, (int) floor($taxBase + $summaryTax + $summaryShip + $summaryFee));
                             $payNow = $grandTotal;
                         }
                     @endphp
