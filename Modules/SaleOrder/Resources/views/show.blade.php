@@ -43,19 +43,19 @@
 
         if ($etaDays < 0) {
             $etaCountdownText = 'Overdue '.abs($etaDays).' days';
-            $etaBadgeClass = 'bg-danger';
+            $etaBadgeClass = 'bg-danger text-dark sale-order-eta-countdown-badge';
         } elseif ($etaDays === 0) {
             $etaCountdownText = 'Due Today';
-            $etaBadgeClass = 'bg-danger';
+            $etaBadgeClass = 'bg-danger text-dark sale-order-eta-countdown-badge';
         } elseif ($etaDays <= 3) {
             $etaCountdownText = $etaDays.' days left';
-            $etaBadgeClass = 'bg-danger';
+            $etaBadgeClass = 'bg-danger text-dark sale-order-eta-countdown-badge';
         } elseif ($etaDays <= 7) {
             $etaCountdownText = $etaDays.' days left';
-            $etaBadgeClass = 'bg-warning text-dark';
+            $etaBadgeClass = 'bg-warning text-dark sale-order-eta-countdown-badge';
         } else {
             $etaCountdownText = $etaDays.' days left';
-            $etaBadgeClass = 'bg-light text-dark border';
+            $etaBadgeClass = 'bg-light text-dark border sale-order-eta-countdown-badge';
         }
     }
 
@@ -98,6 +98,14 @@
     $updatedByName = optional($saleOrder->updater)->name ?? '-';
     $createdAtText = $saleOrder->created_at ? \Carbon\Carbon::parse($saleOrder->created_at)->format('d M Y H:i') : '-';
     $updatedAtText = $saleOrder->updated_at ? \Carbon\Carbon::parse($saleOrder->updated_at)->format('d M Y H:i') : '-';
+
+    $showShortagePoModal = (bool) session('show_sale_order_shortage_po_modal')
+        && (int) session('shortage_sale_order_id') === (int) $saleOrder->id;
+    $shortagePoReference = (string) session('shortage_sale_order_reference', $saleOrder->reference);
+    $shortagePoQuantity = session('shortage_quantity');
+    $purchaseOrderCreateUrl = \Illuminate\Support\Facades\Route::has('purchase-orders.create')
+        ? route('purchase-orders.create', ['source' => 'sale_order', 'sale_order_id' => (int) $saleOrder->id])
+        : null;
 @endphp
 
 <style>
@@ -151,6 +159,10 @@
         margin-top: .35rem;
     }
 
+    .sale-order-eta-countdown-badge {
+        color: #111827 !important;
+    }
+
     @media (max-width: 576px) {
         .sale-order-status-chip {
             width: 100%;
@@ -194,9 +206,6 @@
                         ETA: <strong>{{ $etaDateText }}</strong>
                         @if($etaDateText !== '-')
                             &bull; <span class="badge {{ $etaBadgeClass }}">{{ $etaCountdownText }}</span>
-                            @if(!empty($saleOrder->estimated_arrival_days))
-                                &bull; Lead Time: <strong>{{ (int) $saleOrder->estimated_arrival_days }} days</strong>
-                            @endif
                         @endif
                     </div>
 
@@ -663,5 +672,86 @@
         </div>
     </div>
 
+    @if($showShortagePoModal)
+        <div class="modal fade" id="saleOrderShortagePoModal" tabindex="-1" role="dialog" aria-labelledby="saleOrderShortagePoModalLabel" aria-hidden="true">
+            <div class="modal-dialog modal-dialog-centered" role="document">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h5 class="modal-title" id="saleOrderShortagePoModalLabel">Pending Stock Detected</h5>
+                        <button type="button" class="close" data-dismiss="modal" data-bs-dismiss="modal" data-coreui-dismiss="modal" aria-label="Close">
+                            <span aria-hidden="true">&times;</span>
+                        </button>
+                    </div>
+                    <div class="modal-body">
+                        <p class="mb-2">
+                            Sale Order <strong>{{ $shortagePoReference }}</strong> has pending stock / shortage.
+                        </p>
+                        <p class="mb-2">
+                            Current shortage:
+                            <strong>
+                                @if(is_null($shortagePoQuantity))
+                                    Not recorded
+                                @else
+                                    {{ number_format((int) $shortagePoQuantity) }} qty
+                                @endif
+                            </strong>
+                        </p>
+                        <p class="mb-0 text-muted">
+                            You may create a Purchase Order to fulfill the required items.
+                        </p>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-outline-secondary" data-dismiss="modal" data-bs-dismiss="modal" data-coreui-dismiss="modal">Close</button>
+                        @if($purchaseOrderCreateUrl)
+                            <a href="{{ $purchaseOrderCreateUrl }}" class="btn btn-primary">
+                                <i class="bi bi-journal-plus me-1"></i> Create Purchase Order
+                            </a>
+                        @endif
+                    </div>
+                </div>
+            </div>
+        </div>
+    @endif
+
 </div>
 @endsection
+
+@if($showShortagePoModal)
+    @push('page_scripts')
+        <script>
+        (function () {
+            function openModal(modalId) {
+                var modalEl = document.getElementById(modalId);
+                if (!modalEl) return false;
+
+                try {
+                    if (typeof bootstrap !== 'undefined' && bootstrap.Modal) {
+                        bootstrap.Modal.getOrCreateInstance(modalEl).show();
+                        return true;
+                    }
+                } catch (e) {}
+
+                try {
+                    if (typeof coreui !== 'undefined' && coreui.Modal) {
+                        coreui.Modal.getOrCreateInstance(modalEl).show();
+                        return true;
+                    }
+                } catch (e) {}
+
+                try {
+                    if (window.jQuery && typeof jQuery(modalEl).modal === 'function') {
+                        jQuery(modalEl).modal('show');
+                        return true;
+                    }
+                } catch (e) {}
+
+                return false;
+            }
+
+            document.addEventListener('DOMContentLoaded', function () {
+                openModal('saleOrderShortagePoModal');
+            });
+        })();
+        </script>
+    @endpush
+@endif

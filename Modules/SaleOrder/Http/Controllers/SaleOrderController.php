@@ -1090,8 +1090,11 @@ class SaleOrderController extends Controller
             $request->validate($rules, $messages);
 
             $saleOrderId = null;
+            $createdSaleOrderReference = null;
+            $createdSaleOrderHasShortage = false;
+            $createdSaleOrderShortageQuantity = null;
 
-            DB::transaction(function () use ($request, $branchId, $source, &$saleOrderId) {
+            DB::transaction(function () use ($request, $branchId, $source, &$saleOrderId, &$createdSaleOrderReference, &$createdSaleOrderHasShortage, &$createdSaleOrderShortageQuantity) {
 
                 $customer = Customer::query()
                     ->where('id', (int) $request->customer_id)
@@ -1303,6 +1306,9 @@ class SaleOrderController extends Controller
                 ]);
 
                 $saleOrderId = (int) $so->id;
+                $createdSaleOrderReference = (string) ($so->reference ?? ('SO#' . $so->id));
+                $createdSaleOrderHasShortage = (bool) $hasShortage;
+                $createdSaleOrderShortageQuantity = $totalShortageQuantity;
 
                 foreach ($normalizedItems as $index => $row) {
                     $itemShortage = $shortageSnapshot['items'][$index] ?? [
@@ -1388,7 +1394,18 @@ class SaleOrderController extends Controller
             });
 
             toast('Sale Order Created!', 'success');
-            return redirect()->route('sale-orders.show', $saleOrderId);
+            $redirect = redirect()->route('sale-orders.show', $saleOrderId);
+
+            if ($createdSaleOrderHasShortage) {
+                $redirect->with([
+                    'show_sale_order_shortage_po_modal' => true,
+                    'shortage_sale_order_id' => (int) $saleOrderId,
+                    'shortage_sale_order_reference' => $createdSaleOrderReference,
+                    'shortage_quantity' => $createdSaleOrderShortageQuantity,
+                ]);
+            }
+
+            return $redirect;
 
         } catch (ValidationException $e) {
             Log::warning('Sale Order create validation failed.', [
