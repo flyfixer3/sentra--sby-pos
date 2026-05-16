@@ -45,12 +45,23 @@ class SaleOrder extends BaseModel
         'deposit_payment_method',
         'deposit_code',
 
+        'has_shortage',
+        'shortage_detected_at',
+        'shortage_resolved_at',
+        'estimated_arrival_days',
+        'estimated_arrival_date',
+
         'created_by',
         'updated_by',
     ];
 
     protected $casts = [
         'date' => 'date',
+        'has_shortage' => 'boolean',
+        'shortage_detected_at' => 'datetime',
+        'shortage_resolved_at' => 'datetime',
+        'estimated_arrival_days' => 'integer',
+        'estimated_arrival_date' => 'date',
     ];
 
     public function customer(): BelongsTo

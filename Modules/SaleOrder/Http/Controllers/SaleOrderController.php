@@ -26,6 +26,86 @@ use Modules\SaleOrder\Entities\SaleOrderItem;
 
 class SaleOrderController extends Controller
 {
+    private function getBranchSellableStockMap(int $branchId, array $productIds, array $reservedCreditByProduct = []): array
+    {
+        $productIds = collect($productIds)
+            ->map(fn ($id) => (int) $id)
+            ->filter(fn ($id) => $id > 0)
+            ->unique()
+            ->values()
+            ->all();
+
+        if ($branchId <= 0 || empty($productIds)) {
+            return [];
+        }
+
+        $stockRows = DB::table('stocks')
+            ->where('branch_id', (int) $branchId)
+            ->whereIn('product_id', $productIds)
+            ->select(
+                'product_id',
+                DB::raw('COALESCE(SUM(qty_total), 0) as total_qty'),
+                DB::raw('COALESCE(SUM(qty_reserved), 0) as reserved_qty')
+            )
+            ->groupBy('product_id')
+            ->get()
+            ->keyBy('product_id');
+
+        $damagedRows = DB::table('product_damaged_items')
+            ->where('branch_id', (int) $branchId)
+            ->whereIn('product_id', $productIds)
+            ->where('resolution_status', 'pending')
+            ->whereNull('moved_out_at')
+            ->select('product_id', DB::raw('COALESCE(SUM(quantity), 0) as qty'))
+            ->groupBy('product_id')
+            ->pluck('qty', 'product_id')
+            ->toArray();
+
+        $sellable = [];
+        foreach ($productIds as $productId) {
+            $row = $stockRows->get($productId);
+            $total = max(0, (int) ($row->total_qty ?? 0));
+            $reserved = max(0, (int) ($row->reserved_qty ?? 0));
+            $damaged = max(0, (int) ($damagedRows[$productId] ?? 0));
+            $reservedCredit = max(0, (int) ($reservedCreditByProduct[$productId] ?? 0));
+
+            $sellable[$productId] = max(0, max(0, $total - $damaged) - max(0, $reserved - $reservedCredit));
+        }
+
+        return $sellable;
+    }
+
+    private function hasSaleOrderShortage(int $branchId, array $qtyByProduct, array $reservedCreditByProduct = []): bool
+    {
+        $sellableMap = $this->getBranchSellableStockMap($branchId, array_keys($qtyByProduct), $reservedCreditByProduct);
+
+        foreach ($qtyByProduct as $productId => $orderedQty) {
+            $productId = (int) $productId;
+            $orderedQty = max(0, (int) $orderedQty);
+            if ($productId <= 0 || $orderedQty <= 0) {
+                continue;
+            }
+
+            if ($orderedQty > (int) ($sellableMap[$productId] ?? 0)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private function buildEstimatedArrivalDate(?string $date, $days): ?string
+    {
+        $days = is_numeric($days) ? (int) $days : 0;
+        if ($days <= 0) {
+            return null;
+        }
+
+        return Carbon::parse($date ?: now()->toDateString())
+            ->addDays($days)
+            ->toDateString();
+    }
+
     private function deliveredQtyExpr(string $alias = 'sdi'): string
     {
         return "CASE
@@ -917,6 +997,7 @@ class SaleOrderController extends Controller
 
                 'warehouse_id' => 'nullable|integer',
                 'note' => 'nullable|string|max:5000',
+                'estimated_arrival_days' => 'nullable|integer|min:1',
 
                 'tax_percentage' => 'required|numeric|min:0|max:100',
                 'discount_type' => 'required|in:fixed,percentage',
@@ -1061,6 +1142,9 @@ class SaleOrderController extends Controller
                 $normalizedItems = $itemSnapshot['items'];
                 $qtyByProduct = $itemSnapshot['qty_by_product'];
                 $sellSubtotal = (int) $itemSnapshot['sell_subtotal'];
+                $hasShortage = $this->hasSaleOrderShortage((int) $branchId, $qtyByProduct);
+                $estimatedArrivalDays = $request->filled('estimated_arrival_days') ? (int) $request->estimated_arrival_days : null;
+                $estimatedArrivalDate = $this->buildEstimatedArrivalDate((string) $request->date, $estimatedArrivalDays);
 
                 if (empty($qtyByProduct)) {
                     throw ValidationException::withMessages([
@@ -1173,6 +1257,11 @@ class SaleOrderController extends Controller
 
                     // ✅ dp received
                     'deposit_received_amount' => (int) $depositReceived,
+                    'has_shortage' => $hasShortage,
+                    'shortage_detected_at' => $hasShortage ? now() : null,
+                    'shortage_resolved_at' => null,
+                    'estimated_arrival_days' => $estimatedArrivalDays,
+                    'estimated_arrival_date' => $estimatedArrivalDate,
                 ]);
 
                 $saleOrderId = (int) $so->id;
@@ -1575,6 +1664,7 @@ class SaleOrderController extends Controller
                 'date' => 'required|date',
                 'customer_id' => 'required|integer',
                 'note' => 'nullable|string|max:5000',
+                'estimated_arrival_days' => 'nullable|integer|min:1',
 
                 'tax_percentage' => 'required|numeric|min:0|max:100',
                 'discount_type' => 'required|in:fixed,percentage',
@@ -1669,6 +1759,9 @@ class SaleOrderController extends Controller
                 $normalizedItems = $itemSnapshot['items'];
                 $qtyByProduct = $itemSnapshot['qty_by_product'];
                 $sellSubtotal = (int) $itemSnapshot['sell_subtotal'];
+                $hasShortage = $this->hasSaleOrderShortage((int) $branchId, $qtyByProduct, $oldQtyByProduct);
+                $estimatedArrivalDays = $request->filled('estimated_arrival_days') ? (int) $request->estimated_arrival_days : null;
+                $estimatedArrivalDate = $this->buildEstimatedArrivalDate((string) $request->date, $estimatedArrivalDays);
 
                 if (empty($qtyByProduct)) {
                     throw ValidationException::withMessages([
@@ -1719,6 +1812,11 @@ class SaleOrderController extends Controller
                     'deposit_payment_method' => $saleOrder->deposit_payment_method,
                     'deposit_code' => $saleOrder->deposit_code,
                     'deposit_received_amount' => (int) ($saleOrder->deposit_received_amount ?? 0),
+                    'has_shortage' => $hasShortage,
+                    'shortage_detected_at' => $hasShortage ? ($saleOrder->shortage_detected_at ?: now()) : null,
+                    'shortage_resolved_at' => null,
+                    'estimated_arrival_days' => $estimatedArrivalDays,
+                    'estimated_arrival_date' => $estimatedArrivalDate,
                 ]);
 
                 // replace items

@@ -109,6 +109,7 @@
     $oldHeaderDiscountValue = old('header_discount_value', $prefillHeaderDiscountValue ?? old('discount_percentage', 0));
     $oldShipping = old('shipping_amount', $prefillShippingAmount ?? 0);
     $oldFee = old('fee_amount', $prefillFeeAmount ?? 0);
+    $oldEstimatedArrivalDays = old('estimated_arrival_days');
 
     // ✅ deposit default 0 (NOT empty)
     $oldDepositPct = old('deposit_percentage', 0);
@@ -201,7 +202,22 @@
                                 <div id="so_date_client_error" class="invalid-feedback d-none">Date is required.</div>
                             </div>
 
-                            <div class="col-md-9 mb-3">
+                            <div class="col-md-3 mb-3">
+                                <label class="form-label" for="so_estimated_arrival_days">Estimated Arrival (Days)</label>
+                                <input type="number"
+                                       min="1"
+                                       step="1"
+                                       name="estimated_arrival_days"
+                                       id="so_estimated_arrival_days"
+                                       class="form-control @error('estimated_arrival_days') is-invalid @enderror"
+                                       value="{{ $oldEstimatedArrivalDays }}"
+                                       placeholder="30">
+                                @error('estimated_arrival_days')
+                                    <div class="invalid-feedback d-block">{{ $message }}</div>
+                                @enderror
+                            </div>
+
+                            <div class="col-md-6 mb-3">
                                 <label class="form-label" for="so_customer_id">Customer {!! $requiredMark !!}</label>
                                 <div class="so-customer-autocomplete">
                                     <div class="so-customer-row">

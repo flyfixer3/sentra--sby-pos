@@ -23,6 +23,37 @@
     };
 
     $dateText = $saleOrder->date ? \Carbon\Carbon::parse($saleOrder->date)->format('d M Y') : '-';
+    $hasShortage = (bool)($saleOrder->has_shortage ?? false);
+    $shortageBadgeClass = $hasShortage ? 'bg-danger' : 'bg-success';
+    $shortageText = $hasShortage ? 'PENDING STOCK' : 'AVAILABLE';
+    $shortageDetectedText = $saleOrder->shortage_detected_at ? \Carbon\Carbon::parse($saleOrder->shortage_detected_at)->format('d M Y H:i') : '-';
+    $shortageResolvedText = $saleOrder->shortage_resolved_at ? \Carbon\Carbon::parse($saleOrder->shortage_resolved_at)->format('d M Y H:i') : '-';
+
+    $etaDateText = '-';
+    $etaCountdownText = '-';
+    $etaBadgeClass = 'bg-secondary';
+    if (!empty($saleOrder->estimated_arrival_date)) {
+        $etaDate = \Carbon\Carbon::parse($saleOrder->estimated_arrival_date)->startOfDay();
+        $etaDateText = $etaDate->format('d M Y');
+        $etaDays = now()->startOfDay()->diffInDays($etaDate, false);
+
+        if ($etaDays < 0) {
+            $etaCountdownText = 'Overdue '.abs($etaDays).' days';
+            $etaBadgeClass = 'bg-danger';
+        } elseif ($etaDays === 0) {
+            $etaCountdownText = 'Due Today';
+            $etaBadgeClass = 'bg-danger';
+        } elseif ($etaDays <= 3) {
+            $etaCountdownText = $etaDays.' days left';
+            $etaBadgeClass = 'bg-danger';
+        } elseif ($etaDays <= 7) {
+            $etaCountdownText = $etaDays.' days left';
+            $etaBadgeClass = 'bg-warning text-dark';
+        } else {
+            $etaCountdownText = $etaDays.' days left';
+            $etaBadgeClass = 'bg-light text-dark border';
+        }
+    }
 
     $remainingConfirmedMap = $remainingMap ?? [];
     $plannedRemainingMap = $plannedRemainingMap ?? $remainingConfirmedMap;
@@ -45,7 +76,6 @@
         }
     }
 
-    // ✅ Financial Summary
     $subtotal = (int)($saleOrder->subtotal_amount ?? 0);
     $taxAmt   = (int)($saleOrder->tax_amount ?? 0);
     $fee      = (int)($saleOrder->fee_amount ?? 0);
@@ -66,23 +96,107 @@
     $updatedAtText = $saleOrder->updated_at ? \Carbon\Carbon::parse($saleOrder->updated_at)->format('d M Y H:i') : '-';
 @endphp
 
+<style>
+    .sale-order-title-wrap {
+        min-width: 260px;
+    }
+
+    .sale-order-status-strip {
+        display: flex;
+        flex-wrap: wrap;
+        gap: .5rem;
+        margin-top: .45rem;
+    }
+
+    .sale-order-status-chip {
+        display: inline-flex;
+        align-items: center;
+        gap: .4rem;
+        padding: .35rem .5rem;
+        border: 1px solid #d8dbe0;
+        border-radius: .5rem;
+        background: #f8f9fa;
+        line-height: 1;
+    }
+
+    .sale-order-status-chip-label {
+        color: #768192;
+        font-size: .68rem;
+        font-weight: 600;
+        letter-spacing: .02em;
+        text-transform: uppercase;
+        white-space: nowrap;
+    }
+
+    .sale-order-status-chip .badge {
+        font-size: .68rem;
+    }
+
+    .sale-order-meta-line {
+        color: #768192;
+        font-size: .78rem;
+    }
+
+    .sale-order-meta-line strong {
+        color: #3c4b64;
+    }
+
+    .sale-order-status-help {
+        color: #768192;
+        font-size: .72rem;
+        margin-top: .35rem;
+    }
+
+    @media (max-width: 576px) {
+        .sale-order-status-chip {
+            width: 100%;
+            justify-content: space-between;
+        }
+    }
+</style>
+
 <div class="container-fluid">
 
     <div class="card mb-3 shadow-sm">
         <div class="card-body">
             <div class="d-flex flex-wrap justify-content-between align-items-start gap-3">
-                <div>
-                    <div class="d-flex align-items-center gap-2">
+                <div class="sale-order-title-wrap">
+                    <div class="d-flex flex-wrap align-items-center gap-2">
                         <h4 class="mb-0">{{ $saleOrder->reference }}</h4>
-                        <span class="badge {{ $statusBadge }}">{{ strtoupper($saleOrder->status ?? 'PENDING') }}</span>
                     </div>
 
-                    <div class="text-muted small mt-1">
+                    <div class="sale-order-status-strip">
+                        <div class="sale-order-status-chip">
+                            <span class="sale-order-status-chip-label">Order Status</span>
+                            <span class="badge {{ $statusBadge }}">{{ strtoupper($saleOrder->status ?? 'PENDING') }}</span>
+                        </div>
+
+                        <div class="sale-order-status-chip">
+                            <span class="sale-order-status-chip-label">Stock Status</span>
+                            <span class="badge {{ $shortageBadgeClass }}">{{ $shortageText }}</span>
+                        </div>
+                    </div>
+
+                    <div class="sale-order-status-help">
+                        Order Status = progress dokumen SO. Stock Status = kondisi shortage / ketersediaan barang.
+                    </div>
+
+                    <div class="sale-order-meta-line mt-2">
                         Date: <strong>{{ $dateText }}</strong>
-                        • Customer: <strong>{{ $saleOrder->customer?->customer_name ?? '-' }}</strong>
+                        &bull; Customer: <strong>{{ $saleOrder->customer?->customer_name ?? '-' }}</strong>
                     </div>
 
-                    <div class="text-muted small mt-1">
+                    <div class="sale-order-meta-line mt-1">
+                        ETA: <strong>{{ $etaDateText }}</strong>
+                        @if($etaDateText !== '-')
+                            &bull; <span class="badge {{ $etaBadgeClass }}">{{ $etaCountdownText }}</span>
+                            @if(!empty($saleOrder->estimated_arrival_days))
+                                &bull; Lead Time: <strong>{{ (int) $saleOrder->estimated_arrival_days }} days</strong>
+                            @endif
+                        @endif
+                    </div>
+
+                    <div class="sale-order-meta-line mt-1">
                         Quotation:
                         <strong>
                             @if($quotationId)
@@ -98,7 +212,7 @@
                             @endif
                         </strong>
 
-                        • Invoice (Sale):
+                        &bull; Invoice (Sale):
                         <span class="text-muted">listed per delivery below</span>
                     </div>
                 </div>
@@ -128,15 +242,6 @@
                             <i class="bi bi-download me-1"></i> Download PDF
                         </a>
                     </div>
-
-                    {{-- ✅ DP Receipt stays separate from Sale Order print --}}
-                    <!-- @if($dpRec > 0)
-                        <a class="btn btn-outline-info"
-                           href="{{ route('sale-orders.dp-receipt', $saleOrder->id) }}"
-                           target="_blank">
-                            <i class="bi bi-receipt me-1"></i> DP Receipt
-                        </a>
-                    @endif -->
 
                     @can('edit_sale_orders')
                         @if($status === 'pending')
@@ -174,8 +279,34 @@
 
     <div class="card mb-3 shadow-sm">
         <div class="card-body">
-            <h6 class="mb-3">Audit Information</h6>
+            <h6 class="mb-3">Tracking & Audit Information</h6>
             <div class="row">
+                <div class="col-md-3 mb-2">
+                    <div class="text-muted small">Stock Status</div>
+                    <div>
+                        <span class="badge {{ $shortageBadgeClass }}">{{ $shortageText }}</span>
+                        <div class="text-muted small mt-1">
+                            {{ $hasShortage ? 'Needs purchasing / incoming stock follow-up.' : 'No shortage flag for this Sale Order.' }}
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-3 mb-2">
+                    <div class="text-muted small">Shortage Detected At</div>
+                    <div class="fw-semibold">{{ $shortageDetectedText }}</div>
+                </div>
+                <div class="col-md-3 mb-2">
+                    <div class="text-muted small">Shortage Resolved At</div>
+                    <div class="fw-semibold">{{ $shortageResolvedText }}</div>
+                </div>
+                <div class="col-md-3 mb-2">
+                    <div class="text-muted small">Estimated Arrival</div>
+                    <div class="fw-semibold">
+                        {{ $etaDateText }}
+                        @if($etaDateText !== '-')
+                            <span class="badge {{ $etaBadgeClass }}">{{ $etaCountdownText }}</span>
+                        @endif
+                    </div>
+                </div>
                 <div class="col-md-3 mb-2 mb-md-0">
                     <div class="text-muted small">Created By</div>
                     <div class="fw-semibold">{{ $createdByName }}</div>
@@ -196,7 +327,6 @@
         </div>
     </div>
 
-    {{-- ✅ Financial Summary --}}
     <div class="card mb-3 shadow-sm">
         <div class="card-body">
             <h6 class="mb-3">Financial Summary</h6>
@@ -268,7 +398,7 @@
             <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-2">
                 <h6 class="mb-0">Items Progress</h6>
                 <div class="text-muted small">
-                    Delivered = confirmed/partial deliveries • Planned = pending+confirmed+partial
+                    Delivered = confirmed/partial deliveries &bull; Planned = pending+confirmed+partial
                 </div>
             </div>
 
@@ -333,9 +463,9 @@
                                 </div>
                                 <div class="text-muted small mt-1">
                                     Unit: <strong>{{ format_currency($unitPrice) }}</strong>
-                                    • Net: <strong>{{ format_currency($netPrice) }}</strong>
-                                    • Item Discount: <strong>{{ format_currency($itemDiscount) }}</strong>
-                                    • Subtotal: <strong>{{ format_currency($lineSubtotal) }}</strong>
+                                    &bull; Net: <strong>{{ format_currency($netPrice) }}</strong>
+                                    &bull; Item Discount: <strong>{{ format_currency($itemDiscount) }}</strong>
+                                    &bull; Subtotal: <strong>{{ format_currency($lineSubtotal) }}</strong>
                                 </div>
                             </td>
 
@@ -365,7 +495,7 @@
                             </td>
 
                             <td>
-                                <div class="small text-muted mb-1">Delivered: {{ $deliveredPct }}% • Planned: {{ $plannedPct }}%</div>
+                                <div class="small text-muted mb-1">Delivered: {{ $deliveredPct }}% &bull; Planned: {{ $plannedPct }}%</div>
                                 <div class="progress" style="height: 10px;">
                                     <div class="progress-bar" role="progressbar" style="width: {{ $plannedPct }}%"></div>
                                 </div>

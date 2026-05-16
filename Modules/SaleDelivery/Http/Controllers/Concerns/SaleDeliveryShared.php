@@ -237,8 +237,25 @@ trait SaleDeliveryShared
             }
         }
 
+        $updates = [];
+
         if ((string) $so->status !== $newStatus) {
-            $so->update(['status' => $newStatus, 'updated_by' => auth()->id()]);
+            $updates['status'] = $newStatus;
+        }
+
+        if (Schema::hasColumn('sale_orders', 'has_shortage') && (bool) ($so->has_shortage ?? false)) {
+            if ($totalRemaining <= 0) {
+                $updates['has_shortage'] = false;
+                $updates['shortage_resolved_at'] = now();
+            } else {
+                $updates['has_shortage'] = true;
+                $updates['shortage_resolved_at'] = null;
+            }
+        }
+
+        if (!empty($updates)) {
+            $updates['updated_by'] = auth()->id();
+            $so->update($updates);
         }
     }
 

@@ -32,6 +32,36 @@ class SaleOrdersDataTable extends DataTable
         return Carbon::parse($datePart . ' ' . $timePart)->format('d-m-Y H:i');
     }
 
+    private function formatEstimatedArrival($row): string
+    {
+        if (empty($row->estimated_arrival_date)) {
+            return '-';
+        }
+
+        $date = Carbon::parse($row->estimated_arrival_date)->startOfDay();
+        $today = now()->startOfDay();
+        $days = $today->diffInDays($date, false);
+        $dateText = $date->format('d-m-Y');
+
+        if ($days < 0) {
+            return '<span class="badge badge-danger">' . e($dateText . ' - Overdue ' . abs($days) . ' days') . '</span>';
+        }
+
+        if ($days === 0) {
+            return '<span class="badge badge-danger">' . e($dateText . ' - Due Today') . '</span>';
+        }
+
+        if ($days <= 3) {
+            return '<span class="badge badge-danger">' . e($dateText . ' - ' . $days . ' days left') . '</span>';
+        }
+
+        if ($days <= 7) {
+            return '<span class="badge badge-warning">' . e($dateText . ' - ' . $days . ' days left') . '</span>';
+        }
+
+        return '<span class="badge badge-light border">' . e($dateText . ' - ' . $days . ' days left') . '</span>';
+    }
+
     public function dataTable($query)
     {
         return datatables()
@@ -69,6 +99,16 @@ class SaleOrdersDataTable extends DataTable
                 if ($s === 'cancelled') $badge = 'danger';
 
                 return '<span class="badge badge-' . $badge . '">' . strtoupper(e($s)) . '</span>';
+            })
+            ->addColumn('shortage_status', function ($row) {
+                if ((bool) ($row->has_shortage ?? false)) {
+                    return '<span class="badge badge-danger">Pending Stock</span>';
+                }
+
+                return '<span class="badge badge-success">Available</span>';
+            })
+            ->editColumn('estimated_arrival_date', function ($row) {
+                return $this->formatEstimatedArrival($row);
             })
             ->addColumn('action', function ($row) {
 
@@ -116,12 +156,12 @@ class SaleOrdersDataTable extends DataTable
 
                 return $html;
             })
-            ->rawColumns(['status', 'action']);
+            ->rawColumns(['status', 'shortage_status', 'estimated_arrival_date', 'action']);
     }
 
     public function query(SaleOrder $model)
     {
-        return $model->query()
+        $query = $model->query()
             ->with(['customer'])
             ->select('sale_orders.*')
             ->selectSub(function ($q) {
@@ -139,6 +179,15 @@ class SaleOrdersDataTable extends DataTable
                     ->whereRaw('LOWER(COALESCE(sd.status,"")) = ?', ['confirmed'])
                     ->whereNotNull('sd.sale_id');
             }, 'invoiced_confirmed_deliveries_count');
+
+        $shortageFilter = request('shortage_filter', 'all');
+        if ($shortageFilter === 'shortage') {
+            $query->where('sale_orders.has_shortage', true);
+        } elseif ($shortageFilter === 'normal') {
+            $query->where('sale_orders.has_shortage', false);
+        }
+
+        return $query;
     }
 
     public function html()
@@ -146,11 +195,15 @@ class SaleOrdersDataTable extends DataTable
         return $this->builder()
             ->setTableId('sale-orders-table')
             ->columns($this->getColumns())
-            ->minifiedAjax()
+            ->ajax([
+                'url' => route('sale-orders.index'),
+                'type' => 'GET',
+                'data' => 'function(d){ d.shortage_filter = $("#sale-order-shortage-filter").val(); }',
+            ])
             ->dom("<'row'<'col-md-3'l><'col-md-5 mb-2'B><'col-md-4'f>>" .
                   "tr" .
                   "<'row'<'col-md-5'i><'col-md-7 mt-2'p>>")
-            ->orderBy(5, 'desc')
+            ->orderBy(7, 'desc')
             ->buttons(
                 Button::make('excel')->text('<i class="bi bi-file-earmark-excel-fill"></i> Excel'),
                 Button::make('print')->text('<i class="bi bi-printer-fill"></i> Print'),
@@ -166,6 +219,8 @@ class SaleOrdersDataTable extends DataTable
             Column::make('date')->title('Date'),
             Column::computed('customer')->title('Customer')->orderable(false)->searchable(false),
             Column::make('status')->title('Status'),
+            Column::computed('shortage_status')->title('Stock')->orderable(false)->searchable(false),
+            Column::make('estimated_arrival_date')->title('Estimated Arrival')->searchable(false),
             Column::computed('action')->exportable(false)->printable(false)->width(120)->addClass('text-center'),
             Column::make('created_at')->visible(false),
         ];
