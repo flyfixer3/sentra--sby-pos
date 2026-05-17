@@ -20,10 +20,10 @@ return [
     'allowed_methods' => ['*'],
 
     // Restrict via env for production. Example:
-    // CORS_ALLOWED_ORIGINS=https://accounting.sentraautoglass.com
+    // CORS_ALLOWED_ORIGINS=https://accounting.sentraautoglass.com,https://crm.sentraautoglass.com,https://sentraautoglass.com,https://www.sentraautoglass.com
     'allowed_origins' => array_filter(array_map('trim', explode(',', env(
         'CORS_ALLOWED_ORIGINS',
-        'http://localhost:3000,http://127.0.0.1:3000,http://localhost:3001,http://127.0.0.1:3001,https://accounting.sentraautoglass.com'
+        'http://localhost:3000,http://127.0.0.1:3000,http://localhost:3001,http://127.0.0.1:3001,https://accounting.sentraautoglass.com,https://crm.sentraautoglass.com,https://crm-sentra.vercel.app,https://sentraautoglass.com,https://www.sentraautoglass.com,https://sentraautoglass.vercel.app'
     )))),
 
     'allowed_origins_patterns' => [],

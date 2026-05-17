@@ -25,7 +25,10 @@ return [
             '127.0.0.1:8000',
             '::1',
             'accounting.sentraautoglass.com',
+            'crm.sentraautoglass.com',
             'internal.sentraautoglass.com',
+            'sentraautoglass.com',
+            'www.sentraautoglass.com',
             parse_url(config('app.url'), PHP_URL_HOST),
             Sanctum::currentApplicationUrlWithPort(),
         ]))
