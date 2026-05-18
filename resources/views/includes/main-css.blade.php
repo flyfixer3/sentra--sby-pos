@@ -26,8 +26,8 @@
     }
 
     /* DataTables sorting affordance.
-       The project loads DataTables JS globally, but not the Bootstrap DataTables CSS,
-       so sortable headers need a small shared visual treatment. */
+       Keep one project-controlled indicator even when module views load the
+       Bootstrap DataTables CSS, which also injects sorting pseudo-elements. */
     table.dataTable thead th.sorting,
     table.dataTable thead th.sorting_asc,
     table.dataTable thead th.sorting_desc,
@@ -42,6 +42,7 @@
         position: relative;
         padding-right: 1.75rem !important;
         user-select: none;
+        background-image: none !important;
     }
 
     table.dataTable thead th.sorting_disabled,
@@ -50,6 +51,31 @@
     table.dataTable thead td.dt-orderable-none {
         cursor: default;
         padding-right: .75rem !important;
+        background-image: none !important;
+    }
+
+    table.dataTable thead th.sorting::before,
+    table.dataTable thead th.sorting_asc::before,
+    table.dataTable thead th.sorting_desc::before,
+    table.dataTable thead th.sorting_disabled::before,
+    table.dataTable thead th.dt-orderable-asc::before,
+    table.dataTable thead th.dt-orderable-desc::before,
+    table.dataTable thead th.dt-ordering-asc::before,
+    table.dataTable thead th.dt-ordering-desc::before,
+    table.dataTable thead th.dt-orderable-none::before,
+    table.dataTable thead td.sorting::before,
+    table.dataTable thead td.sorting_asc::before,
+    table.dataTable thead td.sorting_desc::before,
+    table.dataTable thead td.sorting_disabled::before,
+    table.dataTable thead td.dt-orderable-asc::before,
+    table.dataTable thead td.dt-orderable-desc::before,
+    table.dataTable thead td.dt-ordering-asc::before,
+    table.dataTable thead td.dt-ordering-desc::before,
+    table.dataTable thead td.dt-orderable-none::before,
+    table.dataTable thead th .dt-column-order,
+    table.dataTable thead td .dt-column-order {
+        content: none !important;
+        display: none !important;
     }
 
     table.dataTable thead th.sorting::after,
