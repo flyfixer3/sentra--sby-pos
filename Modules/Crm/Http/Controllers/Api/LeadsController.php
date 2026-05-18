@@ -65,8 +65,28 @@ class LeadsController extends Controller
                     "{$table}.last_clicked_at",
                 ];
 
-                if (Schema::hasColumn($table, 'gclid')) {
-                    $columns[] = "{$table}.gclid";
+                foreach ([
+                    'gclid',
+                    'gbraid',
+                    'wbraid',
+                    'page_path',
+                    'referrer_url',
+                    'device_type',
+                    'browser_name',
+                    'browser_version',
+                    'os_name',
+                    'os_version',
+                    'screen_width',
+                    'screen_height',
+                    'language',
+                    'timezone',
+                    'ip_city',
+                    'ip_region',
+                    'ip_country',
+                ] as $column) {
+                    if (Schema::hasColumn($table, $column)) {
+                        $columns[] = "{$table}.{$column}";
+                    }
                 }
 
                 $query->select($columns);

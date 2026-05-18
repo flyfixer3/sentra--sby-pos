@@ -107,17 +107,28 @@ class CtaClicksController extends Controller
             'utm_term' => ['nullable', 'string', 'max:150'],
             'utm_content' => ['nullable', 'string', 'max:150'],
             'gclid' => ['nullable', 'string', 'max:150'],
+            'gbraid' => ['nullable', 'string', 'max:150'],
+            'wbraid' => ['nullable', 'string', 'max:150'],
             'landing_page_url' => ['nullable', 'string', 'max:2048'],
+            'page_path' => ['nullable', 'string', 'max:2048'],
+            'referrer_url' => ['nullable', 'string', 'max:2048'],
             'cta_type' => ['nullable', 'string', 'max:50'],
             'cta_source' => ['nullable', 'string', 'max:100'],
             'target_whatsapp_number' => ['nullable', 'string', 'max:50'],
+            'device_type' => ['nullable', 'string', 'max:50'],
+            'browser_name' => ['nullable', 'string', 'max:100'],
+            'browser_version' => ['nullable', 'string', 'max:50'],
+            'os_name' => ['nullable', 'string', 'max:100'],
+            'os_version' => ['nullable', 'string', 'max:50'],
+            'screen_width' => ['nullable', 'integer', 'min:0', 'max:100000'],
+            'screen_height' => ['nullable', 'integer', 'min:0', 'max:100000'],
+            'language' => ['nullable', 'string', 'max:50'],
+            'timezone' => ['nullable', 'string', 'max:100'],
         ]);
 
         $data = $this->normalizePayload($data, $request);
-        $hasGclidColumn = Schema::hasColumn('crm_cta_clicks', 'gclid');
-        if (!$hasGclidColumn) {
-            unset($data['gclid']);
-        }
+        $availableOptionalColumns = $this->availableOptionalColumns();
+        $data = $this->filterUnavailableOptionalColumns($data, $availableOptionalColumns);
         $windowStart = now()->subMinutes(30);
 
         $existing = CtaClick::query()
@@ -145,8 +156,19 @@ class CtaClicksController extends Controller
                 'user_agent'     => $data['user_agent'],
             ];
 
-            if ($hasGclidColumn && empty($existing->gclid) && !empty($data['gclid'])) {
-                $update['gclid'] = $data['gclid'];
+            foreach ($availableOptionalColumns as $column) {
+                if (!array_key_exists($column, $data)) {
+                    continue;
+                }
+
+                $isAttributionIdentifier = in_array($column, ['gclid', 'gbraid', 'wbraid'], true);
+                if ($isAttributionIdentifier && !empty($existing->{$column})) {
+                    continue;
+                }
+
+                if ($data[$column] !== null) {
+                    $update[$column] = $data[$column];
+                }
             }
 
             if (Schema::hasColumn('crm_cta_clicks', 'suspicious_score')) {
@@ -217,7 +239,10 @@ class CtaClicksController extends Controller
             })
             ->latest('last_clicked_at')
             ->limit($limit)
-            ->with('lead:id,contact_name,status')
+            ->with([
+                'lead' => fn ($query) => $query->without('media')->select('id', 'contact_name', 'status', 'created_at', 'created_by'),
+                'lead.creator' => fn ($query) => $query->without('media')->select('id', 'name'),
+            ])
             ->get();
 
         return response()->json(['data' => $rows]);
@@ -249,10 +274,21 @@ class CtaClicksController extends Controller
             'utm_term',
             'utm_content',
             'gclid',
+            'gbraid',
+            'wbraid',
             'landing_page_url',
+            'page_path',
+            'referrer_url',
             'cta_type',
             'cta_source',
             'target_whatsapp_number',
+            'device_type',
+            'browser_name',
+            'browser_version',
+            'os_name',
+            'os_version',
+            'language',
+            'timezone',
         ] as $key) {
             $data[$key] = $data[$key] ?? null;
         }
@@ -276,7 +312,71 @@ class CtaClicksController extends Controller
         $data['source'] = $data['utm_source'] ?: ($data['source'] ?? null);
         $data['ip_address'] = $request->ip();
         $data['user_agent'] = Str::limit((string) $request->userAgent(), 500, '');
+        $data['ip_city'] = $this->headerValue($request, 'CF-IPCity', 120);
+        $data['ip_region'] = $this->headerValue($request, 'CF-Region', 120);
+        $data['ip_country'] = $this->headerValue($request, 'CF-IPCountry', 2);
 
         return $data;
+    }
+
+    protected function availableOptionalColumns(): array
+    {
+        return array_values(array_filter([
+            'gclid',
+            'gbraid',
+            'wbraid',
+            'page_path',
+            'referrer_url',
+            'device_type',
+            'browser_name',
+            'browser_version',
+            'os_name',
+            'os_version',
+            'screen_width',
+            'screen_height',
+            'language',
+            'timezone',
+            'ip_city',
+            'ip_region',
+            'ip_country',
+        ], fn ($column) => Schema::hasColumn('crm_cta_clicks', $column)));
+    }
+
+    protected function filterUnavailableOptionalColumns(array $data, array $availableColumns): array
+    {
+        $available = array_flip($availableColumns);
+
+        foreach ([
+            'gclid',
+            'gbraid',
+            'wbraid',
+            'page_path',
+            'referrer_url',
+            'device_type',
+            'browser_name',
+            'browser_version',
+            'os_name',
+            'os_version',
+            'screen_width',
+            'screen_height',
+            'language',
+            'timezone',
+            'ip_city',
+            'ip_region',
+            'ip_country',
+        ] as $column) {
+            if (!isset($available[$column])) {
+                unset($data[$column]);
+            }
+        }
+
+        return $data;
+    }
+
+    protected function headerValue(Request $request, string $header, int $limit): ?string
+    {
+        $value = trim((string) $request->headers->get($header, ''));
+
+        return $value === '' ? null : Str::limit($value, $limit, '');
     }
 }
