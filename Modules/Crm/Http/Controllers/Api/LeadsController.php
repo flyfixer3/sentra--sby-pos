@@ -46,26 +46,27 @@ class LeadsController extends Controller
             'assignedUser' => fn ($query) => $query->without('media')->select('id', 'name', 'email'),
             'assignees' => fn ($query) => $query->without('media')->select('users.id', 'users.name', 'users.email'),
             'ctaClick' => function ($query) {
+                $table = 'crm_cta_clicks';
                 $columns = [
-                    'id',
-                    'lead_id',
-                    'cta_type',
-                    'cta_source',
-                    'ref_code',
-                    'utm_source',
-                    'utm_medium',
-                    'utm_campaign',
-                    'utm_term',
-                    'utm_content',
-                    'landing_page_url',
-                    'target_whatsapp_number',
-                    'source',
-                    'created_at',
-                    'last_clicked_at',
+                    "{$table}.id",
+                    "{$table}.lead_id",
+                    "{$table}.cta_type",
+                    "{$table}.cta_source",
+                    "{$table}.ref_code",
+                    "{$table}.utm_source",
+                    "{$table}.utm_medium",
+                    "{$table}.utm_campaign",
+                    "{$table}.utm_term",
+                    "{$table}.utm_content",
+                    "{$table}.landing_page_url",
+                    "{$table}.target_whatsapp_number",
+                    "{$table}.source",
+                    "{$table}.created_at",
+                    "{$table}.last_clicked_at",
                 ];
 
-                if (Schema::hasColumn('crm_cta_clicks', 'gclid')) {
-                    $columns[] = 'gclid';
+                if (Schema::hasColumn($table, 'gclid')) {
+                    $columns[] = "{$table}.gclid";
                 }
 
                 $query->select($columns);
