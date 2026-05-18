@@ -106,6 +106,7 @@ class CtaClicksController extends Controller
             'utm_campaign' => ['nullable', 'string', 'max:150'],
             'utm_term' => ['nullable', 'string', 'max:150'],
             'utm_content' => ['nullable', 'string', 'max:150'],
+            'gclid' => ['nullable', 'string', 'max:150'],
             'landing_page_url' => ['nullable', 'string', 'max:2048'],
             'cta_type' => ['nullable', 'string', 'max:50'],
             'cta_source' => ['nullable', 'string', 'max:100'],
@@ -113,6 +114,10 @@ class CtaClicksController extends Controller
         ]);
 
         $data = $this->normalizePayload($data, $request);
+        $hasGclidColumn = Schema::hasColumn('crm_cta_clicks', 'gclid');
+        if (!$hasGclidColumn) {
+            unset($data['gclid']);
+        }
         $windowStart = now()->subMinutes(30);
 
         $existing = CtaClick::query()
@@ -139,6 +144,10 @@ class CtaClicksController extends Controller
                 'ip_address'     => $data['ip_address'],
                 'user_agent'     => $data['user_agent'],
             ];
+
+            if ($hasGclidColumn && empty($existing->gclid) && !empty($data['gclid'])) {
+                $update['gclid'] = $data['gclid'];
+            }
 
             if (Schema::hasColumn('crm_cta_clicks', 'suspicious_score')) {
                 // Re-evaluate fraud score on every click update
@@ -239,6 +248,7 @@ class CtaClicksController extends Controller
             'utm_campaign',
             'utm_term',
             'utm_content',
+            'gclid',
             'landing_page_url',
             'cta_type',
             'cta_source',

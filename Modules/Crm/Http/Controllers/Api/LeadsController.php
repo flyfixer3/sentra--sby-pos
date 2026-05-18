@@ -6,6 +6,7 @@ use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Validation\Rule;
 use Modules\Crm\Entities\Lead;
 use Modules\Crm\Entities\CrmNotification;
@@ -44,23 +45,31 @@ class LeadsController extends Controller
             'leadProducts' => fn ($query) => $query->orderBy('id'),
             'assignedUser' => fn ($query) => $query->without('media')->select('id', 'name', 'email'),
             'assignees' => fn ($query) => $query->without('media')->select('users.id', 'users.name', 'users.email'),
-            'ctaClick' => fn ($query) => $query->select(
-                'id',
-                'lead_id',
-                'cta_type',
-                'cta_source',
-                'ref_code',
-                'utm_source',
-                'utm_medium',
-                'utm_campaign',
-                'utm_term',
-                'utm_content',
-                'landing_page_url',
-                'target_whatsapp_number',
-                'source',
-                'created_at',
-                'last_clicked_at'
-            ),
+            'ctaClick' => function ($query) {
+                $columns = [
+                    'id',
+                    'lead_id',
+                    'cta_type',
+                    'cta_source',
+                    'ref_code',
+                    'utm_source',
+                    'utm_medium',
+                    'utm_campaign',
+                    'utm_term',
+                    'utm_content',
+                    'landing_page_url',
+                    'target_whatsapp_number',
+                    'source',
+                    'created_at',
+                    'last_clicked_at',
+                ];
+
+                if (Schema::hasColumn('crm_cta_clicks', 'gclid')) {
+                    $columns[] = 'gclid';
+                }
+
+                $query->select($columns);
+            },
         ];
     }
 
