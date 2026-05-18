@@ -7,6 +7,7 @@ use App\Models\User;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Database\Eloquent\SoftDeletes;
 
 class Lead extends BaseModel
@@ -37,4 +38,5 @@ class Lead extends BaseModel
     }
 
     public function serviceOrders(): HasMany { return $this->hasMany(ServiceOrder::class, 'lead_id'); }
+    public function ctaClick(): HasOne { return $this->hasOne(CtaClick::class, 'lead_id')->latestOfMany(); }
 }
