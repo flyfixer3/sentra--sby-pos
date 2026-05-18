@@ -2,6 +2,7 @@
 
 namespace App\Http\Livewire;
 
+use App\Support\ProductSearch;
 use Illuminate\Support\Collection;
 use Livewire\Component;
 use Modules\Product\Entities\Product;
@@ -40,9 +41,8 @@ class SearchProductSale extends Component
             ])
             ->whereHas('product', function ($q) use ($branchId) {
                 $q->withoutGlobalScopes()
-                    ->where(function ($inner) {
-                        $inner->where('product_name', 'like', '%' . $this->query . '%')
-                            ->orWhere('product_code', 'like', '%' . $this->query . '%');
+                    ->tap(function ($inner) {
+                        ProductSearch::applyTokenSearch($inner, $this->query, ['product_name', 'product_code'], 'id');
                     });
 
                 if ($branchId !== 'all' && is_numeric($branchId)) {

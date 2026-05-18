@@ -2,6 +2,7 @@
 
 namespace Modules\Inventory\Http\Controllers;
 
+use App\Support\ProductSearch;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
 use Illuminate\Support\Facades\Auth;
@@ -136,8 +137,12 @@ class StockOpnameController extends Controller
 
         if ($search !== '') {
             $itemsQuery->where(function ($q) use ($search) {
-                $q->where('product_code_snapshot', 'like', '%' . $search . '%')
-                    ->orWhere('product_name_snapshot', 'like', '%' . $search . '%');
+                ProductSearch::applyTokenSearch(
+                    $q,
+                    $search,
+                    ['product_code_snapshot', 'product_name_snapshot'],
+                    'product_id'
+                );
             });
         }
 
@@ -216,9 +221,8 @@ class StockOpnameController extends Controller
 
         $products = Product::withoutGlobalScopes()
             ->where('item_type', 'glass')
-            ->where(function ($q) use ($search) {
-                $q->where('product_code', 'like', '%' . $search . '%')
-                    ->orWhere('product_name', 'like', '%' . $search . '%');
+            ->tap(function ($q) use ($search) {
+                ProductSearch::applyTokenSearch($q, $search, ['product_code', 'product_name'], 'id');
             })
             ->orderBy('product_code')
             ->limit(20)

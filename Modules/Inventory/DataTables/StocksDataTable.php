@@ -2,6 +2,7 @@
 
 namespace Modules\Inventory\DataTables;
 
+use App\Support\ProductSearch;
 use Illuminate\Support\Facades\DB;
 use Yajra\DataTables\Html\Button;
 use Yajra\DataTables\Services\DataTable;
@@ -198,14 +199,10 @@ class StocksDataTable extends DataTable
                         0
                     ) as available_qty
                 '),
-            ]);
+        ]);
 
         if (!empty($productTerm)) {
-            $term = '%' . $productTerm . '%';
-            $q->where(function ($w) use ($term) {
-                $w->where('products.product_name', 'like', $term)
-                    ->orWhere('products.product_code', 'like', $term);
-            });
+            ProductSearch::applyTokenSearch($q, $productTerm);
         }
 
         if (!$canFallbackToProducts) {

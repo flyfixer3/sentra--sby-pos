@@ -2,6 +2,7 @@
 
 namespace Modules\Mutation\DataTables;
 
+use App\Support\ProductSearch;
 use Modules\Mutation\Entities\Mutation;
 use Yajra\DataTables\Html\Button;
 use Yajra\DataTables\Html\Column;
@@ -124,7 +125,7 @@ class MutationsDataTable extends DataTable
             ->filterColumn('product_code', function ($q, $keyword) {
                 $keyword = trim((string)$keyword);
                 if ($keyword === '') return;
-                $q->where('products.product_code', 'like', "%{$keyword}%");
+                ProductSearch::applyTokenSearch($q, $keyword, ['products.product_code'], null);
             })
             ->orderColumn('product_code', function ($q, $order) {
                 $q->orderBy('products.product_code', $order);
@@ -133,7 +134,7 @@ class MutationsDataTable extends DataTable
             ->filterColumn('product_name', function ($q, $keyword) {
                 $keyword = trim((string)$keyword);
                 if ($keyword === '') return;
-                $q->where('products.product_name', 'like', "%{$keyword}%");
+                ProductSearch::applyTokenSearch($q, $keyword, ['products.product_name'], null);
             })
             ->orderColumn('product_name', function ($q, $order) {
                 $q->orderBy('products.product_name', $order);
@@ -201,10 +202,7 @@ class MutationsDataTable extends DataTable
         // filter "mobil" => cari di product_code / product_name (join)
         if (request()->filled('car')) {
             $car = trim((string) request('car'));
-            $q->where(function ($x) use ($car) {
-                $x->where('products.product_code', 'like', "%{$car}%")
-                ->orWhere('products.product_name', 'like', "%{$car}%");
-            });
+            ProductSearch::applyTokenSearch($q, $car);
         }
 
         return $q;

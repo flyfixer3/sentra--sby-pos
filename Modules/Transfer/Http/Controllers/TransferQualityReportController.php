@@ -3,6 +3,7 @@
 namespace Modules\Transfer\Http\Controllers;
 
 use App\Support\DefectTypeSupport;
+use App\Support\ProductSearch;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
 use Illuminate\Support\Facades\DB;
@@ -194,8 +195,9 @@ class TransferQualityReportController extends Controller
             ->when($dateTo, fn($qr) => $qr->whereDate('d.created_at', '<=', $dateTo))
             ->when($q !== '', function ($qr) use ($q) {
                 $qr->where(function ($sub) use ($q) {
-                    $sub->where('p.product_name', 'like', "%{$q}%")
-                        ->orWhereRaw('CAST(d.defect_types AS CHAR) like ?', ["%{$q}%"])
+                    ProductSearch::applyTokenSearch($sub, $q, ['p.product_name'], 'd.product_id');
+
+                    $sub->orWhereRaw('CAST(d.defect_types AS CHAR) like ?', ["%{$q}%"])
                         ->orWhere('d.description', 'like', "%{$q}%")
                         ->orWhere('tr.reference', 'like', "%{$q}%")
                         ->orWhere('po.reference', 'like', "%{$q}%")
@@ -314,8 +316,9 @@ class TransferQualityReportController extends Controller
             ->when($resolutionStatus !== 'all', fn($qr) => $qr->where('dm.resolution_status', $resolutionStatus))
             ->when($q !== '', function ($qr) use ($q) {
                 $qr->where(function ($sub) use ($q) {
-                    $sub->where('p.product_name', 'like', "%{$q}%")
-                        ->orWhere('dm.reason', 'like', "%{$q}%")
+                    ProductSearch::applyTokenSearch($sub, $q, ['p.product_name'], 'dm.product_id');
+
+                    $sub->orWhere('dm.reason', 'like', "%{$q}%")
                         ->orWhere('tr.reference', 'like', "%{$q}%")
                         ->orWhere('po.reference', 'like', "%{$q}%")
                         ->orWhere('pur.reference', 'like', "%{$q}%")

@@ -2,6 +2,7 @@
 
 namespace App\Http\Livewire;
 
+use App\Support\ProductSearch;
 use Illuminate\Support\Collection;
 use Livewire\Component;
 use Modules\Product\Entities\Product;
@@ -62,9 +63,8 @@ class SearchProduct extends Component
         $branchId = session('active_branch');
 
         $query = Product::withoutGlobalScopes()
-            ->where(function ($q) {
-                $q->where('product_name', 'like', '%' . $this->query . '%')
-                    ->orWhere('product_code', 'like', '%' . $this->query . '%');
+            ->tap(function ($q) {
+                ProductSearch::applyTokenSearch($q, $this->query, ['product_name', 'product_code'], 'id');
             });
 
         // Product master bersifat global, tapi tetap izinkan produk cabang lama

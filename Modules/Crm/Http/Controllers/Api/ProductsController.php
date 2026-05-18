@@ -3,6 +3,7 @@
 namespace Modules\Crm\Http\Controllers\Api;
 
 use App\Support\BranchContext;
+use App\Support\ProductSearch;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
 use Illuminate\Support\Facades\Auth;
@@ -24,10 +25,7 @@ class ProductsController extends Controller
             ->without('media')
             ->select('id', 'product_code', 'product_name', 'product_price', 'product_unit')
             ->when($search !== '', function ($query) use ($search) {
-                $query->where(function ($inner) use ($search) {
-                    $inner->where('product_code', 'like', '%' . $search . '%')
-                        ->orWhere('product_name', 'like', '%' . $search . '%');
-                });
+                ProductSearch::applyTokenSearch($query, $search, ['product_code', 'product_name'], 'id');
             })
             ->orderBy('product_code')
             ->limit($limit)
@@ -183,9 +181,8 @@ class ProductsController extends Controller
             ->withoutGlobalScope('branch')
             ->without('media')
             ->select('id', 'product_code', 'product_name', 'product_price', 'product_unit')
-            ->where(function ($q) use ($search) {
-                $q->where('product_code', 'like', '%' . $search . '%')
-                  ->orWhere('product_name', 'like', '%' . $search . '%');
+            ->tap(function ($q) use ($search) {
+                ProductSearch::applyTokenSearch($q, $search, ['product_code', 'product_name'], 'id');
             })
             ->orderBy('product_code')
             ->limit($limit)
