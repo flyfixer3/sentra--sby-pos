@@ -108,6 +108,8 @@ Route::middleware($middlewares)->prefix('crm')->group(function () {
     // Reports
     Route::prefix('reports')->group(function () {
         Route::get('/advanced', [ReportsController::class, 'advanced']);
+        Route::get('/marketing-attribution', [ReportsController::class, 'marketingAttribution']);
+        Route::get('/marketing-attribution/detail', [ReportsController::class, 'marketingAttributionDetail']);
         Route::get('/summary', [ReportsController::class, 'summary']);
         Route::get('/cta-tracking', [ReportsController::class, 'ctaTracking']);
         Route::get('/by-source', [ReportsController::class, 'bySource']);

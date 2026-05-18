@@ -9,6 +9,7 @@ use Illuminate\Routing\Controller;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
+use Illuminate\Support\Str;
 use Modules\Crm\Entities\CtaClick;
 use Modules\Crm\Entities\Lead;
 
@@ -63,6 +64,149 @@ class ReportsController extends Controller
         $prefix = $table ? $table . '.' : '';
 
         return "COALESCE(NULLIF({$prefix}source,''), NULLIF({$prefix}utm_source,''), 'direct')";
+    }
+
+    protected function marketingBase(Request $request)
+    {
+        $query = DB::table('crm_cta_clicks as clicks')
+            ->leftJoin('crm_leads as leads', 'leads.id', '=', 'clicks.lead_id');
+
+        $this->applyDateRange($query, $request, 'clicks.created_at');
+
+        $campaign = trim((string) $request->query('campaign', ''));
+        $source = trim((string) $request->query('source', ''));
+        $medium = trim((string) $request->query('medium', ''));
+        $device = trim((string) $request->query('device', ''));
+        $converted = trim((string) $request->query('converted', ''));
+        $hot = filter_var($request->query('hot', false), FILTER_VALIDATE_BOOLEAN);
+        $search = trim((string) $request->query('search', ''));
+
+        $query
+            ->when($campaign !== '', fn ($q) => $q->where('clicks.utm_campaign', $campaign))
+            ->when($source !== '', fn ($q) => $q->where('clicks.utm_source', $source))
+            ->when($medium !== '', fn ($q) => $q->where('clicks.utm_medium', $medium))
+            ->when($device !== '', fn ($q) => $q->where('clicks.device_type', $device))
+            ->when($converted === 'yes', fn ($q) => $q->whereNotNull('clicks.lead_id'))
+            ->when($converted === 'no', fn ($q) => $q->whereNull('clicks.lead_id'))
+            ->when($search !== '', function ($q) use ($search) {
+                $q->where(function ($inner) use ($search) {
+                    $inner->where('clicks.ref_code', 'like', '%' . $search . '%')
+                        ->orWhere('clicks.utm_campaign', 'like', '%' . $search . '%')
+                        ->orWhere('clicks.utm_term', 'like', '%' . $search . '%')
+                        ->orWhere('clicks.utm_content', 'like', '%' . $search . '%')
+                        ->orWhere('clicks.cta_source', 'like', '%' . $search . '%');
+                });
+            });
+
+        if ($hot) {
+            $query->where(function ($q) {
+                $q->where('clicks.click_count', '>', 1)
+                    ->orWhereIn('clicks.ref_code', function ($sub) {
+                        $sub->from('crm_cta_clicks')
+                            ->select('ref_code')
+                            ->whereNotNull('ref_code')
+                            ->groupBy('ref_code')
+                            ->havingRaw('COUNT(DISTINCT cta_source) > 1');
+                    });
+            });
+        }
+
+        return $query;
+    }
+
+    protected function campaignAreaLabel(?string $campaign): string
+    {
+        $value = strtolower(trim((string) $campaign));
+
+        return match ($value) {
+            '', '(none)', 'none', 'direct' => 'Direct / Unknown',
+            'ga_search_tangerang', 'search_service_tangerang' => 'Tangerang Area',
+            'ga_search_bekasi', 'search_service_bekasi' => 'Bekasi Area',
+            'ga_search_surabaya', 'search_service_surabaya' => 'Surabaya Area',
+            default => Str::headline(str_replace(['_', '-'], ' ', $value)),
+        };
+    }
+
+    protected function sourceMediumLabel(?string $source, ?string $medium): string
+    {
+        $source = strtolower(trim((string) $source));
+        $medium = strtolower(trim((string) $medium));
+
+        if (($source === '' || $source === 'direct') && ($medium === '' || $medium === 'none')) {
+            return 'Direct / Unknown';
+        }
+
+        if (str_contains($source, 'google') && in_array($medium, ['cpc', 'ppc', 'paid', 'paid_search', 'sem'], true)) {
+            return 'Google Ads';
+        }
+
+        if (str_contains($source, 'google') && in_array($medium, ['organic', 'seo', 'search'], true)) {
+            return 'Google Organic / SEO';
+        }
+
+        if (str_contains($source, 'instagram') || $source === 'ig') {
+            return 'Instagram';
+        }
+
+        if (str_contains($source, 'tiktok')) {
+            return 'TikTok';
+        }
+
+        if (str_contains($source, 'facebook') || str_contains($source, 'meta') || $source === 'fb') {
+            return 'Meta Social';
+        }
+
+        $label = trim($source . ' / ' . $medium, ' /');
+
+        return $label !== '' ? Str::headline(str_replace(['_', '-'], ' ', $label)) : 'Other';
+    }
+
+    protected function channelFor(?string $source, ?string $medium): string
+    {
+        $label = $this->sourceMediumLabel($source, $medium);
+
+        return match ($label) {
+            'Google Ads' => 'google_ads',
+            'Google Organic / SEO' => 'seo',
+            'Instagram', 'TikTok', 'Meta Social' => 'social',
+            'Direct / Unknown' => 'direct',
+            default => 'other',
+        };
+    }
+
+    protected function withDerivedRates(Collection $rows): Collection
+    {
+        return $rows->map(function ($row) {
+            $row = (array) $row;
+            $row['cta_clicks'] = (int) ($row['cta_clicks'] ?? 0);
+            $row['unique_ref_codes'] = (int) ($row['unique_ref_codes'] ?? 0);
+            $row['converted_leads'] = (int) ($row['converted_leads'] ?? 0);
+            $row['hot_visitors'] = (int) ($row['hot_visitors'] ?? 0);
+            $row['conversion_rate'] = $row['cta_clicks'] > 0
+                ? round(($row['converted_leads'] / $row['cta_clicks']) * 100, 2)
+                : 0;
+            $row['avg_clicks_per_ref_code'] = $row['unique_ref_codes'] > 0
+                ? round($row['cta_clicks'] / $row['unique_ref_codes'], 2)
+                : 0;
+            $row['avg_time_to_lead_minutes'] = isset($row['avg_time_to_lead_minutes'])
+                ? ($row['avg_time_to_lead_minutes'] === null ? null : round((float) $row['avg_time_to_lead_minutes'], 2))
+                : null;
+            return $row;
+        });
+    }
+
+    protected function avgTimeToLeadExpression(): string
+    {
+        return DB::connection()->getDriverName() === 'sqlite'
+            ? "AVG(CASE WHEN leads.created_at IS NOT NULL AND clicks.first_clicked_at IS NOT NULL THEN (julianday(leads.created_at) - julianday(clicks.first_clicked_at)) * 1440 ELSE NULL END)"
+            : "AVG(CASE WHEN leads.created_at IS NOT NULL AND clicks.first_clicked_at IS NOT NULL THEN TIMESTAMPDIFF(MINUTE, clicks.first_clicked_at, leads.created_at) ELSE NULL END)";
+    }
+
+    protected function refCodeGroupExpression(): string
+    {
+        return DB::connection()->getDriverName() === 'sqlite'
+            ? "COALESCE(clicks.ref_code, '__no_ref_' || clicks.id)"
+            : "COALESCE(clicks.ref_code, CONCAT('__no_ref_', clicks.id))";
     }
 
     protected function summaryPayload(Request $request): array
@@ -590,6 +734,289 @@ class ReportsController extends Controller
             });
 
         return response()->json(['data' => $rows]);
+    }
+
+    public function marketingAttribution(Request $request)
+    {
+        abort_if(Gate::denies('show_crm_reports'), 403);
+
+        $base = $this->marketingBase($request);
+        $avgTimeExpr = $this->avgTimeToLeadExpression();
+
+        $ctaTotal = (clone $base)->count('clicks.id');
+        $convertedLeads = (clone $base)->whereNotNull('clicks.lead_id')->count('clicks.id');
+        $uniqueRefCodes = (clone $base)->whereNotNull('clicks.ref_code')->distinct('clicks.ref_code')->count('clicks.ref_code');
+        $hotVisitors = DB::query()
+            ->fromSub(
+                (clone $base)
+                    ->selectRaw($this->refCodeGroupExpression() . ' as ref_key, SUM(clicks.click_count) as total_clicks, COUNT(DISTINCT clicks.cta_source) as distinct_cta_count')
+                    ->groupBy('ref_key'),
+                'grouped'
+            )
+            ->where(function ($query) {
+                $query->where('total_clicks', '>', 1)->orWhere('distinct_cta_count', '>', 1);
+            })
+            ->count();
+
+        $sourceRows = $this->withDerivedRates(
+            (clone $base)
+                ->selectRaw("
+                    COALESCE(NULLIF(clicks.utm_source,''), NULLIF(clicks.source,''), 'direct') as utm_source,
+                    COALESCE(NULLIF(clicks.utm_medium,''), 'none') as utm_medium,
+                    COUNT(clicks.id) as cta_clicks,
+                    COUNT(DISTINCT clicks.ref_code) as unique_ref_codes,
+                    SUM(CASE WHEN clicks.lead_id IS NOT NULL THEN 1 ELSE 0 END) as converted_leads,
+                    SUM(CASE WHEN clicks.click_count > 1 THEN 1 ELSE 0 END) as hot_visitors,
+                    MAX(clicks.last_clicked_at) as last_activity_at
+                ")
+                ->groupBy('utm_source', 'utm_medium')
+                ->orderByDesc('cta_clicks')
+                ->limit(20)
+                ->get()
+        )->map(function ($row) {
+            $row['source_label'] = $this->sourceMediumLabel($row['utm_source'] ?? null, $row['utm_medium'] ?? null);
+            $row['channel'] = $this->channelFor($row['utm_source'] ?? null, $row['utm_medium'] ?? null);
+            return $row;
+        })->values();
+
+        $campaignRows = $this->withDerivedRates(
+            (clone $base)
+                ->selectRaw("
+                    COALESCE(NULLIF(clicks.utm_campaign,''), '(none)') as utm_campaign,
+                    COUNT(clicks.id) as cta_clicks,
+                    COUNT(DISTINCT clicks.ref_code) as unique_ref_codes,
+                    SUM(CASE WHEN clicks.lead_id IS NOT NULL THEN 1 ELSE 0 END) as converted_leads,
+                    SUM(CASE WHEN clicks.click_count > 1 THEN 1 ELSE 0 END) as hot_visitors,
+                    {$avgTimeExpr} as avg_time_to_lead_minutes,
+                    MAX(clicks.last_clicked_at) as last_activity_at
+                ")
+                ->groupBy('utm_campaign')
+                ->orderByDesc('cta_clicks')
+                ->limit(50)
+                ->get()
+        )->map(function ($row) use ($request) {
+            $campaign = $row['utm_campaign'] === '(none)' ? null : $row['utm_campaign'];
+            $row['campaign_label'] = $this->campaignAreaLabel($campaign);
+            $row['top_keyword'] = $this->topValueFor($request, 'utm_term', ['utm_campaign' => $campaign]);
+            $row['top_device'] = $this->topValueFor($request, 'device_type', ['utm_campaign' => $campaign]);
+            return $row;
+        })->values();
+
+        $keywordRows = $this->withDerivedRates(
+            (clone $base)
+                ->whereNotNull('clicks.utm_term')
+                ->where('clicks.utm_term', '<>', '')
+                ->selectRaw("
+                    clicks.utm_term as keyword,
+                    COUNT(clicks.id) as cta_clicks,
+                    COUNT(DISTINCT clicks.ref_code) as unique_ref_codes,
+                    SUM(CASE WHEN clicks.lead_id IS NOT NULL THEN 1 ELSE 0 END) as converted_leads,
+                    SUM(CASE WHEN clicks.click_count > 1 THEN 1 ELSE 0 END) as hot_visitors,
+                    MAX(clicks.last_clicked_at) as last_activity_at
+                ")
+                ->groupBy('clicks.utm_term')
+                ->orderByDesc('cta_clicks')
+                ->limit(30)
+                ->get()
+        );
+
+        $ctaRows = $this->withDerivedRates(
+            (clone $base)
+                ->selectRaw("
+                    COALESCE(NULLIF(clicks.cta_source,''), NULLIF(clicks.cta_type,''), 'cta') as cta_key,
+                    COUNT(clicks.id) as cta_clicks,
+                    COUNT(DISTINCT clicks.ref_code) as unique_ref_codes,
+                    SUM(CASE WHEN clicks.lead_id IS NOT NULL THEN 1 ELSE 0 END) as converted_leads,
+                    SUM(CASE WHEN clicks.click_count > 1 THEN 1 ELSE 0 END) as hot_visitors,
+                    MAX(clicks.last_clicked_at) as last_activity_at
+                ")
+                ->groupBy('cta_key')
+                ->orderByDesc('cta_clicks')
+                ->limit(30)
+                ->get()
+        );
+
+        $deviceRows = $this->withDerivedRates(
+            (clone $base)
+                ->selectRaw("
+                    COALESCE(NULLIF(clicks.device_type,''), 'unknown') as device_type,
+                    COUNT(clicks.id) as cta_clicks,
+                    COUNT(DISTINCT clicks.ref_code) as unique_ref_codes,
+                    SUM(CASE WHEN clicks.lead_id IS NOT NULL THEN 1 ELSE 0 END) as converted_leads,
+                    SUM(CASE WHEN clicks.click_count > 1 THEN 1 ELSE 0 END) as hot_visitors,
+                    MAX(clicks.last_clicked_at) as last_activity_at
+                ")
+                ->groupBy('device_type')
+                ->orderByDesc('cta_clicks')
+                ->get()
+        )->map(function ($row) use ($request) {
+            $row['top_browser'] = $this->topValueFor($request, 'browser_name', ['device_type' => $row['device_type']]);
+            $row['top_os'] = $this->topValueFor($request, 'os_name', ['device_type' => $row['device_type']]);
+            return $row;
+        })->values();
+
+        $bestCampaign = $campaignRows->sortByDesc('converted_leads')->first();
+        $bestSource = $sourceRows->filter(fn ($row) => ($row['cta_clicks'] ?? 0) >= 3)->sortByDesc('conversion_rate')->first() ?: $sourceRows->sortByDesc('conversion_rate')->first();
+        $bestKeyword = $keywordRows->sortByDesc('converted_leads')->first();
+        $worstCampaign = $campaignRows
+            ->filter(fn ($row) => ($row['cta_clicks'] ?? 0) >= 5 && ($row['conversion_rate'] ?? 0) < 20)
+            ->sortByDesc('cta_clicks')
+            ->first();
+        $mostActiveDevice = $deviceRows->sortByDesc('cta_clicks')->first();
+
+        return response()->json([
+            'summary' => [
+                'total_cta_clicks' => $ctaTotal,
+                'unique_ref_codes' => $uniqueRefCodes,
+                'converted_leads' => $convertedLeads,
+                'tracking_to_lead_conversion_rate' => $ctaTotal > 0 ? round(($convertedLeads / $ctaTotal) * 100, 2) : 0,
+                'hot_visitors' => $hotVisitors,
+                'google_ads_leads' => $sourceRows->where('channel', 'google_ads')->sum('converted_leads'),
+                'seo_leads' => $sourceRows->where('channel', 'seo')->sum('converted_leads'),
+                'social_leads' => $sourceRows->where('channel', 'social')->sum('converted_leads'),
+                'direct_unknown_leads' => $sourceRows->where('channel', 'direct')->sum('converted_leads'),
+            ],
+            'executive_summary' => [
+                'best_campaign_by_leads' => $bestCampaign,
+                'best_source_by_conversion' => $bestSource,
+                'best_keyword_by_leads' => $bestKeyword,
+                'worst_campaign_high_click_low_conversion' => $worstCampaign,
+                'most_active_device' => $mostActiveDevice,
+                'latest_meaningful_activity' => $this->latestMeaningfulActivity($request),
+            ],
+            'action_insights' => $this->actionInsights($campaignRows, $sourceRows, $keywordRows, $ctaTotal),
+            'campaign_performance' => $campaignRows,
+            'source_medium_performance' => $sourceRows,
+            'keyword_performance' => $keywordRows,
+            'cta_performance' => $ctaRows,
+            'device_performance' => $deviceRows,
+            'time_insights' => [
+                'avg_time_to_lead_minutes' => (clone $base)->selectRaw($avgTimeExpr . ' as avg_value')->value('avg_value'),
+            ],
+        ]);
+    }
+
+    protected function topValueFor(Request $request, string $column, array $filters = []): ?string
+    {
+        $query = $this->marketingBase($request)
+            ->whereNotNull("clicks.{$column}")
+            ->where("clicks.{$column}", '<>', '');
+
+        foreach ($filters as $key => $value) {
+            if ($value === null || $value === '(none)') {
+                $query->where(function ($inner) use ($key) {
+                    $inner->whereNull("clicks.{$key}")->orWhere("clicks.{$key}", '');
+                });
+            } else {
+                $query->where("clicks.{$key}", $value);
+            }
+        }
+
+        $row = $query
+            ->selectRaw("clicks.{$column} as value, COUNT(*) as total")
+            ->groupBy("clicks.{$column}")
+            ->orderByDesc('total')
+            ->first();
+
+        return $row?->value;
+    }
+
+    protected function latestMeaningfulActivity(Request $request): ?array
+    {
+        $row = $this->marketingBase($request)
+            ->select('clicks.ref_code', 'clicks.last_clicked_at', 'clicks.lead_id', 'leads.contact_name')
+            ->orderByDesc(DB::raw('CASE WHEN clicks.lead_id IS NOT NULL THEN 1 ELSE 0 END'))
+            ->orderByDesc('clicks.last_clicked_at')
+            ->first();
+
+        if (!$row) {
+            return null;
+        }
+
+        return [
+            'type' => $row->lead_id ? 'converted_lead' : (($row->ref_code && $row->last_clicked_at) ? 'latest_click' : 'hot_visitor'),
+            'label' => $row->contact_name ?: ($row->ref_code ?: 'Latest CTA activity'),
+            'occurred_at' => $row->last_clicked_at,
+        ];
+    }
+
+    protected function actionInsights(Collection $campaignRows, Collection $sourceRows, Collection $keywordRows, int $totalClicks): array
+    {
+        $insights = [];
+        $weakCampaign = $campaignRows->filter(fn ($row) => ($row['cta_clicks'] ?? 0) >= 5 && ($row['conversion_rate'] ?? 0) < 20)->sortByDesc('cta_clicks')->first();
+        if ($weakCampaign) {
+            $insights[] = [
+                'type' => 'high_click_low_lead',
+                'severity' => 'warning',
+                'title' => 'High clicks, low leads',
+                'description' => "{$weakCampaign['campaign_label']} mendapat banyak klik tetapi conversion ke lead masih rendah.",
+                'metric_label' => 'Conversion',
+                'metric_value' => $weakCampaign['conversion_rate'] . '%',
+            ];
+        }
+
+        $goodCampaign = $campaignRows->filter(fn ($row) => ($row['converted_leads'] ?? 0) > 0)->sortByDesc('conversion_rate')->first();
+        if ($goodCampaign) {
+            $insights[] = [
+                'type' => 'good_conversion',
+                'severity' => 'good',
+                'title' => 'Good conversion campaign',
+                'description' => "{$goodCampaign['campaign_label']} sedang menjadi campaign paling efisien.",
+                'metric_label' => 'Lead',
+                'metric_value' => $goodCampaign['converted_leads'],
+            ];
+        }
+
+        $direct = $sourceRows->where('channel', 'direct')->sum('cta_clicks');
+        if ($totalClicks > 0 && ($direct / $totalClicks) > 0.25) {
+            $insights[] = [
+                'type' => 'direct_unknown_high',
+                'severity' => 'warning',
+                'title' => 'Direct/Unknown traffic too high',
+                'description' => 'Terlalu banyak klik tidak memiliki source yang jelas. Periksa UTM di link iklan dan share manual.',
+                'metric_label' => 'Direct share',
+                'metric_value' => round(($direct / $totalClicks) * 100, 2) . '%',
+            ];
+        }
+
+        $missingKeyword = $keywordRows->isEmpty();
+        if ($missingKeyword) {
+            $insights[] = [
+                'type' => 'missing_utm',
+                'severity' => 'info',
+                'title' => 'Missing UTM keyword data',
+                'description' => 'Belum ada keyword terbaca pada periode ini. Pastikan Final URL suffix mengisi utm_term.',
+                'metric_label' => 'Keyword rows',
+                'metric_value' => 0,
+            ];
+        }
+
+        return $insights;
+    }
+
+    public function marketingAttributionDetail(Request $request)
+    {
+        abort_if(Gate::denies('show_crm_reports'), 403);
+
+        $type = trim((string) $request->query('type', 'campaign'));
+        $value = trim((string) $request->query('value', ''));
+        $limit = min(max((int) $request->query('limit', 10), 1), 50);
+        $query = CtaClick::query()->with(['lead:id,contact_name,status,created_at'])->latest('last_clicked_at');
+        $this->applyDateRange($query, $request);
+
+        match ($type) {
+            'source' => $query->where('utm_source', $value),
+            'medium' => $query->where('utm_medium', $value),
+            'keyword' => $query->where('utm_term', $value),
+            'device' => $query->where('device_type', $value),
+            default => $value === '(none)'
+                ? $query->where(fn ($q) => $q->whereNull('utm_campaign')->orWhere('utm_campaign', ''))
+                : $query->where('utm_campaign', $value),
+        };
+
+        return response()->json([
+            'data' => $query->limit($limit)->get(),
+        ]);
     }
 
     public function ctaTracking(Request $request)
