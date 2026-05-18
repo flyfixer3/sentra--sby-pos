@@ -410,6 +410,7 @@ class PurchaseController extends Controller
             'activeBranchId'     => $branchId,
             'defaultWarehouseId' => $defaultWarehouseId,
             'stock_mode'         => $stock_mode,
+            'stockSearchWarehouseId' => $warehouseId,
 
             'prefill' => [
                 'purchase_order_id'    => $purchaseOrder ? (int) $purchaseOrder->id : null,
@@ -438,6 +439,7 @@ class PurchaseController extends Controller
             'activeBranchId'     => $activeBranchId,
             'defaultWarehouseId' => $defaultWarehouseId,
             'stock_mode'         => $stock_mode,
+            'stockSearchWarehouseId' => null,
         ]);
     }
 

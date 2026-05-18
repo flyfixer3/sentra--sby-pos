@@ -49,7 +49,7 @@
     <div class="container-fluid mb-4">
         <div class="row">
             <div class="col-12">
-                <livewire:search-product/>
+                <livewire:search-product :warehouseId="$stockSearchWarehouseId ?? null"/>
             </div>
         </div>
 

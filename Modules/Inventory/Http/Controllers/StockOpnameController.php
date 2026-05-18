@@ -3,6 +3,7 @@
 namespace Modules\Inventory\Http\Controllers;
 
 use App\Support\ProductSearch;
+use App\Support\ProductAvailability;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
 use Illuminate\Support\Facades\Auth;
@@ -226,7 +227,13 @@ class StockOpnameController extends Controller
             })
             ->orderBy('product_code')
             ->limit(20)
-            ->get(['id', 'product_code', 'product_name']);
+            ->get(['id', 'product_code', 'product_name', 'product_unit']);
+
+        $products = ProductAvailability::applyLabels(
+            $products,
+            (int) $stockOpname->branch_id,
+            (int) $stockOpname->warehouse_id ?: null
+        );
 
         $data = $products->map(function ($product) use ($stockOpname) {
             $existing = $stockOpname->items()
@@ -237,6 +244,8 @@ class StockOpnameController extends Controller
                 'id' => (int) $product->id,
                 'product_code' => (string) $product->product_code,
                 'product_name' => (string) $product->product_name,
+                'product_unit' => (string) ($product->product_unit ?? ''),
+                'label' => (string) ($product->available_stock_label ?? ProductAvailability::formatLabel($product, 0)),
                 'system_qty' => (int) ($existing->system_qty ?? 0),
                 'physical_qty' => isset($existing) ? $existing->physical_qty : null,
                 'rack_label' => isset($existing)

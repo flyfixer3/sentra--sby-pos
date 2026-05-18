@@ -33,7 +33,7 @@
                         @foreach($search_results as $result)
                             <li class="list-group-item list-group-item-action">
                                 <a wire:click="resetQuery" wire:click.prevent="selectProduct({{ $result }})" href="#">
-                                    {{ $result->product['product_code'] }} | {{ $result->stock_last }} | {{$result->warehouse['warehouse_name']}}
+                                    {{ $result->product['available_stock_label'] ?? (($result->product['product_code'] ?? '-') . ' | ' . ($result->product['product_name'] ?? '-') . ' | 0 ' . (($result->product['product_unit'] ?? '') ?: 'unit') . ' avail') }} | {{$result->warehouse['warehouse_name']}}
                                 </a>
                             </li>
                             <!-- @if(isset($result))

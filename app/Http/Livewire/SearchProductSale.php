@@ -3,6 +3,7 @@
 namespace App\Http\Livewire;
 
 use App\Support\ProductSearch;
+use App\Support\ProductAvailability;
 use Illuminate\Support\Collection;
 use Livewire\Component;
 use Modules\Product\Entities\Product;
@@ -61,7 +62,7 @@ class SearchProductSale extends Component
             $query->whereIn('warehouse_id', $warehouseIds);
         }
 
-        $this->search_results = $query
+        $results = $query
             ->latest('date')
             ->get()
             ->filter(function ($mutation) {
@@ -72,6 +73,24 @@ class SearchProductSale extends Component
             })
             ->take($this->how_many)
             ->values();
+
+        $results->groupBy(fn ($mutation) => (int) $mutation->warehouse_id)
+            ->each(function ($warehouseResults, $warehouseId) {
+                $productsWithLabels = ProductAvailability::applyLabels(
+                    $warehouseResults->pluck('product'),
+                    ProductAvailability::activeBranchId(),
+                    (int) $warehouseId ?: null
+                )->keyBy(fn ($product) => (int) data_get($product, 'id'));
+
+                $warehouseResults->each(function ($mutation) use ($productsWithLabels) {
+                    $product = $productsWithLabels->get((int) $mutation->product_id);
+                    if ($product) {
+                        $mutation->setRelation('product', $product);
+                    }
+                });
+            });
+
+        $this->search_results = $results;
     }
 
     public function loadMore() {

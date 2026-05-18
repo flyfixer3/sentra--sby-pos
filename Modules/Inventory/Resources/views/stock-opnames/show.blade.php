@@ -520,10 +520,10 @@
                         <div class="manual-search-item" 
                              data-code="${escapeHtml(item.product_code)}"
                              data-name="${escapeHtml(item.product_name)}"
+                             data-label="${escapeHtml(item.label || '')}"
                              data-system="${Number(item.system_qty || 0)}"
                              data-rack="${escapeHtml(item.rack_label || '')}">
-                            <div class="manual-search-code">${escapeHtml(item.product_code)}</div>
-                            <div>${escapeHtml(item.product_name)}</div>
+                            <div class="manual-search-code">${escapeHtml(item.label || ((item.product_code || '-') + ' | ' + (item.product_name || '-')))}</div>
                             <div class="manual-search-meta">Sistem: ${Number(item.system_qty || 0)}${item.rack_label ? ' | Rack: ' + escapeHtml(item.rack_label) : ''}</div>
                         </div>
                     `).join('');
@@ -533,8 +533,9 @@
                         node.addEventListener('click', function () {
                             const code = node.getAttribute('data-code') || '';
                             const name = node.getAttribute('data-name') || '';
+                            const label = node.getAttribute('data-label') || '';
                             const system = node.getAttribute('data-system') || '0';
-                            input.value = code + ' | ' + name;
+                            input.value = label || (code + ' | ' + name);
                             hidden.value = code;
                             systemQty.value = system;
                             resultBox.style.display = 'none';
