@@ -156,6 +156,127 @@
         <div class="col-12">
             <div class="card">
                 <div class="card-body">
+                    @include('utils.alerts')
+
+                    @php
+                        $status = strtolower((string) ($adjustment->status ?? 'approved'));
+                        $statusMap = [
+                            'pending' => 'warning text-dark',
+                            'approved' => 'success',
+                            'rejected' => 'danger',
+                        ];
+                        $statusClass = $statusMap[$status] ?? 'secondary';
+                        $isSuperAdmin = auth()->check() && auth()->user()->hasRole('Super Admin');
+                    @endphp
+
+                    <div class="d-flex align-items-center justify-content-between mb-3">
+                        <div>
+                            <span class="badge badge-{{ $statusClass }} px-3 py-2">{{ strtoupper($status ?: 'approved') }}</span>
+                            @if(!empty($adjustment->request_type))
+                                <span class="badge badge-light border px-3 py-2 ml-1">{{ str_replace('_', ' ', strtoupper($adjustment->request_type)) }}</span>
+                            @endif
+                        </div>
+
+                        @if($isSuperAdmin && $adjustment->isPending())
+                            <div class="d-flex" style="gap:8px;">
+                                <form action="{{ route('adjustments.approve', $adjustment) }}" method="POST" class="d-inline">
+                                    @csrf
+                                    <input type="hidden" name="approval_note" value="">
+                                    <button type="submit" class="btn btn-success" onclick="return confirm('Approve and execute this adjustment request?')">
+                                        <i class="bi bi-check2"></i> Approve
+                                    </button>
+                                </form>
+                                <button type="button" class="btn btn-danger" data-toggle="modal" data-target="#rejectAdjustmentModal">
+                                    <i class="bi bi-x-circle"></i> Reject
+                                </button>
+                            </div>
+                        @endif
+                    </div>
+
+                    @if($adjustment->isRejected() && !empty($adjustment->rejection_reason))
+                        <div class="alert alert-danger">
+                            <strong>Rejection Reason:</strong><br>
+                            {{ $adjustment->rejection_reason }}
+                        </div>
+                    @endif
+
+                    @if(!empty($adjustment->approval_note))
+                        <div class="alert alert-success">
+                            <strong>Approval Note:</strong><br>
+                            {{ $adjustment->approval_note }}
+                        </div>
+                    @endif
+
+                    @if(!$adjustment->isApproved())
+                        @php
+                            $pendingLines = $adjustment->pendingDisplayLines();
+                        @endphp
+
+                        <div class="alert alert-light border">
+                            <strong>Request Details</strong>
+                            <div class="text-muted small">These lines are pending/rejected request data and have not been posted to stock.</div>
+                        </div>
+
+                        <div class="table-responsive mb-4">
+                            <table class="table table-bordered table-sm">
+                                <thead>
+                                    <tr>
+                                        <th class="text-center" style="width:60px">#</th>
+                                        <th>Product</th>
+                                        <th>Warehouse</th>
+                                        <th>Rack / Allocation</th>
+                                        <th class="text-center">Flow</th>
+                                        <th class="text-center">Qty</th>
+                                        <th>Detail</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    @forelse($pendingLines as $index => $line)
+                                        <tr>
+                                            <td class="text-center">{{ $index + 1 }}</td>
+                                            <td>
+                                                <strong>{{ $line['product_name'] ?? '-' }}</strong>
+                                                <div class="muted">Code: {{ $line['product_code'] ?? '-' }}</div>
+                                            </td>
+                                            <td>
+                                                {{ $line['warehouse_name'] ?? '-' }}
+                                            </td>
+                                            <td>
+                                                @foreach((array) ($line['rack_display'] ?? ['-']) as $rackLine)
+                                                    <div>{{ $rackLine }}</div>
+                                                @endforeach
+                                            </td>
+                                            <td class="text-center">
+                                                <span class="badge badge-light border">{{ $line['flow'] ?? '-' }}</span>
+                                            </td>
+                                            <td class="text-center">{{ (int) ($line['qty'] ?? 0) }}</td>
+                                            <td>
+                                                @forelse((array) ($line['details'] ?? []) as $detail)
+                                                    <div class="mb-1">
+                                                        @if(!empty($detail['label']))
+                                                            <span class="badge badge-secondary">{{ $detail['label'] }}</span>
+                                                        @endif
+                                                        <span>{{ $detail['text'] ?? '-' }}</span>
+                                                        @if(!empty($detail['photo_path']))
+                                                            <a href="{{ asset('storage/'.$detail['photo_path']) }}" target="_blank" rel="noopener" class="badge badge-info ml-1">
+                                                                View Photo
+                                                            </a>
+                                                        @endif
+                                                    </div>
+                                                @empty
+                                                    <span class="muted">-</span>
+                                                @endforelse
+                                            </td>
+                                        </tr>
+                                    @empty
+                                        <tr>
+                                            <td colspan="7" class="text-center muted">No request items found.</td>
+                                        </tr>
+                                    @endforelse
+                                </tbody>
+                            </table>
+                        </div>
+                    @endif
 
                     @if(!empty($adjustment->note))
                         <div class="alert alert-info mb-3 d-flex align-items-center justify-content-between">
@@ -205,13 +326,16 @@
                                 <td colspan="2">{{ $createdAt }}</td>
                             </tr>
 
-                            <tr>
-                                <th>Product</th>
-                                <th>Rack</th>
-                                <th class="text-center" style="width:210px">Condition / Flow</th>
-                                <th class="text-center" style="width:170px">Type / Qty</th>
-                            </tr>
+                            @if($adjustment->isApproved())
+                                <tr>
+                                    <th>Product</th>
+                                    <th>Rack</th>
+                                    <th class="text-center" style="width:210px">Condition / Flow</th>
+                                    <th class="text-center" style="width:170px">Type / Qty</th>
+                                </tr>
+                            @endif
 
+                            @if($adjustment->isApproved())
                             @foreach($adjustment->adjustedProducts as $adjustedProduct)
                                 @php
                                     [$sourceCond, $targetCond] = $conditionFlow($adjustedProduct->note ?? '');
@@ -324,6 +448,7 @@
                                     </tr>
                                 @endif
                             @endforeach
+                            @endif
                         </table>
                     </div>
 
@@ -448,4 +573,28 @@
     </div>
 
 </div>
+
+@if(auth()->check() && auth()->user()->hasRole('Super Admin') && $adjustment->isPending())
+    <div class="modal fade" id="rejectAdjustmentModal" tabindex="-1" role="dialog" aria-hidden="true">
+        <div class="modal-dialog" role="document">
+            <form class="modal-content" action="{{ route('adjustments.reject', $adjustment) }}" method="POST">
+                @csrf
+                <div class="modal-header">
+                    <h5 class="modal-title">Reject Adjustment Request</h5>
+                    <button type="button" class="close" data-dismiss="modal" aria-label="Close">
+                        <span aria-hidden="true">&times;</span>
+                    </button>
+                </div>
+                <div class="modal-body">
+                    <label class="font-weight-bold">Reason <span class="text-danger">*</span></label>
+                    <textarea name="rejection_reason" class="form-control" rows="4" required></textarea>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-light border" data-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-danger">Reject</button>
+                </div>
+            </form>
+        </div>
+    </div>
+@endif
 @endsection

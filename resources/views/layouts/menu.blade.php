@@ -4,6 +4,12 @@
     </a>
 </li>
 
+<li class="c-sidebar-nav-item {{ request()->routeIs('inbox.*') ? 'c-active' : '' }}">
+    <a class="c-sidebar-nav-link" href="{{ route('inbox.index') }}">
+        <i class="c-sidebar-nav-icon bi bi-inbox" style="line-height: 1;"></i> Inbox
+    </a>
+</li>
+
 {{-- =========================
     PRODUCTS
 ========================= --}}

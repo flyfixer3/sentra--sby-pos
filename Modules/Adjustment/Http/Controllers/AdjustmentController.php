@@ -12,6 +12,8 @@ use Illuminate\Support\Facades\Gate;
 use Modules\Adjustment\DataTables\AdjustmentsDataTable;
 use Modules\Adjustment\Entities\AdjustedProduct;
 use Modules\Adjustment\Entities\Adjustment;
+use Modules\Adjustment\Entities\AdjustmentRequestItem;
+use Modules\Adjustment\Services\AdjustmentExecutionService;
 use Modules\Product\Entities\Product;
 use Modules\Product\Entities\Warehouse;
 use Modules\Product\Entities\ProductDefectItem;
@@ -21,10 +23,12 @@ use Modules\Mutation\Http\Controllers\MutationController;
 class AdjustmentController extends Controller
 {
     private MutationController $mutationController;
+    private AdjustmentExecutionService $executionService;
 
-    public function __construct(MutationController $mutationController)
+    public function __construct(MutationController $mutationController, AdjustmentExecutionService $executionService)
     {
         $this->mutationController = $mutationController;
+        $this->executionService = $executionService;
     }
 
     public function index(AdjustmentsDataTable $dataTable)
@@ -409,6 +413,17 @@ class AdjustmentController extends Controller
             $arr = array_values(array_unique(array_filter($arr, fn ($x) => $x > 0)));
             return $arr;
         };
+
+        try {
+            $this->createPendingStockAdjustmentRequest($request, $adjType, $branchId, $date, $note);
+            toast('Adjustment request submitted and waiting for Super Admin approval.', 'success');
+            return redirect()->route('adjustments.index');
+        } catch (\Throwable $e) {
+            return redirect()
+                ->back()
+                ->withInput()
+                ->with('message', $e->getMessage());
+        }
 
         try {
 
@@ -1071,6 +1086,9 @@ class AdjustmentController extends Controller
             'creator',
             'branch',
             'warehouse',
+            'requestItems.product',
+            'requestItems.warehouse',
+            'requestItems.rack',
             'adjustedProducts.rack',
             'adjustedProducts.product' => function ($query) {
                 $query->withoutGlobalScopes();
@@ -1146,6 +1164,12 @@ class AdjustmentController extends Controller
     {
         abort_if(Gate::denies('edit_adjustments'), 403);
 
+        if (!$adjustment->isApproved()) {
+            return redirect()
+                ->route('adjustments.show', $adjustment)
+                ->with('error', 'Pending or rejected adjustment requests cannot be edited in this phase.');
+        }
+
         $active = session('active_branch');
         if ($active === 'all' || $active === null || $active === '') {
             return redirect()
@@ -1173,6 +1197,12 @@ class AdjustmentController extends Controller
     public function update(Request $request, Adjustment $adjustment)
     {
         abort_if(Gate::denies('edit_adjustments'), 403);
+
+        if (!$adjustment->isApproved()) {
+            return redirect()
+                ->route('adjustments.show', $adjustment)
+                ->with('error', 'Pending or rejected adjustment requests cannot be updated.');
+        }
 
         $request->validate([
             'date'          => 'required|date',
@@ -1640,6 +1670,12 @@ class AdjustmentController extends Controller
     {
         abort_if(Gate::denies('delete_adjustments'), 403);
 
+        if ($adjustment->isPending() || $adjustment->isRejected()) {
+            $adjustment->delete();
+            toast('Adjustment request deleted.', 'warning');
+            return redirect()->route('adjustments.index');
+        }
+
         $active = session('active_branch');
         if ($active === 'all' || $active === null || $active === '') {
             return redirect()
@@ -1696,6 +1732,66 @@ class AdjustmentController extends Controller
 
         toast('Adjustment Deleted!', 'warning');
         return redirect()->route('adjustments.index');
+    }
+
+    public function approve(Request $request, Adjustment $adjustment)
+    {
+        abort_unless(auth()->check() && auth()->user()->hasRole('Super Admin'), 403);
+
+        $request->validate([
+            'approval_note' => ['nullable', 'string', 'max:2000'],
+        ]);
+
+        try {
+            $this->executionService->approve($adjustment, (int) Auth::id(), $request->input('approval_note'));
+            toast('Adjustment request approved and executed.', 'success');
+            return redirect()->route('adjustments.show', $adjustment);
+        } catch (\Throwable $e) {
+            return redirect()
+                ->route('adjustments.show', $adjustment)
+                ->with('error', 'Approval failed: ' . $e->getMessage());
+        }
+    }
+
+    public function reject(Request $request, Adjustment $adjustment)
+    {
+        abort_unless(auth()->check() && auth()->user()->hasRole('Super Admin'), 403);
+
+        $request->validate([
+            'rejection_reason' => ['required', 'string', 'min:2', 'max:2000'],
+        ]);
+
+        try {
+            DB::transaction(function () use ($adjustment, $request) {
+                $locked = Adjustment::query()
+                    ->where('id', (int) $adjustment->id)
+                    ->lockForUpdate()
+                    ->firstOrFail();
+
+                if (!$locked->isPending()) {
+                    throw new \RuntimeException('Only pending adjustment requests can be rejected.');
+                }
+
+                $locked->update([
+                    'status' => 'rejected',
+                    'rejected_by' => Auth::id(),
+                    'rejected_at' => now(),
+                    'rejection_reason' => $request->input('rejection_reason'),
+                ]);
+
+                activity()
+                    ->performedOn($locked)
+                    ->causedBy(auth()->user())
+                    ->log('Rejected adjustment request');
+            });
+
+            toast('Adjustment request rejected.', 'warning');
+            return redirect()->route('adjustments.show', $adjustment);
+        } catch (\Throwable $e) {
+            return redirect()
+                ->route('adjustments.show', $adjustment)
+                ->with('error', 'Reject failed: ' . $e->getMessage());
+        }
     }
 
     /**
@@ -1937,6 +2033,14 @@ class AdjustmentController extends Controller
 
             return [];
         };
+
+        try {
+            $this->createPendingQualityAdjustmentRequest($request, $type, $activeBranchId, $date, $globalNote, $isClassic, $normalizeDetailArray);
+            toast('Quality reclass request submitted and waiting for Super Admin approval.', 'success');
+            return redirect()->route('adjustments.index');
+        } catch (\Throwable $e) {
+            return redirect()->back()->withInput()->with('error', $e->getMessage());
+        }
 
         try {
             DB::beginTransaction();
@@ -2592,6 +2696,454 @@ class AdjustmentController extends Controller
                 'success' => false,
                 'message' => $e->getMessage(),
             ], 500);
+        }
+    }
+
+    private function createPendingStockAdjustmentRequest(Request $request, string $adjType, int $branchId, string $date, string $note): Adjustment
+    {
+        $items = (array) $request->input('items', []);
+
+        if ($adjType === 'add') {
+            $warehouseId = (int) $request->warehouse_id;
+            $this->assertWarehouseInBranch($warehouseId, $branchId);
+            $items = $this->preparePendingStockAddItems($request, $items, $branchId, $warehouseId);
+            $requestType = 'stock_add';
+        } else {
+            $items = $this->preparePendingStockSubItems($items, $branchId);
+            $warehouseId = $this->pickStockSubHeaderWarehouseId($items, $branchId);
+            $requestType = 'stock_sub';
+        }
+
+        if (empty($items)) {
+            throw new \RuntimeException('At least one valid adjustment item is required.');
+        }
+
+        return DB::transaction(function () use ($date, $note, $branchId, $warehouseId, $requestType, $items) {
+            $adjustment = Adjustment::query()->create([
+                'date' => $date,
+                'reference' => 'ADJ',
+                'warehouse_id' => $warehouseId,
+                'note' => $note,
+                'created_by' => Auth::id(),
+                'branch_id' => $branchId,
+                'status' => 'pending',
+                'request_type' => $requestType,
+                'submitted_by' => Auth::id(),
+                'submitted_at' => now(),
+                'payload' => [
+                    'date' => $date,
+                    'note' => $note,
+                    'items' => $items,
+                ],
+            ]);
+
+            foreach ($items as $idx => $item) {
+                $this->createAdjustmentRequestItem($adjustment, (int) $idx + 1, $item);
+            }
+
+            activity()->performedOn($adjustment)->causedBy(auth()->user())->log('Submitted adjustment request');
+
+            return $adjustment;
+        });
+    }
+
+    private function preparePendingStockAddItems(Request $request, array $items, int $branchId, int $warehouseId): array
+    {
+        $prepared = [];
+
+        foreach ($items as $idx => $item) {
+            $item = (array) $item;
+            $productId = (int) ($item['product_id'] ?? 0);
+            $good = (int) ($item['qty_good'] ?? 0);
+            $defect = (int) ($item['qty_defect'] ?? 0);
+            $damaged = (int) ($item['qty_damaged'] ?? 0);
+            $total = $good + $defect + $damaged;
+
+            if ($total <= 0) {
+                continue;
+            }
+
+            $this->resolveAdjustmentProduct($productId, $branchId, (int) $idx + 1);
+
+            $goodAllocations = array_values((array) ($item['good_allocations'] ?? []));
+            if ($good > 0) {
+                $sum = 0;
+                foreach ($goodAllocations as $ga) {
+                    $qty = (int) ($ga['qty'] ?? 0);
+                    $rackId = (int) ($ga['to_rack_id'] ?? 0);
+                    $sum += $qty;
+                    if ($qty > 0) {
+                        $this->assertRackBelongsToWarehouse($rackId, $warehouseId);
+                    }
+                }
+                if ($sum !== $good) {
+                    throw new \RuntimeException("Line #" . ($idx + 1) . ": GOOD allocation total ({$sum}) must equal GOOD ({$good}).");
+                }
+            }
+
+            $defects = array_values((array) ($item['defects'] ?? []));
+            if ($defect > 0 && count($defects) !== $defect) {
+                throw new \RuntimeException('Line #' . ($idx + 1) . ': Defect details must match qty.');
+            }
+            foreach ($defects as $i => $detail) {
+                $detail = (array) $detail;
+                $rackId = (int) ($detail['to_rack_id'] ?? 0);
+                if ($rackId <= 0 || empty(DefectTypeSupport::extractFromPayload($detail))) {
+                    throw new \RuntimeException('Line #' . ($idx + 1) . ': defect detail #' . ($i + 1) . ' rack/type is required.');
+                }
+                $this->assertRackBelongsToWarehouse($rackId, $warehouseId);
+                if ($request->hasFile("items.$idx.defects.$i.photo")) {
+                    $detail['photo_path'] = $request->file("items.$idx.defects.$i.photo")->store('adjustments/pending/defects', 'public');
+                }
+                $defects[$i] = $detail;
+            }
+
+            $damagedItems = array_values((array) ($item['damaged_items'] ?? []));
+            if ($damaged > 0 && count($damagedItems) !== $damaged) {
+                throw new \RuntimeException('Line #' . ($idx + 1) . ': Damaged details must match qty.');
+            }
+            foreach ($damagedItems as $i => $detail) {
+                $detail = (array) $detail;
+                $rackId = (int) ($detail['to_rack_id'] ?? 0);
+                if ($rackId <= 0 || trim((string) ($detail['reason'] ?? '')) === '') {
+                    throw new \RuntimeException('Line #' . ($idx + 1) . ': damaged detail #' . ($i + 1) . ' rack/reason is required.');
+                }
+                $this->assertRackBelongsToWarehouse($rackId, $warehouseId);
+                if ($request->hasFile("items.$idx.damaged_items.$i.photo")) {
+                    $detail['photo_path'] = $request->file("items.$idx.damaged_items.$i.photo")->store('adjustments/pending/damaged', 'public');
+                }
+                $damagedItems[$i] = $detail;
+            }
+
+            $item['warehouse_id'] = $warehouseId;
+            $item['qty'] = $total;
+            $item['good_allocations'] = $goodAllocations;
+            $item['defects'] = $defects;
+            $item['damaged_items'] = $damagedItems;
+            $prepared[] = $item;
+        }
+
+        return $prepared;
+    }
+
+    private function preparePendingStockSubItems(array $items, int $branchId): array
+    {
+        $prepared = [];
+
+        foreach ($items as $idx => $item) {
+            $item = (array) $item;
+            $productId = (int) ($item['product_id'] ?? 0);
+            $expected = (int) ($item['qty'] ?? 0);
+            $itemNote = trim((string) ($item['note'] ?? ''));
+
+            if ($productId <= 0 || $expected <= 0 || $itemNote === '') {
+                throw new \RuntimeException('Invalid SUB item at line #' . ($idx + 1));
+            }
+
+            $this->resolveAdjustmentProduct($productId, $branchId, (int) $idx + 1);
+
+            $goodTotal = 0;
+            $goodAllocations = array_values((array) ($item['good_allocations'] ?? []));
+            foreach ($goodAllocations as $allocation) {
+                $wid = (int) ($allocation['warehouse_id'] ?? 0);
+                $rid = (int) ($allocation['from_rack_id'] ?? 0);
+                $qty = (int) ($allocation['qty'] ?? 0);
+                if ($qty <= 0) {
+                    continue;
+                }
+                $this->assertWarehouseInBranch($wid, $branchId);
+                $this->assertRackBelongsToWarehouse($rid, $wid);
+                $goodTotal += $qty;
+            }
+
+            $defIds = $this->normalizeIdArray($item['selected_defect_ids'] ?? ($item['defect_unit_ids'] ?? []));
+            $damIds = $this->normalizeIdArray($item['selected_damaged_ids'] ?? ($item['damaged_unit_ids'] ?? []));
+
+            if (!empty($defIds)) {
+                $count = ProductDefectItem::query()
+                    ->where('branch_id', $branchId)
+                    ->where('product_id', $productId)
+                    ->whereNull('moved_out_at')
+                    ->whereIn('id', $defIds)
+                    ->count();
+                if ($count !== count($defIds)) {
+                    throw new \RuntimeException('Line #' . ($idx + 1) . ': some selected DEFECT units are no longer available.');
+                }
+            }
+
+            if (!empty($damIds)) {
+                $count = ProductDamagedItem::query()
+                    ->where('branch_id', $branchId)
+                    ->where('product_id', $productId)
+                    ->whereNull('moved_out_at')
+                    ->whereIn('id', $damIds)
+                    ->count();
+                if ($count !== count($damIds)) {
+                    throw new \RuntimeException('Line #' . ($idx + 1) . ': some selected DAMAGED units are no longer available.');
+                }
+            }
+
+            $selected = $goodTotal + count($defIds) + count($damIds);
+            if ($selected !== $expected) {
+                throw new \RuntimeException("Line #" . ($idx + 1) . ": total selected must match Expected. Expected={$expected}, Selected={$selected}.");
+            }
+
+            $item['good_allocations'] = $goodAllocations;
+            $item['selected_defect_ids'] = $defIds;
+            $item['selected_damaged_ids'] = $damIds;
+            $prepared[] = $item;
+        }
+
+        return $prepared;
+    }
+
+    private function pickStockSubHeaderWarehouseId(array $items, int $branchId): int
+    {
+        foreach ($items as $item) {
+            foreach ((array) ($item['good_allocations'] ?? []) as $allocation) {
+                $wid = (int) ($allocation['warehouse_id'] ?? 0);
+                if ($wid > 0) {
+                    $this->assertWarehouseInBranch($wid, $branchId);
+                    return $wid;
+                }
+            }
+
+            $productId = (int) ($item['product_id'] ?? 0);
+            $defIds = $this->normalizeIdArray($item['selected_defect_ids'] ?? []);
+            if (!empty($defIds)) {
+                $wid = (int) (ProductDefectItem::query()
+                    ->where('branch_id', $branchId)
+                    ->where('product_id', $productId)
+                    ->whereIn('id', $defIds)
+                    ->value('warehouse_id') ?? 0);
+                if ($wid > 0) return $wid;
+            }
+
+            $damIds = $this->normalizeIdArray($item['selected_damaged_ids'] ?? []);
+            if (!empty($damIds)) {
+                $wid = (int) (ProductDamagedItem::query()
+                    ->where('branch_id', $branchId)
+                    ->where('product_id', $productId)
+                    ->whereIn('id', $damIds)
+                    ->value('warehouse_id') ?? 0);
+                if ($wid > 0) return $wid;
+            }
+        }
+
+        $warehouse = Warehouse::query()
+            ->where('branch_id', $branchId)
+            ->orderByDesc('is_main')
+            ->orderBy('id')
+            ->first();
+
+        if (!$warehouse) {
+            throw new \RuntimeException('No warehouse found for this branch.');
+        }
+
+        return (int) $warehouse->id;
+    }
+
+    private function createPendingQualityAdjustmentRequest(Request $request, string $type, int $branchId, string $date, string $globalNote, bool $isClassic, callable $normalizeDetailArray): Adjustment
+    {
+        $requestType = match ($type) {
+            'defect' => 'quality_good_to_defect',
+            'damaged' => 'quality_good_to_damaged',
+            'defect_to_good' => 'quality_defect_to_good',
+            'damaged_to_good' => 'quality_damaged_to_good',
+            default => throw new \RuntimeException('Invalid quality request type.'),
+        };
+
+        $warehouseId = $isClassic ? (int) $request->input('warehouse_id') : null;
+        if ($isClassic) {
+            $this->assertWarehouseInBranch((int) $warehouseId, $branchId);
+        }
+
+        $items = $isClassic
+            ? $this->preparePendingQualityGoodToIssueItems($request, $type, $branchId, (int) $warehouseId, $normalizeDetailArray)
+            : $this->preparePendingQualityIssueToGoodItems($request, $type, $branchId, $warehouseId);
+
+        if (empty($items)) {
+            throw new \RuntimeException('At least one valid quality item is required.');
+        }
+
+        return DB::transaction(function () use ($date, $globalNote, $branchId, $warehouseId, $requestType, $items) {
+            $adjustment = Adjustment::query()->create([
+                'date' => $date,
+                'reference' => 'ADJ',
+                'warehouse_id' => $warehouseId,
+                'note' => trim('Pending ' . str_replace('_', ' ', $requestType) . ($globalNote ? ' | ' . $globalNote : '')),
+                'created_by' => Auth::id(),
+                'branch_id' => $branchId,
+                'status' => 'pending',
+                'request_type' => $requestType,
+                'submitted_by' => Auth::id(),
+                'submitted_at' => now(),
+                'payload' => [
+                    'date' => $date,
+                    'user_note' => $globalNote,
+                    'items' => $items,
+                ],
+            ]);
+
+            foreach ($items as $idx => $item) {
+                $this->createAdjustmentRequestItem($adjustment, (int) $idx + 1, $item);
+            }
+
+            activity()->performedOn($adjustment)->causedBy(auth()->user())->log('Submitted quality reclass request');
+
+            return $adjustment;
+        });
+    }
+
+    private function preparePendingQualityGoodToIssueItems(Request $request, string $type, int $branchId, int $warehouseId, callable $normalizeDetailArray): array
+    {
+        $prepared = [];
+
+        foreach ((array) $request->input('items', []) as $idx => $item) {
+            $item = (array) $item;
+            $productId = (int) ($item['product_id'] ?? 0);
+            $rackId = (int) ($item['rack_id'] ?? 0);
+            $qty = (int) ($item['qty'] ?? 0);
+
+            if ($productId <= 0 || $rackId <= 0 || $qty <= 0) {
+                throw new \RuntimeException('Invalid quality item at line #' . ($idx + 1));
+            }
+
+            $this->assertRackBelongsToWarehouse($rackId, $warehouseId);
+            $this->resolveAdjustmentProduct($productId, $branchId, (int) $idx + 1);
+
+            if ($type === 'defect') {
+                $details = $normalizeDetailArray($item['defects'] ?? null);
+                if (count($details) !== $qty) {
+                    throw new \RuntimeException('Line #' . ($idx + 1) . ': defect detail rows must match qty.');
+                }
+                foreach ($details as $i => $detail) {
+                    $detail = (array) $detail;
+                    if (empty(DefectTypeSupport::extractFromPayload($detail))) {
+                        throw new \RuntimeException('Line #' . ($idx + 1) . ': defect types are required for unit #' . ($i + 1));
+                    }
+                    if ($request->hasFile("items.$idx.defects.$i.photo")) {
+                        $detail['photo_path'] = $this->storeQualityImage($request->file("items.$idx.defects.$i.photo"), $type);
+                    }
+                    $details[$i] = $detail;
+                }
+                $item['defects'] = $details;
+            } else {
+                $details = $normalizeDetailArray($item['damaged_items'] ?? null);
+                if (count($details) !== $qty) {
+                    throw new \RuntimeException('Line #' . ($idx + 1) . ': damaged detail rows must match qty.');
+                }
+                foreach ($details as $i => $detail) {
+                    $detail = (array) $detail;
+                    if (trim((string) ($detail['reason'] ?? '')) === '') {
+                        throw new \RuntimeException('Line #' . ($idx + 1) . ': damaged reason is required for unit #' . ($i + 1));
+                    }
+                    if ($request->hasFile("items.$idx.damaged_items.$i.photo")) {
+                        $detail['photo_path'] = $this->storeQualityImage($request->file("items.$idx.damaged_items.$i.photo"), $type);
+                    }
+                    $details[$i] = $detail;
+                }
+                $item['damaged_items'] = $details;
+            }
+
+            $item['warehouse_id'] = $warehouseId;
+            $prepared[] = $item;
+        }
+
+        return $prepared;
+    }
+
+    private function preparePendingQualityIssueToGoodItems(Request $request, string $type, int $branchId, ?int &$headerWarehouseId): array
+    {
+        $prepared = [];
+        $fromCondition = $type === 'damaged_to_good' ? 'damaged' : 'defect';
+
+        foreach ((array) $request->input('items', []) as $idx => $item) {
+            $item = (array) $item;
+            $productId = (int) ($item['product_id'] ?? 0);
+            $qty = (int) ($item['qty'] ?? 0);
+            $ids = $this->normalizeIdArray($item['selected_unit_ids'] ?? []);
+            $itemNote = trim((string) ($item['item_note'] ?? $item['user_note'] ?? $request->input('user_note', '')));
+
+            if ($productId <= 0 || $qty <= 0 || count($ids) !== $qty || $itemNote === '') {
+                throw new \RuntimeException('Invalid Issue -> GOOD item at line #' . ($idx + 1));
+            }
+
+            $this->resolveAdjustmentProduct($productId, $branchId, (int) $idx + 1);
+
+            $query = $fromCondition === 'defect' ? ProductDefectItem::query() : ProductDamagedItem::query();
+            $units = $query
+                ->where('branch_id', $branchId)
+                ->where('product_id', $productId)
+                ->whereIn('id', $ids)
+                ->whereNull('moved_out_at')
+                ->get(['id', 'warehouse_id', 'rack_id']);
+
+            if ($units->count() !== count($ids)) {
+                throw new \RuntimeException('Some picked IDs are invalid / already moved out at line #' . ($idx + 1));
+            }
+
+            foreach ($units as $unit) {
+                $this->assertWarehouseInBranch((int) $unit->warehouse_id, $branchId);
+                $this->assertRackBelongsToWarehouse((int) $unit->rack_id, (int) $unit->warehouse_id);
+                if ($headerWarehouseId === null) {
+                    $headerWarehouseId = (int) $unit->warehouse_id;
+                }
+            }
+
+            $item['selected_unit_ids'] = $ids;
+            $prepared[] = $item;
+        }
+
+        return $prepared;
+    }
+
+    private function createAdjustmentRequestItem(Adjustment $adjustment, int $lineNo, array $item): void
+    {
+        $requestType = (string) $adjustment->request_type;
+        $quantity = (int) ($item['qty'] ?? $item['quantity'] ?? 0);
+
+        $map = [
+            'stock_add' => [null, 'mixed'],
+            'stock_sub' => ['mixed', null],
+            'quality_good_to_defect' => ['good', 'defect'],
+            'quality_good_to_damaged' => ['good', 'damaged'],
+            'quality_defect_to_good' => ['defect', 'good'],
+            'quality_damaged_to_good' => ['damaged', 'good'],
+        ];
+
+        [$from, $to] = $map[$requestType] ?? [null, null];
+
+        AdjustmentRequestItem::query()->create([
+            'adjustment_id' => (int) $adjustment->id,
+            'line_no' => $lineNo,
+            'product_id' => (int) ($item['product_id'] ?? 0),
+            'warehouse_id' => ((int) ($item['warehouse_id'] ?? $adjustment->warehouse_id ?? 0)) ?: null,
+            'rack_id' => ((int) ($item['rack_id'] ?? 0)) ?: null,
+            'quantity' => $quantity,
+            'condition_from' => $from,
+            'condition_to' => $to,
+            'payload' => $item,
+        ]);
+    }
+
+    private function normalizeIdArray($raw): array
+    {
+        if (is_string($raw)) {
+            $decoded = json_decode($raw, true);
+            $raw = is_array($decoded) ? $decoded : [];
+        }
+
+        $raw = is_array($raw) ? $raw : [];
+        $raw = array_map('intval', $raw);
+        return array_values(array_unique(array_filter($raw, fn ($id) => $id > 0)));
+    }
+
+    private function assertWarehouseInBranch(int $warehouseId, int $branchId): void
+    {
+        $warehouse = Warehouse::query()->where('id', $warehouseId)->first();
+        if (!$warehouse || (int) $warehouse->branch_id !== $branchId) {
+            throw new \RuntimeException("Selected warehouse_id={$warehouseId} is not in active branch.");
         }
     }
 

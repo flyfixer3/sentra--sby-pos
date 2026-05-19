@@ -2,6 +2,7 @@
 
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\SwitchBranchController;
+use App\Http\Controllers\InboxController;
 use Illuminate\Support\Facades\Auth;
 
 /*
@@ -18,6 +19,7 @@ Auth::routes(['register' => false]);
 
 Route::group(['middleware' => 'auth'], function () {
     Route::get('/home', 'HomeController@index')->name('home');
+    Route::get('/inbox', [InboxController::class, 'index'])->name('inbox.index');
     Route::resource('entities', 'EntityController')->except('show');
 
     Route::post('/session/keep-alive', function () {

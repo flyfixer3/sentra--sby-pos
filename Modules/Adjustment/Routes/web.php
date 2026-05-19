@@ -41,6 +41,10 @@ Route::group(['middleware' => 'auth'], function () {
             ->name('adjustments.create');
         Route::post('adjustments', 'AdjustmentController@store')
             ->name('adjustments.store');
+        Route::post('adjustments/{adjustment}/approve', 'AdjustmentController@approve')
+            ->name('adjustments.approve');
+        Route::post('adjustments/{adjustment}/reject', 'AdjustmentController@reject')
+            ->name('adjustments.reject');
         Route::get('adjustments/{adjustment}/edit', 'AdjustmentController@edit')
             ->name('adjustments.edit');
         Route::match(['put', 'patch'], 'adjustments/{adjustment}', 'AdjustmentController@update')

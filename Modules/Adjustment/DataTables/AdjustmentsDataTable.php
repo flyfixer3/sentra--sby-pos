@@ -39,33 +39,39 @@ class AdjustmentsDataTable extends DataTable
                 return route('adjustments.show', $data->id);
             })
 
-            // ✅ date tampil dengan jam dari created_at
             ->editColumn('date', function ($row) {
                 return $this->formatDateWithCreatedTime($row, 'date');
             })
 
-            /**
-             * ✅ FIX: field hasil withSum adalah adjusted_products_sum_quantity
-             * BUKAN adjusted_products_quantity_sum
-             */
+            ->editColumn('adjusted_products_count', function ($row) {
+                return $row->displayProductVariationsCount();
+            })
+
             ->editColumn('adjusted_products_sum_quantity', function ($row) {
-                $v = $row->adjusted_products_sum_quantity ?? 0;
-                // kadang driver DB ngasih string/decimal, kita paksa int
-                return (int) $v;
+                return $row->displayTotalQuantity();
+            })
+
+            ->addColumn('status_badge', function ($row) {
+                $status = strtolower((string) ($row->status ?? 'approved'));
+                $map = [
+                    'pending' => ['warning', 'text-dark', 'PENDING'],
+                    'approved' => ['success', '', 'APPROVED'],
+                    'rejected' => ['danger', '', 'REJECTED'],
+                ];
+                [$bg, $extra, $label] = $map[$status] ?? ['secondary', '', strtoupper($status ?: 'APPROVED')];
+                return '<span class="badge bg-' . $bg . ' ' . $extra . '">' . $label . '</span>';
             })
 
             ->addColumn('action', function ($data) {
                 return view('adjustment::partials.actions', compact('data'));
-            });
+            })
+            ->rawColumns(['status_badge', 'action']);
     }
 
     public function query(Adjustment $model)
     {
-        /**
-         * adjusted_products_count        = jumlah baris/line item di adjusted_products
-         * adjusted_products_sum_quantity = total pcs (SUM adjusted_products.quantity)
-         */
         return $model->query()
+            ->with('requestItems')
             ->withCount('adjustedProducts')
             ->withSum('adjustedProducts', 'quantity');
     }
@@ -81,8 +87,7 @@ class AdjustmentsDataTable extends DataTable
                 "tr" .
                 "<'row'<'col-md-5'i><'col-md-7 mt-2'p>>"
             )
-            // ✅ kolom created_at hidden ada di index terakhir (lihat getColumns)
-            ->orderBy(5)
+            ->orderBy(6)
             ->buttons(
                 Button::make('excel')->text('<i class="bi bi-file-earmark-excel-fill"></i> Excel'),
                 Button::make('print')->text('<i class="bi bi-printer-fill"></i> Print'),
@@ -101,13 +106,18 @@ class AdjustmentsDataTable extends DataTable
             Column::make('reference')
                 ->className('text-center align-middle'),
 
-            // ✅ GANTI TITLE SAJA
             Column::make('adjusted_products_count')
                 ->title('Product Variations')
                 ->className('text-center align-middle'),
 
             Column::make('adjusted_products_sum_quantity')
                 ->title('Total Qty')
+                ->className('text-center align-middle'),
+
+            Column::computed('status_badge')
+                ->title('Status')
+                ->exportable(false)
+                ->printable(false)
                 ->className('text-center align-middle'),
 
             Column::computed('action')

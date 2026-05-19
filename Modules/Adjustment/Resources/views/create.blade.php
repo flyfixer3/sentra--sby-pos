@@ -85,14 +85,7 @@
                                 </div>
                             </div>
 
-                            <form action="{{ route('adjustments.store') }}" method="POST" id="adjustmentAddForm" enctype="multipart/form-data"
-                                  data-confirm-submit="true"
-                                  data-confirm-title="Confirm Submit?"
-                                  data-confirm-message="Please review all data and item rows carefully before submitting. This action may affect inventory, delivery, payment, or accounting records."
-                                  data-confirm-confirm-text="Yes, submit"
-                                  data-confirm-cancel-text="Cancel"
-                                  data-confirm-icon="warning"
-                                  data-confirm-require-items="true">
+                            <form action="{{ route('adjustments.store') }}" method="POST" id="adjustmentAddForm" enctype="multipart/form-data" data-confirm-submit="false">
                                 @csrf
 
                                 <div class="form-row">
@@ -218,7 +211,7 @@
                                 <div class="sa-divider"></div>
 
                                 <div class="d-flex justify-content-end mt-3">
-                                    <button type="submit" class="btn btn-primary">
+                                    <button type="button" class="btn btn-primary" onclick="submitQualityForm()">
                                         Submit Reclass <i class="bi bi-check"></i>
                                     </button>
                                 </div>
@@ -232,6 +225,30 @@
                 </div>
             </div>
 
+        </div>
+    </div>
+</div>
+
+<div class="modal fade" id="adjustmentSubmitConfirmModal" tabindex="-1" role="dialog" aria-labelledby="adjustmentSubmitConfirmTitle" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered" role="document">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="adjustmentSubmitConfirmTitle">Submit Adjustment Request?</h5>
+                <button type="button" class="close" data-dismiss="modal" data-bs-dismiss="modal" data-coreui-dismiss="modal" aria-label="Close">
+                    <span aria-hidden="true">&times;</span>
+                </button>
+            </div>
+            <div class="modal-body">
+                <p class="mb-0" id="adjustmentSubmitConfirmMessage">
+                    This adjustment will be submitted as a pending request and will not affect stock until approved by Super Admin.
+                </p>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-light border" data-dismiss="modal" data-bs-dismiss="modal" data-coreui-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-primary" id="confirmAdjustmentSubmitBtn">
+                    Submit Request
+                </button>
+            </div>
         </div>
     </div>
 </div>
@@ -274,6 +291,8 @@
     // ✅ remember last selected warehouse in Stock tab (biar UX enak)
     let LAST_STOCK_WAREHOUSE_ID = parseInt(window.DEFAULT_STOCK_WAREHOUSE_ID || 0);
     window.currentAdjustmentMode = window.currentAdjustmentMode || 'stock';
+    let pendingAdjustmentSubmitForm = null;
+    let adjustmentSubmitting = false;
 
     // =========================
     // STOCK: Toggle ADD/SUB UI (JANGAN UBAH LOGIC EXISTING)
@@ -399,8 +418,75 @@
         setStockModeUI(getAdjType());
     }
 
+    function showAdjustmentSubmitModal(form, message){
+        pendingAdjustmentSubmitForm = form;
+
+        const messageEl = document.getElementById('adjustmentSubmitConfirmMessage');
+        if(messageEl){
+            messageEl.textContent = message || 'This adjustment will be submitted as a pending request and will not affect stock until approved by Super Admin.';
+        }
+
+        const btn = document.getElementById('confirmAdjustmentSubmitBtn');
+        if(btn){
+            btn.disabled = false;
+            btn.innerHTML = 'Submit Request';
+        }
+
+        const modal = document.getElementById('adjustmentSubmitConfirmModal');
+        if(!modal) return;
+
+        if(window.bootstrap && window.bootstrap.Modal){
+            window.bootstrap.Modal.getOrCreateInstance(modal).show();
+            return;
+        }
+
+        if(window.coreui && window.coreui.Modal){
+            window.coreui.Modal.getOrCreateInstance(modal).show();
+            return;
+        }
+
+        if(window.jQuery && typeof window.jQuery(modal).modal === 'function'){
+            window.jQuery(modal).modal('show');
+        }
+    }
+
+    function hideAdjustmentSubmitModal(){
+        const modal = document.getElementById('adjustmentSubmitConfirmModal');
+        if(!modal) return;
+
+        if(window.bootstrap && window.bootstrap.Modal){
+            window.bootstrap.Modal.getOrCreateInstance(modal).hide();
+            return;
+        }
+
+        if(window.coreui && window.coreui.Modal){
+            window.coreui.Modal.getOrCreateInstance(modal).hide();
+            return;
+        }
+
+        if(window.jQuery && typeof window.jQuery(modal).modal === 'function'){
+            window.jQuery(modal).modal('hide');
+        }
+    }
+
+    function formPassesBrowserValidation(form){
+        if(!form) return false;
+
+        if(typeof form.reportValidity === 'function'){
+            return form.reportValidity();
+        }
+
+        if(typeof form.checkValidity === 'function' && !form.checkValidity()){
+            return false;
+        }
+
+        return true;
+    }
+
     function submitStockForm(){
         const type = getAdjType();
+        const stockForm = document.getElementById('adjustmentAddForm');
+        if(!stockForm) return;
 
         if(type === 'add'){
             ensureStockWarehouseSelected();
@@ -420,14 +506,48 @@
             }
         }
 
-        const stockForm = document.getElementById('adjustmentAddForm');
-        if (stockForm && typeof stockForm.requestSubmit === 'function') {
-            stockForm.requestSubmit();
-        } else {
-            stockForm?.submit();
+        if(!formPassesBrowserValidation(stockForm)){
+            return;
         }
+
+        showAdjustmentSubmitModal(
+            stockForm,
+            'This adjustment will be submitted as a pending request and will not affect stock until approved by Super Admin.'
+        );
     }
     window.submitStockForm = submitStockForm;
+
+    function submitQualityForm(){
+        const qForm = document.getElementById('qualityForm');
+        if(!qForm) return;
+
+        const type = document.getElementById('quality_type')?.value || 'defect';
+
+        if(isToGood(type)){
+            if(typeof window.validateAllQtgRows === 'function'){
+                const ok = window.validateAllQtgRows();
+                if(!ok){
+                    alert('Masih ada item Issueâ†’GOOD yang Qty mismatch. Tolong cek status per item.');
+                    return;
+                }
+            }
+        }else{
+            const ok = validateQrcClassicBeforeSubmit();
+            if(!ok){
+                return;
+            }
+        }
+
+        if(!formPassesBrowserValidation(qForm)){
+            return;
+        }
+
+        showAdjustmentSubmitModal(
+            qForm,
+            'This quality reclass will be submitted as a pending request and will not affect stock until approved by Super Admin.'
+        );
+    }
+    window.submitQualityForm = submitQualityForm;
 
     // =========================
     // QUALITY: mode switch (CLASSIC vs ISSUE->GOOD)
@@ -589,6 +709,24 @@
                         return;
                     }
                 }
+            });
+        }
+
+        const confirmBtn = document.getElementById('confirmAdjustmentSubmitBtn');
+        if(confirmBtn){
+            confirmBtn.addEventListener('click', function(){
+                if(adjustmentSubmitting || !pendingAdjustmentSubmitForm){
+                    return;
+                }
+
+                adjustmentSubmitting = true;
+                this.disabled = true;
+                this.innerHTML = 'Submitting...';
+
+                const form = pendingAdjustmentSubmitForm;
+                hideAdjustmentSubmitModal();
+
+                HTMLFormElement.prototype.submit.call(form);
             });
         }
     });
