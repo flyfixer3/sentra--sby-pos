@@ -48,6 +48,7 @@ class DefectTypeController extends Controller
                 'data' => [
                     'id' => (int) $existing->id,
                     'name' => (string) $existing->name,
+                    'label' => (string) $existing->name,
                     'existing' => true,
                 ],
             ]);
@@ -63,6 +64,7 @@ class DefectTypeController extends Controller
             'data' => [
                 'id' => (int) $created->id,
                 'name' => (string) $created->name,
+                'label' => (string) $created->name,
                 'existing' => false,
             ],
         ]);

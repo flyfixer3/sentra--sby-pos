@@ -3,6 +3,7 @@
 namespace App\Http\Livewire\Adjustment;
 
 use Livewire\Component;
+use Modules\Product\Entities\Product;
 use Modules\Product\Entities\Warehouse;
 
 class ProductTableQualityToGood extends Component
@@ -32,10 +33,11 @@ class ProductTableQualityToGood extends Component
     // 'defect' | 'damaged'
     public string $condition = 'defect';
 
-    public function mount(): void
+    public function mount($pendingItems = null, string $condition = 'defect'): void
     {
         $active = session('active_branch');
         $this->branchId = (int) ($active === 'all' ? 0 : $active);
+        $this->condition = $condition === 'damaged' ? 'damaged' : 'defect';
 
         // ✅ route harus ada (yang kemarin error)
         $this->qualityToGoodPickerUrl = route('adjustments.quality.to_good.picker');
@@ -55,6 +57,50 @@ class ProductTableQualityToGood extends Component
                 ];
             })->values()->toArray();
         }
+
+        if (!empty($pendingItems) && is_iterable($pendingItems)) {
+            foreach ($pendingItems as $row) {
+                $row = (array) $row;
+                $productId = (int) ($row['product_id'] ?? 0);
+                if ($productId <= 0) {
+                    continue;
+                }
+
+                $product = Product::withoutGlobalScopes()->find($productId);
+                if (!$product) {
+                    continue;
+                }
+
+                $idx = count($this->products);
+                $ids = $this->normalizeIds($row['selected_unit_ids'] ?? []);
+
+                $this->products[] = [
+                    'product_id' => $productId,
+                    'product_code' => (string) ($product->product_code ?? ''),
+                    'product_name' => (string) ($product->product_name ?? 'Product'),
+                    'expected_qty' => (int) ($row['qty'] ?? count($ids) ?: 1),
+                    'user_note' => (string) ($row['item_note'] ?? $row['user_note'] ?? ''),
+                ];
+
+                $this->selections[$idx] = [
+                    'unit_ids' => $ids,
+                ];
+            }
+        }
+    }
+
+    private function normalizeIds($raw): array
+    {
+        if (is_string($raw)) {
+            $decoded = json_decode($raw, true);
+            $raw = is_array($decoded) ? $decoded : [];
+        }
+
+        if (!is_array($raw)) {
+            return [];
+        }
+
+        return array_values(array_unique(array_filter(array_map('intval', $raw), fn ($id) => $id > 0)));
     }
 
     public function qualityToGoodTypeChanged(string $type): void

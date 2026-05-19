@@ -1164,10 +1164,10 @@ class AdjustmentController extends Controller
     {
         abort_if(Gate::denies('edit_adjustments'), 403);
 
-        if (!$adjustment->isApproved()) {
+        if (!$adjustment->isPending()) {
             return redirect()
                 ->route('adjustments.show', $adjustment)
-                ->with('error', 'Pending or rejected adjustment requests cannot be edited in this phase.');
+                ->with('error', 'Only pending adjustment requests can be edited. Approved or rejected adjustments are locked.');
         }
 
         $active = session('active_branch');
@@ -1189,19 +1189,45 @@ class AdjustmentController extends Controller
             ->orderBy('warehouse_name')
             ->get();
 
-        $defaultWarehouseId = (int) ($adjustment->warehouse_id ?: optional($warehouses->firstWhere('is_main', 1))->id);
+        $adjustment->loadMissing([
+            'requestItems.product',
+            'requestItems.warehouse',
+            'requestItems.rack',
+        ]);
 
-        return view('adjustment::edit', compact('adjustment', 'warehouses', 'activeBranchId', 'defaultWarehouseId'));
+        $defaultWarehouseId = (int) ($adjustment->warehouse_id ?: optional($warehouses->firstWhere('is_main', 1))->id);
+        $pendingItems = $adjustment->requestItems
+            ->map(fn ($item) => (array) ($item->payload ?? []))
+            ->values()
+            ->all();
+
+        return view('adjustment::edit', compact('adjustment', 'warehouses', 'activeBranchId', 'defaultWarehouseId', 'pendingItems'));
     }
 
     public function update(Request $request, Adjustment $adjustment)
     {
         abort_if(Gate::denies('edit_adjustments'), 403);
 
-        if (!$adjustment->isApproved()) {
+        if (!$adjustment->isPending()) {
             return redirect()
                 ->route('adjustments.show', $adjustment)
-                ->with('error', 'Pending or rejected adjustment requests cannot be updated.');
+                ->with('error', 'Only pending adjustment requests can be updated. Approved or rejected adjustments are locked.');
+        }
+
+        try {
+            if ($request->has('adjustment_type')) {
+                $this->updatePendingStockAdjustmentRequest($request, $adjustment);
+            } else {
+                $this->updatePendingQualityAdjustmentRequest($request, $adjustment);
+            }
+
+            toast('Pending adjustment request updated.', 'success');
+            return redirect()->route('adjustments.show', $adjustment);
+        } catch (\Throwable $e) {
+            return redirect()
+                ->back()
+                ->withInput()
+                ->with('error', $e->getMessage());
         }
 
         $request->validate([
@@ -2826,6 +2852,77 @@ class AdjustmentController extends Controller
         return $prepared;
     }
 
+    private function updatePendingStockAdjustmentRequest(Request $request, Adjustment $adjustment): void
+    {
+        $request->validate([
+            'date' => ['required', 'date'],
+            'adjustment_type' => ['required', 'in:add,sub'],
+            'warehouse_id' => ['nullable', 'integer', 'exists:warehouses,id'],
+            'note' => ['nullable', 'string', 'max:1000'],
+            'items' => ['required', 'array', 'min:1'],
+        ]);
+
+        $active = session('active_branch');
+        if ($active === 'all' || $active === null || $active === '') {
+            throw new \RuntimeException("Please choose a specific branch first (not 'All Branch') to update an adjustment request.");
+        }
+
+        $branchId = (int) $active;
+        if ((int) $adjustment->branch_id !== $branchId) {
+            abort(403, 'You can only update adjustments from the active branch.');
+        }
+
+        $date = $this->normalizeDateForDatabase($request->input('date'));
+        $type = (string) $request->input('adjustment_type');
+        $items = (array) $request->input('items', []);
+
+        if ($type === 'add') {
+            $warehouseId = (int) $request->input('warehouse_id');
+            $this->assertWarehouseInBranch($warehouseId, $branchId);
+            $preparedItems = $this->preparePendingStockAddItems($request, $items, $branchId, $warehouseId);
+            $requestType = 'stock_add';
+        } else {
+            $preparedItems = $this->preparePendingStockSubItems($items, $branchId);
+            $warehouseId = $this->pickStockSubHeaderWarehouseId($preparedItems, $branchId);
+            $requestType = 'stock_sub';
+        }
+
+        if (empty($preparedItems)) {
+            throw new \RuntimeException('At least one valid adjustment item is required.');
+        }
+
+        DB::transaction(function () use ($adjustment, $date, $branchId, $warehouseId, $requestType, $preparedItems, $request) {
+            $locked = Adjustment::query()
+                ->whereKey($adjustment->id)
+                ->lockForUpdate()
+                ->firstOrFail();
+
+            if (!$locked->isPending()) {
+                throw new \RuntimeException('Only pending adjustment requests can be updated.');
+            }
+
+            $locked->update([
+                'date' => $date,
+                'warehouse_id' => $warehouseId,
+                'note' => trim('Pending ' . str_replace('_', ' ', $requestType) . ($request->input('note') ? ' | ' . $request->input('note') : '')),
+                'branch_id' => $branchId,
+                'request_type' => $requestType,
+                'payload' => [
+                    'date' => $date,
+                    'note' => $request->input('note'),
+                    'items' => $preparedItems,
+                ],
+            ]);
+
+            $locked->requestItems()->delete();
+            foreach ($preparedItems as $idx => $item) {
+                $this->createAdjustmentRequestItem($locked, (int) $idx + 1, $item);
+            }
+
+            activity()->performedOn($locked)->causedBy(auth()->user())->log('Updated pending adjustment request');
+        });
+    }
+
     private function preparePendingStockSubItems(array $items, int $branchId): array
     {
         $prepared = [];
@@ -2992,6 +3089,92 @@ class AdjustmentController extends Controller
             activity()->performedOn($adjustment)->causedBy(auth()->user())->log('Submitted quality reclass request');
 
             return $adjustment;
+        });
+    }
+
+    private function updatePendingQualityAdjustmentRequest(Request $request, Adjustment $adjustment): void
+    {
+        $request->validate([
+            'date' => ['required', 'date'],
+            'type' => ['required', 'in:defect,damaged,defect_to_good,damaged_to_good'],
+            'user_note' => ['nullable', 'string', 'max:1000'],
+            'items' => ['required', 'array', 'min:1'],
+        ]);
+
+        $active = session('active_branch');
+        if ($active === 'all' || $active === null || $active === '') {
+            throw new \RuntimeException("Please choose a specific branch first (not 'All Branch') to update an adjustment request.");
+        }
+
+        $branchId = (int) $active;
+        if ((int) $adjustment->branch_id !== $branchId) {
+            abort(403, 'You can only update adjustments from the active branch.');
+        }
+
+        $type = (string) $request->input('type');
+        $requestType = match ($type) {
+            'defect' => 'quality_good_to_defect',
+            'damaged' => 'quality_good_to_damaged',
+            'defect_to_good' => 'quality_defect_to_good',
+            'damaged_to_good' => 'quality_damaged_to_good',
+            default => throw new \RuntimeException('Invalid quality request type.'),
+        };
+
+        $normalizeDetailArray = function ($raw): array {
+            if ($raw === null) return [];
+            if (is_array($raw)) return array_values($raw);
+            if (is_string($raw)) {
+                $decoded = json_decode($raw, true);
+                return is_array($decoded) ? array_values($decoded) : [];
+            }
+            return [];
+        };
+
+        $date = $this->normalizeDateForDatabase($request->input('date'));
+        $globalNote = trim((string) $request->input('user_note', ''));
+        $isClassic = in_array($type, ['defect', 'damaged'], true);
+        $warehouseId = $isClassic ? (int) $request->input('warehouse_id') : null;
+
+        if ($isClassic) {
+            $this->assertWarehouseInBranch($warehouseId, $branchId);
+            $items = $this->preparePendingQualityGoodToIssueItems($request, $type, $branchId, $warehouseId, $normalizeDetailArray);
+        } else {
+            $items = $this->preparePendingQualityIssueToGoodItems($request, $type, $branchId, $warehouseId);
+        }
+
+        if (empty($items)) {
+            throw new \RuntimeException('At least one valid quality item is required.');
+        }
+
+        DB::transaction(function () use ($adjustment, $date, $branchId, $warehouseId, $requestType, $items, $globalNote) {
+            $locked = Adjustment::query()
+                ->whereKey($adjustment->id)
+                ->lockForUpdate()
+                ->firstOrFail();
+
+            if (!$locked->isPending()) {
+                throw new \RuntimeException('Only pending adjustment requests can be updated.');
+            }
+
+            $locked->update([
+                'date' => $date,
+                'warehouse_id' => $warehouseId,
+                'note' => trim('Pending ' . str_replace('_', ' ', $requestType) . ($globalNote ? ' | ' . $globalNote : '')),
+                'branch_id' => $branchId,
+                'request_type' => $requestType,
+                'payload' => [
+                    'date' => $date,
+                    'user_note' => $globalNote,
+                    'items' => $items,
+                ],
+            ]);
+
+            $locked->requestItems()->delete();
+            foreach ($items as $idx => $item) {
+                $this->createAdjustmentRequestItem($locked, (int) $idx + 1, $item);
+            }
+
+            activity()->performedOn($locked)->causedBy(auth()->user())->log('Updated pending quality reclass request');
         });
     }
 

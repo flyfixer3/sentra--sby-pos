@@ -113,6 +113,41 @@
                     .replace(/'/g, '&#039;');
             }
 
+            function defectTypeKey(value) {
+                return String(value || '').trim().toLowerCase();
+            }
+
+            function selectedContains(selected, label) {
+                const key = defectTypeKey(label);
+                return normalizeDefectTypes(selected).some((entry) => defectTypeKey(entry) === key);
+            }
+
+            function addDefectTypeOption(label) {
+                const name = String(label || '').trim();
+                if (name === '') return '';
+
+                const options = normalizeDefectTypes(window.DEFECT_TYPE_OPTIONS || []);
+                const existing = options.find((entry) => defectTypeKey(entry) === defectTypeKey(name));
+
+                if (!existing) {
+                    options.push(name);
+                    window.DEFECT_TYPE_OPTIONS = options;
+                    return name;
+                }
+
+                window.DEFECT_TYPE_OPTIONS = options;
+                return existing;
+            }
+
+            function ensurePickerIdentity(picker) {
+                if (!picker) return '';
+                if (!picker.dataset.defectTypePickerId) {
+                    window.__defectTypePickerSeq = (window.__defectTypePickerSeq || 0) + 1;
+                    picker.dataset.defectTypePickerId = 'defect-type-picker-' + window.__defectTypePickerSeq;
+                }
+                return picker.dataset.defectTypePickerId;
+            }
+
             function normalizeDefectTypes(raw) {
                 let values = raw;
 
@@ -189,7 +224,7 @@
 
                 const options = normalizeDefectTypes(window.DEFECT_TYPE_OPTIONS || []);
                 list.innerHTML = options.map((label) => {
-                    const checked = selected.includes(label) ? 'checked' : '';
+                    const checked = selectedContains(selected, label) ? 'checked' : '';
                     const removeHtml = window.CAN_DELETE_DEFECT_TYPES
                         ? ('<button type="button" class="defect-type-remove-btn" data-defect-type="' + escapeHtml(label) + '" title="Remove defect type">&times;</button>')
                         : '';
@@ -208,8 +243,29 @@
                 updatePickerHiddenInputs(picker, selected);
             }
 
+            function syncCreatedDefectType(detail) {
+                const name = String((detail && (detail.label || detail.name)) || '').trim();
+                if (name === '') return;
+
+                const canonicalName = addDefectTypeOption(name);
+                const sourcePickerId = String((detail && detail.sourcePickerId) || '');
+
+                document.querySelectorAll('.defect-type-picker').forEach((targetPicker) => {
+                    const pickerId = ensurePickerIdentity(targetPicker);
+                    const selected = readSelectedFromPicker(targetPicker, true);
+
+                    if (pickerId === sourcePickerId && !selectedContains(selected, canonicalName)) {
+                        selected.push(canonicalName);
+                    }
+
+                    targetPicker.dataset.selected = JSON.stringify(normalizeDefectTypes(selected));
+                    renderPickerChecklist(targetPicker);
+                });
+            }
+
             function bindPickerEvents(picker) {
                 if (!picker || picker.dataset.bound === '1') return;
+                ensurePickerIdentity(picker);
                 picker.dataset.bound = '1';
 
                 picker.addEventListener('change', function (event) {
@@ -307,20 +363,15 @@
                             throw new Error((payload && payload.message) ? payload.message : 'Failed to create defect type.');
                         }
 
-                        const name = String(payload.data.name || '').trim();
-                        if (name !== '' && !normalizeDefectTypes(window.DEFECT_TYPE_OPTIONS).includes(name)) {
-                            window.DEFECT_TYPE_OPTIONS.push(name);
-                        }
-
-                        const selected = readSelectedFromPicker(picker);
-                        selected.push(name);
-                        picker.dataset.selected = JSON.stringify(normalizeDefectTypes(selected));
-                        renderPickerChecklist(picker);
-
-                        const targetCheckbox = picker.querySelector('.defect-type-option[value="' + (window.CSS && CSS.escape ? CSS.escape(name) : name.replace(/"/g, '\\"')) + '"]');
-                        if (targetCheckbox) targetCheckbox.checked = true;
-                        updatePickerSummary(picker, readSelectedFromPicker(picker));
-                        updatePickerHiddenInputs(picker, readSelectedFromPicker(picker));
+                        window.dispatchEvent(new CustomEvent('defect-type-created', {
+                            detail: {
+                                id: payload.data.id || null,
+                                name: payload.data.name,
+                                label: payload.data.label || payload.data.name,
+                                existing: payload.data.existing === true,
+                                sourcePickerId: ensurePickerIdentity(picker)
+                            }
+                        }));
 
                         if (input) input.value = '';
                         if (note) note.textContent = payload.data.existing ? 'Already exists and selected.' : 'Saved and selected.';
@@ -340,7 +391,7 @@
                     : '<span class="defect-type-summary-empty">No defect type selected.</span>';
 
                 const checklistHtml = options.map((label) => {
-                    const checked = values.includes(label) ? 'checked' : '';
+                    const checked = selectedContains(values, label) ? 'checked' : '';
                     const removeHtml = window.CAN_DELETE_DEFECT_TYPES
                         ? ('<button type="button" class="defect-type-remove-btn" data-defect-type="' + escapeHtml(label) + '" title="Remove defect type">&times;</button>')
                         : '';
@@ -379,6 +430,7 @@
             window.initDefectTypePickers = function (scope) {
                 const root = scope || document;
                 root.querySelectorAll('.defect-type-picker').forEach((picker) => {
+                    ensurePickerIdentity(picker);
                     renderPickerChecklist(picker);
                     bindPickerEvents(picker);
                 });
@@ -390,6 +442,10 @@
 
             document.addEventListener('DOMContentLoaded', function () {
                 window.initDefectTypePickers(document);
+            });
+
+            window.addEventListener('defect-type-created', function (event) {
+                syncCreatedDefectType(event.detail || {});
             });
         })();
     </script>

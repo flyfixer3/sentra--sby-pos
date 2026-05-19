@@ -4,6 +4,7 @@ namespace App\Http\Livewire\Adjustment;
 
 use Livewire\Component;
 use Illuminate\Support\Facades\DB;
+use Modules\Product\Entities\Product;
 use Modules\Product\Entities\Warehouse;
 
 class ProductTableStockSub extends Component
@@ -36,7 +37,7 @@ class ProductTableStockSub extends Component
     // url endpoint for picker data
     public string $stockSubPickerUrl = '';
 
-    public function mount()
+    public function mount($pendingItems = null)
     {
         $active = session('active_branch');
         $this->branchId = (int) ($active === 'all' ? 0 : $active);
@@ -60,6 +61,53 @@ class ProductTableStockSub extends Component
                 ];
             })->values()->toArray();
         }
+
+        if (!empty($pendingItems) && is_iterable($pendingItems)) {
+            foreach ($pendingItems as $row) {
+                $row = (array) $row;
+                $productId = (int) ($row['product_id'] ?? 0);
+                if ($productId <= 0) {
+                    continue;
+                }
+
+                $product = Product::withoutGlobalScopes()->find($productId);
+                if (!$product) {
+                    continue;
+                }
+
+                $idx = count($this->products);
+                $defectIds = $this->normalizeIds($row['selected_defect_ids'] ?? []);
+                $damagedIds = $this->normalizeIds($row['selected_damaged_ids'] ?? []);
+
+                $this->products[] = [
+                    'product_id' => $productId,
+                    'product_code' => (string) ($product->product_code ?? ''),
+                    'product_name' => (string) ($product->product_name ?? 'Product'),
+                    'expected_qty' => (int) ($row['qty'] ?? $row['quantity'] ?? 1),
+                ];
+
+                $this->selections[$idx] = [
+                    'good_allocations' => array_values((array) ($row['good_allocations'] ?? [])),
+                    'defect_ids' => $defectIds,
+                    'damaged_ids' => $damagedIds,
+                    'note' => (string) ($row['note'] ?? ''),
+                ];
+            }
+        }
+    }
+
+    private function normalizeIds($raw): array
+    {
+        if (is_string($raw)) {
+            $decoded = json_decode($raw, true);
+            $raw = is_array($decoded) ? $decoded : [];
+        }
+
+        if (!is_array($raw)) {
+            return [];
+        }
+
+        return array_values(array_unique(array_filter(array_map('intval', $raw), fn ($id) => $id > 0)));
     }
 
     /**
