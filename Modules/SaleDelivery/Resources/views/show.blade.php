@@ -126,7 +126,7 @@
                         <form method="POST"
                               action="{{ route('sale-deliveries.create-invoice', $saleDelivery->id) }}"
                               class="d-inline"
-                              onsubmit="return confirm('Create Invoice from this Sale Delivery? (1 Delivery = 1 Invoice)');">
+                              data-confirm-submit="true" data-confirm-title="Confirm Create" data-confirm-message="Create Invoice from this Sale Delivery? (1 Delivery = 1 Invoice)" data-confirm-button="Create" data-confirm-variant="primary">
                             @csrf
                             <button type="submit" class="btn btn-success">
                                 <i class="bi bi-receipt me-1"></i> Create Invoice
@@ -152,7 +152,7 @@
                             <form method="POST"
                                 action="{{ route('sale-deliveries.destroy', $saleDelivery->id) }}"
                                 class="d-inline"
-                                onsubmit="return confirm('Delete this Sale Delivery? Only allowed if status is not CONFIRMED.');">
+                                data-confirm-submit="true" data-confirm-title="Confirm Delete" data-confirm-message="Delete this Sale Delivery? Only allowed if status is not CONFIRMED." data-confirm-button="Delete" data-confirm-variant="danger">
                                 @csrf
                                 @method('DELETE')
                                 <button type="submit" class="btn btn-outline-danger">

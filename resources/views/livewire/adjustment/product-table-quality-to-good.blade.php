@@ -146,7 +146,11 @@
                                         <button type="button"
                                                 class="btn btn-outline-danger btn-sm"
                                                 wire:click="removeProduct({{ $idx }})"
-                                                onclick="return confirm('Remove product ini dari list?')">
+                                                data-confirm-click="true"
+                                                data-confirm-title="Confirm Delete"
+                                                data-confirm-message="Remove product ini dari list?"
+                                                data-confirm-button="Delete"
+                                                data-confirm-variant="danger">
                                             <i class="bi bi-x-circle"></i> Cancel
                                         </button>
                                     </div>

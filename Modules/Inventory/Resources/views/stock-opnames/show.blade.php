@@ -56,13 +56,13 @@
                                     @csrf
                                     <button type="submit" class="btn btn-outline-warning btn-sm rounded-pill px-3">Tandai Kosong Jadi 0</button>
                                 </form>
-                                <form action="{{ route('inventory.stock-opnames.review', $stockOpname) }}" method="POST" class="d-inline" onsubmit="return confirm('Kunci review ini? Qty fisik dan resolve tidak bisa diubah lagi setelah masuk tahap reviewed.');">
+                                <form action="{{ route('inventory.stock-opnames.review', $stockOpname) }}" method="POST" class="d-inline" data-confirm-submit="true" data-confirm-title="Confirm Action" data-confirm-message="Kunci review ini? Qty fisik dan resolve tidak bisa diubah lagi setelah masuk tahap reviewed." data-confirm-button="Confirm" data-confirm-variant="warning">
                                     @csrf
                                     <button type="submit" class="btn btn-info btn-sm rounded-pill px-3">Kunci Review</button>
                                 </form>
                             @elseif($stockOpname->status === 'reviewed')
                                 @can('create_adjustments')
-                                <form action="{{ route('inventory.stock-opnames.finalize', $stockOpname) }}" method="POST" class="d-inline" onsubmit="return confirm('Finalize adjustment untuk item yang sudah ditandai adjustment?');">
+                                <form action="{{ route('inventory.stock-opnames.finalize', $stockOpname) }}" method="POST" class="d-inline" data-confirm-submit="true" data-confirm-title="Confirm Action" data-confirm-message="Finalize adjustment untuk item yang sudah ditandai adjustment?" data-confirm-button="Confirm" data-confirm-variant="warning">
                                     @csrf
                                     <button type="submit" class="btn btn-success btn-sm rounded-pill px-3">Finalize Adjustment</button>
                                 </form>
@@ -287,7 +287,7 @@
                                                     @if($stockOpname->status === 'draft')
                                                         <div class="d-flex flex-wrap mt-2" style="gap:8px;">
                                                             <button type="button" class="btn btn-sm btn-outline-secondary rounded-pill px-3 js-edit-resolve">Edit Resolve</button>
-                                                            <form action="{{ route('inventory.stock-opnames.items.reset-resolve', [$stockOpname, $item]) }}" method="POST" class="d-inline" onsubmit="return confirm('Reset resolve item ini?');">
+                                                            <form action="{{ route('inventory.stock-opnames.items.reset-resolve', [$stockOpname, $item]) }}" method="POST" class="d-inline" data-confirm-submit="true" data-confirm-title="Confirm Action" data-confirm-message="Reset resolve item ini?" data-confirm-button="Confirm" data-confirm-variant="primary">
                                                                 @csrf
                                                                 <button type="submit" class="btn btn-sm btn-outline-danger rounded-pill px-3">Reset Resolve</button>
                                                             </form>

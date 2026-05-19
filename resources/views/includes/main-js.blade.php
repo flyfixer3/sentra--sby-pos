@@ -13,7 +13,10 @@
 <script>
     (function () {
         var lastSubmitter = null;
-        var deliveryPendingForm = null;
+        var confirmedForms = new WeakSet();
+        var confirmedClicks = new WeakSet();
+        var modalConfirmHandler = null;
+        var modalCancelHandler = null;
 
         function isFormElement(element) {
             return element && element.tagName && element.tagName.toLowerCase() === 'form';
@@ -47,12 +50,15 @@
             return null;
         }
 
-        function clearPendingState(form) {
-            form.removeAttribute('data-confirm-submit-pending');
+        function dataOption(form, submitter, key, fallback) {
+            var value = submitter && submitter.getAttribute(key);
+            if (value === null || value === '') value = form && form.getAttribute(key);
+            return value === null || value === '' ? fallback : value;
         }
 
-        function isConfirmedSubmit(form) {
-            return form.getAttribute('data-confirmed-submit') === 'true';
+        function clearPendingState(form) {
+            if (!form) return;
+            form.removeAttribute('data-confirm-submit-pending');
         }
 
         function hasEnabledConfirm(form, submitter) {
@@ -61,35 +67,120 @@
             if (form.getAttribute('data-no-confirm-submit') === 'true') return false;
 
             return form.getAttribute('data-confirm-submit') === 'true'
+                || form.getAttribute('data-delivery-confirm-submit') === 'true'
                 || (submitter && submitter.getAttribute('data-confirm-submit-button') === 'true');
         }
 
-        function getOption(form, name, fallback) {
-            var value = form.getAttribute(name);
-            return value === null || value === '' ? fallback : value;
+        function getModal() {
+            var modal = document.getElementById('confirmSubmitModal');
+            if (!modal) return null;
+
+            return {
+                root: modal,
+                title: document.getElementById('confirmSubmitModalTitle'),
+                message: document.getElementById('confirmSubmitModalMessage'),
+                confirm: document.getElementById('confirmSubmitModalConfirm'),
+                cancel: document.getElementById('confirmSubmitModalCancel')
+            };
         }
 
-        function getSweetAlert() {
-            if (window.Swal && typeof window.Swal.fire === 'function') return window.Swal;
-            if (window.Sweetalert2 && typeof window.Sweetalert2.fire === 'function') return window.Sweetalert2;
-            if (window.swal && typeof window.swal.fire === 'function') return window.swal;
-            if (typeof window.swal === 'function') {
-                return {
-                    fire: function (options) {
-                        return window.swal({
-                            title: options.title,
-                            text: options.text,
-                            icon: options.icon,
-                            buttons: [options.cancelButtonText, options.confirmButtonText]
-                        }).then(function (confirmed) {
-                            return { isConfirmed: !!confirmed };
-                        });
-                    }
-                };
+        function openModal(modal) {
+            if (window.coreui && window.coreui.Modal && typeof window.coreui.Modal.getOrCreateInstance === 'function') {
+                window.coreui.Modal.getOrCreateInstance(modal).show();
+                return;
             }
 
-            return null;
+            if (window.bootstrap && window.bootstrap.Modal && typeof window.bootstrap.Modal.getOrCreateInstance === 'function') {
+                window.bootstrap.Modal.getOrCreateInstance(modal).show();
+                return;
+            }
+
+            if (window.jQuery && typeof window.jQuery(modal).modal === 'function') {
+                window.jQuery(modal).modal('show');
+                return;
+            }
+
+            modal.classList.add('show');
+            modal.style.display = 'block';
+            modal.removeAttribute('aria-hidden');
+            document.body.classList.add('modal-open');
         }
+
+        function closeModal(modal) {
+            if (window.coreui && window.coreui.Modal && typeof window.coreui.Modal.getOrCreateInstance === 'function') {
+                window.coreui.Modal.getOrCreateInstance(modal).hide();
+                return;
+            }
+
+            if (window.bootstrap && window.bootstrap.Modal && typeof window.bootstrap.Modal.getOrCreateInstance === 'function') {
+                window.bootstrap.Modal.getOrCreateInstance(modal).hide();
+                return;
+            }
+
+            if (window.jQuery && typeof window.jQuery(modal).modal === 'function') {
+                window.jQuery(modal).modal('hide');
+                return;
+            }
+
+            modal.classList.remove('show');
+            modal.style.display = 'none';
+            modal.setAttribute('aria-hidden', 'true');
+            document.body.classList.remove('modal-open');
+            if (typeof modalCancelHandler === 'function') modalCancelHandler();
+        }
+
+        function setConfirmVariant(button, variant) {
+            var allowed = ['primary', 'secondary', 'success', 'danger', 'warning', 'info', 'light', 'dark'];
+            variant = allowed.indexOf(variant) !== -1 ? variant : 'primary';
+            button.className = 'btn btn-' + variant;
+        }
+
+        function showConfirmModal(options) {
+            var modal = getModal();
+            if (!modal || !modal.root || !modal.confirm || !modal.cancel) return;
+
+            modal.title.textContent = options.title || 'Confirm Action';
+            modal.message.textContent = options.message || 'Please make sure all information is correct before continuing.';
+            modal.confirm.textContent = options.confirmText || 'Confirm';
+            modal.cancel.textContent = options.cancelText || 'Cancel';
+            modal.confirm.disabled = false;
+            modal.cancel.classList.toggle('d-none', !!options.noticeOnly);
+            setConfirmVariant(modal.confirm, options.variant || 'primary');
+
+            if (modalConfirmHandler) modal.confirm.removeEventListener('click', modalConfirmHandler);
+            modalConfirmHandler = function () {
+                modal.confirm.disabled = true;
+                if (typeof options.onConfirm === 'function') options.onConfirm();
+            };
+            modal.confirm.addEventListener('click', modalConfirmHandler);
+
+            modalCancelHandler = function () {
+                modal.confirm.disabled = false;
+                if (typeof options.onCancel === 'function') options.onCancel();
+                modalCancelHandler = null;
+            };
+
+            openModal(modal.root);
+        }
+
+        window.showConfirmSubmitModal = function (options) {
+            return new Promise(function (resolve) {
+                showConfirmModal({
+                    title: options && options.title,
+                    message: options && options.message,
+                    confirmText: options && (options.confirmText || options.confirmButtonText),
+                    cancelText: options && (options.cancelText || options.cancelButtonText),
+                    variant: options && options.variant,
+                    onConfirm: function () {
+                        closeModal(getModal().root);
+                        resolve(true);
+                    },
+                    onCancel: function () {
+                        resolve(false);
+                    }
+                });
+            });
+        };
 
         function appendSubmitterValue(form, submitter) {
             if (!submitter || !submitter.name || submitter.disabled) return null;
@@ -106,22 +197,10 @@
 
         function applySubmitterOverrides(form, submitter) {
             if (!submitter) return;
-
-            if (submitter.hasAttribute('formaction')) {
-                form.action = submitter.formAction;
-            }
-
-            if (submitter.hasAttribute('formmethod')) {
-                form.method = submitter.formMethod;
-            }
-
-            if (submitter.hasAttribute('formenctype')) {
-                form.enctype = submitter.formEnctype;
-            }
-
-            if (submitter.hasAttribute('formtarget')) {
-                form.target = submitter.formTarget;
-            }
+            if (submitter.hasAttribute('formaction')) form.action = submitter.formAction;
+            if (submitter.hasAttribute('formmethod')) form.method = submitter.formMethod;
+            if (submitter.hasAttribute('formenctype')) form.enctype = submitter.formEnctype;
+            if (submitter.hasAttribute('formtarget')) form.target = submitter.formTarget;
         }
 
         function setSubmitterLoading(submitter, form) {
@@ -129,7 +208,7 @@
 
             submitter.disabled = true;
 
-            var loadingText = getOption(form, 'data-confirm-loading-text', 'Submitting...');
+            var loadingText = dataOption(form, submitter, 'data-confirm-loading-text', 'Processing...');
             var tag = (submitter.tagName || '').toLowerCase();
             var type = ((submitter.getAttribute('type') || submitter.type || '') + '').toLowerCase();
 
@@ -143,13 +222,13 @@
         }
 
         function submitConfirmed(form, submitter) {
-            if (isConfirmedSubmit(form) && form.getAttribute('data-confirm-submit-resubmitting') === 'true') return;
+            var validSubmitter = getValidSubmitter(form, submitter);
 
+            confirmedForms.add(form);
             form.setAttribute('data-confirmed-submit', 'true');
             form.setAttribute('data-confirm-submit-resubmitting', 'true');
             clearPendingState(form);
-
-            var validSubmitter = getValidSubmitter(form, submitter);
+            closeModal(getModal().root);
 
             if (typeof form.requestSubmit === 'function') {
                 try {
@@ -158,17 +237,13 @@
                     } else {
                         form.requestSubmit();
                     }
+                    return;
                 } catch (e) {
                     try {
                         form.requestSubmit();
-                    } catch (requestSubmitError) {
-                        appendSubmitterValue(form, validSubmitter);
-                        applySubmitterOverrides(form, validSubmitter);
-                        setSubmitterLoading(validSubmitter, form);
-                        HTMLFormElement.prototype.submit.call(form);
-                    }
+                        return;
+                    } catch (requestSubmitError) {}
                 }
-                return;
             }
 
             appendSubmitterValue(form, validSubmitter);
@@ -177,173 +252,14 @@
             HTMLFormElement.prototype.submit.call(form);
         }
 
-        function hasRequiredItemRows(form) {
-            if (form.getAttribute('data-item-validation') === 'purchase-delivery') {
-                return hasPurchaseDeliveryQuantity(form);
-            }
-
-            var quantityInput = form.querySelector('input[name="total_quantity"]');
-            if (quantityInput && parseInt(quantityInput.value || '0', 10) > 0) {
-                return true;
-            }
-
-            var itemSelectors = [
-                '[data-cart-sync-row]',
-                'input[name^="items"][name$="[product_id]"]',
-                'input[name="product_ids[]"]',
-                'input[name^="product_ids"]'
-            ];
-
-            return itemSelectors.some(function (selector) {
-                return Array.prototype.some.call(form.querySelectorAll(selector), function (element) {
-                    if (element.disabled) return false;
-                    if (element.matches && element.matches('input, select, textarea')) {
-                        return (element.value || '').trim() !== '' && (element.value || '0') !== '0';
-                    }
-                    return true;
-                });
-            });
-        }
-
         function hasPurchaseDeliveryQuantity(form) {
             var quantityInputs = form.querySelectorAll('input[name^="quantity["], .qty-input');
 
             return Array.prototype.some.call(quantityInputs, function (input) {
                 if (input.disabled) return false;
-
                 var value = parseFloat(input.value || '0');
                 return !Number.isNaN(value) && value > 0;
             });
-        }
-
-        function showRequiredItemsWarning(form) {
-            var title = getOption(form, 'data-confirm-items-title', 'Product Required');
-            var message = getOption(form, 'data-confirm-items-message', 'Please add at least one product before submitting this document.');
-            var buttonText = getOption(form, 'data-confirm-items-button-text', 'OK');
-            var Swal = getSweetAlert();
-
-            if (Swal) {
-                return Swal.fire({
-                    title: title,
-                    text: message,
-                    icon: 'warning',
-                    confirmButtonText: buttonText
-                });
-            }
-
-            window.alert(title + '\n\n' + message);
-        }
-
-        function showConfirmation(form, submitter) {
-            var title = getOption(form, 'data-confirm-title', 'Confirm Submit');
-            var message = getOption(form, 'data-confirm-message', 'Are you sure you want to submit this form?');
-            var confirmText = getOption(form, 'data-confirm-confirm-text', 'Yes, submit');
-            var cancelText = getOption(form, 'data-confirm-cancel-text', 'Cancel');
-            var icon = getOption(form, 'data-confirm-icon', 'question');
-
-            var Swal = getSweetAlert();
-
-            if (Swal) {
-                return Swal.fire({
-                    title: title,
-                    text: message,
-                    icon: icon,
-                    showCancelButton: true,
-                    confirmButtonText: confirmText,
-                    cancelButtonText: cancelText,
-                    reverseButtons: true,
-                    focusCancel: true
-                }).then(function (result) {
-                    if (result && result.isConfirmed) {
-                        submitConfirmed(form, submitter);
-                    } else {
-                        clearPendingState(form);
-                    }
-                }).catch(function () {
-                    clearPendingState(form);
-                });
-            }
-
-            if (window.confirm(title + '\n\n' + message)) {
-                submitConfirmed(form, submitter);
-            } else {
-                clearPendingState(form);
-            }
-        }
-
-        function ensureDeliveryConfirmModal() {
-            var existing = document.getElementById('deliveryConfirmModal');
-            if (existing) return existing;
-
-            var modal = document.createElement('div');
-            modal.className = 'modal fade';
-            modal.id = 'deliveryConfirmModal';
-            modal.tabIndex = -1;
-            modal.setAttribute('role', 'dialog');
-            modal.setAttribute('aria-hidden', 'true');
-            modal.innerHTML = '' +
-                '<div class="modal-dialog modal-dialog-centered" role="document">' +
-                    '<div class="modal-content">' +
-                        '<div class="modal-header">' +
-                            '<h5 class="modal-title" id="deliveryConfirmTitle">Confirm Submit</h5>' +
-                            '<button type="button" class="close" data-dismiss="modal" data-bs-dismiss="modal" aria-label="Close">' +
-                                '<span aria-hidden="true">&times;</span>' +
-                            '</button>' +
-                        '</div>' +
-                        '<div class="modal-body">' +
-                            '<p class="mb-0" id="deliveryConfirmMessage">Please review before submitting.</p>' +
-                        '</div>' +
-                        '<div class="modal-footer">' +
-                            '<button type="button" class="btn btn-light" data-dismiss="modal" data-bs-dismiss="modal" id="deliveryConfirmCancel">Cancel</button>' +
-                            '<button type="button" class="btn btn-primary" id="deliveryConfirmOk">Submit</button>' +
-                        '</div>' +
-                    '</div>' +
-                '</div>';
-
-            document.body.appendChild(modal);
-            return modal;
-        }
-
-        function openDeliveryModal(modal) {
-            if (window.jQuery && typeof window.jQuery(modal).modal === 'function') {
-                window.jQuery(modal).modal('show');
-                return;
-            }
-
-            modal.classList.add('show');
-            modal.style.display = 'block';
-            modal.removeAttribute('aria-hidden');
-            document.body.classList.add('modal-open');
-        }
-
-        function closeDeliveryModal(modal) {
-            if (window.jQuery && typeof window.jQuery(modal).modal === 'function') {
-                window.jQuery(modal).modal('hide');
-                return;
-            }
-
-            modal.classList.remove('show');
-            modal.style.display = 'none';
-            modal.setAttribute('aria-hidden', 'true');
-            document.body.classList.remove('modal-open');
-        }
-
-        function showDeliveryNotice(form, title, message) {
-            var modal = ensureDeliveryConfirmModal();
-            modal.querySelector('#deliveryConfirmTitle').textContent = title;
-            modal.querySelector('#deliveryConfirmMessage').textContent = message;
-            modal.querySelector('#deliveryConfirmCancel').classList.add('d-none');
-
-            var ok = modal.querySelector('#deliveryConfirmOk');
-            ok.textContent = getOption(form, 'data-confirm-items-button-text', 'OK');
-            ok.className = 'btn btn-primary';
-            ok.onclick = function () {
-                closeDeliveryModal(modal);
-                clearPendingState(form);
-                modal.querySelector('#deliveryConfirmCancel').classList.remove('d-none');
-            };
-
-            openDeliveryModal(modal);
         }
 
         function hasSaleDeliveryQuantity(form) {
@@ -365,24 +281,52 @@
             });
         }
 
-        function deliveryFormHasRequiredItems(form) {
+        function hasRequiredItemRows(form) {
             var mode = form.getAttribute('data-item-validation');
+            if (mode === 'purchase-delivery') return hasPurchaseDeliveryQuantity(form);
+            if (mode === 'sale-delivery') return hasSaleDeliveryQuantity(form);
 
-            if (mode === 'purchase-delivery') {
-                return hasPurchaseDeliveryQuantity(form);
-            }
+            var quantityInput = form.querySelector('input[name="total_quantity"]');
+            if (quantityInput && parseInt(quantityInput.value || '0', 10) > 0) return true;
 
-            if (mode === 'sale-delivery') {
-                return hasSaleDeliveryQuantity(form);
-            }
+            var itemSelectors = [
+                '[data-cart-sync-row]',
+                'input[name^="items"][name$="[product_id]"]',
+                'input[name="product_ids[]"]',
+                'input[name^="product_ids"]'
+            ];
 
-            return true;
+            return itemSelectors.some(function (selector) {
+                return Array.prototype.some.call(form.querySelectorAll(selector), function (element) {
+                    if (element.disabled) return false;
+                    if (element.matches && element.matches('input, select, textarea')) {
+                        return (element.value || '').trim() !== '' && (element.value || '0') !== '0';
+                    }
+                    return true;
+                });
+            });
+        }
+
+        function showRequiredItemsWarning(form) {
+            showConfirmModal({
+                title: dataOption(form, null, 'data-confirm-items-title', 'Product Required'),
+                message: dataOption(form, null, 'data-confirm-items-message', 'Please add at least one product before submitting this document.'),
+                confirmText: dataOption(form, null, 'data-confirm-items-button-text', 'OK'),
+                cancelText: 'Cancel',
+                variant: 'primary',
+                noticeOnly: true,
+                onConfirm: function () {
+                    closeModal(getModal().root);
+                    clearPendingState(form);
+                },
+                onCancel: function () {
+                    clearPendingState(form);
+                }
+            });
         }
 
         function saleDeliveryConfirmIsValid(form) {
-            if (form.getAttribute('data-delivery-validation') !== 'sale-delivery-confirm') {
-                return true;
-            }
+            if (form.getAttribute('data-delivery-validation') !== 'sale-delivery-confirm') return true;
 
             if (typeof window.refreshSaleDeliveryConfirmValidation === 'function') {
                 window.refreshSaleDeliveryConfirmValidation();
@@ -395,91 +339,91 @@
             });
         }
 
-        function showDeliveryConfirmation(form, submitter) {
-            var modal = ensureDeliveryConfirmModal();
-            modal.querySelector('#deliveryConfirmTitle').textContent = getOption(form, 'data-confirm-title', 'Confirm Submit');
-            modal.querySelector('#deliveryConfirmMessage').textContent = getOption(form, 'data-confirm-message', 'Please review before submitting.');
-            modal.querySelector('#deliveryConfirmCancel').classList.remove('d-none');
+        function showConfirmation(form, submitter) {
+            var title = dataOption(form, submitter, 'data-confirm-title', 'Confirm Action');
+            var message = dataOption(form, submitter, 'data-confirm-message', 'Please make sure all information is correct before continuing.');
+            var confirmText = dataOption(form, submitter, 'data-confirm-button', null)
+                || dataOption(form, submitter, 'data-confirm-confirm-text', 'Confirm');
+            var cancelText = dataOption(form, submitter, 'data-confirm-cancel', null)
+                || dataOption(form, submitter, 'data-confirm-cancel-text', 'Cancel');
+            var variant = dataOption(form, submitter, 'data-confirm-variant', 'primary');
 
-            var ok = modal.querySelector('#deliveryConfirmOk');
-            ok.textContent = getOption(form, 'data-confirm-confirm-text', 'Submit');
-            ok.className = 'btn btn-primary';
-            deliveryPendingForm = form;
-            ok.onclick = function () {
-                closeDeliveryModal(modal);
-
-                form.setAttribute('data-delivery-confirmed-submit', 'true');
-                clearPendingState(form);
-                appendSubmitterValue(form, getValidSubmitter(form, submitter));
-                applySubmitterOverrides(form, getValidSubmitter(form, submitter));
-                setSubmitterLoading(getValidSubmitter(form, submitter), form);
-                HTMLFormElement.prototype.submit.call(form);
-            };
-
-            var cancel = modal.querySelector('#deliveryConfirmCancel');
-            cancel.onclick = function () {
-                clearPendingState(form);
-                deliveryPendingForm = null;
-            };
-
-            openDeliveryModal(modal);
+            showConfirmModal({
+                title: title,
+                message: message,
+                confirmText: confirmText,
+                cancelText: cancelText,
+                variant: variant,
+                onConfirm: function () {
+                    submitConfirmed(form, submitter);
+                },
+                onCancel: function () {
+                    clearPendingState(form);
+                }
+            });
         }
 
         document.addEventListener('hidden.bs.modal', function (event) {
-            if (event.target && event.target.id === 'deliveryConfirmModal' && deliveryPendingForm) {
-                clearPendingState(deliveryPendingForm);
-                deliveryPendingForm = null;
+            if (event.target && event.target.id === 'confirmSubmitModal' && typeof modalCancelHandler === 'function') {
+                modalCancelHandler();
             }
         });
 
-        document.addEventListener('submit', function (event) {
-            var form = event.target;
-            if (!isFormElement(form) || form.getAttribute('data-delivery-confirm-submit') !== 'true') {
+        document.addEventListener('hidden.coreui.modal', function (event) {
+            if (event.target && event.target.id === 'confirmSubmitModal' && typeof modalCancelHandler === 'function') {
+                modalCancelHandler();
+            }
+        });
+
+        document.addEventListener('click', function (event) {
+            var submitter = getSubmitButton(event.target);
+            if (submitter) lastSubmitter = submitter;
+
+            var formTarget = event.target && event.target.closest ? event.target.closest('[data-confirm-target-form]') : null;
+            if (formTarget) {
+                event.preventDefault();
+                event.stopImmediatePropagation();
+
+                var targetForm = document.getElementById(formTarget.getAttribute('data-confirm-target-form'));
+                if (!targetForm) return;
+
+                showConfirmModal({
+                    title: formTarget.getAttribute('data-confirm-title') || 'Confirm Action',
+                    message: formTarget.getAttribute('data-confirm-message') || 'Please make sure all information is correct before continuing.',
+                    confirmText: formTarget.getAttribute('data-confirm-button') || formTarget.getAttribute('data-confirm-confirm-text') || 'Confirm',
+                    cancelText: formTarget.getAttribute('data-confirm-cancel') || formTarget.getAttribute('data-confirm-cancel-text') || 'Cancel',
+                    variant: formTarget.getAttribute('data-confirm-variant') || 'primary',
+                    onConfirm: function () {
+                        submitConfirmed(targetForm, null);
+                    },
+                    onCancel: function () {
+                        clearPendingState(targetForm);
+                    }
+                });
                 return;
             }
 
-            if (form.getAttribute('data-delivery-confirmed-submit') === 'true') {
+            var confirmTarget = event.target && event.target.closest ? event.target.closest('[data-confirm-click="true"]') : null;
+            if (!confirmTarget || confirmedClicks.has(confirmTarget)) {
+                if (confirmTarget) confirmedClicks.delete(confirmTarget);
                 return;
             }
 
             event.preventDefault();
             event.stopImmediatePropagation();
 
-            if (form.getAttribute('data-confirm-submit-pending') === 'true') return;
-            form.setAttribute('data-confirm-submit-pending', 'true');
-
-            if (!form.checkValidity()) {
-                clearPendingState(form);
-                form.reportValidity();
-                return;
-            }
-
-            if (form.getAttribute('data-confirm-require-items') === 'true' && !deliveryFormHasRequiredItems(form)) {
-                showDeliveryNotice(
-                    form,
-                    getOption(form, 'data-confirm-items-title', 'Item Quantity Required'),
-                    getOption(form, 'data-confirm-items-message', 'Please input at least one item quantity before submitting this delivery.')
-                );
-                clearPendingState(form);
-                return;
-            }
-
-            if (!saleDeliveryConfirmIsValid(form)) {
-                clearPendingState(form);
-                var box = document.getElementById('rowErrorBox');
-                if (box) box.classList.remove('d-none');
-                window.scrollTo({ top: 0, behavior: 'smooth' });
-                return;
-            }
-
-            showDeliveryConfirmation(form, getValidSubmitter(form, event.submitter || lastSubmitter));
-        }, true);
-
-        document.addEventListener('click', function (event) {
-            var submitter = getSubmitButton(event.target);
-            if (submitter) {
-                lastSubmitter = submitter;
-            }
+            showConfirmModal({
+                title: confirmTarget.getAttribute('data-confirm-title') || 'Confirm Action',
+                message: confirmTarget.getAttribute('data-confirm-message') || 'Please make sure all information is correct before continuing.',
+                confirmText: confirmTarget.getAttribute('data-confirm-button') || confirmTarget.getAttribute('data-confirm-confirm-text') || 'Confirm',
+                cancelText: confirmTarget.getAttribute('data-confirm-cancel') || confirmTarget.getAttribute('data-confirm-cancel-text') || 'Cancel',
+                variant: confirmTarget.getAttribute('data-confirm-variant') || 'primary',
+                onConfirm: function () {
+                    confirmedClicks.add(confirmTarget);
+                    closeModal(getModal().root);
+                    confirmTarget.click();
+                }
+            });
         }, true);
 
         document.addEventListener('submit', function (event) {
@@ -487,7 +431,8 @@
             var submitter = getValidSubmitter(form, event.submitter || lastSubmitter);
 
             if (!hasEnabledConfirm(form, submitter)) return;
-            if (isConfirmedSubmit(form)) {
+
+            if (confirmedForms.has(form) || form.getAttribute('data-confirmed-submit') === 'true') {
                 clearPendingState(form);
                 applySubmitterOverrides(form, submitter);
 
@@ -505,13 +450,26 @@
             }
 
             event.preventDefault();
+            event.stopImmediatePropagation();
 
             if (form.getAttribute('data-confirm-submit-pending') === 'true') return;
             form.setAttribute('data-confirm-submit-pending', 'true');
+            if (!form.checkValidity()) {
+                clearPendingState(form);
+                form.reportValidity();
+                return;
+            }
 
             if (form.getAttribute('data-confirm-require-items') === 'true' && !hasRequiredItemRows(form)) {
                 showRequiredItemsWarning(form);
+                return;
+            }
+
+            if (!saleDeliveryConfirmIsValid(form)) {
                 clearPendingState(form);
+                var box = document.getElementById('rowErrorBox');
+                if (box) box.classList.remove('d-none');
+                window.scrollTo({ top: 0, behavior: 'smooth' });
                 return;
             }
 
@@ -533,7 +491,6 @@
         }, true);
     })();
 </script>
-
 <script>
     (function () {
         if (window.jQuery && jQuery.fn && jQuery.fn.dataTable) {

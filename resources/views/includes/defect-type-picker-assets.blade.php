@@ -285,7 +285,16 @@
                         const value = String(removeBtn.getAttribute('data-defect-type') || '').trim();
                         if (value === '') return;
 
-                        if (!window.confirm('Remove defect type "' + value + '" from master list?')) return;
+                        const confirmed = window.showConfirmSubmitModal
+                            ? await window.showConfirmSubmitModal({
+                                title: 'Confirm Delete',
+                                message: 'Remove defect type "' + value + '" from master list?',
+                                confirmText: 'Delete',
+                                cancelText: 'Cancel',
+                                variant: 'danger'
+                            })
+                            : false;
+                        if (!confirmed) return;
 
                         removeBtn.disabled = true;
                         if (note) note.textContent = 'Removing...';

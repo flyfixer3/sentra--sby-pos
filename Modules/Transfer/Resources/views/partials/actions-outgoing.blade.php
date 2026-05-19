@@ -8,7 +8,7 @@
     </a>
 
     @if($canDelete)
-        <form action="{{ route('transfers.destroy', $row->id) }}" method="POST" onsubmit="return confirm('Hapus transfer ini?');">
+        <form action="{{ route('transfers.destroy', $row->id) }}" method="POST" data-confirm-submit="true" data-confirm-title="Confirm Delete" data-confirm-message="Hapus transfer ini?" data-confirm-button="Delete" data-confirm-variant="danger">
             @csrf
             @method('DELETE')
             <button type="submit" class="btn btn-danger" title="Delete">

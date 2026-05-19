@@ -268,7 +268,7 @@
                         @if($status === 'pending')
                             <form action="{{ route('sale-orders.destroy', $saleOrder->id) }}" method="POST"
                                   class="m-0"
-                                  onsubmit="return confirm('Delete this Sale Order? This cannot be undone.')">
+                                  data-confirm-submit="true" data-confirm-title="Confirm Delete" data-confirm-message="Delete this Sale Order? This cannot be undone." data-confirm-button="Delete" data-confirm-variant="danger">
                                 @csrf
                                 @method('DELETE')
                                 <button type="submit" class="btn btn-outline-danger">
@@ -648,7 +648,7 @@
                                                 <form method="POST"
                                                       action="{{ route('sale-deliveries.create-invoice', $d->id) }}"
                                                       class="d-inline"
-                                                      onsubmit="return confirm('Create Invoice from this Sale Delivery? (1 Delivery = 1 Invoice)');">
+                                                      data-confirm-submit="true" data-confirm-title="Confirm Create" data-confirm-message="Create Invoice from this Sale Delivery? (1 Delivery = 1 Invoice)" data-confirm-button="Create" data-confirm-variant="primary">
                                                     @csrf
                                                     <button type="submit" class="btn btn-sm btn-outline-success">
                                                         <i class="bi bi-receipt"></i> Create Invoice

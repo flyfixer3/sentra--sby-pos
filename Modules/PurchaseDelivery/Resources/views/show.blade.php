@@ -617,7 +617,7 @@
                 <form action="{{ route('purchase-deliveries.destroy', $purchaseDelivery->id) }}"
                       method="POST"
                       class="d-inline-block"
-                      onsubmit="return confirm('Are you sure? It will delete the data permanently!');">
+                      data-confirm-submit="true" data-confirm-title="Confirm Delete" data-confirm-message="Are you sure? It will delete the data permanently!" data-confirm-button="Delete" data-confirm-variant="danger">
                     @csrf
                     @method('DELETE')
                     <button type="submit" class="btn btn-outline-danger btn-sm">

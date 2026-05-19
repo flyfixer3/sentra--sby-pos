@@ -103,7 +103,7 @@
                         <form method="POST"
                             action="{{ route('quotations.create-invoice-direct', $quotation->id) }}"
                             class="d-inline"
-                            onsubmit="return confirm('Create Sale Invoice from this quotation (skip Sale Order, auto create Sale Delivery pending)?');">
+                            data-confirm-submit="true" data-confirm-title="Confirm Create" data-confirm-message="Create Sale Invoice from this quotation (skip Sale Order, auto create Sale Delivery pending)?" data-confirm-button="Create" data-confirm-variant="primary">
                             @csrf
                             <button type="submit" class="btn btn-warning" @if($hasChildren) disabled @endif>
                                 <i class="bi bi-receipt me-1"></i> Create Sales Invoice

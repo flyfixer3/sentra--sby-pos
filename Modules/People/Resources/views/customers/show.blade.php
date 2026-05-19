@@ -99,7 +99,7 @@
                                                     <button type="button" class="btn btn-sm btn-info" data-toggle="modal" data-target="#editVehicleModal{{ $vehicle->id }}">
                                                         Edit
                                                     </button>
-                                                    <form action="{{ route('customers.vehicles.destroy', [$customer, $vehicle]) }}" method="POST" class="d-inline" onsubmit="return confirm('Delete this vehicle?')">
+                                                    <form action="{{ route('customers.vehicles.destroy', [$customer, $vehicle]) }}" method="POST" class="d-inline" data-confirm-submit="true" data-confirm-title="Confirm Delete" data-confirm-message="Delete this vehicle?" data-confirm-button="Delete" data-confirm-variant="danger">
                                                         @csrf
                                                         @method('delete')
                                                         <button type="submit" class="btn btn-sm btn-danger">

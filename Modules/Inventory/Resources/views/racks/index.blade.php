@@ -135,7 +135,7 @@
                                         @endcan
 
                                         @can('delete_racks')
-                                            <form action="{{ route('inventory.racks.destroy', $r->id) }}" method="POST" onsubmit="return confirm('Delete this rack?')">
+                                            <form action="{{ route('inventory.racks.destroy', $r->id) }}" method="POST" data-confirm-submit="true" data-confirm-title="Confirm Delete" data-confirm-message="Delete this rack?" data-confirm-button="Delete" data-confirm-variant="danger">
                                                 @csrf
                                                 @method('DELETE')
                                                 <button type="submit" class="btn btn-sm btn-danger">

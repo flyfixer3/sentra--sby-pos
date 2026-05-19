@@ -57,7 +57,7 @@
                                             @if($isSuperAdmin)
                                                 <form action="{{ route('adjustments.approve', $adjustment) }}" method="POST" class="d-inline">
                                                     @csrf
-                                                    <button type="submit" class="btn btn-success btn-sm" onclick="return confirm('Approve and execute this adjustment request?')">
+                                                    <button type="submit" class="btn btn-success btn-sm" data-confirm-submit-button="true" data-confirm-title="Confirm Approval" data-confirm-message="Approve and execute this adjustment request?" data-confirm-button="Approve" data-confirm-variant="success">
                                                         <i class="bi bi-check2"></i>
                                                     </button>
                                                 </form>

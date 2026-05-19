@@ -148,7 +148,11 @@ class SaleOrdersDataTable extends DataTable
                 // DELETE (only pending)
                 if ($isPending && Gate::allows('delete_sale_orders')) {
                     $html .= '<form action="' . $deleteUrl . '" method="POST" style="display:inline-block"
-                                onsubmit="return confirm(\'Delete this Sale Order? This cannot be undone.\')">
+                                data-confirm-submit="true"
+                                data-confirm-title="Confirm Delete"
+                                data-confirm-message="Delete this Sale Order? This cannot be undone."
+                                data-confirm-button="Delete"
+                                data-confirm-variant="danger">
                                 ' . csrf_field() . '
                                 ' . method_field('DELETE') . '
                                 <button type="submit" class="btn btn-sm btn-outline-danger">

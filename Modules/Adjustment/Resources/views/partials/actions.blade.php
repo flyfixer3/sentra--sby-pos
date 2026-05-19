@@ -28,7 +28,7 @@
 
             <form action="{{ route('adjustments.approve', $data->id) }}" method="POST" class="m-0">
                 @csrf
-                <button type="submit" class="dropdown-item text-success" onclick="return confirm('Approve and execute this adjustment request?')">
+                <button type="submit" class="dropdown-item text-success" data-confirm-submit-button="true" data-confirm-title="Confirm Approval" data-confirm-message="Approve and execute this adjustment request?" data-confirm-button="Approve" data-confirm-variant="success">
                     <i class="bi bi-check2 mr-2 text-success" style="line-height: 1;"></i> Approve
                 </button>
             </form>
@@ -52,12 +52,7 @@
         @can('delete_adjustments')
             <div class="dropdown-divider"></div>
 
-            <button id="delete" class="dropdown-item text-danger" onclick="
-                event.preventDefault();
-                if (confirm('Are you sure? It will delete the data permanently!')) {
-                    document.getElementById('destroy{{ $data->id }}').submit()
-                }
-            ">
+            <button id="delete" class="dropdown-item text-danger" type="button" data-confirm-target-form="destroy{{ $data->id }}" data-confirm-title="Confirm Delete" data-confirm-message="Are you sure? It will delete the data permanently!" data-confirm-button="Delete" data-confirm-variant="danger">
                 <i class="bi bi-trash mr-2 text-danger" style="line-height: 1;"></i> Delete
             </button>
             <form id="destroy{{ $data->id }}" class="d-none" action="{{ route('adjustments.destroy', $data->id) }}" method="POST">

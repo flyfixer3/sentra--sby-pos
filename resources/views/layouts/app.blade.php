@@ -39,6 +39,8 @@
         @include('layouts.footer')
     </div>
 
+    @include('includes.confirm-submit-modal')
+
     {{-- ✅ Kalau kamu pakai snowfall effect --}}
     {{-- @includeIf('includes.snowfall') --}}
 
