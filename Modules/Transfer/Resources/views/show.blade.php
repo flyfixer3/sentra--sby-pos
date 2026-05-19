@@ -548,6 +548,8 @@
     </div>
 </div>
 
+@include('includes.edit-activity-log', ['model' => $transfer])
+
 @endsection
 
 @push('scripts')

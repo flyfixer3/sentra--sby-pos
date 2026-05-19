@@ -49,5 +49,6 @@
             </div>
         </div>
     </div>
-@endsection
 
+    @include('includes.edit-activity-log', ['model' => $supplier])
+@endsection

@@ -125,6 +125,8 @@
         </div>
     </div>
 
+    @include('includes.edit-activity-log', ['model' => $customer])
+
     @can('edit_customers')
         <div class="modal fade" id="addVehicleModal" tabindex="-1" role="dialog" aria-labelledby="addVehicleModalLabel" aria-hidden="true">
             <div class="modal-dialog" role="document">

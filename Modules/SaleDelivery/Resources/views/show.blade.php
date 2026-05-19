@@ -452,6 +452,8 @@
     @endif
 
 </div>
+
+@include('includes.edit-activity-log', ['model' => $saleDelivery])
 @endsection
 
 @push('page_scripts')

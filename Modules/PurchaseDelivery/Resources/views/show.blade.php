@@ -657,6 +657,8 @@
     </div>
 
 </div>
+
+@include('includes.edit-activity-log', ['model' => $purchaseDelivery])
 @endsection
 
 @push('page_scripts')

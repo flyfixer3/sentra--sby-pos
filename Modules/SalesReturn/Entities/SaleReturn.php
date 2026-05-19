@@ -2,12 +2,14 @@
 
 namespace Modules\SalesReturn\Entities;
 
+use App\Traits\LogsModelChanges;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Spatie\Activitylog\Traits\LogsActivity;
 
 class SaleReturn extends Model
 {
-    use HasFactory;
+    use HasFactory, LogsActivity, LogsModelChanges;
 
     protected $guarded = [];
 

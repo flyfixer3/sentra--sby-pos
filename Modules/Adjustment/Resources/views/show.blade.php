@@ -574,6 +574,8 @@
 
 </div>
 
+@include('includes.edit-activity-log', ['model' => $adjustment])
+
 @if(auth()->check() && auth()->user()->hasRole('Super Admin') && $adjustment->isPending())
     <div class="modal fade" id="rejectAdjustmentModal" tabindex="-1" role="dialog" aria-hidden="true">
         <div class="modal-dialog" role="document">

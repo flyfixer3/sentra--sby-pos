@@ -714,6 +714,8 @@
     @endif
 
 </div>
+
+@include('includes.edit-activity-log', ['model' => $saleOrder])
 @endsection
 
 @if($showShortagePoModal)

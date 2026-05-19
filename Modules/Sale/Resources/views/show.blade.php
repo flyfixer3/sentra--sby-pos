@@ -362,4 +362,6 @@
             </div>
         </div>
     </div>
+
+    @include('includes.edit-activity-log', ['model' => $sale])
 @endsection

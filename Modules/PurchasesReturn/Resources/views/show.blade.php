@@ -135,5 +135,6 @@
             </div>
         </div>
     </div>
-@endsection
 
+    @include('includes.edit-activity-log', ['model' => $purchase_return])
+@endsection

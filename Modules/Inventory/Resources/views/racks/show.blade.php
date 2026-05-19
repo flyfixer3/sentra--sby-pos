@@ -134,6 +134,8 @@
         </div>
     </div>
 </div>
+
+@include('includes.edit-activity-log', ['model' => $rack])
 @endsection
 
 @push('page_scripts')

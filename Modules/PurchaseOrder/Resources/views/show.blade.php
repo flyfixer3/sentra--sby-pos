@@ -581,4 +581,6 @@
         ])
     @endif
 @endcan
+
+@include('includes.edit-activity-log', ['model' => $purchase_order])
 @endsection

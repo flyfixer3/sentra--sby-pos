@@ -231,5 +231,7 @@
                 </div>
             </div>
         </div>
+
+        @include('includes.edit-activity-log', ['model' => $product])
     </div>
 @endsection
