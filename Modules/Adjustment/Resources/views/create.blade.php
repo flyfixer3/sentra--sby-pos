@@ -240,7 +240,7 @@
             </div>
             <div class="modal-body">
                 <p class="mb-0" id="adjustmentSubmitConfirmMessage">
-                    This adjustment will be submitted as a pending request and will not affect stock until approved by Super Admin.
+                    This adjustment will be submitted as a pending request and will not affect stock until approved.
                 </p>
             </div>
             <div class="modal-footer">
@@ -423,7 +423,7 @@
 
         const messageEl = document.getElementById('adjustmentSubmitConfirmMessage');
         if(messageEl){
-            messageEl.textContent = message || 'This adjustment will be submitted as a pending request and will not affect stock until approved by Super Admin.';
+            messageEl.textContent = message || 'This adjustment will be submitted as a pending request and will not affect stock until approved.';
         }
 
         const btn = document.getElementById('confirmAdjustmentSubmitBtn');
@@ -512,7 +512,7 @@
 
         showAdjustmentSubmitModal(
             stockForm,
-            'This adjustment will be submitted as a pending request and will not affect stock until approved by Super Admin.'
+            'This adjustment will be submitted as a pending request and will not affect stock until approved.'
         );
     }
     window.submitStockForm = submitStockForm;
@@ -544,7 +544,7 @@
 
         showAdjustmentSubmitModal(
             qForm,
-            'This quality reclass will be submitted as a pending request and will not affect stock until approved by Super Admin.'
+            'This quality reclass will be submitted as a pending request and will not affect stock until approved.'
         );
     }
     window.submitQualityForm = submitQualityForm;

@@ -42,8 +42,10 @@ Route::group(['middleware' => 'auth'], function () {
         Route::post('adjustments', 'AdjustmentController@store')
             ->name('adjustments.store');
         Route::post('adjustments/{adjustment}/approve', 'AdjustmentController@approve')
+            ->middleware('can:approve_adjustments')
             ->name('adjustments.approve');
         Route::post('adjustments/{adjustment}/reject', 'AdjustmentController@reject')
+            ->middleware('can:approve_adjustments')
             ->name('adjustments.reject');
         Route::get('adjustments/{adjustment}/edit', 'AdjustmentController@edit')
             ->name('adjustments.edit');

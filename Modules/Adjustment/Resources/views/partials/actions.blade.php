@@ -1,6 +1,6 @@
 @php
     $status = strtolower((string) ($data->status ?? 'approved'));
-    $isSuperAdmin = auth()->check() && auth()->user()->hasRole('Super Admin');
+    $canApproveAdjustments = auth()->check() && auth()->user()->can('approve_adjustments');
 @endphp
 
 <div class="btn-group dropleft">
@@ -23,7 +23,7 @@
             </a>
         @endcan
 
-        @if($isSuperAdmin && $status === 'pending')
+        @if($canApproveAdjustments && $status === 'pending')
             <div class="dropdown-divider"></div>
 
             <form action="{{ route('adjustments.approve', $data->id) }}" method="POST" class="m-0">

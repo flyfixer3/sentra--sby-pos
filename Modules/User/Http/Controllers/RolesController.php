@@ -124,6 +124,7 @@ class RolesController extends Controller
             'create_adjustments',
             'show_adjustments',
             'edit_adjustments',
+            'approve_adjustments',
             'delete_adjustments',
             'access_quotations',
             'create_quotations',

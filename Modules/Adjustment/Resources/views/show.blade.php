@@ -166,7 +166,7 @@
                             'rejected' => 'danger',
                         ];
                         $statusClass = $statusMap[$status] ?? 'secondary';
-                        $isSuperAdmin = auth()->check() && auth()->user()->hasRole('Super Admin');
+                        $canApproveAdjustments = auth()->check() && auth()->user()->can('approve_adjustments');
                     @endphp
 
                     <div class="d-flex align-items-center justify-content-between mb-3">
@@ -177,7 +177,7 @@
                             @endif
                         </div>
 
-                        @if($isSuperAdmin && $adjustment->isPending())
+                        @if($canApproveAdjustments && $adjustment->isPending())
                             <div class="d-flex" style="gap:8px;">
                                 <form action="{{ route('adjustments.approve', $adjustment) }}" method="POST" class="d-inline">
                                     @csrf
@@ -576,7 +576,7 @@
 
 @include('includes.edit-activity-log', ['model' => $adjustment])
 
-@if(auth()->check() && auth()->user()->hasRole('Super Admin') && $adjustment->isPending())
+@if(auth()->check() && auth()->user()->can('approve_adjustments') && $adjustment->isPending())
     <div class="modal fade" id="rejectAdjustmentModal" tabindex="-1" role="dialog" aria-hidden="true">
         <div class="modal-dialog" role="document">
             <form class="modal-content" action="{{ route('adjustments.reject', $adjustment) }}" method="POST">

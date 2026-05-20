@@ -54,7 +54,7 @@
                                                 <i class="bi bi-eye"></i>
                                             </a>
 
-                                            @if($isSuperAdmin)
+                                            @if($canApproveAdjustments && $adjustment->isPending())
                                                 <form action="{{ route('adjustments.approve', $adjustment) }}" method="POST" class="d-inline">
                                                     @csrf
                                                     <button type="submit" class="btn btn-success btn-sm" data-confirm-submit-button="true" data-confirm-title="Confirm Approval" data-confirm-message="Approve and execute this adjustment request?" data-confirm-button="Approve" data-confirm-variant="success">

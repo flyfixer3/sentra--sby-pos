@@ -416,7 +416,7 @@ class AdjustmentController extends Controller
 
         try {
             $this->createPendingStockAdjustmentRequest($request, $adjType, $branchId, $date, $note);
-            toast('Adjustment request submitted and waiting for Super Admin approval.', 'success');
+            toast('Adjustment request submitted and waiting for approval.', 'success');
             return redirect()->route('adjustments.index');
         } catch (\Throwable $e) {
             return redirect()
@@ -1762,7 +1762,7 @@ class AdjustmentController extends Controller
 
     public function approve(Request $request, Adjustment $adjustment)
     {
-        abort_unless(auth()->check() && auth()->user()->hasRole('Super Admin'), 403);
+        abort_if(Gate::denies('approve_adjustments'), 403);
 
         $request->validate([
             'approval_note' => ['nullable', 'string', 'max:2000'],
@@ -1781,7 +1781,7 @@ class AdjustmentController extends Controller
 
     public function reject(Request $request, Adjustment $adjustment)
     {
-        abort_unless(auth()->check() && auth()->user()->hasRole('Super Admin'), 403);
+        abort_if(Gate::denies('approve_adjustments'), 403);
 
         $request->validate([
             'rejection_reason' => ['required', 'string', 'min:2', 'max:2000'],
@@ -2062,7 +2062,7 @@ class AdjustmentController extends Controller
 
         try {
             $this->createPendingQualityAdjustmentRequest($request, $type, $activeBranchId, $date, $globalNote, $isClassic, $normalizeDetailArray);
-            toast('Quality reclass request submitted and waiting for Super Admin approval.', 'success');
+            toast('Quality reclass request submitted and waiting for approval.', 'success');
             return redirect()->route('adjustments.index');
         } catch (\Throwable $e) {
             return redirect()->back()->withInput()->with('error', $e->getMessage());

@@ -9,7 +9,7 @@ class InboxController extends Controller
     public function index()
     {
         $user = auth()->user();
-        $isSuperAdmin = $user && $user->hasRole('Super Admin');
+        $canApproveAdjustments = $user ? $user->can('approve_adjustments') : false;
 
         $query = Adjustment::query()
             ->with(['branch', 'warehouse', 'creator'])
@@ -17,12 +17,12 @@ class InboxController extends Controller
             ->orderByDesc('submitted_at')
             ->orderByDesc('created_at');
 
-        if (!$isSuperAdmin) {
+        if (!$canApproveAdjustments) {
             $query->where('submitted_by', optional($user)->id);
         }
 
         $adjustments = $query->paginate(25);
 
-        return view('inbox.index', compact('adjustments', 'isSuperAdmin'));
+        return view('inbox.index', compact('adjustments', 'canApproveAdjustments'));
     }
 }

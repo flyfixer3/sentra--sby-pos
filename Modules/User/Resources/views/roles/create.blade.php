@@ -258,6 +258,14 @@
                                                 <div class="col-6">
                                                     <div class="custom-control custom-switch">
                                                         <input type="checkbox" class="custom-control-input"
+                                                               id="approve_adjustments" name="permissions[]"
+                                                               value="approve_adjustments" {{ old('approve_adjustments') ? 'checked' : '' }}>
+                                                        <label class="custom-control-label" for="approve_adjustments">Approve / Reject Adjustments</label>
+                                                    </div>
+                                                </div>
+                                                <div class="col-6">
+                                                    <div class="custom-control custom-switch">
+                                                        <input type="checkbox" class="custom-control-input"
                                                                id="delete_adjustments" name="permissions[]"
                                                                value="delete_adjustments" {{ old('delete_adjustments') ? 'checked' : '' }}>
                                                         <label class="custom-control-label" for="delete_adjustments">Delete</label>

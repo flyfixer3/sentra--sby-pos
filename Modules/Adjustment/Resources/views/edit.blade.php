@@ -63,7 +63,7 @@
                     @include('utils.alerts')
 
                     <div class="alert alert-warning border">
-                        Approved and rejected adjustments are locked. This page is only for editing a request before Super Admin approval.
+                        Approved and rejected adjustments are locked. This page is only for editing a request before approval.
                     </div>
 
                     @if($requestType === 'stock_add')

@@ -52,6 +52,7 @@ class PermissionsTableSeeder extends Seeder
             'create_adjustments',
             'show_adjustments',
             'edit_adjustments',
+            'approve_adjustments',
             'delete_adjustments',
 
             //Quotaions
