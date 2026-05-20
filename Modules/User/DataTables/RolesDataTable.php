@@ -22,13 +22,14 @@ class RolesDataTable extends DataTable
                 return view('user::roles.partials.permissions', [
                     'data' => $data
                 ]);
-            });
+            })
+            ->rawColumns(['permissions', 'action']);
 
     }
 
     public function query(Role $model) {
         return $model->newQuery()->with(['permissions' => function ($query) {
-            $query->select('name')->take(10)->get();
+            $query->select('permissions.id', 'permissions.name')->orderBy('permissions.name');
         }])->where('name', '!=', 'Super Admin');
     }
 
